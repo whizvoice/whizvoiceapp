@@ -1,0 +1,42 @@
+package com.example.wiz.ui.viewmodels
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.wiz.data.local.ChatEntity
+import com.example.wiz.data.repository.WizRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class ChatsListViewModel @Inject constructor(
+    private val repository: WizRepository
+) : ViewModel() {
+
+    // All chats, ordered by most recent first
+    val chats: StateFlow<List<ChatEntity>> = repository.getAllChats()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    // Create a new chat
+    fun createNewChat(title: String = "New Chat"): Long {
+        var newChatId = -1L
+        viewModelScope.launch {
+            newChatId = repository.createChat(title)
+        }
+        return newChatId
+    }
+
+    // Clear all chat history
+    fun clearAllChatHistory() {
+        viewModelScope.launch {
+            repository.deleteAllChats()
+        }
+    }
+}

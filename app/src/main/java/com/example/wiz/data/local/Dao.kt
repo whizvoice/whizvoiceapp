@@ -1,0 +1,66 @@
+package com.example.wiz.data.local
+
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.RoomDatabase
+import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface ChatDao {
+    @Query("SELECT * FROM chats ORDER BY lastMessageTime DESC")
+    fun getAllChatsFlow(): Flow<List<ChatEntity>>
+
+    @Query("SELECT * FROM chats WHERE id = :chatId")
+    suspend fun getChatById(chatId: Long): ChatEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChat(chat: ChatEntity): Long
+
+    @Update
+    suspend fun updateChat(chat: ChatEntity)
+
+    @Query("UPDATE chats SET lastMessageTime = :timestamp WHERE id = :chatId")
+    suspend fun updateChatLastMessageTime(chatId: Long, timestamp: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM chats")
+    suspend fun deleteAllChats()
+
+    @Delete
+    suspend fun deleteChat(chat: ChatEntity)
+}
+
+@Dao
+interface MessageDao {
+    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
+    fun getMessagesForChatFlow(chatId: Long): Flow<List<MessageEntity>>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId")
+    suspend fun getMessageCountForChat(chatId: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessage(message: MessageEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessages(messages: List<MessageEntity>)
+
+    @Query("DELETE FROM messages WHERE chatId = :chatId")
+    suspend fun deleteMessagesForChat(chatId: Long)
+
+    @Query("DELETE FROM messages")
+    suspend fun deleteAllMessages()
+}
+
+@Database(
+    entities = [ChatEntity::class, MessageEntity::class],
+    version = 1,
+    exportSchema = false
+)
+abstract class WizDatabase : RoomDatabase() {
+    abstract fun chatDao(): ChatDao
+    abstract fun messageDao(): MessageDao
+}
