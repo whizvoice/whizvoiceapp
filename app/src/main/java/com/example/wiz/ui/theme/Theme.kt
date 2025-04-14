@@ -73,8 +73,24 @@ fun WizTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
+            // Set the status bar color to your primary color
             window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+
+            // Determine if the primary color is light or dark
+            // You might need a helper function to calculate luminance or use a library
+            // For simplicity, let's assume a threshold (e.g., > 0.5 luminance is light)
+            // This requires a way to calculate luminance. A simple approximation:
+            val primaryColor = colorScheme.primary
+            val luminance =
+                (0.2126 * primaryColor.red + 0.7152 * primaryColor.green + 0.0722 * primaryColor.blue)
+
+            // Set icons to dark if the status bar color (primary) is light, and vice-versa
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
+                luminance > 0.5 // Adjust threshold as needed
+
+            // Optional: You might also want to control the navigation bar color/icons
+            // window.navigationBarColor = colorScheme.background.toArgb() // Example
+            // WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = luminanceBackground > 0.5 // Example
         }
     }
 
@@ -83,4 +99,5 @@ fun WizTheme(
         typography = Typography,
         content = content
     )
+
 }

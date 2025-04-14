@@ -2,70 +2,32 @@ package com.example.wiz.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.* // Use wildcard import for brevity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material.icons.filled.* // Use wildcard import for brevity
+import androidx.compose.material3.* // Use wildcard import for brevity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -75,74 +37,48 @@ import com.example.wiz.data.local.MessageEntity
 import com.example.wiz.data.local.MessageType
 import com.example.wiz.ui.viewmodels.ChatViewModel
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.RepeatMode // Import RepeatMode
+import androidx.compose.animation.core.StartOffset // Import StartOffset
+import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
 
-import androidx.compose.runtime.State
-import com.google.accompanist.systemuicontroller.rememberSystemUiController
-
-// States for transition animation
-enum class TransitionState {
-    Entering, Entered, Exiting, Exited
-}
-
-// Helper to track transition states
-@Composable
-fun rememberTransitionState(): State<TransitionState> {
-    val state = remember { mutableStateOf(TransitionState.Entering) }
-
-    LaunchedEffect(Unit) {
-        // Simulate transition completion after a delay
-        delay(300) // Matches our animation duration
-        state.value = TransitionState.Entered
-    }
-
-    return state
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     chatId: Long,
-    onBackClick: () -> Unit,
     onChatsListClick: () -> Unit,
     viewModel: ChatViewModel = hiltViewModel()
 ) {
+    // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
     val isListening by viewModel.isListening.collectAsState()
     val transcription by viewModel.transcriptionState.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
-    val isResponding by viewModel.isResponding.collectAsState()
+    val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
     val speechError by viewModel.speechError.collectAsState()
+    val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
+    val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
 
+    // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Define the color for the input area with elevation
-    val inputSurfaceColor = MaterialTheme.colorScheme.surface.copy(
-        alpha = 0.9f
-    ).compositeOver(MaterialTheme.colorScheme.surfaceTint.copy(
-        alpha = 0.1f
-    ))
+    val inputSurfaceColor = MaterialTheme.colorScheme.background // Keep it simple or use previous calculation
+    // .copy(alpha = 0.9f) // Example customization
+    // .compositeOver(MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.1f))
 
-    // Simple animation visibility state - no need for complex transition state
-    var isContentVisible by remember { mutableStateOf(false) }
 
-    // Delay loading and showing content after transition animation
-    LaunchedEffect(Unit) {
-        // Wait for entry animation to complete
-        delay(300)
-
-        // Load chat data
+    // Load chat data when chatId changes
+    LaunchedEffect(chatId) {
         viewModel.loadChat(chatId)
-
-        // Show content with slight delay for smoothness
-        delay(50)
-        isContentVisible = true
     }
 
-    // Scroll to bottom when messages change
-    LaunchedEffect(messages) {
+    // Scroll to bottom when new messages arrive
+    LaunchedEffect(messages.size) { // Trigger scroll based on message count change
         if (messages.isNotEmpty()) {
+            delay(100) // Allow layout
             listState.animateScrollToItem(messages.size - 1)
         }
     }
@@ -150,39 +86,52 @@ fun ChatScreen(
     // Show speech recognition errors
     LaunchedEffect(speechError) {
         speechError?.let {
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showSnackbar(message = it, duration = SnackbarDuration.Short)
         }
     }
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text(chatTitle) },
+                title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
                 navigationIcon = {
                     IconButton(onClick = onChatsListClick) {
+                        Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = viewModel::toggleVoiceResponse) {
                         Icon(
-                            imageVector = Icons.Default.Menu,
-                            contentDescription = "Open Chats List"
+                            imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
                         )
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
+            // Pass the combined state to disable input correctly
+            val isInputDisabled = isResponding || isSpeaking
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
-                isResponding = isResponding,
+                isInputDisabled = isInputDisabled, // Use a combined state
                 onInputChange = viewModel::updateInputText,
-                onSendClick = { viewModel.sendUserInput() },
-                onMicClick = viewModel::toggleSpeechRecognition,
+                onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
+                onMicClick = {
+                    // Only allow mic toggle if not speaking or responding
+                    if (!isInputDisabled) {
+                        viewModel.toggleSpeechRecognition()
+                    }
+                },
                 surfaceColor = inputSurfaceColor
             )
         }
@@ -190,31 +139,27 @@ fun ChatScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(paddingValues) // Apply padding from Scaffold
+                .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent) // Subtle speaking indicator
         ) {
-            // Fade in content after animation completes
-            AnimatedVisibility(
-                visible = isContentVisible || messages.isEmpty(),
-                enter = fadeIn(animationSpec = tween(300))
-            ) {
-                if (messages.isEmpty()) {
-                    EmptyChatPlaceholder()
-                } else {
-                    MessagesList(
-                        messages = messages,
-                        listState = listState
-                    )
-                }
+            // Display messages or placeholder
+            if (messages.isEmpty() && !isResponding && !isSpeaking) { // Show placeholder only if truly empty and idle
+                EmptyChatPlaceholder()
+            } else {
+                MessagesList(
+                    messages = messages,
+                    listState = listState
+                )
             }
 
-            // Show typing indicator when assistant is responding
+            // Typing Indicator - Show only when responding (agent thinking), not when speaking
             AnimatedVisibility(
-                visible = isResponding,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
+                visible = isResponding && !isSpeaking,
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(16.dp)
+                    .padding(start = 16.dp, end = 16.dp, bottom = 8.dp) // Position above input bar area
             ) {
                 TypingIndicator()
             }
@@ -227,89 +172,74 @@ fun MessagesList(
     messages: List<MessageEntity>,
     listState: androidx.compose.foundation.lazy.LazyListState
 ) {
-    // Debug print for troubleshooting
-    if (messages.isEmpty()) {
-        println("Debug: MessagesList received empty messages list")
-    } else {
-        println("Debug: MessagesList received ${messages.size} messages")
-    }
-
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
         state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
+        // reverseLayout = true // Keep false for messages appearing at the bottom
     ) {
-        items(messages) { message ->
-            // Debug print for each message
-            println("Debug: Displaying message: ${message.content} (${message.type})")
+        items(messages, key = { it.id }) { message ->
             MessageItem(message = message)
         }
+        // Add a spacer at the bottom for breathing room above input bar
+        item { Spacer(modifier = Modifier.height(8.dp)) }
     }
 }
+
 
 @Composable
 fun MessageItem(message: MessageEntity) {
     val isUserMessage = message.type == MessageType.USER
 
-    // More distinctive colors for the bubbles
     val backgroundColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary // Use actual primary color for user
+        MessageType.USER -> MaterialTheme.colorScheme.primary
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
     }
-
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.onPrimary // Ensure text is readable on primary
+        MessageType.USER -> MaterialTheme.colorScheme.onPrimary
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer
     }
+    val alignment = if (isUserMessage) Alignment.CenterEnd else Alignment.CenterStart
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUserMessage) Arrangement.End else Arrangement.Start
-    ) {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Card(
             modifier = Modifier
-                .widthIn(max = 340.dp)
-                .padding(vertical = 4.dp), // Add some vertical spacing between messages
-            shape = RoundedCornerShape(
-                topStart = if (isUserMessage) 12.dp else 4.dp,
-                topEnd = if (isUserMessage) 4.dp else 12.dp,
-                bottomStart = 12.dp,
-                bottomEnd = 12.dp
+                .widthIn(max = 300.dp)
+                .padding(
+                    start = if (isUserMessage) 56.dp else 0.dp, // More indentation for user messages
+                    end = if (isUserMessage) 0.dp else 56.dp   // More indentation for assistant messages
+                ),
+            shape = RoundedCornerShape( // Slightly different shapes
+                topStart = if (!isUserMessage) 4.dp else 16.dp,
+                topEnd = if (isUserMessage) 4.dp else 16.dp,
+                bottomStart = 16.dp,
+                bottomEnd = 16.dp
             ),
-            colors = CardDefaults.cardColors(
-                containerColor = backgroundColor,
-                contentColor = textColor
-            ),
-            // Add elevation for more visual distinction
-            elevation = CardDefaults.cardElevation(
-                defaultElevation = if (isUserMessage) 2.dp else 1.dp
-            )
+            colors = CardDefaults.cardColors(containerColor = backgroundColor, contentColor = textColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                // Add a small label to identify the speaker
-                Text(
-                    text = if (isUserMessage) "You" else "Wiz",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = textColor.copy(alpha = 0.8f)
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                if (!isUserMessage) { // Optional speaker label for assistant
+                    Text(
+                        text = "Bonobo", // Assistant name
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = textColor.copy(alpha = 0.9f),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyLarge
                 )
-
                 Spacer(modifier = Modifier.height(4.dp))
-
                 Text(
                     text = DateFormatter.formatMessageTime(message.timestamp),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth(),
-                    color = textColor.copy(alpha = 0.7f) // Slightly dimmed timestamp
+                    color = textColor.copy(alpha = 0.7f)
                 )
             }
         }
@@ -319,11 +249,11 @@ fun MessageItem(message: MessageEntity) {
 @Composable
 fun EmptyChatPlaceholder() {
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Send a message to Wiz...",
+            text = "Start chatting with Bonobo!\nType or tap the mic.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
@@ -333,43 +263,50 @@ fun EmptyChatPlaceholder() {
 
 @Composable
 fun TypingIndicator() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.secondaryContainer)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+    // Using Card for consistency
+    Card(
+        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Text(
-            text = "Wiz is thinking",
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
-            style = MaterialTheme.typography.bodyMedium
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp) // Match message padding
+        ) {
+            Text(
+                text = "Wiz is thinking",
+                style = MaterialTheme.typography.bodyMedium // Consistent style
+            )
+            Spacer(modifier = Modifier.width(8.dp)) // Space before dots
 
-        // Three animated dots
-        for (i in 0 until 3) {
-            val delay = i * 200
-            var isVisible by remember { mutableStateOf(true) }
+            // Animated dots
+            val dotCount = 3
+            val animationDelay = 1000 // Slightly longer cycle
+            val dotSize = 6.dp
+            val dotSpacing = 4.dp
 
-            LaunchedEffect(key1 = true) {
-                kotlinx.coroutines.delay(delay.toLong())
-                while (true) {
-                    isVisible = true
-                    kotlinx.coroutines.delay(600)
-                    isVisible = false
-                    kotlinx.coroutines.delay(400)
+            Row(horizontalArrangement = Arrangement.spacedBy(dotSpacing)) {
+                for (i in 0 until dotCount) {
+                    val delay = (i * animationDelay / dotCount).toLong()
+                    val alpha by animateFloatAsState(
+                        targetValue = 1f, // Animate alpha from low to high and back
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = animationDelay / 2), // Faster fade in/out
+                            repeatMode = RepeatMode.Reverse,
+                            initialStartOffset = StartOffset(offsetMillis = delay.toInt())
+                        )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(dotSize)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha.coerceIn(0.4f, 1f))) // Adjusted alpha range
+                    )
                 }
             }
-
-            val alpha by animateFloatAsState(targetValue = if (isVisible) 1f else 0.2f)
-
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha))
-            )
         }
     }
 }
@@ -379,100 +316,88 @@ fun ChatInputBar(
     inputText: String,
     transcription: String,
     isListening: Boolean,
-    isResponding: Boolean,
+    isInputDisabled: Boolean, // Combined disabled state (responding OR speaking)
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onMicClick: () -> Unit,
     surfaceColor: Color
 ) {
-    // Determine if there's manually typed text (ignoring transcription)
-    val hasInputText = inputText.isNotEmpty()
-
-    // Determine what to display in the field
-    val displayText = if (isListening) transcription else inputText
-
-    // Determine the placeholder text
-    val placeholderText = if (isListening) {
-        if (transcription.isNotEmpty()) "" // Show transcription if available
-        else "Listening..." // Otherwise show "Listening..."
-    } else {
-        "Type a message"
-    }
+    val hasInputText = inputText.isNotBlank()
+    // Display transcription if listening, otherwise input text. Show placeholder within TextField.
+    val displayValue = if (isListening) transcription else inputText
+    val placeholderText = if (isListening) "Listening..." else "Type or tap mic..."
 
     Surface(
         color = surfaceColor,
-        tonalElevation = 4.dp,
+        //tonalElevation = 4.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
-            .imePadding()
+            .navigationBarsPadding() // Handles navigation bar insets
+            .imePadding() // Handles keyboard insets
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+        Box( // Use Box to contain TextField and allow padding
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedTextField(
-                    value = displayText,
-                    onValueChange = {
-                        // Only allow typing when not listening
-                        if (!isListening) onInputChange(it)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text(placeholderText) }, // Use dynamic placeholder
-                    singleLine = false,
-                    maxLines = 4,
-                    // Field should be readable when listening, but not editable via keyboard
-                    enabled = !isResponding,
-                    readOnly = isListening, // Make field read-only (non-focusable) when listening
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        // Adjust disabled/readonly appearance if needed
-                        disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = if (isListening) 0.5f else 1f),
-                        disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if(isListening) 0.7f else 1f), // Slightly dimmer when listening
-                        focusedContainerColor = surfaceColor,
-                        unfocusedContainerColor = surfaceColor,
-                        disabledContainerColor = surfaceColor,
-                    ),
-                    trailingIcon = {
-                        // Button action depends ONLY on whether we are listening or not
-                        IconButton(
-                            onClick = if (isListening) onMicClick else { if (hasInputText) onSendClick else onMicClick },
-                            enabled = !isResponding
-                        ) {
-                            // Icon depends on listening state primarily
-                            if (isListening) {
-                                // Always show MicOff when listening, tapping stops it
-                                Icon(
-                                    imageVector = Icons.Default.MicOff,
-                                    contentDescription = "Stop listening",
-                                    tint = MaterialTheme.colorScheme.error // Use error color to indicate active listening/stop action
-                                )
-                            } else {
-                                // If not listening, show Send if there's text, otherwise Mic
-                                if (hasInputText) {
-                                    Icon(
-                                        imageVector = Icons.Default.Send,
-                                        contentDescription = "Send",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Mic,
-                                        contentDescription = "Start listening",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
+            OutlinedTextField(
+                value = displayValue,
+                onValueChange = {
+                    // Only allow input change if not listening
+                    if (!isListening) onInputChange(it)
+                },
+                modifier = Modifier.fillMaxWidth(), // TextField fills the Box
+                placeholder = { Text(placeholderText) },
+                readOnly = isListening, // Cannot edit via keyboard when listening
+                enabled = !isInputDisabled, // Disable field if responding or speaking
+                singleLine = false,
+                maxLines = 5,
+                shape = RoundedCornerShape(24.dp), // Rounded corners
+                colors = OutlinedTextFieldDefaults.colors(
+                    // Define colors for different states
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), // Dim text when disabled
+                    focusedContainerColor = surfaceColor,
+                    unfocusedContainerColor = surfaceColor,
+                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f), // Dim container when disabled
+                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                ),
+                trailingIcon = { // Place the icon back inside the TextField
+                    val canSend = hasInputText && !isListening
+                    val icon = when {
+                        isListening -> Icons.Filled.MicOff
+                        canSend -> Icons.Filled.Send
+                        else -> Icons.Filled.Mic
                     }
-                )
-            }
+                    val description = when {
+                        isListening -> "Stop listening"
+                        canSend -> "Send message"
+                        else -> "Start listening"
+                    }
+                    val tint = when {
+                        isListening -> MaterialTheme.colorScheme.error // Red when listening/stoppable
+                        canSend -> MaterialTheme.colorScheme.primary // Primary color for send
+                        else -> MaterialTheme.colorScheme.primary // Primary color for mic start
+                    }
+
+                    IconButton(
+                        onClick = if (isListening) onMicClick else { if (canSend) onSendClick else onMicClick },
+                        enabled = !isInputDisabled // Use the combined disabled state
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = description,
+                            // Apply tint based on state, dim if disabled
+                            tint = if (!isInputDisabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
+                    }
+                }
+            )
         }
     }
 }

@@ -127,7 +127,7 @@ fun ChatItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Chat icon or placeholder
-        Icon(
+        /*Icon(
             imageVector = Icons.Default.Add, // We'll use a placeholder icon
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
@@ -135,7 +135,7 @@ fun ChatItem(
         )
 
         Spacer(modifier = Modifier.width(16.dp))
-
+        */
         // Chat title and preview
         Column(
             modifier = Modifier.weight(1f)

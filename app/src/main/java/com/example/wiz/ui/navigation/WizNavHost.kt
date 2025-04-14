@@ -144,9 +144,6 @@ fun WizNavHost(
 
             ChatScreen(
                 chatId = chatId,
-                onBackClick = {
-                    navController.navigateUp()
-                },
                 onChatsListClick = {
                     // Preload chats list before navigating
                     preloadManager.preloadChatsList()
@@ -176,9 +173,6 @@ fun WizNavHost(
         ) {
             ChatScreen(
                 chatId = -1L, // -1 indicates a new chat
-                onBackClick = {
-                    navController.navigateUp()
-                },
                 onChatsListClick = {
                     // Preload chats list before navigating
                     preloadManager.preloadChatsList()
