@@ -222,7 +222,7 @@ fun MessageItem(message: MessageEntity) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 if (!isUserMessage) { // Optional speaker label for assistant
                     Text(
-                        text = "Bonobo", // Assistant name
+                        text = "Wiz", // Assistant name
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = textColor.copy(alpha = 0.9f),
@@ -253,7 +253,7 @@ fun EmptyChatPlaceholder() {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Start chatting with Bonobo!\nType or tap the mic.",
+            text = "Start chatting with Wiz!\nType or tap the mic.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
