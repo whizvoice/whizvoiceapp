@@ -106,6 +106,9 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
+
+    implementation("androidx.datastore:datastore-preferences:1.1.5")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
 
 // Allow references to generated code

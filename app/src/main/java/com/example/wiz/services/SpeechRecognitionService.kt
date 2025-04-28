@@ -152,6 +152,7 @@ class SpeechRecognitionService @Inject constructor(
         // Cancel any pending restarts before stopping
         serviceScope.launch { /* cancel pending restarts if using delays */ } // Placeholder if delays were used
 
+        speechRecognizer?.cancel()
         speechRecognizer?.stopListening() // Request stop
 
         if (_isListening.value) {

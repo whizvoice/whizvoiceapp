@@ -1,43 +1,44 @@
 package com.example.wiz.ui.viewmodels
 
-import android.content.Context // Import Context
-import android.speech.tts.TextToSpeech // Import TextToSpeech
-import android.speech.tts.UtteranceProgressListener // Import UtteranceProgressListener
+import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.wiz.data.local.MessageEntity
 import com.example.wiz.data.repository.WizRepository
 import com.example.wiz.services.SpeechRecognitionService
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext // Import ApplicationContext
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update // Import update
+import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
-import java.util.Locale // Import Locale
-import java.util.UUID // Import UUID
+import okhttp3.WebSocket
+import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
+
+import com.example.wiz.data.remote.WizServerRepository
+import com.example.wiz.data.remote.WebSocketEvent
+import kotlinx.coroutines.flow.catch
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context, // Inject Context
     private val repository: WizRepository,
-    private val speechRecognitionService: SpeechRecognitionService
+    private val speechRecognitionService: SpeechRecognitionService,
+    private val wizServerRepository: WizServerRepository
 ) : ViewModel(), TextToSpeech.OnInitListener { // Implement OnInitListener
 
     private val TAG = "ChatViewModel"
 
+    // Config state
+    val configUseRemoteAgent = true;
+
     // Chat state
     private val _chatId = MutableStateFlow<Long>(-1)
+    val chatId: StateFlow<Long> = _chatId.asStateFlow()
     private val _chatTitle = MutableStateFlow<String>("New Chat")
     val chatTitle = _chatTitle.asStateFlow()
 
@@ -82,11 +83,70 @@ class ChatViewModel @Inject constructor(
     // Chat persistence jobs
     private var persistenceJob: Job? = null
 
+    // --- WebSocket State ---
+    private val _isConnectedToServer = MutableStateFlow(false)
+    val isConnectedToServer = _isConnectedToServer.asStateFlow()
+    private var serverMessageCollectorJob: Job? = null
+
     init {
         speechRecognitionService.initialize()
         // Initialize TTS
         tts = TextToSpeech(context, this)
         Log.d(TAG, "TTS Initialization requested.")
+
+        if (configUseRemoteAgent) {
+            observeServerMessages()
+        }
+    }
+
+    // Observe messages from the WebSocket
+    private fun observeServerMessages() {
+        serverMessageCollectorJob?.cancel() // Cancel previous collector if any
+        serverMessageCollectorJob = viewModelScope.launch {
+            wizServerRepository.webSocketEvents
+                .catch { e -> Log.e(TAG, "Error in WebSocket event flow", e) }
+                .collect { event ->
+                    when (event) {
+                        is WebSocketEvent.Message -> handleServerMessage(event.text)
+                        is WebSocketEvent.Error -> {
+                            Log.e(TAG, "WebSocket Error", event.error)
+                            _isConnectedToServer.value = false
+                            _isResponding.value = false // Stop showing thinking indicator on error
+                            // Optionally show error to user via snackbar/state
+                        }
+                        is WebSocketEvent.Closed -> {
+                            Log.i(TAG, "WebSocket Closed")
+                            _isConnectedToServer.value = false
+                            _isResponding.value = false // Stop showing thinking indicator
+                        }
+                        is WebSocketEvent.Connected -> {
+                            Log.i(TAG, "WebSocket Connected")
+                            _isConnectedToServer.value = true
+                            // You might want to send initial context or chat history here if needed
+                        }
+                    }
+                }
+        }
+    }
+
+
+    // Handle messages received from the server
+    private suspend fun handleServerMessage(responseText: String) {
+        val currentChatId = _chatId.value
+        if (currentChatId <= 0) {
+            Log.w(TAG, "Received server message but no active chat ID.")
+            return
+        }
+
+        // Add assistant message to DB
+        repository.addAssistantMessage(currentChatId, responseText)
+
+        _isResponding.value = false // Agent has responded
+
+        // Speak the response if enabled
+        if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
+            speakAgentResponse(responseText)
+        }
     }
 
     // --- TextToSpeech.OnInitListener Implementation ---
@@ -140,10 +200,18 @@ class ChatViewModel @Inject constructor(
 
     fun loadChat(chatId: Long) {
         viewModelScope.launch {
+            // Disconnect from server if switching chats or loading new
+            if (configUseRemoteAgent) {
+                wizServerRepository.disconnect()
+                _isConnectedToServer.value = false
+            }
+
             if (chatId <= 0) {
+                // ... (handle new chat creation as before)
                 _chatId.value = -1
                 _chatTitle.value = "New Chat"
             } else {
+                // ... (handle loading existing chat as before)
                 Log.d(TAG, "Loading chat with ID: $chatId")
                 val chat = repository.getChatById(chatId)
                 if (chat != null) {
@@ -156,12 +224,19 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Chat not found, creating new chat")
                 }
             }
-            // Reset states for the new/loaded chat
+            // Reset states
             _inputText.value = ""
             _isResponding.value = false
-            speechRecognitionService.stopListening() // Stop listening when changing chats
-            tts?.stop() // Stop any ongoing TTS
+            speechRecognitionService.stopListening()
+            tts?.stop()
             _isSpeaking.value = false
+
+
+            // Connect to server if needed *after* chat ID is set
+            if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
+                delay(100) // Small delay to ensure state propagation
+                wizServerRepository.connect()
+            }
         }
     }
 
@@ -188,31 +263,53 @@ class ChatViewModel @Inject constructor(
         if (trimmedText.isBlank() || _isResponding.value) return
 
         viewModelScope.launch {
-            // Stop listening before sending
-            /*if (isListening.value) {
-                speechRecognitionService.stopListening()
-            }*/
-
             var currentChatId = _chatId.value
-            // Create a new chat if needed
+
+            // Create a new chat if needed (this part remains the same)
             if (currentChatId <= 0) {
                 val chatTitle = repository.deriveChatTitle(trimmedText)
                 val newChatId = repository.createChat(chatTitle)
                 _chatId.value = newChatId
                 _chatTitle.value = chatTitle
-                currentChatId = newChatId // Use the new ID for subsequent operations
+                currentChatId = newChatId
+
+                // If this was a new chat and we use remote agent, connect now
+                if(configUseRemoteAgent && !_isConnectedToServer.value) {
+                    wizServerRepository.connect()
+                }
             }
 
-            // Add user message
+            // Add user message (remains the same)
             repository.addUserMessage(currentChatId, trimmedText)
 
-            // Clear input
+            // Clear input (remains the same)
             _inputText.value = ""
 
-            // Generate assistant response
-            generateAssistantResponse(currentChatId)
 
-            // Schedule persistence check
+            // --- Server Interaction ---
+            if (configUseRemoteAgent) {
+                if (_isConnectedToServer.value) {
+                    _isResponding.value = true // Show thinking indicator
+                    val success = wizServerRepository.sendMessage(trimmedText)
+                    if (!success) {
+                        _isResponding.value = false // Stop indicator if send failed
+                        // Handle error (e.g., show snackbar)
+                        Log.e(TAG, "Failed to send message via WebSocket")
+                    }
+                    // Response handling is done in observeServerMessages
+                } else {
+                    Log.w(TAG, "Cannot send message: Not connected to server.")
+                    // Handle error (e.g., show snackbar "Not connected")
+                    // Optionally fallback to local response or queue message
+                    generateAssistantResponse(currentChatId) // Fallback to local?
+                }
+            } else {
+                // --- Local Fallback ---
+                generateAssistantResponse(currentChatId)
+            }
+
+
+            // Schedule persistence check (remains the same)
             schedulePersistenceCheck(currentChatId)
         }
     }
@@ -229,33 +326,26 @@ class ChatViewModel @Inject constructor(
     // --- Internal Helper Functions ---
 
     private suspend fun generateAssistantResponse(chatId: Long) {
-        if (chatId <= 0) return // Safety check
+        if (chatId <= 0 || configUseRemoteAgent) return // Don't run if using remote or invalid ID
 
         _isResponding.value = true
-        delay(1000) // Simulate network delay
+        delay(1000)
 
+        // ... (keep the rest of the local response generation logic)
         val responses = listOf(
-            "I understand. Can you tell me more about that?",
-            "That's interesting. How can I help you with this?",
-            "Let me think about that for a moment.",
-            "I see what you mean. What would you like to do next?",
-            "Thanks for sharing that with me.",
-            "I'm processing that information. Is there anything specific you're looking for?",
-            "I appreciate your patience while I think about this.",
-            "That's a good point. Let me consider how best to assist you."
+            "Local: I understand.",
+            "Local: That's interesting.",
+            "Local: Let me think.",
+            // ... add more distinct local responses if needed
         )
         val responseText = responses.random()
 
-        // Add assistant message to DB first
         repository.addAssistantMessage(chatId, responseText)
+        _isResponding.value = false
 
-        _isResponding.value = false // Mark responding false after adding to DB
-
-        // Speak the response if enabled and TTS is ready
+        // Speak the response if enabled
         if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
             speakAgentResponse(responseText)
-        } else if (_isVoiceResponseEnabled.value && !_isTTSInitialized.value) {
-            Log.w(TAG, "Voice response enabled but TTS not initialized. Skipping speech.")
         }
     }
 
@@ -286,7 +376,7 @@ class ChatViewModel @Inject constructor(
             // Restart listening only if it was active before TTS started
             // Give a small delay to avoid immediate re-triggering if there's noise
             viewModelScope.launch {
-                delay(200) // Adjust delay as needed
+                delay(500) // Adjust delay as needed
                 // Check if still in voice mode and not speaking again immediately
                 if (wasListeningBeforeTTS && !_isSpeaking.value) {
                     Log.d(TAG, "Resuming speech recognition after TTS.")
@@ -316,10 +406,14 @@ class ChatViewModel @Inject constructor(
         super.onCleared()
         Log.d(TAG, "ViewModel cleared. Releasing resources.")
         speechRecognitionService.release()
-        // Shutdown TTS
         tts?.stop()
         tts?.shutdown()
         tts = null
         persistenceJob?.cancel()
+        // Disconnect WebSocket
+        if (configUseRemoteAgent) {
+            wizServerRepository.disconnect()
+        }
+        serverMessageCollectorJob?.cancel() // Stop collecting events
     }
 }

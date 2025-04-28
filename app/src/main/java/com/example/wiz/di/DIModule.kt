@@ -13,6 +13,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+import okhttp3.OkHttpClient
+import com.example.wiz.data.remote.WizServerRepository
+import java.util.concurrent.TimeUnit
+
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
@@ -46,5 +50,20 @@ object AppModule {
         messageDao: MessageDao
     ): WizRepository {
         return WizRepository(chatDao, messageDao)
+    }
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideWizServerRepository(okHttpClient: OkHttpClient): WizServerRepository {
+        return WizServerRepository(okHttpClient)
     }
 }
