@@ -2,7 +2,7 @@ package com.example.whiz.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.data.repository.WhizRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +11,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: WizRepository
+    private val repository: WhizRepository
 ) : ViewModel() {
 
     private val _isClearingHistory = MutableStateFlow(false)

@@ -222,7 +222,7 @@ fun MessageItem(message: MessageEntity) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 if (!isUserMessage) { // Optional speaker label for assistant
                     Text(
-                        text = "Wiz", // Assistant name
+                        text = "Whiz", // Assistant name
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = textColor.copy(alpha = 0.9f),
@@ -253,7 +253,7 @@ fun EmptyChatPlaceholder() {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Start chatting with Wiz!\nType or tap the mic.",
+            text = "Start chatting with Whiz!\nType or tap the mic.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
@@ -277,7 +277,7 @@ fun TypingIndicator() {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp) // Match message padding
         ) {
             Text(
-                text = "Wiz is thinking",
+                text = "Whiz is thinking",
                 style = MaterialTheme.typography.bodyMedium // Consistent style
             )
             Spacer(modifier = Modifier.width(8.dp)) // Space before dots

@@ -1,6 +1,6 @@
 package com.example.whiz.data
 
-import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.data.repository.WhizRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -10,7 +10,7 @@ import javax.inject.Singleton
 
 @Singleton
 class PreloadManager @Inject constructor(
-    private val repository: WizRepository
+    private val repository: WhizRepository
 ) {
     private val preloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

@@ -1,4 +1,4 @@
-package com.example.wiz
+package com.example.whiz
 
 import org.junit.Test
 

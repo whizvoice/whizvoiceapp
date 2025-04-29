@@ -27,10 +27,10 @@ sealed class WebSocketEvent {
 }
 
 @Singleton
-class WizServerRepository @Inject constructor(
+class WhizServerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient // Inject OkHttpClient
 ) {
-    private val TAG = "WizServerRepo"
+    private val TAG = "WhizServerRepo"
     private var webSocket: WebSocket? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -39,15 +39,15 @@ class WizServerRepository @Inject constructor(
     val webSocketEvents: SharedFlow<WebSocketEvent> = _webSocketEvents.asSharedFlow()
 
     // Replace with your server's actual address
-    private val WIZ_SERVER_URL = "ws://REDACTED_SERVER_IP:8000/chat" // 10.0.2.2 for Android emulator localhost
+    private val WHIZ_SERVER_URL = "ws://REDACTED_SERVER_IP:8000/chat" // 10.0.2.2 for Android emulator localhost
 
     fun connect() {
         if (webSocket != null) {
             Log.w(TAG, "WebSocket already connected or connecting.")
             return
         }
-        Log.d(TAG, "Attempting to connect to $WIZ_SERVER_URL")
-        val request = Request.Builder().url(WIZ_SERVER_URL).build()
+        Log.d(TAG, "Attempting to connect to $WHIZ_SERVER_URL")
+        val request = Request.Builder().url(WHIZ_SERVER_URL).build()
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "WebSocket connection opened.")
@@ -66,13 +66,13 @@ class WizServerRepository @Inject constructor(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason")
-                this@WizServerRepository.webSocket = null // Clear reference
+                this@WhizServerRepository.webSocket = null // Clear reference
                 scope.launch { _webSocketEvents.emit(WebSocketEvent.Closed) }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket connection failure", t)
-                this@WizServerRepository.webSocket = null // Clear reference on failure
+                this@WhizServerRepository.webSocket = null // Clear reference on failure
                 scope.launch { _webSocketEvents.emit(WebSocketEvent.Error(t)) }
                 // Optionally try to reconnect here
             }

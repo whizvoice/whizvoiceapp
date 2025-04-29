@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import com.example.whiz.data.local.ChatDao
 import com.example.whiz.data.local.MessageDao
-import com.example.whiz.data.local.WizDatabase
-import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.data.local.WhizDatabase
+import com.example.whiz.data.repository.WhizRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -14,7 +14,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 import okhttp3.OkHttpClient
-import com.example.whiz.data.remote.WizServerRepository
+import com.example.whiz.data.remote.WhizServerRepository
 import java.util.concurrent.TimeUnit
 
 @Module
@@ -23,33 +23,33 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideWizDatabase(@ApplicationContext context: Context): WizDatabase {
+    fun provideWhizDatabase(@ApplicationContext context: Context): WhizDatabase {
         return Room.databaseBuilder(
             context,
-            WizDatabase::class.java,
-            "wiz_database"
+            WhizDatabase::class.java,
+            "whiz_database"
         ).build()
     }
 
     @Provides
     @Singleton
-    fun provideChatDao(database: WizDatabase): ChatDao {
+    fun provideChatDao(database: WhizDatabase): ChatDao {
         return database.chatDao()
     }
 
     @Provides
     @Singleton
-    fun provideMessageDao(database: WizDatabase): MessageDao {
+    fun provideMessageDao(database: WhizDatabase): MessageDao {
         return database.messageDao()
     }
 
     @Provides
     @Singleton
-    fun provideWizRepository(
+    fun provideWhizRepository(
         chatDao: ChatDao,
         messageDao: MessageDao
-    ): WizRepository {
-        return WizRepository(chatDao, messageDao)
+    ): WhizRepository {
+        return WhizRepository(chatDao, messageDao)
     }
 
     @Provides
@@ -63,7 +63,7 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideWizServerRepository(okHttpClient: OkHttpClient): WizServerRepository {
-        return WizServerRepository(okHttpClient)
+    fun provideWhizServerRepository(okHttpClient: OkHttpClient): WhizServerRepository {
+        return WhizServerRepository(okHttpClient)
     }
 }

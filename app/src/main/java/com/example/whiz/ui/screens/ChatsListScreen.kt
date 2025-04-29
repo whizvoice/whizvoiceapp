@@ -177,7 +177,7 @@ fun EmptyChatsList(onNewChatClick: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Start a conversation with Wiz",
+                text = "Start a conversation with Whiz",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -9,8 +9,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
 import com.example.whiz.data.PreloadManager
-import com.example.whiz.ui.navigation.WizNavHost
-import com.example.whiz.ui.theme.WizTheme
+import com.example.whiz.ui.navigation.WhizNavHost
+import com.example.whiz.ui.theme.WhizTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -23,13 +23,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            WizTheme {
+            WhizTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
-                    WizNavHost(
+                    WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager
                     )

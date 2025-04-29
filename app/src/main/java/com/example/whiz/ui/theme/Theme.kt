@@ -55,7 +55,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun WizTheme(
+fun WhizTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit

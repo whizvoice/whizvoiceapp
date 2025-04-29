@@ -60,7 +60,7 @@ interface MessageDao {
     version = 1,
     exportSchema = false
 )
-abstract class WizDatabase : RoomDatabase() {
+abstract class WhizDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun messageDao(): MessageDao
 }

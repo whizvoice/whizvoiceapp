@@ -14,11 +14,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class WizRepository @Inject constructor(
+class WhizRepository @Inject constructor(
     private val chatDao: ChatDao,
     private val messageDao: MessageDao
 ) {
-    private val TAG = "WizRepository"
+    private val TAG = "WhizRepository"
 
     // Chat operations
     fun getAllChats(): Flow<List<ChatEntity>> {
@@ -83,17 +83,16 @@ class WizRepository @Inject constructor(
     }
 
     // Message operations
-// In WizRepository class
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
         // Add debug logging
-        Log.d("WizRepository", "Getting messages for chat ID: $chatId")
+        Log.d("WhizRepository", "Getting messages for chat ID: $chatId")
 
         return messageDao.getMessagesForChatFlow(chatId)
             .onEach { messages ->
-                Log.d("WizRepository", "Retrieved ${messages.size} messages for chat $chatId")
+                Log.d("WhizRepository", "Retrieved ${messages.size} messages for chat $chatId")
             }
             .catch { e ->
-                Log.e("WizRepository", "Error getting messages for chat $chatId", e)
+                Log.e("WhizRepository", "Error getting messages for chat $chatId", e)
                 emit(emptyList())
             }
     }

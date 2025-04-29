@@ -6,7 +6,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -19,16 +19,16 @@ import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
 
-import com.example.whiz.data.remote.WizServerRepository
+import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.remote.WebSocketEvent
 import kotlinx.coroutines.flow.catch
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context, // Inject Context
-    private val repository: WizRepository,
+    private val repository: WhizRepository,
     private val speechRecognitionService: SpeechRecognitionService,
-    private val wizServerRepository: WizServerRepository
+    private val whizServerRepository: WhizServerRepository
 ) : ViewModel(), TextToSpeech.OnInitListener { // Implement OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -103,7 +103,7 @@ class ChatViewModel @Inject constructor(
     private fun observeServerMessages() {
         serverMessageCollectorJob?.cancel() // Cancel previous collector if any
         serverMessageCollectorJob = viewModelScope.launch {
-            wizServerRepository.webSocketEvents
+            whizServerRepository.webSocketEvents
                 .catch { e -> Log.e(TAG, "Error in WebSocket event flow", e) }
                 .collect { event ->
                     when (event) {
@@ -202,7 +202,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             // Disconnect from server if switching chats or loading new
             if (configUseRemoteAgent) {
-                wizServerRepository.disconnect()
+                whizServerRepository.disconnect()
                 _isConnectedToServer.value = false
             }
 
@@ -235,7 +235,7 @@ class ChatViewModel @Inject constructor(
             // Connect to server if needed *after* chat ID is set
             if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
                 delay(100) // Small delay to ensure state propagation
-                wizServerRepository.connect()
+                whizServerRepository.connect()
             }
         }
     }
@@ -275,7 +275,7 @@ class ChatViewModel @Inject constructor(
 
                 // If this was a new chat and we use remote agent, connect now
                 if(configUseRemoteAgent && !_isConnectedToServer.value) {
-                    wizServerRepository.connect()
+                    whizServerRepository.connect()
                 }
             }
 
@@ -290,7 +290,7 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 if (_isConnectedToServer.value) {
                     _isResponding.value = true // Show thinking indicator
-                    val success = wizServerRepository.sendMessage(trimmedText)
+                    val success = whizServerRepository.sendMessage(trimmedText)
                     if (!success) {
                         _isResponding.value = false // Stop indicator if send failed
                         // Handle error (e.g., show snackbar)
@@ -412,7 +412,7 @@ class ChatViewModel @Inject constructor(
         persistenceJob?.cancel()
         // Disconnect WebSocket
         if (configUseRemoteAgent) {
-            wizServerRepository.disconnect()
+            whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
     }

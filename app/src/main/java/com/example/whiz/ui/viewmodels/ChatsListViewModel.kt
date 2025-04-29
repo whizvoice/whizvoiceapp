@@ -3,7 +3,7 @@ package com.example.whiz.ui.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.local.ChatEntity
-import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.data.repository.WhizRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,7 +13,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class ChatsListViewModel @Inject constructor(
-    private val repository: WizRepository
+    private val repository: WhizRepository
 ) : ViewModel() {
 
     // All chats, ordered by most recent first

@@ -36,7 +36,7 @@ private const val ANIMATION_DURATION = 300
 private const val PRELOAD_DELAY = 50L  // Short delay to start preloading
 
 @Composable
-fun WizNavHost(
+fun WhizNavHost(
     navController: NavHostController,
     preloadManager: PreloadManager
 ) {
