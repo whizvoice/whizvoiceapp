@@ -1,4 +1,4 @@
-package com.example.wiz.ui.screens
+package com.example.whiz.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,9 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.example.wiz.data.local.ChatEntity
-import com.example.wiz.data.local.DateFormatter
-import com.example.wiz.ui.viewmodels.ChatsListViewModel
+import com.example.whiz.data.local.ChatEntity
+import com.example.whiz.data.local.DateFormatter
+import com.example.whiz.ui.viewmodels.ChatsListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

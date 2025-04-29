@@ -1,4 +1,4 @@
-package com.example.wiz.services
+package com.example.whiz.services
 
 import android.content.Context
 import android.content.Intent

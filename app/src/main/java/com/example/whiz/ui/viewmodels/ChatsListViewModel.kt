@@ -1,9 +1,9 @@
-package com.example.wiz.ui.viewmodels
+package com.example.whiz.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.wiz.data.local.ChatEntity
-import com.example.wiz.data.repository.WizRepository
+import com.example.whiz.data.local.ChatEntity
+import com.example.whiz.data.repository.WizRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow

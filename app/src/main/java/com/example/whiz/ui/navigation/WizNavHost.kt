@@ -1,4 +1,4 @@
-package com.example.wiz.ui.navigation
+package com.example.whiz.ui.navigation
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
@@ -16,10 +16,10 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.example.wiz.data.PreloadManager
-import com.example.wiz.ui.screens.ChatScreen
-import com.example.wiz.ui.screens.ChatsListScreen
-import com.example.wiz.ui.screens.SettingsScreen
+import com.example.whiz.data.PreloadManager
+import com.example.whiz.ui.screens.ChatScreen
+import com.example.whiz.ui.screens.ChatsListScreen
+import com.example.whiz.ui.screens.SettingsScreen
 import kotlinx.coroutines.delay
 
 sealed class Screen(val route: String) {

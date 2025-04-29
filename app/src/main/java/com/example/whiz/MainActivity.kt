@@ -1,4 +1,4 @@
-package com.example.wiz
+package com.example.whiz
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,9 +8,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
-import com.example.wiz.data.PreloadManager
-import com.example.wiz.ui.navigation.WizNavHost
-import com.example.wiz.ui.theme.WizTheme
+import com.example.whiz.data.PreloadManager
+import com.example.whiz.ui.navigation.WizNavHost
+import com.example.whiz.ui.theme.WizTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 

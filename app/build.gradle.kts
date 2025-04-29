@@ -12,11 +12,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.wiz"
+    namespace = "com.example.whiz"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.wiz"
+        applicationId = "com.example.whiz"
         minSdk = 31
         targetSdk = 35
         versionCode = 1

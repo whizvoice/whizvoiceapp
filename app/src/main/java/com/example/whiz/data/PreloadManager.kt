@@ -1,6 +1,6 @@
-package com.example.wiz.data
+package com.example.whiz.data
 
-import com.example.wiz.data.repository.WizRepository
+import com.example.whiz.data.repository.WizRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

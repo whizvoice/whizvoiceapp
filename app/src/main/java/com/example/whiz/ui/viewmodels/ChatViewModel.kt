@@ -1,4 +1,4 @@
-package com.example.wiz.ui.viewmodels
+package com.example.whiz.ui.viewmodels
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
@@ -6,8 +6,8 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.wiz.data.repository.WizRepository
-import com.example.wiz.services.SpeechRecognitionService
+import com.example.whiz.data.repository.WizRepository
+import com.example.whiz.services.SpeechRecognitionService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -19,8 +19,8 @@ import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
 
-import com.example.wiz.data.remote.WizServerRepository
-import com.example.wiz.data.remote.WebSocketEvent
+import com.example.whiz.data.remote.WizServerRepository
+import com.example.whiz.data.remote.WebSocketEvent
 import kotlinx.coroutines.flow.catch
 
 @HiltViewModel

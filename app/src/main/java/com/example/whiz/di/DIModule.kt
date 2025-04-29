@@ -1,11 +1,11 @@
-package com.example.wiz.di
+package com.example.whiz.di
 
 import android.content.Context
 import androidx.room.Room
-import com.example.wiz.data.local.ChatDao
-import com.example.wiz.data.local.MessageDao
-import com.example.wiz.data.local.WizDatabase
-import com.example.wiz.data.repository.WizRepository
+import com.example.whiz.data.local.ChatDao
+import com.example.whiz.data.local.MessageDao
+import com.example.whiz.data.local.WizDatabase
+import com.example.whiz.data.repository.WizRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -14,7 +14,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 import okhttp3.OkHttpClient
-import com.example.wiz.data.remote.WizServerRepository
+import com.example.whiz.data.remote.WizServerRepository
 import java.util.concurrent.TimeUnit
 
 @Module

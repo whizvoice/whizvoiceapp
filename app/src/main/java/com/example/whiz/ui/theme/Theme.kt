@@ -1,4 +1,4 @@
-package com.example.wiz.ui.theme
+package com.example.whiz.ui.theme
 
 import android.app.Activity
 import android.os.Build

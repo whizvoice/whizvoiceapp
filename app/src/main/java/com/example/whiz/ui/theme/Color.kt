@@ -1,4 +1,4 @@
-package com.example.wiz.ui.theme
+package com.example.whiz.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

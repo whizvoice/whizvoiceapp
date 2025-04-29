@@ -1,4 +1,4 @@
-package com.example.wiz.ui.screens
+package com.example.whiz.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -32,10 +32,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.example.wiz.data.local.DateFormatter
-import com.example.wiz.data.local.MessageEntity
-import com.example.wiz.data.local.MessageType
-import com.example.wiz.ui.viewmodels.ChatViewModel
+import com.example.whiz.data.local.DateFormatter
+import com.example.whiz.data.local.MessageEntity
+import com.example.whiz.data.local.MessageType
+import com.example.whiz.ui.viewmodels.ChatViewModel
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset

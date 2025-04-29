@@ -1,4 +1,4 @@
-package com.example.wiz.data.local
+package com.example.whiz.data.local
 
 import androidx.room.Dao
 import androidx.room.Database

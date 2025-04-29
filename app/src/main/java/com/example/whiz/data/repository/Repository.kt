@@ -1,11 +1,11 @@
-package com.example.wiz.data.repository
+package com.example.whiz.data.repository
 
 import android.util.Log
-import com.example.wiz.data.local.ChatDao
-import com.example.wiz.data.local.ChatEntity
-import com.example.wiz.data.local.MessageDao
-import com.example.wiz.data.local.MessageEntity
-import com.example.wiz.data.local.MessageType
+import com.example.whiz.data.local.ChatDao
+import com.example.whiz.data.local.ChatEntity
+import com.example.whiz.data.local.MessageDao
+import com.example.whiz.data.local.MessageEntity
+import com.example.whiz.data.local.MessageType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map

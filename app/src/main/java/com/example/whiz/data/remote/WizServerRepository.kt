@@ -1,4 +1,4 @@
-package com.example.wiz.data.remote
+package com.example.whiz.data.remote
 
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope

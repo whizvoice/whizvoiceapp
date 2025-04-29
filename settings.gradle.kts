@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "wiz"
+rootProject.name = "whiz"
 include(":app")
  

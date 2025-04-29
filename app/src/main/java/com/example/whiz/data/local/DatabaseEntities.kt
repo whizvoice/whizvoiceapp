@@ -1,7 +1,8 @@
-package com.example.wiz.data.local
+package com.example.whiz.data.local
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
@@ -33,7 +34,8 @@ enum class MessageType {
             childColumns = ["chatId"],
             onDelete = ForeignKey.CASCADE
         )
-    ]
+    ],
+    indices = [Index("chatId")]
 )
 @TypeConverters(MessageTypeConverter::class)
 data class MessageEntity(

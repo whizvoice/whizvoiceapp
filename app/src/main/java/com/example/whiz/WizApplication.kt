@@ -1,4 +1,4 @@
-package com.example.wiz
+package com.example.whiz
 
 import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
