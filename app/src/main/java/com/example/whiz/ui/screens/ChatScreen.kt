@@ -22,7 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +42,8 @@ import kotlinx.coroutines.delay
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
+import com.example.whiz.permissions.MicrophonePermissionHandler
+import com.example.whiz.permissions.PermissionHandler
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,10 +63,43 @@ fun ChatScreen(
     val speechError by viewModel.speechError.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
+    val micPermissionGranted by viewModel.micPermissionGranted.collectAsState()
 
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Handle permission state
+    var showPermissionHandler by remember { mutableStateOf(false) }
+    
+    // If mic is clicked without permission, show permission handler
+    fun handleMicClick() {
+        if (!micPermissionGranted) {
+            showPermissionHandler = true
+        } else {
+            // Only allow mic toggle if not speaking or responding
+            val isInputDisabled = isResponding || isSpeaking
+            if (!isInputDisabled) {
+                viewModel.toggleSpeechRecognition()
+            }
+        }
+    }
+
+    // Microphone permission handler
+    if (showPermissionHandler) {
+        MicrophonePermissionHandler(
+            onPermissionGranted = {
+                viewModel.onMicrophonePermissionGranted()
+                showPermissionHandler = false
+                // Auto-trigger speech recognition when permission is granted
+                viewModel.toggleSpeechRecognition()
+            },
+            onPermissionDenied = {
+                viewModel.onMicrophonePermissionDenied()
+                showPermissionHandler = false
+            }
+        )
+    }
 
     // Define the color for the input area with elevation
     val inputSurfaceColor = MaterialTheme.colorScheme.background // Keep it simple or use previous calculation
@@ -126,12 +163,7 @@ fun ChatScreen(
                 isInputDisabled = isInputDisabled, // Use a combined state
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
-                onMicClick = {
-                    // Only allow mic toggle if not speaking or responding
-                    if (!isInputDisabled) {
-                        viewModel.toggleSpeechRecognition()
-                    }
-                },
+                onMicClick = { handleMicClick() },
                 surfaceColor = inputSurfaceColor
             )
         }

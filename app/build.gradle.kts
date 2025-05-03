@@ -26,6 +26,13 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        
+        // Add Room schema location and KSP args
+        ksp {
+            arg("room.schemaLocation", "$projectDir/schemas")
+            arg("room.incremental", "true")
+            arg("room.generateKotlin", "true")
+        }
     }
 
     buildTypes {

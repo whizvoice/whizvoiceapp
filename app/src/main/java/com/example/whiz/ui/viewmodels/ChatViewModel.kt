@@ -21,6 +21,7 @@ import javax.inject.Inject
 
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.remote.WebSocketEvent
+import com.example.whiz.permissions.PermissionHandler
 import kotlinx.coroutines.flow.catch
 
 @HiltViewModel
@@ -88,7 +89,18 @@ class ChatViewModel @Inject constructor(
     val isConnectedToServer = _isConnectedToServer.asStateFlow()
     private var serverMessageCollectorJob: Job? = null
 
+    // State to track permission status
+    private val _micPermissionGranted = MutableStateFlow(false)
+    val micPermissionGranted = _micPermissionGranted.asStateFlow()
+
+    // Error state for the view model
+    private val _errorState = MutableStateFlow<String?>(null)
+    val errorState = _errorState.asStateFlow()
+
     init {
+        // Check if the app already has microphone permission
+        _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
+        
         speechRecognitionService.initialize()
         // Initialize TTS
         tts = TextToSpeech(context, this)
@@ -246,6 +258,14 @@ class ChatViewModel @Inject constructor(
 
     fun toggleSpeechRecognition() {
         if (_isSpeaking.value) return // Don't allow mic toggle while speaking
+
+        // Check for microphone permission
+        if (!_micPermissionGranted.value) {
+            // Permission not granted yet, emit error
+            Log.w(TAG, "Microphone permission not granted")
+            _errorState.value = "Microphone permission required" 
+            return
+        }
 
         if (isListening.value) {
             speechRecognitionService.stopListening()
@@ -415,5 +435,17 @@ class ChatViewModel @Inject constructor(
             whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
+    }
+
+    // Called when permission is granted from UI
+    fun onMicrophonePermissionGranted() {
+        _micPermissionGranted.value = true
+        _errorState.value = null
+    }
+    
+    // Called when permission is denied
+    fun onMicrophonePermissionDenied() {
+        _micPermissionGranted.value = false
+        _errorState.value = "Microphone permission is required for voice input"
     }
 }

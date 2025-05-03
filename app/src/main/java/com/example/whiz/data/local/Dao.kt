@@ -22,16 +22,16 @@ interface ChatDao {
     suspend fun insertChat(chat: ChatEntity): Long
 
     @Update
-    suspend fun updateChat(chat: ChatEntity)
+    suspend fun updateChat(chat: ChatEntity): Int
 
     @Query("UPDATE chats SET lastMessageTime = :timestamp WHERE id = :chatId")
-    suspend fun updateChatLastMessageTime(chatId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun updateChatLastMessageTime(chatId: Long, timestamp: Long = System.currentTimeMillis()): Int
 
     @Query("DELETE FROM chats")
-    suspend fun deleteAllChats()
+    suspend fun deleteAllChats(): Int
 
     @Delete
-    suspend fun deleteChat(chat: ChatEntity)
+    suspend fun deleteChat(chat: ChatEntity): Int
 }
 
 @Dao
@@ -46,13 +46,13 @@ interface MessageDao {
     suspend fun insertMessage(message: MessageEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertMessages(messages: List<MessageEntity>)
+    suspend fun insertMessages(messages: List<MessageEntity>): List<Long>
 
     @Query("DELETE FROM messages WHERE chatId = :chatId")
-    suspend fun deleteMessagesForChat(chatId: Long)
+    suspend fun deleteMessagesForChat(chatId: Long): Int
 
     @Query("DELETE FROM messages")
-    suspend fun deleteAllMessages()
+    suspend fun deleteAllMessages(): Int
 }
 
 @Database(
