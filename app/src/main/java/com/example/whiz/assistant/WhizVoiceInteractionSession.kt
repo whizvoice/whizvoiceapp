@@ -66,7 +66,7 @@ class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(co
             Log.d(TAG, "Starting AssistantActivity (Voice Trigger: $isVoiceTrigger)...")
             context.startActivity(intent)
             // We finish the session itself relatively quickly, the AssistantActivity takes over the UI
-            // finish() // Consider finishing the session after starting the activity
+            finish() // Consider finishing the session after starting the activity
         } catch (e: Exception) {
             Log.e(TAG, "Error starting AssistantActivity", e)
             finish() // Finish session if activity start fails

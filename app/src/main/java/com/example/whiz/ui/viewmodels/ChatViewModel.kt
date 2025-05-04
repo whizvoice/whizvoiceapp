@@ -151,15 +151,28 @@ class ChatViewModel @Inject constructor(
     }
 
 
-    // Handle messages received from the server
     private suspend fun handleServerMessage(responseText: String) {
-        val currentChatId = _chatId.value
+        var currentChatId = _chatId.value // Get current ID before modification
+
+        // Check if a chat needs to be created
         if (currentChatId <= 0) {
-            Log.w(TAG, "Received server message but no active chat ID.")
-            return
+            Log.d(TAG, "handleServerMessage: No active chat. Creating new chat for initial server message.")
+            // Derive a title from the server message or use a default
+            val chatTitle = repository.deriveChatTitle(responseText).ifBlank { "Assistant Chat" } // Use helper or default
+            val newChatId = repository.createChat(chatTitle)
+
+            // Update ViewModel state IMMEDIATELY
+            _chatId.value = newChatId
+            _chatTitle.value = chatTitle
+            currentChatId = newChatId // Update local variable to use the new ID below
+
+            Log.d(TAG, "handleServerMessage: Created chat $currentChatId with title '$chatTitle'")
+            // Note: The `messages` flow should automatically switch to this new chat ID
+            // because it uses `_chatId.flatMapLatest`.
         }
 
-        // Add assistant message to DB
+        // Now we are guaranteed to have a valid currentChatId
+        Log.d(TAG, "handleServerMessage: Adding assistant message to chat $currentChatId")
         repository.addAssistantMessage(currentChatId, responseText)
 
         _isResponding.value = false // Agent has responded

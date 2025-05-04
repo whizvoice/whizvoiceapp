@@ -27,6 +27,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.data.local.MessageType // Import MessageType
 import android.util.Log // Import Log
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.remember
 
 @Composable
@@ -47,26 +48,19 @@ fun AssistantOverlayUi(
     // 1. Collect the state containing the full list of messages
     val messagesState by viewModel.messages.collectAsState()
 
+    // *** Step 1: Comment out the derived state ***
+    /*
     // 2. Derive the last assistant message from the current value of the state
     // Use remember so this calculation only runs when messagesState changes.
     val lastAssistantMessage = remember(messagesState) {
         messagesState.lastOrNull { it.type == MessageType.ASSISTANT }
     }
+    */
 
     // *** Restore LaunchedEffect to load chat and attempt auto-listening ***
     LaunchedEffect(Unit) {
         Log.d(TAG, "LaunchedEffect: Initializing Assistant State. Permission: $micPermissionGranted")
-        // Ensure ViewModel loads a new chat state for the assistant session
-        // Note: loadChat also resets many other states like inputText, isResponding etc.
         viewModel.loadChat(-1L)
-        // Attempt to start listening if permission is granted
-        /*if (micPermissionGranted) {
-            Log.d(TAG, "Permission granted. Calling startListeningFromAssistant.")
-            viewModel.startListeningFromAssistant()
-        } else {
-            Log.w(TAG, "Launched but no mic permission for auto-listening.")
-            // Inform user? Or just wait for manual mic tap.
-        }*/
     }
 
     // The main Box fills the screen but is transparent
@@ -74,18 +68,26 @@ fun AssistantOverlayUi(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent) // Make the Box transparent
-            // Apply padding horizontally, ensure no fixed bottom padding to allow imePadding to work
-            .padding(start = 16.dp, end = 16.dp),
+            .padding(start = 16.dp, end = 16.dp)
+            .imePadding()
+            .navigationBarsPadding(),
         contentAlignment = Alignment.BottomCenter // Align content (Column) to bottom
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(), // Column takes full width
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
+            // *** Step 3: Add Logging ***
+            val lastMessage = messagesState.lastOrNull() // Get the actual last message
+            Log.d("AssistantOverlayUi", "Recomposing: lastMessage content = ${lastMessage?.content}")
+
+            // --- Step 2: Comment out AnimatedVisibility block ---
+            /*
             // --- Display Last Assistant Response Conditionally ---
             AnimatedVisibility(
                 // Show if message is not null
-                visible = lastAssistantMessage != null,
+                visible = lastAssistantMessage != null, // Uses the commented out variable
                 enter = fadeIn() + slideInVertically(),
                 exit = fadeOut() + slideOutVertically()
             ) {
@@ -108,34 +110,50 @@ fun AssistantOverlayUi(
                     }
                 }
             } // End AnimatedVisibility
+            */
+
+            // *** Step 4: Add Simplified Display ***
+            if (lastMessage != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f) // Responsive width
+                        .padding(bottom = 16.dp), // Space between response and input bar
+                    // Use simple shapes/colors for debugging
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (lastMessage.type == MessageType.ASSISTANT) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                    tonalElevation = 2.dp
+                ) {
+                    Text(
+                        // Display type and content clearly
+                        text = "DBG Last (${lastMessage.type}): ${lastMessage.content}",
+                        modifier = Modifier.padding(16.dp),
+                        color = if (lastMessage.type == MessageType.ASSISTANT) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.bodyMedium // Use a standard style
+                    )
+                }
+            }
+            // *** End of Simplified Display ***
+
 
             // --- Input Bar ---
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
-                isInputDisabled = isResponding || isSpeaking, // Disable if thinking or speaking
+                isInputDisabled = isResponding || isSpeaking,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {
-                    // Check permission before allowing mic toggle from UI tap
                     if (micPermissionGranted) {
                         viewModel.toggleSpeechRecognition()
                     } else {
                         Log.w(TAG,"Mic Tapped but no permission.")
-                        // Ideally, trigger the permission request flow here if possible
-                        // This might involve calling back to the Activity.
-                        // For now, it just won't work if permission is missing.
                     }
                 },
-                // Let the Surface within ChatInputBar handle its color/elevation
-                // based on Material 3 guidelines (using tonalElevation)
-                surfaceColor = Color.Unspecified
+                // Pass explicit color and shape as decided before
+                surfaceColor = MaterialTheme.colorScheme.surface, // Use the non-transparent color
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) // Use the desired overlay shape
             )
         }
     }
 }
-
-// Remove the surfaceColorAtElevation helper if relying on Surface's tonalElevation
-// @Composable
-// fun MaterialTheme.surfaceColorAtElevation(elevation: Dp): Color { ... }

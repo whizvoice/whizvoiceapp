@@ -36,9 +36,10 @@
             android:name=".AssistantActivity"
             android:theme="@style/Theme.Whiz.Assistant"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleInstance"
             android:excludeFromRecents="true"
             android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize"
             android:permission="android.permission.BIND_VOICE_INTERACTION">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
