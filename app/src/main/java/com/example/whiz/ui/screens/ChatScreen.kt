@@ -42,6 +42,8 @@ import kotlinx.coroutines.delay
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import com.example.whiz.permissions.MicrophonePermissionHandler
 import com.example.whiz.permissions.PermissionHandler
 
@@ -368,7 +370,8 @@ fun ChatInputBar(
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onMicClick: () -> Unit,
-    surfaceColor: Color
+    surfaceColor: Color,
+    shape: Shape = RectangleShape
 ) {
     val hasInputText = inputText.isNotBlank()
     // Display transcription if listening, otherwise input text. Show placeholder within TextField.
@@ -378,6 +381,7 @@ fun ChatInputBar(
     Surface(
         color = surfaceColor,
         //tonalElevation = 4.dp,
+        shape = shape,
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding() // Handles navigation bar insets

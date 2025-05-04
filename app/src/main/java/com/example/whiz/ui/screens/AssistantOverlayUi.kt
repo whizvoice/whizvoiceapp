@@ -1,0 +1,159 @@
+package com.example.whiz.ui.screens
+
+// Add necessary animation imports
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+// Remove this if using Surface tonalElevation directly
+// import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.whiz.ui.viewmodels.ChatViewModel
+import com.example.whiz.data.local.MessageType // Import MessageType
+import android.util.Log // Import Log
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.remember
+
+@Composable
+fun AssistantOverlayUi(
+    viewModel: ChatViewModel = hiltViewModel(),
+    onDismiss: () -> Unit // Callback to close the activity
+) {
+    val TAG = "AssistantOverlayUi" // Tag for logging
+
+    // Collect necessary state from ViewModel
+    val inputText by viewModel.inputText.collectAsState()
+    val transcription by viewModel.transcriptionState.collectAsState()
+    val isListening by viewModel.isListening.collectAsState()
+    val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
+    val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
+    val micPermissionGranted by viewModel.micPermissionGranted.collectAsState()
+
+    // 1. Collect the state containing the full list of messages
+    val messagesState by viewModel.messages.collectAsState()
+
+    // *** Step 1: Comment out the derived state ***
+    /*
+    // 2. Derive the last assistant message from the current value of the state
+    // Use remember so this calculation only runs when messagesState changes.
+    val lastAssistantMessage = remember(messagesState) {
+        messagesState.lastOrNull { it.type == MessageType.ASSISTANT }
+    }
+    */
+
+    // *** Restore LaunchedEffect to load chat and attempt auto-listening ***
+    LaunchedEffect(Unit) {
+        Log.d(TAG, "LaunchedEffect: Initializing Assistant State. Permission: $micPermissionGranted")
+        viewModel.loadChat(-1L)
+    }
+
+    // The main Box fills the screen but is transparent
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Transparent) // Make the Box transparent
+            .padding(start = 16.dp, end = 16.dp)
+            .imePadding()
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.BottomCenter // Align content (Column) to bottom
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(), // Column takes full width
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+
+            // *** Step 3: Add Logging ***
+            val lastMessage = messagesState.lastOrNull() // Get the actual last message
+            Log.d("AssistantOverlayUi", "Recomposing: lastMessage content = ${lastMessage?.content}")
+
+            // --- Step 2: Comment out AnimatedVisibility block ---
+            /*
+            // --- Display Last Assistant Response Conditionally ---
+            AnimatedVisibility(
+                // Show if message is not null
+                visible = lastAssistantMessage != null, // Uses the commented out variable
+                enter = fadeIn() + slideInVertically(),
+                exit = fadeOut() + slideOutVertically()
+            ) {
+                // Smart cast should work here because of visible check
+                lastAssistantMessage?.let { message ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f) // Responsive width
+                            .padding(bottom = 16.dp), // Space between response and input bar
+                        shape = MaterialTheme.shapes.medium, // Rounded corners for response bubble
+                        color = MaterialTheme.colorScheme.surfaceVariant, // Background color for response
+                        tonalElevation = 4.dp // Add elevation
+                    ) {
+                        Text(
+                            text = message.content,
+                            modifier = Modifier.padding(16.dp), // Padding inside the bubble
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
+            } // End AnimatedVisibility
+            */
+
+            // *** Step 4: Add Simplified Display ***
+            if (lastMessage != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f) // Responsive width
+                        .padding(bottom = 16.dp), // Space between response and input bar
+                    // Use simple shapes/colors for debugging
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (lastMessage.type == MessageType.ASSISTANT) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                    tonalElevation = 2.dp
+                ) {
+                    Text(
+                        // Display type and content clearly
+                        text = "DBG Last (${lastMessage.type}): ${lastMessage.content}",
+                        modifier = Modifier.padding(16.dp),
+                        color = if (lastMessage.type == MessageType.ASSISTANT) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.bodyMedium // Use a standard style
+                    )
+                }
+            }
+            // *** End of Simplified Display ***
+
+
+            // --- Input Bar ---
+            ChatInputBar(
+                inputText = inputText,
+                transcription = transcription,
+                isListening = isListening,
+                isInputDisabled = isResponding || isSpeaking,
+                onInputChange = viewModel::updateInputText,
+                onSendClick = { viewModel.sendUserInput(inputText) },
+                onMicClick = {
+                    if (micPermissionGranted) {
+                        viewModel.toggleSpeechRecognition()
+                    } else {
+                        Log.w(TAG,"Mic Tapped but no permission.")
+                    }
+                },
+                // Pass explicit color and shape as decided before
+                surfaceColor = MaterialTheme.colorScheme.surface, // Use the non-transparent color
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) // Use the desired overlay shape
+            )
+        }
+    }
+}

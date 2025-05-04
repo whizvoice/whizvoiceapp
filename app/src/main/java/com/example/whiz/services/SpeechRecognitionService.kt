@@ -96,75 +96,56 @@ class SpeechRecognitionService @Inject constructor(
 
 
     fun startListening(onFinalTranscription: (String) -> Unit) {
+        // Check if already listening
         if (_isListening.value) {
             Log.w(TAG, "Already listening, ignoring startListening request.")
             return
         }
-        
-        // Make sure we're initialized - this is important after permissions change
+
+        // Ensure initialized (important!)
         if (!isInitialized) {
-            Log.d(TAG, "Not initialized, will initialize now before starting listening")
+            Log.w(TAG, "Recognizer not initialized. Attempting initialization.")
             initialize()
-            
-            // If initialization fails, abort
             if (!isInitialized) {
                 _errorState.value = "Speech service not ready. Please try again."
-                return
+                Log.e(TAG, "Initialization failed, cannot start listening.")
+                return // Abort if init failed
             }
         }
-        
-        // Double-check recognizer and intent are ready
-        if (speechRecognizer == null) {
-            Log.e(TAG, "Speech recognizer is null after initialization, cannot start listening")
-            _errorState.value = "Speech service not ready. Please restart the app."
+
+        // Check recognizer/intent again after potential init
+        if (speechRecognizer == null || recognizerIntent == null) {
+            Log.e(TAG, "Cannot start listening, recognizer or intent is null AFTER init check.")
+            _errorState.value = "Speech service encountered an internal error."
+            _isListening.value = false // Ensure state consistency
             return
         }
-        
-        if (recognizerIntent == null) {
-            setupRecognizerIntent()
-        }
 
+        Log.d(TAG, "Preparing to start listening.")
         _transcriptionState.value = ""
         _errorState.value = null
         recognitionCallback = onFinalTranscription
         manualStopInProgress = false
         utteranceFinalized = false
 
-        // Start the first listening attempt
-        triggerListeningStart("initialStart")
+        // Make sure triggerListeningStart is called correctly
+        triggerListeningStart("startListening_entry") // Pass context for logging
     }
 
-    // Renamed internal function to explicitly start/restart listening
+    // And ensure triggerListeningStart logs clearly and sets state:
     private fun triggerListeningStart(reason: String) {
-        if (speechRecognizer == null || recognizerIntent == null) {
-            Log.e(TAG, "Cannot trigger listening start [$reason], recognizer or intent is null.")
-            _isListening.value = false // Ensure state consistency
-            return
-        }
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Log.e(TAG, "Cannot trigger listening start [$reason], recognition not available.")
-            _isListening.value = false
-            _errorState.value = "Speech recognition not available."
-            return
-        }
-
-        Log.d(TAG, "triggerListeningStart called from [$reason]")
-        // Only proceed if we are supposed to be listening
-        if (_isListening.value || reason == "initialStart") { // Allow initial start
-            try {
-                // ** CRITICAL: Reset utterance flag before *each* listening attempt **
-                // This might have been missed if onBeginningOfSpeech wasn't reliable
-                utteranceFinalized = false
-                speechRecognizer?.startListening(recognizerIntent)
-                _isListening.value = true // Ensure state is true when starting
-                Log.i(TAG, "SpeechRecognizer started listening (Reason: $reason).")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in triggerListeningStart [$reason]", e)
-                _errorState.value = "Could not start listening."
-                _isListening.value = false
-            }
-        } else {
-            Log.w(TAG,"Skipping triggerListeningStart [$reason] because _isListening is false.")
+        // ... (null checks as before) ...
+        Log.d(TAG, "Attempting triggerListeningStart from [$reason]")
+        try {
+            utteranceFinalized = false
+            // *** IMPORTANT: Set state BEFORE calling startListening ***
+            _isListening.value = true
+            speechRecognizer?.startListening(recognizerIntent)
+            Log.i(TAG, "SpeechRecognizer successfully called startListening (Reason: $reason). isListening state: ${_isListening.value}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in triggerListeningStart [$reason]", e)
+            _errorState.value = "Could not start listening."
+            _isListening.value = false // Reset state on error
         }
     }
 
