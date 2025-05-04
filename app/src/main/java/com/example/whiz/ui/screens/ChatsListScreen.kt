@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Divider
@@ -46,6 +47,8 @@ fun ChatsListScreen(
     onChatSelected: (Long) -> Unit,
     onNewChatClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    hasPermission: Boolean = false,
+    onRequestPermission: () -> Unit = {},
     viewModel: ChatsListViewModel = hiltViewModel()
 ) {
     val chats by viewModel.chats.collectAsState()
@@ -55,6 +58,14 @@ fun ChatsListScreen(
             CenterAlignedTopAppBar(
                 title = { Text("My Chats") },
                 actions = {
+                    if (!hasPermission) {
+                        IconButton(onClick = onRequestPermission) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Enable Microphone"
+                            )
+                        }
+                    }
                     IconButton(onClick = onSettingsClick) {
                         Icon(
                             imageVector = Icons.Default.Settings,

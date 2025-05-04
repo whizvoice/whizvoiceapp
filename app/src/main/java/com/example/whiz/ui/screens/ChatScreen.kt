@@ -51,6 +51,8 @@ import com.example.whiz.permissions.PermissionHandler
 fun ChatScreen(
     chatId: Long,
     onChatsListClick: () -> Unit,
+    hasPermission: Boolean = false,
+    onRequestPermission: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     // ViewModel state collections
@@ -63,19 +65,27 @@ fun ChatScreen(
     val speechError by viewModel.speechError.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
-    val micPermissionGranted by viewModel.micPermissionGranted.collectAsState()
 
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Handle permission state
-    var showPermissionHandler by remember { mutableStateOf(false) }
+    var showPermissionDialog by remember { mutableStateOf(false) }
     
-    // If mic is clicked without permission, show permission handler
+    // Update viewModel with current permission state
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) {
+            viewModel.onMicrophonePermissionGranted()
+        } else {
+            viewModel.onMicrophonePermissionDenied()
+        }
+    }
+    
+    // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
-        if (!micPermissionGranted) {
-            showPermissionHandler = true
+        if (!hasPermission) {
+            showPermissionDialog = true
         } else {
             // Only allow mic toggle if not speaking or responding
             val isInputDisabled = isResponding || isSpeaking
@@ -85,18 +95,24 @@ fun ChatScreen(
         }
     }
 
-    // Microphone permission handler
-    if (showPermissionHandler) {
-        MicrophonePermissionHandler(
-            onPermissionGranted = {
-                viewModel.onMicrophonePermissionGranted()
-                showPermissionHandler = false
-                // Auto-trigger speech recognition when permission is granted
-                viewModel.toggleSpeechRecognition()
+    // Microphone permission dialog
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("Microphone Permission Required") },
+            text = { Text("Whiz requires continuous microphone access to function as a voice assistant. Without this permission, voice features will not work. Would you like to grant this permission?") },
+            confirmButton = {
+                Button(onClick = {
+                    showPermissionDialog = false
+                    onRequestPermission()
+                }) {
+                    Text("Grant Permission")
+                }
             },
-            onPermissionDenied = {
-                viewModel.onMicrophonePermissionDenied()
-                showPermissionHandler = false
+            dismissButton = {
+                Button(onClick = { showPermissionDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }

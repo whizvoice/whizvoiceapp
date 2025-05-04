@@ -43,24 +43,40 @@ class SpeechRecognitionService @Inject constructor(
     private var utteranceFinalized = false
     private var recognizerIntent: Intent? = null // Store the intent for restarting
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
+    private var isInitialized = false
 
     fun initialize() {
+        // Check availability first without doing anything that could crash
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e(TAG, "Speech recognition is not available on this device.")
             _errorState.value = "Speech recognition not available."
+            isInitialized = false
             return
         }
+        
         setupRecognizerIntent() // Setup intent once
-        releaseInternal(isReinitializing = true)
+        
+        // Safely release any existing recognizer
+        try {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing existing recognizer", e)
+        }
+        
+        // Create the new recognizer with error handling
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
             speechRecognizer?.setRecognitionListener(createRecognitionListener())
             Log.d(TAG, "Speech recognizer initialized successfully.")
             _errorState.value = null
+            isInitialized = true
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SpeechRecognizer", e)
             _errorState.value = "Failed to initialize speech service."
             speechRecognizer = null
+            isInitialized = false
         }
     }
 
@@ -84,14 +100,26 @@ class SpeechRecognitionService @Inject constructor(
             Log.w(TAG, "Already listening, ignoring startListening request.")
             return
         }
-        // Ensure recognizer and intent are ready
-        if (speechRecognizer == null) {
+        
+        // Make sure we're initialized - this is important after permissions change
+        if (!isInitialized) {
+            Log.d(TAG, "Not initialized, will initialize now before starting listening")
             initialize()
-            if (speechRecognizer == null) {
-                _errorState.value = "Speech service not ready."
+            
+            // If initialization fails, abort
+            if (!isInitialized) {
+                _errorState.value = "Speech service not ready. Please try again."
                 return
             }
         }
+        
+        // Double-check recognizer and intent are ready
+        if (speechRecognizer == null) {
+            Log.e(TAG, "Speech recognizer is null after initialization, cannot start listening")
+            _errorState.value = "Speech service not ready. Please restart the app."
+            return
+        }
+        
         if (recognizerIntent == null) {
             setupRecognizerIntent()
         }

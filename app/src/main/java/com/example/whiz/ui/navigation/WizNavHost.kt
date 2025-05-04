@@ -38,7 +38,9 @@ private const val PRELOAD_DELAY = 50L  // Short delay to start preloading
 @Composable
 fun WhizNavHost(
     navController: NavHostController,
-    preloadManager: PreloadManager
+    preloadManager: PreloadManager,
+    hasPermission: Boolean = false,
+    onRequestPermission: () -> Unit = {}
 ) {
     // Custom extension to preload data before navigating
     fun NavHostController.preloadAndNavigate(route: String) {
@@ -102,7 +104,9 @@ fun WhizNavHost(
                 },
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route)
-                }
+                },
+                hasPermission = hasPermission,
+                onRequestPermission = onRequestPermission
             )
         }
 
@@ -150,7 +154,9 @@ fun WhizNavHost(
                     navController.navigate(Screen.ChatsList.route) {
                         popUpTo(Screen.ChatsList.route) { inclusive = true }
                     }
-                }
+                },
+                hasPermission = hasPermission,
+                onRequestPermission = onRequestPermission
             )
         }
 
@@ -179,7 +185,9 @@ fun WhizNavHost(
                     navController.navigate(Screen.ChatsList.route) {
                         popUpTo(Screen.ChatsList.route) { inclusive = true }
                     }
-                }
+                },
+                hasPermission = hasPermission,
+                onRequestPermission = onRequestPermission
             )
         }
 
@@ -213,7 +221,9 @@ fun WhizNavHost(
             SettingsScreen(
                 onBackClick = {
                     navController.navigateUp()
-                }
+                },
+                hasPermission = hasPermission,
+                onRequestPermission = onRequestPermission
             )
         }
     }

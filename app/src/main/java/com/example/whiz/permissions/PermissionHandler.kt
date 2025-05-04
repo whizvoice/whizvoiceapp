@@ -70,7 +70,7 @@ fun MicrophonePermissionHandler(
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Microphone Permission Required") },
-            text = { Text("Whiz needs microphone access to enable voice chat. Please grant this permission in your device settings.") },
+            text = { Text("Whiz needs continuous microphone access to function as a voice assistant. Without this permission, voice features will not work. Please grant this permission in your device settings.") },
             confirmButton = {
                 Button(onClick = {
                     showPermissionDialog = false

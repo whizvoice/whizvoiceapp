@@ -441,11 +441,30 @@ class ChatViewModel @Inject constructor(
     fun onMicrophonePermissionGranted() {
         _micPermissionGranted.value = true
         _errorState.value = null
+        
+        // When permission is granted, make sure SpeechRecognitionService is properly initialized
+        // But don't start listening automatically
+        try {
+            Log.d(TAG, "Microphone permission granted, initializing speech service")
+            speechRecognitionService.initialize()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing speech service after permission granted", e)
+            _errorState.value = "Error initializing speech. Please try again."
+        }
     }
     
     // Called when permission is denied
     fun onMicrophonePermissionDenied() {
         _micPermissionGranted.value = false
         _errorState.value = "Microphone permission is required for voice input"
+        
+        // If speech recognition was active, make sure to stop it
+        if (isListening.value) {
+            try {
+                speechRecognitionService.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping speech recognition after permission denied", e)
+            }
+        }
     }
 }
