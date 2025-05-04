@@ -24,6 +24,15 @@ import com.example.whiz.data.remote.WebSocketEvent
 import com.example.whiz.permissions.PermissionHandler
 import kotlinx.coroutines.flow.catch
 
+// Add necessary imports at the top of ChatViewModel.kt
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map // Ensure map is imported
+import kotlinx.coroutines.flow.stateIn
+import com.example.whiz.data.local.MessageEntity // Ensure MessageEntity is imported
+import com.example.whiz.data.local.MessageType // Ensure MessageType is imported
+
+
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context, // Inject Context
