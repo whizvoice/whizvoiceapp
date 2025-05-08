@@ -1,0 +1,219 @@
+package com.example.whiz.ui.screens
+
+import android.app.Activity
+import android.content.Intent
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
+import com.example.whiz.R
+import com.example.whiz.ui.navigation.Screen
+import com.example.whiz.ui.viewmodels.AuthViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.GoogleApiAvailability
+import kotlinx.coroutines.launch
+
+@Composable
+fun LoginScreen(
+    navController: NavController,
+    authViewModel: AuthViewModel = hiltViewModel()
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+    val userProfile by authViewModel.userProfile.collectAsState()
+    var isLoading by remember { mutableStateOf(false) }
+    var debugInfo by remember { mutableStateOf("") }
+    
+    // Set up the launcher for Google Sign-In
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        isLoading = false
+        if (result.resultCode == Activity.RESULT_OK) {
+            Log.d("LoginScreen", "Sign in successful, processing result")
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                Log.d("LoginScreen", "Successfully got account: ${account.email}")
+                scope.launch {
+                    authViewModel.processSignInResult(account)
+                }
+            } catch (e: ApiException) {
+                Log.e("LoginScreen", "Google sign in failed with status code: ${e.statusCode}", e)
+                // Show detailed error based on status code
+                val errorMessage = when (e.statusCode) {
+                    10 -> "DEVELOPER_ERROR: The application is misconfigured. Check OAuth client ID and SHA-1 signature."
+                    14 -> "CANCELED: The user canceled the sign-in flow."
+                    else -> "Error code: ${e.statusCode}"
+                }
+                Log.e("LoginScreen", "Sign-in error details: $errorMessage")
+                // Show error to user
+            }
+        } else {
+            Log.d("LoginScreen", "Sign in canceled or failed, result code: ${result.resultCode}")
+            if (result.data != null) {
+                try {
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    task.addOnCompleteListener {
+                        if (it.isSuccessful) {
+                            Log.d("LoginScreen", "Task successful despite canceled result")
+                        } else {
+                            Log.e("LoginScreen", "Task failed: ${it.exception}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("LoginScreen", "Error checking sign-in data", e)
+                }
+            }
+            // User canceled sign-in flow or it failed for another reason
+        }
+    }
+
+    // Check Google Play Services availability
+    LaunchedEffect(Unit) {
+        val availability = GoogleApiAvailability.getInstance()
+        val result = availability.isGooglePlayServicesAvailable(context)
+        if (result != com.google.android.gms.common.ConnectionResult.SUCCESS) {
+            Log.e("LoginScreen", "Google Play Services not available: $result")
+            if (availability.isUserResolvableError(result)) {
+                Log.d("LoginScreen", "Error is user resolvable")
+            }
+        } else {
+            Log.d("LoginScreen", "Google Play Services available")
+        }
+    }
+
+    // Navigate to home screen if authenticated
+    LaunchedEffect(isAuthenticated) {
+        if (isAuthenticated) {
+            navController.navigate(Screen.Home.route) {
+                popUpTo(Screen.Login.route) { inclusive = true }
+            }
+        }
+    }
+    
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // App Logo/Icon
+        Image(
+            painter = painterResource(id = R.drawable.ic_launcher_foreground), // Update with your logo
+            contentDescription = "App Logo",
+            modifier = Modifier.size(120.dp)
+        )
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text(
+            text = "Welcome to WhizVoice",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text(
+            text = "Sign in to continue",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        
+        Spacer(modifier = Modifier.height(48.dp))
+        
+        if (isLoading) {
+            CircularProgressIndicator()
+        } else {
+            Button(
+                onClick = {
+                    isLoading = true
+                    try {
+                        val signInIntent = authViewModel.getSignInIntent()
+                        Log.d("LoginScreen", "Launching sign-in intent")
+                        signInLauncher.launch(signInIntent)
+                    } catch (e: Exception) {
+                        Log.e("LoginScreen", "Error launching sign-in", e)
+                        isLoading = false
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(50.dp)
+            ) {
+                Text(text = "Sign in with Google", fontSize = 16.sp)
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Debug section
+            OutlinedButton(
+                onClick = {
+                    val account = GoogleSignIn.getLastSignedInAccount(context)
+                    val availability = GoogleApiAvailability.getInstance()
+                    val servicesResult = availability.isGooglePlayServicesAvailable(context)
+                    val servicesAvailable = servicesResult == com.google.android.gms.common.ConnectionResult.SUCCESS
+                    val servicesMessage = if (servicesAvailable) "Available" else "Not available (code: $servicesResult)"
+                    
+                    debugInfo = """
+                        Last account: ${account?.email ?: "None"}
+                        Google Play Services: $servicesMessage
+                        Has ID token: ${account?.idToken != null}
+                        Package name: com.example.whiz
+                    """.trimIndent()
+                    
+                    Log.d("LoginScreen", "Debug info: $debugInfo")
+                },
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(50.dp)
+            ) {
+                Text(text = "Check Google Sign-In Status", fontSize = 14.sp)
+            }
+            
+            if (debugInfo.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = debugInfo,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+    }
+} 

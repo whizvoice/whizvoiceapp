@@ -2,23 +2,25 @@ package com.example.whiz.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.repository.WhizRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: WhizRepository
+    private val repository: WhizRepository,
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
     private val _isClearingHistory = MutableStateFlow(false)
-    val isClearingHistory = _isClearingHistory.asStateFlow()
+    val isClearingHistory: StateFlow<Boolean> = _isClearingHistory
 
     private val _showClearConfirmation = MutableStateFlow(false)
-    val showClearConfirmation = _showClearConfirmation.asStateFlow()
+    val showClearConfirmation: StateFlow<Boolean> = _showClearConfirmation
 
     // Show confirmation dialog
     fun showClearHistoryConfirmation() {
@@ -34,9 +36,18 @@ class SettingsViewModel @Inject constructor(
     fun clearAllChatHistory() {
         viewModelScope.launch {
             _isClearingHistory.value = true
-            repository.deleteAllChats()
-            _isClearingHistory.value = false
-            _showClearConfirmation.value = false
+            try {
+                repository.deleteAllChats()
+            } finally {
+                _isClearingHistory.value = false
+                _showClearConfirmation.value = false
+            }
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            authRepository.signOut()
         }
     }
 }

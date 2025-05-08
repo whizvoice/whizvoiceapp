@@ -15,6 +15,8 @@ import javax.inject.Singleton
 
 import okhttp3.OkHttpClient
 import com.example.whiz.data.remote.WhizServerRepository
+import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.data.remote.AuthApi
 import java.util.concurrent.TimeUnit
 
 @Module
@@ -63,7 +65,22 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideWhizServerRepository(okHttpClient: OkHttpClient): WhizServerRepository {
-        return WhizServerRepository(okHttpClient)
+    fun provideWhizServerRepository(
+        okHttpClient: OkHttpClient,
+        authRepository: AuthRepository
+    ): WhizServerRepository {
+        return WhizServerRepository(okHttpClient, authRepository)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideAuthRepository(@ApplicationContext context: Context): AuthRepository {
+        return AuthRepository(context)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideAuthApi(okHttpClient: OkHttpClient): AuthApi {
+        return AuthApi(okHttpClient)
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -190,6 +191,23 @@ fun SettingsScreen(
                     icon = Icons.Default.Info,
                     onClick = {},
                     enabled = false
+                )
+
+                Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+                // Account section
+                Text(
+                    text = "Account",
+                    style = MaterialTheme.typography.titleLarge
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                SettingsItem(
+                    title = "Sign Out",
+                    description = "Sign out of your account",
+                    icon = Icons.Default.ExitToApp,
+                    onClick = viewModel::logout
                 )
             }
         }
