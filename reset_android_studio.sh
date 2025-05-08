@@ -1,38 +1,51 @@
 #!/bin/bash
 
-# Function to handle Android Studio quit with confirmation dialogs
-quit_android_studio() {
-    osascript <<EOF
-    tell application "Android Studio"
-        activate
-        delay 1
-        tell application "System Events"
-            # Try to quit normally first
-            keystroke "q" using {command down}
+#  to set up this script to work on mac
+# Go to System Preferences > Security & Privacy > Accessibility
+# Add Terminal (or iTerm2 if you're using that) to the list of allowed apps
+# Add Android Studio to the list as well
+
+LOGFILE="/tmp/android_studio_dialog_buttons.log"
+rm -f "$LOGFILE"
+
+# Quit Android Studio and handle confirmation dialogs
+osascript <<EOF
+set logFile to POSIX file "$LOGFILE"
+tell application "Android Studio"
+    activate
+    quit
+    delay 2
+    tell application "System Events"
+        repeat 10 times
+            if exists (process "Android Studio") then
+                tell process "Android Studio"
+                    repeat with w in windows
+                        try
+                            set btns to buttons of w
+                            set btnNames to {}
+                            repeat with b in btns
+                                set end of btnNames to name of b
+                            end repeat
+                            set fileRef to open for access logFile with write permission
+                            write ("Button names: " & btnNames & linefeed) to fileRef starting at eof
+                            close access fileRef
+                            if (count of btns) > 0 then
+                                click item (count of btns) of btns
+                            end if
+                        end try
+                    end repeat
+                end tell
+            end if
             delay 1
-            
-            # Handle "Do you want to terminate the running process?" dialog
-            if exists (window 1 of process "Android Studio") then
-                if exists (button "Terminate" of window 1 of process "Android Studio") then
-                    click button "Terminate" of window 1 of process "Android Studio"
-                end if
-            end if
-            
-            # Handle "Do you want to save changes?" dialog
-            if exists (window 1 of process "Android Studio") then
-                if exists (button "Don't Save" of window 1 of process "Android Studio") then
-                    click button "Don't Save" of window 1 of process "Android Studio"
-                end if
-            end if
-        end tell
+        end repeat
     end tell
+end tell
 EOF
-}
 
-# Quit Android Studio with dialog handling
-quit_android_studio
+# Print the log file contents
+cat "$LOGFILE"
 
-# Wait a moment for Android Studio to fully quit
+# Wait for Android Studio to fully quit
 sleep 2
 
 # Reopen Android Studio with current project

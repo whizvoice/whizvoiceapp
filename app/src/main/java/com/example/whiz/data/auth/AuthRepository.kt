@@ -9,6 +9,8 @@ import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +85,18 @@ class AuthRepository @Inject constructor(
     init {
         // Load the initial user profile
         refreshUserProfile()
+        
+        // Check if there's a previously signed in account
+        val lastAccount = GoogleSignIn.getLastSignedInAccount(context)
+        val serverToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
+        Log.d(TAG, "Initial auth state check: Google account=${lastAccount != null}, Server token=${serverToken != null}")
+        
+        if (lastAccount == null || serverToken == null) {
+            // Clear any stale data if not fully authenticated
+            GlobalScope.launch {
+                signOut()
+            }
+        }
     }
     
     // Check if user is signed in
