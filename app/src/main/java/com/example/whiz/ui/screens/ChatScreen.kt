@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import com.example.whiz.permissions.MicrophonePermissionHandler
 import com.example.whiz.permissions.PermissionHandler
+import androidx.navigation.NavController
+import com.example.whiz.ui.navigation.Screen // Update this import
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,7 +57,8 @@ fun ChatScreen(
     onChatsListClick: () -> Unit,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
-    viewModel: ChatViewModel = hiltViewModel()
+    viewModel: ChatViewModel = hiltViewModel(),
+    navController: NavController
 ) {
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
@@ -67,6 +70,7 @@ fun ChatScreen(
     val speechError by viewModel.speechError.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
+    val connectionError by viewModel.connectionError.collectAsState()
 
     // UI State
     val listState = rememberLazyListState()
@@ -142,6 +146,22 @@ fun ChatScreen(
     LaunchedEffect(speechError) {
         speechError?.let {
             snackbarHostState.showSnackbar(message = it, duration = SnackbarDuration.Short)
+        }
+    }
+
+    // Handle connection errors
+    LaunchedEffect(connectionError) {
+        if (connectionError != null) {
+            snackbarHostState.showSnackbar(
+                message = connectionError ?: "Connection error",
+                duration = SnackbarDuration.Short
+            )
+            // If it's an authentication error, navigate to login
+            if (connectionError?.contains("Authentication failed") == true) {
+                navController.navigate("login") {
+                    popUpTo("home") { inclusive = true }
+                }
+            }
         }
     }
 

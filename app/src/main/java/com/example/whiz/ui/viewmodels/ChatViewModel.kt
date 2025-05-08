@@ -23,6 +23,7 @@ import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.remote.WebSocketEvent
 import com.example.whiz.permissions.PermissionHandler
 import kotlinx.coroutines.flow.catch
+import com.example.whiz.data.auth.AuthRepository
 
 // Add necessary imports at the top of ChatViewModel.kt
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,7 +39,8 @@ class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context, // Inject Context
     private val repository: WhizRepository,
     private val speechRecognitionService: SpeechRecognitionService,
-    private val whizServerRepository: WhizServerRepository
+    private val whizServerRepository: WhizServerRepository,
+    private val authRepository: AuthRepository // Add this
 ) : ViewModel(), TextToSpeech.OnInitListener { // Implement OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -106,6 +108,10 @@ class ChatViewModel @Inject constructor(
     private val _errorState = MutableStateFlow<String?>(null)
     val errorState = _errorState.asStateFlow()
 
+    // Connection error state
+    private val _connectionError = MutableStateFlow<String?>(null)
+    val connectionError = _connectionError.asStateFlow()
+
     init {
         // Check if the app already has microphone permission
         _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
@@ -122,31 +128,31 @@ class ChatViewModel @Inject constructor(
 
     // Observe messages from the WebSocket
     private fun observeServerMessages() {
-        serverMessageCollectorJob?.cancel() // Cancel previous collector if any
+        serverMessageCollectorJob?.cancel()
         serverMessageCollectorJob = viewModelScope.launch {
-            whizServerRepository.webSocketEvents
-                .catch { e -> Log.e(TAG, "Error in WebSocket event flow", e) }
-                .collect { event ->
-                    when (event) {
-                        is WebSocketEvent.Message -> handleServerMessage(event.text)
-                        is WebSocketEvent.Error -> {
-                            Log.e(TAG, "WebSocket Error", event.error)
-                            _isConnectedToServer.value = false
-                            _isResponding.value = false // Stop showing thinking indicator on error
-                            // Optionally show error to user via snackbar/state
-                        }
-                        is WebSocketEvent.Closed -> {
-                            Log.i(TAG, "WebSocket Closed")
-                            _isConnectedToServer.value = false
-                            _isResponding.value = false // Stop showing thinking indicator
-                        }
-                        is WebSocketEvent.Connected -> {
-                            Log.i(TAG, "WebSocket Connected")
-                            _isConnectedToServer.value = true
-                            // You might want to send initial context or chat history here if needed
+            whizServerRepository.webSocketEvents.collect { event ->
+                when (event) {
+                    is WebSocketEvent.Connected -> {
+                        _isConnectedToServer.value = true
+                        _connectionError.value = null
+                    }
+                    is WebSocketEvent.Closed -> {
+                        _isConnectedToServer.value = false
+                        _connectionError.value = "Connection closed. Please try again."
+                        // Sign out on any connection close to be safe
+                        viewModelScope.launch {
+                            authRepository.signOut()
                         }
                     }
+                    is WebSocketEvent.Error -> {
+                        _isConnectedToServer.value = false
+                        _connectionError.value = "Connection error: ${event.error.message}"
+                    }
+                    is WebSocketEvent.Message -> {
+                        handleServerMessage(event.text)
+                    }
                 }
+            }
         }
     }
 
@@ -327,7 +333,6 @@ class ChatViewModel @Inject constructor(
             // Clear input (remains the same)
             _inputText.value = ""
 
-
             // --- Server Interaction ---
             if (configUseRemoteAgent) {
                 if (_isConnectedToServer.value) {
@@ -335,12 +340,13 @@ class ChatViewModel @Inject constructor(
                     val success = whizServerRepository.sendMessage(trimmedText)
                     if (!success) {
                         _isResponding.value = false // Stop indicator if send failed
-                        // Handle error (e.g., show snackbar)
+                        _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
                     }
                     // Response handling is done in observeServerMessages
                 } else {
                     Log.w(TAG, "Cannot send message: Not connected to server.")
+                    _connectionError.value = "Not connected to server. Please try again."
                     // Handle error (e.g., show snackbar "Not connected")
                     // Optionally fallback to local response or queue message
                     generateAssistantResponse(currentChatId) // Fallback to local?
@@ -349,7 +355,6 @@ class ChatViewModel @Inject constructor(
                 // --- Local Fallback ---
                 generateAssistantResponse(currentChatId)
             }
-
 
             // Schedule persistence check (remains the same)
             schedulePersistenceCheck(currentChatId)

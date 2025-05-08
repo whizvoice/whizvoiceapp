@@ -116,6 +116,14 @@ dependencies {
 
     implementation("androidx.datastore:datastore-preferences:1.1.5")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
+    // Google Sign-In dependencies
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
+    
+    // JWT token processing
+    implementation("io.jsonwebtoken:jjwt-api:0.12.3")
+    implementation("io.jsonwebtoken:jjwt-impl:0.12.3")
+    implementation("io.jsonwebtoken:jjwt-jackson:0.12.3")
 }
 
 // Allow references to generated code

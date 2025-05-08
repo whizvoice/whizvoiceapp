@@ -6,6 +6,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,17 +20,10 @@ import androidx.navigation.navArgument
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.screens.ChatsListScreen
+import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
+import com.example.whiz.ui.viewmodels.AuthViewModel
 import kotlinx.coroutines.delay
-
-sealed class Screen(val route: String) {
-    object ChatsList : Screen("chats_list")
-    object Chat : Screen("chat/{chatId}") {
-        fun createRoute(chatId: Long) = "chat/$chatId"
-    }
-    object NewChat : Screen("chat/new")
-    object Settings : Screen("settings")
-}
 
 // Constants for animation
 private const val ANIMATION_DURATION = 300
@@ -42,6 +36,10 @@ fun WhizNavHost(
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {}
 ) {
+    // Get authentication state
+    val authViewModel: AuthViewModel = hiltViewModel()
+    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+
     // Custom extension to preload data before navigating
     fun NavHostController.preloadAndNavigate(route: String) {
         when {
@@ -49,7 +47,7 @@ fun WhizNavHost(
                 val chatId = route.substringAfter("chat/").toLong()
                 preloadManager.preloadChat(chatId)
             }
-            route == Screen.ChatsList.route -> {
+            route == "home" -> {
                 preloadManager.preloadChatsList()
             }
         }
@@ -58,10 +56,20 @@ fun WhizNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = Screen.NewChat.route
+        startDestination = if (isAuthenticated) Screen.Home.route else Screen.Login.route
     ) {
+        // Login Screen
         composable(
-            route = Screen.ChatsList.route,
+            route = Screen.Login.route,
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None }
+        ) {
+            LoginScreen(navController = navController)
+        }
+        
+        // Home Screen (Chats List)
+        composable(
+            route = Screen.Home.route,
             enterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.End,
@@ -97,10 +105,10 @@ fun WhizNavHost(
                 onChatSelected = { chatId ->
                     // Preload chat data before navigating
                     preloadManager.preloadChat(chatId)
-                    navController.navigate(Screen.Chat.createRoute(chatId))
+                    navController.navigate("chat/$chatId")
                 },
                 onNewChatClick = {
-                    navController.navigate(Screen.NewChat.route)
+                    navController.navigate(Screen.AssistantChat.route)
                 },
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route)
@@ -111,11 +119,11 @@ fun WhizNavHost(
         }
 
         composable(
-            route = Screen.Chat.route,
+            route = "chat/{chatId}",
             arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
             enterTransition = {
                 when (initialState.destination.route) {
-                    Screen.ChatsList.route -> {
+                    Screen.Home.route -> {
                         slideIntoContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.Start,
                             animationSpec = tween(ANIMATION_DURATION)
@@ -126,7 +134,7 @@ fun WhizNavHost(
             },
             exitTransition = {
                 when (targetState.destination.route) {
-                    Screen.ChatsList.route -> {
+                    Screen.Home.route -> {
                         slideOutOfContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.End,
                             animationSpec = tween(ANIMATION_DURATION)
@@ -137,8 +145,8 @@ fun WhizNavHost(
             },
             popEnterTransition = { null },
             popExitTransition = { null }
-        ) { backStackEntry ->
-            val chatId = backStackEntry.arguments?.getLong("chatId") ?: -1L
+        ) {
+            val chatId = it.arguments?.getLong("chatId") ?: -1L
 
             // Preload chat messages if not already done
             LaunchedEffect(chatId) {
@@ -151,21 +159,22 @@ fun WhizNavHost(
                 onChatsListClick = {
                     // Preload chats list before navigating
                     preloadManager.preloadChatsList()
-                    navController.navigate(Screen.ChatsList.route) {
-                        popUpTo(Screen.ChatsList.route) { inclusive = true }
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.Home.route) { inclusive = true }
                     }
                 },
                 hasPermission = hasPermission,
-                onRequestPermission = onRequestPermission
+                onRequestPermission = onRequestPermission,
+                navController = navController
             )
         }
 
         composable(
-            route = Screen.NewChat.route,
+            route = Screen.AssistantChat.route,
             enterTransition = { null },
             exitTransition = {
                 when (targetState.destination.route) {
-                    Screen.ChatsList.route -> {
+                    Screen.Home.route -> {
                         slideOutOfContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.End,
                             animationSpec = tween(ANIMATION_DURATION)
@@ -182,12 +191,13 @@ fun WhizNavHost(
                 onChatsListClick = {
                     // Preload chats list before navigating
                     preloadManager.preloadChatsList()
-                    navController.navigate(Screen.ChatsList.route) {
-                        popUpTo(Screen.ChatsList.route) { inclusive = true }
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.Home.route) { inclusive = true }
                     }
                 },
                 hasPermission = hasPermission,
-                onRequestPermission = onRequestPermission
+                onRequestPermission = onRequestPermission,
+                navController = navController
             )
         }
 
@@ -227,4 +237,4 @@ fun WhizNavHost(
             )
         }
     }
-}
+} 
