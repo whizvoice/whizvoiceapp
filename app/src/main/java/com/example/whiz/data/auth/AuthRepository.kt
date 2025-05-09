@@ -14,7 +14,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,22 +80,28 @@ class AuthRepository @Inject constructor(
     // Private flow to update when preferences change
     private val _userProfileFlow = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfileFlow
+
+    // Server token flow
+    private val _serverTokenFlow = MutableStateFlow<String?>(null)
+    val serverToken: StateFlow<String?> = _serverTokenFlow
     
     init {
         // Load the initial user profile
         refreshUserProfile()
+        // Load initial server token
+        _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
         
         // Check if there's a previously signed in account
         val lastAccount = GoogleSignIn.getLastSignedInAccount(context)
-        val serverToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
-        Log.d(TAG, "Initial auth state check: Google account=${lastAccount != null}, Server token=${serverToken != null}")
+        val localServerToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
+        Log.d(TAG, "Initial auth state check: Google account=${lastAccount != null}, Server token=${localServerToken != null}")
         
-        if (lastAccount == null || serverToken == null) {
-            // Clear any stale data if not fully authenticated
-            GlobalScope.launch {
-                signOut()
-            }
-        }
+        // if (lastAccount == null || localServerToken == null) { // Commented out auto sign-out
+        //     // Clear any stale data if not fully authenticated
+        //     GlobalScope.launch {
+        //         signOut()
+        //     }
+        // }
     }
     
     // Check if user is signed in
@@ -148,20 +153,20 @@ class AuthRepository @Inject constructor(
             sharedPreferences.edit()
                 .putString(PreferenceKeys.SERVER_TOKEN, token)
                 .apply()
-            
-            Log.d(TAG, "Server token saved to preferences")
+            _serverTokenFlow.value = token // Update the flow
+            Log.d(TAG, "Server token saved to preferences and flow updated")
         }
     }
     
-    // Get the Google authentication token
-    val authToken: Flow<String?> = flow {
+    // Get the Google authentication token (can remain as is or also become a StateFlow if needed for reactivity)
+    val authToken: Flow<String?> = kotlinx.coroutines.flow.flow { // Explicitly use kotlinx.coroutines.flow.flow
         emit(sharedPreferences.getString(PreferenceKeys.AUTH_TOKEN, null))
     }
     
-    // Get the server-issued JWT token
-    val serverToken: Flow<String?> = flow {
-        emit(sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null))
-    }
+    // Get the server-issued JWT token (now a StateFlow)
+    // val serverToken: Flow<String?> = flow { // This is replaced by the StateFlow above
+    //     emit(sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null))
+    // }
     
     // Refresh the user profile data from SharedPreferences
     private fun refreshUserProfile() {
@@ -195,8 +200,9 @@ class AuthRepository @Inject constructor(
                 apply()
             }
             
-            // Update the flow
+            // Update the flows
             refreshUserProfile()
+            _serverTokenFlow.value = null // Clear the server token flow
             
             Log.d(TAG, "User signed out and preferences cleared")
         }

@@ -51,9 +51,8 @@ fun LoginScreen(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val userProfile by authViewModel.userProfile.collectAsState()
+    val navigateToHome by authViewModel.navigateToHome.collectAsState()
     var isLoading by remember { mutableStateOf(false) }
     var debugInfo by remember { mutableStateOf("") }
     
@@ -67,10 +66,8 @@ fun LoginScreen(
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
             try {
                 val account = task.getResult(ApiException::class.java)
-                Log.d("LoginScreen", "Successfully got account: ${account.email}")
-                scope.launch {
-                    authViewModel.processSignInResult(account)
-                }
+                Log.d("LoginScreen", "Successfully got account: ${account.email}, calling ViewModel to process.")
+                authViewModel.initiateSignInProcessing(account)
             } catch (e: ApiException) {
                 Log.e("LoginScreen", "Google sign in failed with status code: ${e.statusCode}", e)
                 // Show detailed error based on status code
@@ -99,6 +96,7 @@ fun LoginScreen(
                 }
             }
             // User canceled sign-in flow or it failed for another reason
+            isLoading = false
         }
     }
 
@@ -116,12 +114,13 @@ fun LoginScreen(
         }
     }
 
-    // Navigate to home screen if authenticated
-    LaunchedEffect(isAuthenticated) {
-        if (isAuthenticated) {
+    // Navigate to home screen when ViewModel signals
+    LaunchedEffect(navigateToHome) {
+        if (navigateToHome) {
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Login.route) { inclusive = true }
             }
+            authViewModel.onNavigateToHomeConsumed() // Reset the trigger
         }
     }
     

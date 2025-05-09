@@ -56,8 +56,11 @@ class WhizServerRepository @Inject constructor(
             // Prefer server token over Google token
             val serverToken = runBlocking { authRepository.serverToken.firstOrNull() }
             val authToken = runBlocking { authRepository.authToken.firstOrNull() }
+            Log.d(TAG, "Fetched serverToken: $serverToken")
+            Log.d(TAG, "Fetched authToken (Google ID Token): $authToken")
             
             val tokenToUse = serverToken ?: authToken
+            Log.d(TAG, "Token being used for WebSocket: $tokenToUse")
             
             Log.d(TAG, "Attempting to connect to $WHIZ_SERVER_URL${if (tokenToUse != null) " with auth" else ""}")
             
