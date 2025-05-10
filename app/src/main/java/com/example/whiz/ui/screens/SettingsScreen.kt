@@ -15,8 +15,11 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -27,12 +30,14 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +45,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.whiz.ui.viewmodels.SettingsViewModel
@@ -55,6 +63,16 @@ fun SettingsScreen(
     val isClearingHistory by viewModel.isClearingHistory.collectAsState()
     val showClearConfirmation by viewModel.showClearConfirmation.collectAsState()
     var showPermissionDialog by remember { mutableStateOf(false) }
+    
+    // API Token states
+    var claudeToken by remember { mutableStateOf("") }
+    var asanaToken by remember { mutableStateOf("") }
+    var showClaudeToken by remember { mutableStateOf(false) }
+    var showAsanaToken by remember { mutableStateOf(false) }
+
+    // Collect token states
+    val hasClaudeToken by viewModel.userPreferences.hasClaudeToken.collectAsState()
+    val hasAsanaToken by viewModel.userPreferences.hasAsanaToken.collectAsState()
 
     // Show confirmation dialog if needed
     if (showClearConfirmation) {
@@ -112,104 +130,179 @@ fun SettingsScreen(
             )
         }
     ) { paddingValues ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .padding(16.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-            ) {
-                // Permissions section
-                Text(
-                    text = "Permissions",
-                    style = MaterialTheme.typography.titleLarge
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                SettingsItem(
-                    title = "Microphone Access",
-                    description = if (hasPermission) "Granted - Voice chat is enabled" else "Not granted - Voice chat is disabled",
-                    icon = if (hasPermission) Icons.Default.Mic else Icons.Default.MicOff,
-                    onClick = { 
-                        if (!hasPermission) {
-                            showPermissionDialog = true
-                        }
-                    }
-                )
-                
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-                // History section
-                Text(
-                    text = "Chat History",
-                    style = MaterialTheme.typography.titleLarge
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                SettingsItem(
-                    title = "Clear All Chat History",
-                    description = "Delete all of your chat history. This action cannot be undone.",
-                    icon = Icons.Default.Delete,
-                    onClick = viewModel::showClearHistoryConfirmation,
-                    enabled = !isClearingHistory
-                )
-
-                if (isClearingHistory) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(8.dp)
+            // API Settings section
+            Text(
+                text = "API Settings",
+                style = MaterialTheme.typography.titleLarge
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Claude API Token
+            OutlinedTextField(
+                value = claudeToken,
+                onValueChange = { claudeToken = it },
+                label = { Text("Claude API Token") },
+                visualTransformation = if (showClaudeToken) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showClaudeToken = !showClaudeToken }) {
+                        Icon(
+                            imageVector = if (showClaudeToken) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (showClaudeToken) "Hide token" else "Show token"
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Clearing chat history...")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                supportingText = {
+                    Text(
+                        text = if (hasClaudeToken) "Token is set" else "No token set",
+                        color = if (hasClaudeToken) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.error
+                    )
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Asana Token
+            OutlinedTextField(
+                value = asanaToken,
+                onValueChange = { asanaToken = it },
+                label = { Text("Asana Access Token") },
+                visualTransformation = if (showAsanaToken) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showAsanaToken = !showAsanaToken }) {
+                        Icon(
+                            imageVector = if (showAsanaToken) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (showAsanaToken) "Hide token" else "Show token"
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                supportingText = {
+                    Text(
+                        text = if (hasAsanaToken) "Token is set" else "No token set",
+                        color = if (hasAsanaToken) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.error
+                    )
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Button(
+                onClick = {
+                    if (claudeToken.isNotEmpty()) {
+                        viewModel.setClaudeToken(claudeToken)
+                    }
+                    if (asanaToken.isNotEmpty()) {
+                        viewModel.setAsanaToken(asanaToken)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save API Settings")
+            }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Permissions section
+            Text(
+                text = "Permissions",
+                style = MaterialTheme.typography.titleLarge
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            SettingsItem(
+                title = "Microphone Access",
+                description = if (hasPermission) "Granted - Voice chat is enabled" else "Not granted - Voice chat is disabled",
+                icon = if (hasPermission) Icons.Default.Mic else Icons.Default.MicOff,
+                onClick = { 
+                    if (!hasPermission) {
+                        showPermissionDialog = true
                     }
                 }
+            )
+            
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
 
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
+            // History section
+            Text(
+                text = "Chat History",
+                style = MaterialTheme.typography.titleLarge
+            )
 
-                // About section
-                Text(
-                    text = "About",
-                    style = MaterialTheme.typography.titleLarge
-                )
+            Spacer(modifier = Modifier.height(16.dp))
 
-                Spacer(modifier = Modifier.height(16.dp))
+            SettingsItem(
+                title = "Clear All Chat History",
+                description = "Delete all of your chat history. This action cannot be undone.",
+                icon = Icons.Default.Delete,
+                onClick = viewModel::showClearHistoryConfirmation,
+                enabled = !isClearingHistory
+            )
 
-                SettingsItem(
-                    title = "Version",
-                    description = "1.0.0",
-                    icon = Icons.Default.Info,
-                    onClick = {},
-                    enabled = false
-                )
-
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-                // Account section
-                Text(
-                    text = "Account",
-                    style = MaterialTheme.typography.titleLarge
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                SettingsItem(
-                    title = "Sign Out",
-                    description = "Sign out of your account",
-                    icon = Icons.Default.ExitToApp,
-                    onClick = viewModel::logout
-                )
+            if (isClearingHistory) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(8.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Clearing chat history...")
+                }
             }
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // About section
+            Text(
+                text = "About",
+                style = MaterialTheme.typography.titleLarge
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            SettingsItem(
+                title = "Version",
+                description = "1.0.0",
+                icon = Icons.Default.Info,
+                onClick = {},
+                enabled = false
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Account section
+            Text(
+                text = "Account",
+                style = MaterialTheme.typography.titleLarge
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            SettingsItem(
+                title = "Sign Out",
+                description = "Sign out of your account",
+                icon = Icons.Default.ExitToApp,
+                onClick = viewModel::logout
+            )
         }
     }
 }
