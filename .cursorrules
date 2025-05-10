@@ -1,0 +1,1 @@
+Please never run a Gradle build when working with this project. Please just change the project files. This is so that Android Studio does not get out of sync with the Gradle snapshots
