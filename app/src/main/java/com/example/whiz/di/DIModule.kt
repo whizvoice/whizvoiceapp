@@ -17,7 +17,13 @@ import okhttp3.OkHttpClient
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
+import com.example.whiz.data.api.ApiService
+import com.example.whiz.data.api.SupabaseApi
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
+import okhttp3.Interceptor
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -56,8 +62,19 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient {
+    fun provideOkHttpClient(authRepository: AuthRepository): OkHttpClient {
         return OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val originalRequest = chain.request()
+                // Get token synchronously within the interceptor
+                val token = runBlocking { authRepository.serverToken.value } // Use runBlocking carefully
+
+                val requestBuilder = originalRequest.newBuilder()
+                if (token != null) {
+                    requestBuilder.header("Authorization", "Bearer $token")
+                }
+                chain.proceed(requestBuilder.build())
+            })
             .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
             .connectTimeout(30, TimeUnit.SECONDS)
             .build()
@@ -82,5 +99,27 @@ object AppModule {
     @Singleton
     fun provideAuthApi(okHttpClient: OkHttpClient): AuthApi {
         return AuthApi(okHttpClient)
+    }
+
+    @Provides
+    @Singleton
+    fun provideApiService(okHttpClient: OkHttpClient): ApiService {
+        return Retrofit.Builder()
+            .baseUrl("https://whizvoice.com/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(ApiService::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
+        return Retrofit.Builder()
+            .baseUrl("https://whizvoice.com/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(SupabaseApi::class.java)
     }
 }

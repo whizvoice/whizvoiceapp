@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -36,13 +37,16 @@ class AuthViewModel @Inject constructor(
     val isLoading: StateFlow<Boolean> = _isLoading
     
     // Stream of authentication state
-    val isAuthenticated: StateFlow<Boolean> = authRepository.userProfile
-        .map { it != null }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = authRepository.isSignedIn()
-        )
+    val isAuthenticated: StateFlow<Boolean> = combine(
+        authRepository.userProfile,
+        authRepository.serverToken
+    ) { userProfile, serverToken ->
+        userProfile != null && !serverToken.isNullOrBlank()
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = false
+    )
     
     // Stream of user profile data
     val userProfile: StateFlow<UserProfile?> = authRepository.userProfile
@@ -81,12 +85,14 @@ class AuthViewModel @Inject constructor(
             if (idToken != null) {
                 Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
                 val result = authApi.authenticateWithGoogle(idToken)
+                Log.d(TAG, "Server /auth/google result: $result")
                 
                 if (result.isSuccess) {
                     val authResponse = result.getOrThrow()
                     Log.d(TAG, "Server authentication successful: ${authResponse.user.email}")
                     
                     // Save the server token
+                    Log.d(TAG, "Saving server token: ${authResponse.accessToken}")
                     authRepository.saveServerToken(authResponse.accessToken)
                 } else {
                     val exception = result.exceptionOrNull()
@@ -123,5 +129,20 @@ class AuthViewModel @Inject constructor(
     // Clear error
     fun clearError() {
         _errorState.value = null
+    }
+
+    init {
+        // Observe authentication state and set error if in half-logged-in state
+        viewModelScope.launch {
+            isAuthenticated.collect { authenticated ->
+                android.util.Log.d("AuthViewModel", "isAuthenticated changed: $authenticated")
+                if (!authenticated) {
+                    val account = authRepository.getLastSignedInGoogleAccount()
+                    if (account != null) {
+                        _errorState.value = "Your session is incomplete. Please log in again."
+                    }
+                }
+            }
+        }
     }
 } 

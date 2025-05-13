@@ -118,6 +118,27 @@ fun WhizNavHost(
             )
         }
 
+        // Settings Screen
+        composable(
+            route = Screen.Settings.route,
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                    animationSpec = tween(ANIMATION_DURATION)
+                )
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                    animationSpec = tween(ANIMATION_DURATION)
+                )
+            }
+        ) {
+            SettingsScreen(
+                navController = navController
+            )
+        }
+
         composable(
             route = "chat/{chatId}",
             arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
@@ -198,42 +219,6 @@ fun WhizNavHost(
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController
-            )
-        }
-
-        composable(
-            route = Screen.Settings.route,
-            enterTransition = {
-                slideIntoContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                    animationSpec = tween(ANIMATION_DURATION)
-                )
-            },
-            exitTransition = {
-                slideOutOfContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.End,
-                    animationSpec = tween(ANIMATION_DURATION)
-                )
-            },
-            popEnterTransition = {
-                slideIntoContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.End,
-                    animationSpec = tween(ANIMATION_DURATION)
-                )
-            },
-            popExitTransition = {
-                slideOutOfContainer(
-                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                    animationSpec = tween(ANIMATION_DURATION)
-                )
-            }
-        ) {
-            SettingsScreen(
-                onBackClick = {
-                    navController.navigateUp()
-                },
-                hasPermission = hasPermission,
-                onRequestPermission = onRequestPermission
             )
         }
     }

@@ -19,6 +19,7 @@ import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.navigation.WhizNavHost
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.ui.settings.SettingsActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 

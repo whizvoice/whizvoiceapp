@@ -1,397 +1,309 @@
 package com.example.whiz.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavController
+import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
+import kotlinx.coroutines.launch
+import android.util.Log
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBackClick: () -> Unit,
-    hasPermission: Boolean = false,
-    onRequestPermission: () -> Unit = {},
+    navController: NavController,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    val isClearingHistory by viewModel.isClearingHistory.collectAsState()
-    val showClearConfirmation by viewModel.showClearConfirmation.collectAsState()
-    var showPermissionDialog by remember { mutableStateOf(false) }
-    
-    // API Token states
-    var claudeToken by remember { mutableStateOf("") }
-    var asanaToken by remember { mutableStateOf("") }
-    var showClaudeToken by remember { mutableStateOf(false) }
-    var showAsanaToken by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val errorMessage by viewModel.errorMessage.collectAsState()
 
-    // Collect token states
-    val hasClaudeToken by viewModel.userPreferences.hasClaudeToken.collectAsState()
-    val hasAsanaToken by viewModel.userPreferences.hasAsanaToken.collectAsState()
+    // States from ViewModel
+    val hasClaudeToken by viewModel.hasClaudeToken.collectAsState()
+    val hasAsanaToken by viewModel.hasAsanaToken.collectAsState()
+    val isSavingClaude by viewModel.isSavingClaude.collectAsState()
+    val isSavingAsana by viewModel.isSavingAsana.collectAsState()
 
-    // Show confirmation dialog if needed
-    if (showClearConfirmation) {
-        ClearHistoryConfirmationDialog(
-            onConfirm = viewModel::clearAllChatHistory,
-            onDismiss = viewModel::dismissClearHistoryConfirmation
-        )
-    }
-    
-    // Show permission dialog if requested
-    if (showPermissionDialog) {
-        AlertDialog(
-            onDismissRequest = { showPermissionDialog = false },
-            title = { Text("Microphone Permission") },
-            text = { Text("Whiz requires continuous microphone access to function as a voice assistant. The app needs this permission to respond to your voice commands. Would you like to grant microphone permission?") },
-            confirmButton = {
-                Button(onClick = {
-                    showPermissionDialog = false
-                    onRequestPermission()
-                }) {
-                    Text("Grant Permission")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPermissionDialog = false }) {
-                    Text("Cancel")
-                }
-            },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Mic,
-                    contentDescription = null
+    // Input states
+    var claudeTokenInput by rememberSaveable { mutableStateOf("") }
+    var asanaTokenInput by rememberSaveable { mutableStateOf("") }
+
+    // Effect to show Snackbar messages as one-time events
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { message ->
+            launch { // Launch coroutine for Snackbar
+                snackbarHostState.showSnackbar(
+                    message = message,
+                    duration = SnackbarDuration.Long // Use Long for important messages
                 )
+                viewModel.clearErrorMessage() // Consume the message
             }
-        )
+        }
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Back"
-                        )
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                }
             )
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp)
-        ) {
-            // API Settings section
-            Text(
-                text = "API Settings",
-                style = MaterialTheme.typography.titleLarge
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Claude API Token
-            OutlinedTextField(
-                value = claudeToken,
-                onValueChange = { claudeToken = it },
-                label = { Text("Claude API Token") },
-                visualTransformation = if (showClaudeToken) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { showClaudeToken = !showClaudeToken }) {
-                        Icon(
-                            imageVector = if (showClaudeToken) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (showClaudeToken) "Hide token" else "Show token"
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                supportingText = {
-                    Text(
-                        text = if (hasClaudeToken) "Token is set" else "No token set",
-                        color = if (hasClaudeToken) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.error
-                    )
-                }
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Asana Token
-            OutlinedTextField(
-                value = asanaToken,
-                onValueChange = { asanaToken = it },
-                label = { Text("Asana Access Token") },
-                visualTransformation = if (showAsanaToken) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { showAsanaToken = !showAsanaToken }) {
-                        Icon(
-                            imageVector = if (showAsanaToken) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (showAsanaToken) "Hide token" else "Show token"
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                supportingText = {
-                    Text(
-                        text = if (hasAsanaToken) "Token is set" else "No token set",
-                        color = if (hasAsanaToken) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.error
-                    )
-                }
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Button(
-                onClick = {
-                    if (claudeToken.isNotEmpty()) {
-                        viewModel.setClaudeToken(claudeToken)
-                    }
-                    if (asanaToken.isNotEmpty()) {
-                        viewModel.setAsanaToken(asanaToken)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Save API Settings")
-            }
-
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            // Permissions section
-            Text(
-                text = "Permissions",
-                style = MaterialTheme.typography.titleLarge
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            SettingsItem(
-                title = "Microphone Access",
-                description = if (hasPermission) "Granted - Voice chat is enabled" else "Not granted - Voice chat is disabled",
-                icon = if (hasPermission) Icons.Default.Mic else Icons.Default.MicOff,
-                onClick = { 
-                    if (!hasPermission) {
-                        showPermissionDialog = true
-                    }
-                }
-            )
-            
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            // History section
-            Text(
-                text = "Chat History",
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SettingsItem(
-                title = "Clear All Chat History",
-                description = "Delete all of your chat history. This action cannot be undone.",
-                icon = Icons.Default.Delete,
-                onClick = viewModel::showClearHistoryConfirmation,
-                enabled = !isClearingHistory
-            )
-
-            if (isClearingHistory) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(8.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Clearing chat history...")
-                }
-            }
-
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            // About section
-            Text(
-                text = "About",
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SettingsItem(
-                title = "Version",
-                description = "1.0.0",
-                icon = Icons.Default.Info,
-                onClick = {},
-                enabled = false
-            )
-
-            Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-            // Account section
-            Text(
-                text = "Account",
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SettingsItem(
-                title = "Sign Out",
-                description = "Sign out of your account",
-                icon = Icons.Default.ExitToApp,
-                onClick = viewModel::logout
-            )
-        }
-    }
-}
-
-@Composable
-fun SettingsItem(
-    title: String,
-    description: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-    enabled: Boolean = true
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        onClick = onClick,
-        enabled = enabled,
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary.copy(
-                    alpha = if (enabled) 1f else 0.5f
-                )
+
+            // Claude API Key Section
+            Text("API Keys", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(thickness = Dp.Hairline)
+
+            TokenInputSection(
+                title = "Claude API Key",
+                hasToken = hasClaudeToken,
+                isBusy = isSavingClaude,
+                inputValue = claudeTokenInput,
+                onInputChange = { claudeTokenInput = it },
+                onSaveClick = { viewModel.saveClaudeToken(claudeTokenInput) },
+                onClearClick = { viewModel.saveClaudeToken("") }
             )
 
-            Spacer(modifier = Modifier.width(16.dp))
+            // Asana Access Token Section
+            TokenInputSection(
+                title = "Asana Access Token",
+                hasToken = hasAsanaToken,
+                isBusy = isSavingAsana,
+                inputValue = asanaTokenInput,
+                onInputChange = { asanaTokenInput = it },
+                onSaveClick = { viewModel.saveAsanaToken(asanaTokenInput) },
+                onClearClick = { viewModel.saveAsanaToken("") }
+            )
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(
-                        alpha = if (enabled) 1f else 0.5f
-                    )
-                )
+            Spacer(modifier = Modifier.weight(1f)) // Push logout to bottom
 
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                        alpha = if (enabled) 1f else 0.5f
-                    )
-                )
+            // Logout Section
+            HorizontalDivider(thickness = Dp.Hairline)
+            Button(
+                onClick = { viewModel.logout() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Logout")
             }
         }
     }
 }
 
 @Composable
-fun ClearHistoryConfirmationDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+fun TokenInputSection(
+    title: String,
+    hasToken: Boolean?, // Nullable for loading state
+    isBusy: Boolean,    // Renamed from isSaving, true if VM is working on this token
+    inputValue: String,
+    onInputChange: (String) -> Unit,
+    onSaveClick: () -> Unit,
+    onClearClick: () -> Unit // New parameter for clear action
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Clear All Chat History") },
-        text = {
-            Text(
-                "This will permanently delete all your chat history. This action cannot be undone."
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm
-            ) {
-                Text("Clear History")
+    var editMode by rememberSaveable(hasToken) {
+        val initialEditMode = hasToken == false
+        Log.d("TokenInputSection", "[$title] Initializing editMode. hasToken: $hasToken, initialEditMode: $initialEditMode")
+        mutableStateOf(initialEditMode)
+    }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+
+    // Local states to track which button click initiated the busy state
+    var saveOperationInitiated by remember { mutableStateOf(false) }
+    var clearOperationInitiated by remember { mutableStateOf(false) }
+
+    Log.d("TokenInputSection", "[$title] Recomposing. hasToken: $hasToken, isBusy: $isBusy, editMode: $editMode, inputValue: '$inputValue', saveOpInit: $saveOperationInitiated, clearOpInit: $clearOperationInitiated")
+
+    var previousIsBusy by remember { mutableStateOf(isBusy) } // Track previous busy state
+
+    // Reset local operation trackers when isBusy becomes false
+    // Also, handle UI changes post-operation
+    LaunchedEffect(isBusy, previousIsBusy, saveOperationInitiated, clearOperationInitiated, inputValue, hasToken) {
+        Log.d("TokenInputSection", "[$title] LaunchedEffect(isBusy Triggered). isBusy: $isBusy, previousIsBusy: $previousIsBusy, saveOpInit: $saveOperationInitiated, clearOpInit: $clearOperationInitiated, hasToken: $hasToken")
+        if (previousIsBusy && !isBusy) { // Operation just finished
+            if (saveOperationInitiated) {
+                Log.d("TokenInputSection", "[$title] Save operation finished. inputValue: '$inputValue'")
+                // If a non-blank token was saved, we want to exit edit mode.
+                // The hasToken check ensures we don't prematurely exit editMode if the token status is still false/null after a failed save.
+                if (inputValue.isNotBlank() && hasToken == true) {
+                    Log.d("TokenInputSection", "[$title] Save successful for non-blank token and hasToken is true. Setting editMode = false.")
+                    editMode = false
+                }
+                saveOperationInitiated = false
             }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss
-            ) {
-                Text("Cancel")
+            if (clearOperationInitiated) {
+                Log.d("TokenInputSection", "[$title] Clear operation finished.")
+                // If a clear operation results in hasToken being false, editMode will be set by rememberSaveable.
+                // If hasToken is still true (e.g. clear failed), editMode remains as is (likely true if user clicked 'Clear' from 'Token is set' view's editMode).
+                // However, 'Clear' button is only available when !editMode and hasToken == true.
+                // Clicking 'Clear' sets clearOperationInitiated=true, calls onClearClick (which saves blank token).
+                // Then hasToken should become false, and rememberSaveable(hasToken) will set editMode=true.
+                clearOperationInitiated = false
             }
-        },
-        icon = {
-            Icon(
-                imageVector = Icons.Default.Delete,
-                contentDescription = null
-            )
         }
-    )
+        if (previousIsBusy != isBusy) { // Update previousIsBusy only when isBusy actually changes
+            previousIsBusy = isBusy
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.heightIn(min = 56.dp)
+        ) { // Ensure consistent height
+            when (hasToken) {
+                null -> { // Loading state
+                    Log.d("TokenInputSection", "[$title] State: hasToken is null (Loading)")
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Checking status...", style = MaterialTheme.typography.bodyMedium)
+                }
+                true -> { // Token is set
+                    Log.d("TokenInputSection", "[$title] State: hasToken is true. editMode: $editMode")
+                    if (!editMode) {
+                        Log.d("TokenInputSection", "[$title] Displaying: Token is set (not in editMode)")
+                        Icon(Icons.Default.CheckCircle, contentDescription = "Token set", tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { onInputChange(""); editMode = true },
+                            enabled = !isBusy
+                        ) {
+                            Text("Change")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { clearOperationInitiated = true; onClearClick() },
+                            enabled = !isBusy,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                        ) {
+                            if (isBusy && clearOperationInitiated) {
+                                Log.d("TokenInputSection", "[$title] Displaying: Clear button (busy)")
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            } else {
+                                Log.d("TokenInputSection", "[$title] Displaying: Clear button (idle)")
+                                Text("Clear")
+                            }
+                        }
+                    } else {
+                        Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
+                        // In edit mode for an existing token (user clicked "Change")
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                modifier = Modifier.fillMaxWidth(),
+                                value = inputValue,
+                                onValueChange = onInputChange,
+                                label = { Text("Enter new $title") },
+                                singleLine = true,
+                                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                enabled = !isBusy,
+                                trailingIcon = {
+                                    val image = if (passwordVisible)
+                                        Icons.Filled.Visibility
+                                    else Icons.Filled.VisibilityOff
+                                    val description = if (passwordVisible) "Hide password" else "Show password"
+                                    IconButton(onClick = { passwordVisible = !passwordVisible }){
+                                        Icon(imageVector  = image, description)
+                                    }
+                                }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                Button(
+                                    onClick = { editMode = false }, // Cancel edit mode
+                                    enabled = !isBusy,
+                                    colors = ButtonDefaults.outlinedButtonColors()
+
+                                ) {
+                                    Text("Cancel")
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = { saveOperationInitiated = true; onSaveClick() },
+                                    enabled = !isBusy && inputValue.isNotBlank()
+                                ) {
+                                    if (isBusy && saveOperationInitiated) {
+                                        Log.d("TokenInputSection", "[$title] Displaying: Save button (busy, in editMode for existing token)")
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Log.d("TokenInputSection", "[$title] Displaying: Save button (idle, in editMode for existing token)")
+                                        Text("Save $title")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                false -> { // Token not set - Show input form (editMode will be true here)
+                    Log.d("TokenInputSection", "[$title] State: hasToken is false. editMode: $editMode (should be true)")
+                    Column(modifier = Modifier.fillMaxWidth()) { // Make column take full width for alignment
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = inputValue,
+                            onValueChange = onInputChange,
+                            label = { Text("Enter $title") },
+                            singleLine = true,
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            enabled = !isBusy,
+                            trailingIcon = {
+                                val image = if (passwordVisible)
+                                    Icons.Filled.Visibility
+                                else Icons.Filled.VisibilityOff
+                                val description = if (passwordVisible) "Hide token" else "Show token"
+                                IconButton(onClick = { passwordVisible = !passwordVisible }){
+                                    Icon(imageVector  = image, description)
+                                }
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { saveOperationInitiated = true; onSaveClick() },
+                            enabled = !isBusy && inputValue.isNotBlank(),
+                            modifier = Modifier.align(Alignment.End) // Align button to the right
+                        ) {
+                            if (isBusy && saveOperationInitiated) {
+                                Log.d("TokenInputSection", "[$title] Displaying: Save button (busy, token not set)")
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Log.d("TokenInputSection", "[$title] Displaying: Save button (idle, token not set)")
+                                Text("Save $title")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

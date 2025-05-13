@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,8 +29,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -51,17 +54,18 @@ fun LoginScreen(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val userProfile by authViewModel.userProfile.collectAsState()
-    var isLoading by remember { mutableStateOf(false) }
+    val isLoading by authViewModel.isLoading.collectAsState()
     var debugInfo by remember { mutableStateOf("") }
+    val errorState by authViewModel.errorState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     
     // Set up the launcher for Google Sign-In
     val signInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        isLoading = false
         if (result.resultCode == Activity.RESULT_OK) {
             Log.d("LoginScreen", "Sign in successful, processing result")
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
@@ -124,52 +128,63 @@ fun LoginScreen(
             }
         }
     }
-    
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // App Logo/Icon
-        Image(
-            painter = painterResource(id = R.drawable.ic_launcher_foreground), // Update with your logo
-            contentDescription = "App Logo",
-            modifier = Modifier.size(120.dp)
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Text(
-            text = "Welcome to WhizVoice",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = "Sign in to continue",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        
-        Spacer(modifier = Modifier.height(48.dp))
-        
-        if (isLoading) {
+
+    // Show error message in a Snackbar if present
+    LaunchedEffect(errorState) {
+        errorState?.let { errorMsg ->
+            snackbarHostState.showSnackbar(errorMsg)
+            authViewModel.clearError()
+        }
+    }
+
+    if (isLoading) {
+        // Show loading indicator while authentication is in progress
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
-        } else {
+        }
+        return
+    }
+    if (!isAuthenticated) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // App Logo/Icon
+            Image(
+                painter = painterResource(id = R.drawable.ic_launcher_foreground), // Update with your logo
+                contentDescription = "App Logo",
+                modifier = Modifier.size(120.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Text(
+                text = "Welcome to WhizVoice",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "Sign in to continue",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Spacer(modifier = Modifier.height(48.dp))
+            
             Button(
                 onClick = {
-                    isLoading = true
                     try {
                         val signInIntent = authViewModel.getSignInIntent()
                         Log.d("LoginScreen", "Launching sign-in intent")
                         signInLauncher.launch(signInIntent)
                     } catch (e: Exception) {
                         Log.e("LoginScreen", "Error launching sign-in", e)
-                        isLoading = false
                     }
                 },
                 modifier = Modifier

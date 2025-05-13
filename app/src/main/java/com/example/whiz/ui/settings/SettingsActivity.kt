@@ -6,9 +6,12 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.example.whiz.R
 import com.example.whiz.data.preferences.UserPreferences
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -35,7 +38,7 @@ class SettingsActivity : AppCompatActivity() {
         asanaTokenStatus = findViewById(R.id.asanaTokenStatus)
         
         // Load current tokens
-        loadTokens()
+        initializeTokenDisplay()
         
         // Set up save button
         saveButton.setOnClickListener {
@@ -43,32 +46,40 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
     
-    private fun loadTokens() {
-        // Check if tokens exist and update UI accordingly
-        val hasClaudeToken = userPreferences.hasClaudeToken()
-        val hasAsanaToken = userPreferences.hasAsanaToken()
-        
-        claudeTokenStatus.text = if (hasClaudeToken) "Token is set" else "No token set"
-        asanaTokenStatus.text = if (hasAsanaToken) "Token is set" else "No token set"
-        
-        // Don't show the actual tokens for security
-        claudeTokenInput.hint = if (hasClaudeToken) "Token is set" else "Enter Claude API token"
-        asanaTokenInput.hint = if (hasAsanaToken) "Token is set" else "Enter Asana access token"
+    private fun initializeTokenDisplay() {
+        lifecycleScope.launch {
+            userPreferences.initializeTokenStatus() // Initialize first
+
+            // Collect token states
+            userPreferences.hasClaudeToken.collectLatest { hasClaudeToken ->
+                val isSet = hasClaudeToken ?: false // Handle null
+                claudeTokenStatus.text = if (isSet) "Token is set" else "No token set"
+                claudeTokenInput.hint = if (isSet) "Update Claude token (optional)" else "Enter Claude API token"
+            }
+
+            userPreferences.hasAsanaToken.collectLatest { hasAsanaToken ->
+                val isSet = hasAsanaToken ?: false // Handle null
+                asanaTokenStatus.text = if (isSet) "Token is set" else "No token set"
+                asanaTokenInput.hint = if (isSet) "Update Asana token (optional)" else "Enter Asana access token"
+            }
+        }
     }
     
     private fun saveTokens() {
-        val claudeToken = claudeTokenInput.text.toString()
-        val asanaToken = asanaTokenInput.text.toString()
-        
-        if (claudeToken.isNotEmpty()) {
-            userPreferences.setClaudeToken(claudeToken)
+        lifecycleScope.launch {
+            val claudeToken = claudeTokenInput.text.toString()
+            val asanaToken = asanaTokenInput.text.toString()
+            
+            if (claudeToken.isNotEmpty()) {
+                userPreferences.setClaudeToken(claudeToken)
+            }
+            
+            if (asanaToken.isNotEmpty()) {
+                userPreferences.setAsanaToken(asanaToken)
+            }
+            
+            Toast.makeText(this@SettingsActivity, "Settings saved", Toast.LENGTH_SHORT).show()
+            initializeTokenDisplay() // Refresh using the new function
         }
-        
-        if (asanaToken.isNotEmpty()) {
-            userPreferences.setAsanaToken(asanaToken)
-        }
-        
-        Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
-        loadTokens() // Refresh the UI
     }
 } 

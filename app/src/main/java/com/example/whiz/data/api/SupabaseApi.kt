@@ -1,6 +1,8 @@
 package com.example.whiz.data.api
 
-import retrofit2.http.*
+import retrofit2.http.GET
+import retrofit2.http.POST
+import retrofit2.http.Query
 
 interface SupabaseApi {
     @GET("user_preferences")

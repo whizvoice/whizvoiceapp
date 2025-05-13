@@ -3,6 +3,7 @@ package com.example.whiz.data.api
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import android.util.Log
 
 interface ApiService {
     data class TokenUpdateRequest(
@@ -15,9 +16,9 @@ interface ApiService {
         val has_asana_token: Boolean
     )
 
-    @GET("api/preferences/tokens")
+    @GET("/api/preferences/tokens")
     suspend fun getApiTokens(): TokenResponse
 
-    @POST("api/preferences/tokens")
+    @POST("/api/preferences/tokens")
     suspend fun updateApiTokens(@Body request: TokenUpdateRequest): Map<String, String>
 } 

@@ -522,6 +522,8 @@ EOF
     # Check if build started
     build_status=$(osascript <<EOF
 set buildRunning to false
+set foundStatusBar to false
+set checkedText to ""
 try
     tell application "System Events"
         if exists (process "Android Studio") then
@@ -531,21 +533,49 @@ try
                     try
                         set groupsList to groups of w
                         repeat with g in groupsList
-                            if description of g is "Status Bar" then
+                            -- Try to identify the Status Bar group by description or name
+                            set groupDesc to ""
+                            try
+                                set groupDesc to description of g
+                            end try
+                            set groupName to ""
+                            try
+                                set groupName to name of g
+                            end try
+
+                            if groupDesc is "Status Bar" or groupName is "Status Bar" then
+                                set foundStatusBar to true
+                                -- log "[BUILD_CHECK] Found Status Bar in window: " & (name of w as text) & " (Description: '" & groupDesc & "', Name: '" & groupName & "')"
                                 set staticTexts to static texts of g
                                 repeat with t in staticTexts
-                                    if value of t contains "Gradle Build Running" then
-                                        set buildRunning to true
-                                    end if
+                                    try
+                                        set currentTextValue to value of t
+                                        set checkedText to checkedText & "|'" & currentTextValue & "'"
+                                        -- log "[BUILD_CHECK] Checking text: '" & currentTextValue & "'"
+                                        if currentTextValue contains "Gradle Build Running" then
+                                            -- log "[BUILD_CHECK] Match found: 'Gradle Build Running'"
+                                            set buildRunning to true
+                                            exit repeat -- Exit staticTexts loop
+                                        end if
+                                    on error errMsgValue
+                                        -- log "[BUILD_CHECK][ERROR] Error getting value of static text: " & errMsgValue
+                                    end try
                                 end repeat
+                                if buildRunning then exit repeat -- Exit groupsList loop
                             end if
                         end repeat
+                        if buildRunning then exit repeat -- Exit winList loop
                     end try
                 end repeat
             end tell
+        else
+            -- log "[BUILD_CHECK] Android Studio process not found."
         end if
     end tell
+on error errMsg
+    -- log "[BUILD_CHECK][ERROR] AppleScript error: " & errMsg
 end try
+-- log "[BUILD_CHECK] Final buildRunning status: " & buildRunning & ", Found Status Bar: " & foundStatusBar & ", Checked Texts: " & checkedText
 return buildRunning
 EOF
 )

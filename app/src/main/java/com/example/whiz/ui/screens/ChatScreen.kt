@@ -48,6 +48,7 @@ import com.example.whiz.permissions.MicrophonePermissionHandler
 import com.example.whiz.permissions.PermissionHandler
 import androidx.navigation.NavController
 import com.example.whiz.ui.navigation.Screen // Update this import
+import com.example.whiz.ui.viewmodels.AuthViewModel
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,6 +61,10 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
     navController: NavController
 ) {
+    val authViewModel: AuthViewModel = hiltViewModel()
+    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+    android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
+
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
@@ -70,7 +75,9 @@ fun ChatScreen(
     val speechError by viewModel.speechError.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
-    val connectionError by viewModel.connectionError.collectAsState()
+    val connectionError by viewModel.connectionError.collectAsState() // General connection errors
+    val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
+    val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
 
     // UI State
     val listState = rememberLazyListState()
@@ -149,19 +156,31 @@ fun ChatScreen(
         }
     }
 
-    // Handle connection errors
+    // Handle connection errors (now only for generic errors shown in Snackbar)
     LaunchedEffect(connectionError) {
         if (connectionError != null) {
+            // Show a snackbar for generic connection errors
             snackbarHostState.showSnackbar(
-                message = connectionError ?: "Connection error",
+                message = connectionError ?: "A connection error occurred",
                 duration = SnackbarDuration.Short
             )
-            // If it's an authentication error, navigate to login
-            if (connectionError?.contains("Authentication failed") == true) {
-                navController.navigate("login") {
-                    popUpTo("home") { inclusive = true }
-                }
+            // The ViewModel should clear this error once shown, or it might reappear on recomposition.
+            // Consider adding a viewModel.clearConnectionError() method if needed.
+        }
+    }
+
+    // Function to navigate to Settings
+    fun navigateToSettings(navController: NavController) {
+        navController.navigate(Screen.Settings.route)
+    }
+
+    // Navigate to Login if required
+    LaunchedEffect(navigateToLogin) {
+        if (navigateToLogin) {
+            navController.navigate(Screen.Login.route) {
+                popUpTo(Screen.Home.route) { inclusive = true } // Or your preferred popUpTo logic
             }
+            viewModel.onLoginNavigationComplete() // Reset the state
         }
     }
 
@@ -234,6 +253,44 @@ fun ChatScreen(
                 TypingIndicator()
             }
         }
+    }
+
+    // Show Auth Error Dialog (handles API key issues and other non-login auth errors)
+    if (authErrorMessage != null) {
+        val actualAuthErrorMessage = authErrorMessage!! // Or authErrorMessage.value if its type is State<String?>
+        val dialogTitle = if (actualAuthErrorMessage.contains("API key", ignoreCase = true)) {
+            "API Key Issue"
+        } else {
+            "Authentication Error"
+        }
+        AlertDialog(
+            onDismissRequest = { /* Don't allow dismissal for API key issues, 
+                                 could allow for general auth errors if needed */
+                            if (!dialogTitle.contains("API Key")) viewModel.clearAuthErrorDialog()
+                           },
+            title = { Text(dialogTitle) },
+            text = { Text(actualAuthErrorMessage ?: "An unknown authentication error occurred.") },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.clearAuthErrorDialog()
+                    navigateToSettings(navController)
+                }) {
+                    Text("Go to Settings")
+                }
+            },
+            dismissButton = {
+                // Optional: Provide a way to dismiss if appropriate, e.g., for general auth errors
+                if (actualAuthErrorMessage.contains("log in again")) { // Check against the actual value
+                    Button(onClick = {
+                         viewModel.clearAuthErrorDialog()
+                         // Optionally navigate to login
+                         // navController.navigate("login") { ... }
+                    }) {
+                        Text("Dismiss") // Or "Login"
+                    }
+                }
+            }
+        )
     }
 }
 

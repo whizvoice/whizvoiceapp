@@ -9,8 +9,6 @@ import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +33,7 @@ private object AuthConfig {
     const val GOOGLE_CLIENT_ID = "REDACTED_GOOGLE_CLIENT_ID"
     
     // Web client ID for server authentication
-    const val WEB_CLIENT_ID = "REDACTED_WEB_CLIENT_ID" // Replace with your actual web client ID
+    const val WEB_CLIENT_ID = "REDACTED_WEB_CLIENT_ID"
 }
 
 data class UserProfile(
@@ -67,11 +65,7 @@ class AuthRepository @Inject constructor(
                 .requestIdToken(AuthConfig.WEB_CLIENT_ID)
                 .build()
             
-            GoogleSignIn.getClient(context, gso).also {
-                // Check if there's a previously signed in account
-                val lastAccount = GoogleSignIn.getLastSignedInAccount(context)
-                Log.d(TAG, "Previously signed in account: ${lastAccount?.email ?: "none"}")
-            }
+            GoogleSignIn.getClient(context, gso)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating GoogleSignInClient", e)
             throw e
@@ -82,29 +76,31 @@ class AuthRepository @Inject constructor(
     private val _userProfileFlow = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfileFlow
     
+    // Private flow to update when preferences change
+    private val _serverTokenFlow = MutableStateFlow<String?>(null)
+    val serverToken: StateFlow<String?> = _serverTokenFlow
+    
     init {
         // Load the initial user profile
         refreshUserProfile()
-        
-        // Check if there's a previously signed in account
-        val lastAccount = GoogleSignIn.getLastSignedInAccount(context)
-        val serverToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
-        Log.d(TAG, "Initial auth state check: Google account=${lastAccount != null}, Server token=${serverToken != null}")
-        
-        if (lastAccount == null || serverToken == null) {
-            // Clear any stale data if not fully authenticated
-            GlobalScope.launch {
-                signOut()
-            }
-        }
+        // Load the initial server token
+        _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
     }
     
     // Check if user is signed in
     fun isSignedIn(): Boolean {
         val account = GoogleSignIn.getLastSignedInAccount(context)
         val serverToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
-        Log.d(TAG, "Checking sign-in state: Google account=${account != null}, Server token=${serverToken != null}")
-        return account != null && serverToken != null
+        val userId = sharedPreferences.getString(PreferenceKeys.USER_ID, null)
+        
+        Log.d(TAG, "Checking sign-in state: Google account=${account != null}, Server token=${serverToken != null}, User ID=${userId != null}")
+        
+        if (account != null && serverToken == null) {
+            Log.w(TAG, "Google account present but server token is missing. User is in a half-logged-in state.")
+        }
+        
+        // Only consider signed in if we have all required data
+        return account != null && serverToken != null && userId != null
     }
     
     // Get Google Sign-In Client for sign-in intent
@@ -145,22 +141,19 @@ class AuthRepository @Inject constructor(
     // Save the server-issued JWT token
     suspend fun saveServerToken(token: String) {
         withContext(Dispatchers.IO) {
+            Log.d(TAG, "Saving server token to preferences: $token")
             sharedPreferences.edit()
                 .putString(PreferenceKeys.SERVER_TOKEN, token)
                 .apply()
-            
             Log.d(TAG, "Server token saved to preferences")
+            _serverTokenFlow.value = token
+            Log.d(TAG, "_serverTokenFlow updated: ${_serverTokenFlow.value}")
         }
     }
     
     // Get the Google authentication token
     val authToken: Flow<String?> = flow {
         emit(sharedPreferences.getString(PreferenceKeys.AUTH_TOKEN, null))
-    }
-    
-    // Get the server-issued JWT token
-    val serverToken: Flow<String?> = flow {
-        emit(sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null))
     }
     
     // Refresh the user profile data from SharedPreferences
@@ -181,24 +174,35 @@ class AuthRepository @Inject constructor(
     
     // Sign out the user
     suspend fun signOut() {
-        googleSignInClient.signOut()
-        
-        // Clear stored preferences
         withContext(Dispatchers.IO) {
-            sharedPreferences.edit().apply {
-                remove(PreferenceKeys.AUTH_TOKEN)
-                remove(PreferenceKeys.SERVER_TOKEN)
-                remove(PreferenceKeys.USER_ID)
-                remove(PreferenceKeys.USER_NAME)
-                remove(PreferenceKeys.USER_EMAIL)
-                remove(PreferenceKeys.USER_PHOTO_URL)
-                apply()
+            try {
+                // First clear stored preferences
+                sharedPreferences.edit().apply {
+                    remove(PreferenceKeys.AUTH_TOKEN)
+                    remove(PreferenceKeys.SERVER_TOKEN)
+                    remove(PreferenceKeys.USER_ID)
+                    remove(PreferenceKeys.USER_NAME)
+                    remove(PreferenceKeys.USER_EMAIL)
+                    remove(PreferenceKeys.USER_PHOTO_URL)
+                    apply()
+                }
+                
+                // Update the flow
+                refreshUserProfile()
+                
+                // Then sign out from Google
+                googleSignInClient.signOut()
+                
+                Log.d(TAG, "User signed out and preferences cleared")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during sign out", e)
+                throw e
             }
-            
-            // Update the flow
-            refreshUserProfile()
-            
-            Log.d(TAG, "User signed out and preferences cleared")
         }
+    }
+    
+    // Expose last signed-in Google account
+    fun getLastSignedInGoogleAccount(): GoogleSignInAccount? {
+        return GoogleSignIn.getLastSignedInAccount(context)
     }
 } 

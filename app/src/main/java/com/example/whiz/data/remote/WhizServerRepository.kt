@@ -5,15 +5,13 @@ import com.example.whiz.data.auth.AuthRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -25,6 +23,7 @@ import javax.inject.Singleton
 sealed class WebSocketEvent {
     data class Message(val text: String) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
+    data class AuthError(val message: String) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
 }
@@ -52,21 +51,23 @@ class WhizServerRepository @Inject constructor(
         }
         
         try {
-            // Use runBlocking here to get the token synchronously before creating the WebSocket
-            // Prefer server token over Google token
-            val serverToken = runBlocking { authRepository.serverToken.firstOrNull() }
-            val authToken = runBlocking { authRepository.authToken.firstOrNull() }
+            // Only use server token, no fallback to Google token
+            val serverToken = runBlocking { 
+                withContext(Dispatchers.IO) {
+                    authRepository.serverToken.firstOrNull()
+                }
+            }
             
-            val tokenToUse = serverToken ?: authToken
+            if (serverToken == null) {
+                Log.w(TAG, "No server token available for WebSocket connection")
+                scope.launch { _webSocketEvents.emit(WebSocketEvent.Error(Exception("Authentication required. Please log in again."))) }
+                return
+            }
             
-            Log.d(TAG, "Attempting to connect to $WHIZ_SERVER_URL${if (tokenToUse != null) " with auth" else ""}")
+            Log.d(TAG, "Attempting to connect to $WHIZ_SERVER_URL with server token")
             
             val requestBuilder = Request.Builder().url(WHIZ_SERVER_URL)
-            
-            // Add authorization header if token exists
-            if (tokenToUse != null) {
-                requestBuilder.header("Authorization", "Bearer $tokenToUse")
-            }
+            requestBuilder.header("Authorization", "Bearer $serverToken")
             
             val request = requestBuilder.build()
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
@@ -82,7 +83,14 @@ class WhizServerRepository @Inject constructor(
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
                         Log.i(TAG, "WebSocket message received: $text")
-                        scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) }
+                        // Check for specific auth-related error messages from the backend
+                        if (text.contains("invalid x-api-key", ignoreCase = true) ||
+                            text.contains("Claude API key not found", ignoreCase = true)) {
+                            val userMessage = "Authentication error: Invalid or missing API key. Please check Settings."
+                            scope.launch { _webSocketEvents.emit(WebSocketEvent.AuthError(userMessage)) }
+                        } else {
+                            scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) }
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in onMessage", e)
                     }
@@ -111,7 +119,13 @@ class WhizServerRepository @Inject constructor(
                     try {
                         Log.e(TAG, "WebSocket connection failure", t)
                         this@WhizServerRepository.webSocket = null // Clear reference on failure
-                        scope.launch { _webSocketEvents.emit(WebSocketEvent.Error(t)) }
+                        // Check if the error is due to general authentication failure (e.g., bad server token)
+                        if (response?.code == 401 || t.message?.contains("Authentication failed", ignoreCase = true) == true) {
+                             val userMessage = "Authentication failed. Please log in again."
+                            scope.launch { _webSocketEvents.emit(WebSocketEvent.AuthError(userMessage)) }
+                        } else {
+                            scope.launch { _webSocketEvents.emit(WebSocketEvent.Error(t)) }
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in onFailure", e)
                     }
@@ -148,4 +162,4 @@ class WhizServerRepository @Inject constructor(
             Log.e(TAG, "Error disconnecting WebSocket", e)
         }
     }
-}
+} 
