@@ -40,6 +40,7 @@ class AuthApi @Inject constructor(
             Log.d(TAG, "Sending authentication request to $SERVER_URL/auth/google")    
             val response = okHttpClient.newCall(request).execute()
             val responseBody = response.body?.string()
+            Log.d(TAG, "Raw /auth/google response body: $responseBody")
             
             if (!response.isSuccessful || responseBody == null) {
                 Log.e(TAG, "Authentication failed with code: ${response.code}, message: ${response.message}")
@@ -67,14 +68,8 @@ class AuthApi @Inject constructor(
                     user = user
                 )
             )
-        } catch (e: JSONException) {
-            Log.e(TAG, "JSON parsing error during authentication", e)
-            return@withContext Result.failure(e)
-        } catch (e: IOException) {
-            Log.e(TAG, "Network error during authentication", e)
-            return@withContext Result.failure(e)
         } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error during authentication", e)
+            Log.e(TAG, "Exception during authenticateWithGoogle", e)
             return@withContext Result.failure(e)
         }
     }

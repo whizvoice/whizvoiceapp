@@ -1,8 +1,10 @@
 package com.example.whiz
 
 import android.Manifest
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.widget.Button
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,6 +19,7 @@ import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.navigation.WhizNavHost
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.ui.settings.SettingsActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -46,6 +49,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        // Add settings button
+        findViewById<Button>(R.id.settingsButton).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         
         // Check for microphone permission at startup
         checkMicrophonePermission()

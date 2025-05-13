@@ -71,6 +71,11 @@
             android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:label="Settings" />
+
     </application>
 
 </manifest>

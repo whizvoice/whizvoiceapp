@@ -112,6 +112,14 @@ class ChatViewModel @Inject constructor(
     private val _connectionError = MutableStateFlow<String?>(null)
     val connectionError = _connectionError.asStateFlow()
 
+    // Authentication error state for API keys
+    private val _showAuthErrorDialog = MutableStateFlow<String?>(null)
+    val showAuthErrorDialog = _showAuthErrorDialog.asStateFlow()
+
+    // State to trigger navigation to Login screen
+    private val _navigateToLogin = MutableStateFlow(false)
+    val navigateToLogin = _navigateToLogin.asStateFlow()
+
     init {
         // Check if the app already has microphone permission
         _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
@@ -139,16 +147,38 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.Closed -> {
                         _isConnectedToServer.value = false
                         _connectionError.value = "Connection closed. Please try again."
-                        // Sign out on any connection close to be safe
+                        // Attempt to reconnect instead of signing out
                         viewModelScope.launch {
-                            authRepository.signOut()
+                            try {
+                                whizServerRepository.connect()
+                            } catch (e: Exception) {
+                                Log.e("ChatViewModel", "Failed to reconnect", e)
+                            }
                         }
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
                         _connectionError.value = "Connection error: ${event.error.message}"
+                        _showAuthErrorDialog.value = null // Clear auth error if a general error occurs
+                    }
+                    is WebSocketEvent.AuthError -> { // Handle new AuthError event
+                        _isConnectedToServer.value = false // Typically auth errors mean connection is problematic
+                        if (event.message.contains("API key", ignoreCase = true)) {
+                            _showAuthErrorDialog.value = event.message
+                            _navigateToLogin.value = false // Ensure this is reset
+                        } else if (event.message.contains("log in again", ignoreCase = true)){
+                            _navigateToLogin.value = true
+                            _showAuthErrorDialog.value = null // Ensure this is reset
+                        } else {
+                            // For other/generic AuthErrors, show the dialog for now
+                            _showAuthErrorDialog.value = event.message
+                            _navigateToLogin.value = false
+                        }
+                        _connectionError.value = null // Clear general connection error
                     }
                     is WebSocketEvent.Message -> {
+                        _connectionError.value = null // Clear error on successful message
+                        _showAuthErrorDialog.value = null // Clear auth error on successful message
                         handleServerMessage(event.text)
                     }
                 }
@@ -493,5 +523,13 @@ class ChatViewModel @Inject constructor(
                 Log.e(TAG, "Error stopping speech recognition after permission denied", e)
             }
         }
+    }
+
+    fun clearAuthErrorDialog() {
+        _showAuthErrorDialog.value = null
+    }
+
+    fun onLoginNavigationComplete() { // Renamed for clarity
+        _navigateToLogin.value = false
     }
 }
