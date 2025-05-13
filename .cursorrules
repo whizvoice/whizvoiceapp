@@ -1,3 +1,112 @@
-Please never run a Gradle build when working with this project. Please just change the project files. This is so that Android Studio does not get out of sync with the Gradle snapshots
+this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
+Please never run a Gradle build when working with the Android app. Please just change the project files. This is so that Android Studio does not get out of sync with the Gradle snapshots
 Please also don't downgrade packages for no reason.
 Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./reset_android_studio.sh` to kick off the build in Android Studio so we can test the change right away.
+
+We use supabase for the database. Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
+
+function for adding encrypted preferences
+
+CREATE OR REPLACE FUNCTION insert_user_preferences(
+   p_user_id TEXT,
+   p_preferences JSONB,
+   p_encryption_key TEXT
+)
+RETURNS VOID AS $$
+DECLARE
+   encrypted_prefs BYTEA;
+BEGIN
+   -- Ensure the pgroonga extension is available if you were using it,
+   -- though it's not strictly needed for pgp_sym_encrypt.
+   -- CREATE EXTENSION IF NOT EXISTS pgroonga; -- (If needed for other things)
+   CREATE EXTENSION IF NOT EXISTS pgcrypto; -- Required for pgp_sym_encrypt
+
+
+   encrypted_prefs := pgp_sym_encrypt(p_preferences::TEXT, p_encryption_key);
+
+
+   INSERT INTO user_preferences (user_id, preferences, encrypted_preferences)
+   VALUES (p_user_id, p_preferences, encrypted_prefs)
+   ON CONFLICT (user_id) DO UPDATE SET
+       preferences = EXCLUDED.preferences,
+       encrypted_preferences = EXCLUDED.encrypted_preferences,
+       last_updated = CURRENT_TIMESTAMP;
+END;
+$$ LANGUAGE plpgsql;
+
+function for getting decrypted preferences
+
+CREATE OR REPLACE FUNCTION get_decrypted_preferences(
+   p_user_id TEXT,
+   p_encryption_key TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+   decrypted_prefs TEXT;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+   SELECT pgp_sym_decrypt(encrypted_preferences, p_encryption_key)
+   INTO decrypted_prefs
+   FROM user_preferences
+   WHERE user_id = p_user_id;
+
+
+   -- Returns the decrypted text (JSON string)
+   -- Returns NULL if no user row is found
+   -- Returns NULL or throws an error if decryption fails (e.g., wrong key, corrupted data)
+   RETURN decrypted_prefs;
+END;
+$$ LANGUAGE plpgsql;
+
+function for getting a specific key's value from decrypted preferences
+
+CREATE OR REPLACE FUNCTION get_decrypted_preference_key(
+   p_user_id TEXT,
+   p_encryption_key TEXT,
+   p_target_key TEXT  -- The key whose value you want to retrieve
+)
+RETURNS TEXT AS $$
+DECLARE
+   decrypted_json_text TEXT;
+   key_value TEXT;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+   -- Decrypt the entire preference object first
+   SELECT pgp_sym_decrypt(encrypted_preferences, p_encryption_key)
+   INTO decrypted_json_text
+   FROM user_preferences
+   WHERE user_id = p_user_id;
+
+
+   -- If decryption was successful and returned text...
+   IF decrypted_json_text IS NOT NULL THEN
+       BEGIN
+           -- Try to cast the decrypted text to jsonb
+           -- and then extract the specific key's value as text using ->>
+           SELECT (decrypted_json_text::jsonb) ->> p_target_key
+           INTO key_value;
+
+
+       EXCEPTION WHEN OTHERS THEN
+           -- Handle potential errors during casting (if not valid JSON)
+           -- or key extraction (if key doesn't exist).
+           -- Log warning is useful for debugging in Supabase logs.
+           RAISE WARNING 'Error processing decrypted JSON for user % key %: %', p_user_id, p_target_key, SQLERRM;
+           key_value := NULL; -- Return NULL if processing fails
+       END;
+   ELSE
+       -- No record found or initial decryption failed
+       key_value := NULL;
+   END IF;
+
+
+   RETURN key_value; -- Returns the value as TEXT, or NULL if not found/error
+END;
+$$ LANGUAGE plpgsql;
+
