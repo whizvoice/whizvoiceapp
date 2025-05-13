@@ -12,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -151,8 +150,8 @@ class AuthRepository @Inject constructor(
         }
     }
     
-    // Get the Google authentication token
-    val authToken: Flow<String?> = flow {
+    // Get the Google authentication token (can remain as is or also become a StateFlow if needed for reactivity)
+    val authToken: Flow<String?> = kotlinx.coroutines.flow.flow { // Explicitly use kotlinx.coroutines.flow.flow
         emit(sharedPreferences.getString(PreferenceKeys.AUTH_TOKEN, null))
     }
     

@@ -36,6 +36,10 @@ class AuthViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
     
+    // Navigation trigger
+    private val _navigateToHome = MutableStateFlow(false)
+    val navigateToHome: StateFlow<Boolean> = _navigateToHome
+    
     // Stream of authentication state
     val isAuthenticated: StateFlow<Boolean> = combine(
         authRepository.userProfile,
@@ -64,10 +68,10 @@ class AuthViewModel @Inject constructor(
         return authRepository.createSignInIntent()
     }
     
-    // Process sign-in result with server authentication
-    suspend fun processSignInResult(account: GoogleSignInAccount?) {
+    // New function for UI to call, launches process in viewModelScope
+    fun initiateSignInProcessing(account: GoogleSignInAccount?) {
         if (account == null) {
-            Log.e(TAG, "Sign in failed: Could not get account")
+            Log.e(TAG, "Sign in failed: Could not get account from UI trigger")
             _errorState.value = "Sign in failed: Could not get account"
             return
         }
