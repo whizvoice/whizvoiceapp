@@ -57,6 +57,7 @@ fun LoginScreen(
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     val userProfile by authViewModel.userProfile.collectAsState()
     val isLoading by authViewModel.isLoading.collectAsState()
+    val navigateToHome by authViewModel.navigateToHome.collectAsState()
     var debugInfo by remember { mutableStateOf("") }
     val errorState by authViewModel.errorState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -101,7 +102,7 @@ fun LoginScreen(
                 }
             }
             // User canceled sign-in flow or it failed for another reason
-            isLoading = false
+            authViewModel.cancelSignInAttempt()
         }
     }
 

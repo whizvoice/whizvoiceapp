@@ -20,6 +20,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
+import com.example.whiz.ui.navigation.Screen
 import kotlinx.coroutines.launch
 import android.util.Log
 
@@ -27,11 +28,13 @@ import android.util.Log
 @Composable
 fun SettingsScreen(
     navController: NavController,
-    viewModel: SettingsViewModel = hiltViewModel()
+    viewModel: SettingsViewModel = hiltViewModel(),
+    focusSection: String? = null
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val navigateToLogin by viewModel.navigateToLogin.collectAsState()
 
     // States from ViewModel
     val hasClaudeToken by viewModel.hasClaudeToken.collectAsState()
@@ -42,6 +45,19 @@ fun SettingsScreen(
     // Input states
     var claudeTokenInput by rememberSaveable { mutableStateOf("") }
     var asanaTokenInput by rememberSaveable { mutableStateOf("") }
+
+    // Navigate to Login if required
+    LaunchedEffect(navigateToLogin) {
+        if (navigateToLogin) {
+            Log.d("SettingsScreen", "navigateToLogin triggered, navigating to Login screen.")
+            navController.navigate(Screen.Login.route) {
+                // Clear back stack up to Home or another appropriate root to prevent going back to Settings
+                popUpTo(Screen.Home.route) { inclusive = true }
+                launchSingleTop = true
+            }
+            viewModel.onLoginNavigationComplete() // Reset the state after navigation
+        }
+    }
 
     // Effect to show Snackbar messages as one-time events
     LaunchedEffect(errorMessage) {
@@ -88,7 +104,8 @@ fun SettingsScreen(
                 inputValue = claudeTokenInput,
                 onInputChange = { claudeTokenInput = it },
                 onSaveClick = { viewModel.saveClaudeToken(claudeTokenInput) },
-                onClearClick = { viewModel.saveClaudeToken("") }
+                onClearClick = { viewModel.saveClaudeToken("") },
+                startInEditMode = focusSection == "claude"
             )
 
             // Asana Access Token Section
@@ -99,7 +116,8 @@ fun SettingsScreen(
                 inputValue = asanaTokenInput,
                 onInputChange = { asanaTokenInput = it },
                 onSaveClick = { viewModel.saveAsanaToken(asanaTokenInput) },
-                onClearClick = { viewModel.saveAsanaToken("") }
+                onClearClick = { viewModel.saveAsanaToken("") },
+                startInEditMode = focusSection == "asana"
             )
 
             Spacer(modifier = Modifier.weight(1f)) // Push logout to bottom
@@ -125,11 +143,14 @@ fun TokenInputSection(
     inputValue: String,
     onInputChange: (String) -> Unit,
     onSaveClick: () -> Unit,
-    onClearClick: () -> Unit // New parameter for clear action
+    onClearClick: () -> Unit, // New parameter for clear action
+    startInEditMode: Boolean = false // Add new parameter with default
 ) {
-    var editMode by rememberSaveable(hasToken) {
-        val initialEditMode = hasToken == false
-        Log.d("TokenInputSection", "[$title] Initializing editMode. hasToken: $hasToken, initialEditMode: $initialEditMode")
+    var editMode by rememberSaveable(hasToken, startInEditMode) { // Add startInEditMode to key
+        // Prioritize startInEditMode. If true, always start in edit mode.
+        // Otherwise, start in edit mode if there's no token.
+        val initialEditMode = startInEditMode || (hasToken == false)
+        Log.d("TokenInputSection", "[$title] Initializing editMode. hasToken: $hasToken, startInEditMode: $startInEditMode, initialEditMode: $initialEditMode")
         mutableStateOf(initialEditMode)
     }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }

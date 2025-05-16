@@ -1,36 +1,39 @@
 this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
-Please never run a Gradle build when working with the Android app. Please just change the project files. This is so that Android Studio does not get out of sync with the Gradle snapshots
-Please also don't downgrade packages for no reason.
-Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./reset_android_studio.sh` to kick off the build in Android Studio so we can test the change right away.
+Please don't downgrade packages for no reason.
+Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./android_hot_reload.sh` to kick off the build in Android Studio so we can test the change right away.
 
 We use supabase for the database. Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 
-function for adding encrypted preferences
+function for getting a specific key's value from regular (not encrypted) preferences
 
-CREATE OR REPLACE FUNCTION insert_user_preferences(
+CREATE OR REPLACE FUNCTION get_preference_value(
    p_user_id TEXT,
-   p_preferences JSONB,
-   p_encryption_key TEXT
+   p_target_key TEXT
+)
+RETURNS TEXT AS $$
+BEGIN
+   RETURN (SELECT preferences ->> p_target_key FROM user_preferences WHERE user_id = p_user_id);
+END;
+$$ LANGUAGE plpgsql;
+
+function for setting a specific key's value in regular (not encrypted) preferences
+
+CREATE OR REPLACE FUNCTION set_preference_value(
+   p_user_id TEXT,
+   p_target_key TEXT,
+   p_value TEXT -- Value to set, will be treated as a JSON string value
 )
 RETURNS VOID AS $$
-DECLARE
-   encrypted_prefs BYTEA;
 BEGIN
-   -- Ensure the pgroonga extension is available if you were using it,
-   -- though it's not strictly needed for pgp_sym_encrypt.
-   -- CREATE EXTENSION IF NOT EXISTS pgroonga; -- (If needed for other things)
-   CREATE EXTENSION IF NOT EXISTS pgcrypto; -- Required for pgp_sym_encrypt
-
-
-   encrypted_prefs := pgp_sym_encrypt(p_preferences::TEXT, p_encryption_key);
-
-
-   INSERT INTO user_preferences (user_id, preferences, encrypted_preferences)
-   VALUES (p_user_id, p_preferences, encrypted_prefs)
-   ON CONFLICT (user_id) DO UPDATE SET
-       preferences = EXCLUDED.preferences,
-       encrypted_preferences = EXCLUDED.encrypted_preferences,
-       last_updated = CURRENT_TIMESTAMP;
+   UPDATE user_preferences
+   SET preferences = jsonb_set(
+         COALESCE(preferences, '{}'::jsonb), -- Ensure 'preferences' is not NULL
+         ARRAY[p_target_key], 
+         to_jsonb(p_value), -- Convert text to a JSON string value
+         true -- Create the key if it doesn't exist
+      ),
+      last_updated = CURRENT_TIMESTAMP
+   WHERE user_id = p_user_id;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -110,3 +113,82 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+function for setting a specific key's value in encrypted preferences
+
+    CREATE OR REPLACE FUNCTION set_encrypted_preference_key(
+       p_user_id TEXT,
+       p_target_key TEXT,
+       p_value TEXT, -- Value is passed as text, will be inserted into JSON
+       p_encryption_key TEXT
+    )
+    RETURNS VOID AS $$
+    DECLARE
+       current_encrypted_blob BYTEA;
+       decrypted_json_text TEXT;
+       updated_json_blob JSONB;
+       new_encrypted_blob BYTEA;
+    BEGIN
+       CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+       SELECT encrypted_preferences INTO current_encrypted_blob
+       FROM user_preferences WHERE user_id = p_user_id;
+
+       IF current_encrypted_blob IS NULL THEN
+           decrypted_json_text := '{}'; 
+       ELSE
+           BEGIN
+               decrypted_json_text := pgp_sym_decrypt(current_encrypted_blob, p_encryption_key);
+           EXCEPTION WHEN OTHERS THEN
+               -- Handle potential error if key is wrong or data is corrupt
+               RAISE WARNING 'Error decrypting preferences for user %: %. Assuming empty preferences.', p_user_id, SQLERRM;
+               decrypted_json_text := '{}';
+           END;
+       END IF;
+       
+       IF decrypted_json_text IS NULL OR decrypted_json_text = '' THEN
+          decrypted_json_text := '{}';
+       END IF;
+
+       -- Convert to JSONB, set the key. to_jsonb() ensures p_value is treated as a JSON string value.
+       -- If p_value itself could be a complex JSON structure, use p_value::jsonb instead of to_jsonb(p_value)
+       updated_json_blob := jsonb_set(decrypted_json_text::jsonb, ARRAY[p_target_key], to_jsonb(p_value), true);
+
+       new_encrypted_blob := pgp_sym_encrypt(updated_json_blob::TEXT, p_encryption_key);
+
+       UPDATE user_preferences
+       SET encrypted_preferences = new_encrypted_blob,
+           last_updated = CURRENT_TIMESTAMP
+       WHERE user_id = p_user_id;
+    END;
+    $$ LANGUAGE plpgsql;
+
+function for setting entire encrypted preferences
+
+CREATE OR REPLACE FUNCTION set_encrypted_preferences(
+   p_user_id TEXT,
+   p_preferences_payload JSONB, -- The entire JSON object to be encrypted and stored
+   p_encryption_key TEXT
+)
+RETURNS VOID AS $$
+DECLARE
+   new_encrypted_blob BYTEA;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+   -- Encrypt the provided payload
+   new_encrypted_blob := pgp_sym_encrypt(p_preferences_payload::TEXT, p_encryption_key);
+
+   -- Update only the encrypted_preferences and last_updated columns
+   UPDATE user_preferences
+   SET 
+       encrypted_preferences = new_encrypted_blob,
+       last_updated = CURRENT_TIMESTAMP
+   WHERE user_id = p_user_id;
+
+   -- Optional: Check if the update actually found a row, if needed for robust error handling from calling code.
+   -- IF NOT FOUND THEN
+   --    RAISE WARNING 'User % not found in user_preferences. No encrypted preferences updated.', p_user_id;
+   -- END IF;
+END;
+$$ LANGUAGE plpgsql;

@@ -11,6 +11,11 @@ interface ApiService {
         val asana_access_token: String? = null
     )
 
+    data class UserApiKeySetRequest(
+        val key_name: String,
+        val key_value: String?
+    )
+
     data class TokenResponse(
         val has_claude_token: Boolean,
         val has_asana_token: Boolean
@@ -21,4 +26,7 @@ interface ApiService {
 
     @POST("/api/preferences/tokens")
     suspend fun updateApiTokens(@Body request: TokenUpdateRequest): Map<String, String>
+
+    @POST("/api/user/api_key")
+    suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): Map<String, String>
 } 

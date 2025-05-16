@@ -120,7 +120,12 @@ fun WhizNavHost(
 
         // Settings Screen
         composable(
-            route = Screen.Settings.route,
+            route = Screen.Settings.routeWithArgs,
+            arguments = listOf(navArgument(Screen.Settings.focusSectionArg) {
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            }),
             enterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Start,
@@ -133,9 +138,11 @@ fun WhizNavHost(
                     animationSpec = tween(ANIMATION_DURATION)
                 )
             }
-        ) {
+        ) { backStackEntry ->
+            val focusSection = backStackEntry.arguments?.getString(Screen.Settings.focusSectionArg)
             SettingsScreen(
-                navController = navController
+                navController = navController,
+                focusSection = focusSection
             )
         }
 
