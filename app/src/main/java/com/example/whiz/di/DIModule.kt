@@ -12,6 +12,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import javax.inject.Provider
 
 import okhttp3.OkHttpClient
 import com.example.whiz.data.remote.WhizServerRepository
@@ -19,6 +20,7 @@ import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.api.SupabaseApi
+import com.example.whiz.data.auth.TokenAuthenticator
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
@@ -62,10 +64,16 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(authRepository: AuthRepository): OkHttpClient {
+    fun provideOkHttpClient(
+        authRepositoryProvider: Provider<AuthRepository>,
+        tokenAuthenticator: TokenAuthenticator
+    ): OkHttpClient {
         return OkHttpClient.Builder()
+            .authenticator(tokenAuthenticator)
             .addInterceptor(Interceptor { chain ->
                 val originalRequest = chain.request()
+                // Get AuthRepository instance via provider
+                val authRepository = authRepositoryProvider.get()
                 // Get token synchronously within the interceptor
                 val token = runBlocking { authRepository.serverToken.value } // Use runBlocking carefully
 
@@ -91,8 +99,11 @@ object AppModule {
     
     @Provides
     @Singleton
-    fun provideAuthRepository(@ApplicationContext context: Context): AuthRepository {
-        return AuthRepository(context)
+    fun provideAuthRepository(
+        @ApplicationContext context: Context,
+        authApi: AuthApi
+    ): AuthRepository {
+        return AuthRepository(context, authApi)
     }
     
     @Provides

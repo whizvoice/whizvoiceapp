@@ -32,8 +32,11 @@ import kotlinx.coroutines.flow.map // Ensure map is imported
 import kotlinx.coroutines.flow.stateIn
 import com.example.whiz.data.local.MessageEntity // Ensure MessageEntity is imported
 import com.example.whiz.data.local.MessageType // Ensure MessageType is imported
+import kotlinx.coroutines.ExperimentalCoroutinesApi // Import for OptIn
+import org.json.JSONObject // For basic JSON parsing
+import org.json.JSONException
 
-
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // Added OptIn annotation
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context, // Inject Context
@@ -116,9 +119,15 @@ class ChatViewModel @Inject constructor(
     private val _showAuthErrorDialog = MutableStateFlow<String?>(null)
     val showAuthErrorDialog = _showAuthErrorDialog.asStateFlow()
 
+    // New state for Asana specific setup dialog
+    private val _showAsanaSetupDialog = MutableStateFlow(false)
+    val showAsanaSetupDialog = _showAsanaSetupDialog.asStateFlow()
+
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
     val navigateToLogin = _navigateToLogin.asStateFlow()
+
+    private var isDisconnectingForAuthError = false
 
     init {
         // Check if the app already has microphone permission
@@ -141,51 +150,172 @@ class ChatViewModel @Inject constructor(
             whizServerRepository.webSocketEvents.collect { event ->
                 when (event) {
                     is WebSocketEvent.Connected -> {
+                        Log.d(TAG, "WebSocketEvent.Connected: Called.")
                         _isConnectedToServer.value = true
                         _connectionError.value = null
+                        viewModelScope.launch {
+                            delay(200) 
+                            if (_isConnectedToServer.value) { 
+                                Log.d(TAG, "WebSocketEvent.Connected: DELAYED - Resetting isDisconnectingForAuthError to false.")
+                                isDisconnectingForAuthError = false
+                            }
+                        }
+                    }
+                    is WebSocketEvent.Reconnecting -> {
+                        Log.d(TAG, "WebSocketEvent.Reconnecting: Called.")
+                        _isConnectedToServer.value = false
+                        _connectionError.value = "Connection lost. Attempting to reconnect..."
+                        _isResponding.value = false
                     }
                     is WebSocketEvent.Closed -> {
+                        Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection closed. Please try again."
-                        // Attempt to reconnect instead of signing out
-                        viewModelScope.launch {
-                            try {
-                                whizServerRepository.connect()
-                            } catch (e: Exception) {
-                                Log.e("ChatViewModel", "Failed to reconnect", e)
+                        if (isDisconnectingForAuthError) {
+                            Log.d(TAG, "WebSocketEvent.Closed: Intentional disconnect due to AuthError. Not queueing further actions here.")
+                        } else if (_navigateToLogin.value) {
+                            Log.d(TAG, "WebSocketEvent.Closed: Not attempting client-side reconnect as navigation to login is pending.")
+                        } else {
+                            if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
+                                _connectionError.value = "Connection closed."
                             }
+                            Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable. Current connectionError: ${_connectionError.value}")
                         }
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection error: ${event.error.message}"
-                        _showAuthErrorDialog.value = null // Clear auth error if a general error occurs
-                    }
-                    is WebSocketEvent.AuthError -> { // Handle new AuthError event
-                        _isConnectedToServer.value = false // Typically auth errors mean connection is problematic
-                        if (event.message.contains("API key", ignoreCase = true)) {
-                            _showAuthErrorDialog.value = event.message
-                            _navigateToLogin.value = false // Ensure this is reset
-                        } else if (event.message.contains("log in again", ignoreCase = true)){
-                            _navigateToLogin.value = true
-                            _showAuthErrorDialog.value = null // Ensure this is reset
-                        } else {
-                            // For other/generic AuthErrors, show the dialog for now
-                            _showAuthErrorDialog.value = event.message
-                            _navigateToLogin.value = false
+                        _connectionError.value = "Connection error: ${event.error.message ?: "Unknown connection failure"}"
+                        _showAuthErrorDialog.value = null
+                        _navigateToLogin.value = false
+                        if (_chatId.value > 0) { // Only add if a chat is active
+                            repository.addAssistantMessage(
+                                chatId = _chatId.value,
+                                content = "Error: ${event.error.message ?: "Unknown connection error"}"
+                                // Timestamp is handled by repository or MessageEntity default
+                            )
                         }
-                        _connectionError.value = null // Clear general connection error
+                        _isResponding.value = false
                     }
-                    is WebSocketEvent.Message -> {
-                        _connectionError.value = null // Clear error on successful message
-                        _showAuthErrorDialog.value = null // Clear auth error on successful message
-                        handleServerMessage(event.text)
+                    is WebSocketEvent.AuthError -> {
+                        Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
+                        _isConnectedToServer.value = false
+                        viewModelScope.launch {
+                            val refreshSuccessful = authRepository.refreshAccessToken()
+                            if (refreshSuccessful) {
+                                Log.i(TAG, "Token refresh successful after WebSocket AuthError. Attempting to reconnect WebSocket.")
+                                isDisconnectingForAuthError = false
+                                _navigateToLogin.value = false
+                                whizServerRepository.connect()
+                            } else {
+                                Log.w(TAG, "Token refresh failed after WebSocket AuthError. Navigating to login.")
+                                _navigateToLogin.value = true 
+                                isDisconnectingForAuthError = true 
+                                
+                                whizServerRepository.disconnect() 
+                                
+                                authRepository.signOut()
+                                Log.d(TAG, "AuthError: Called authRepository.signOut() after failed refresh.")
+                                
+                                _showAuthErrorDialog.value = null
+                                _showAsanaSetupDialog.value = false
+                                _connectionError.value = null
+                                if (_chatId.value > 0) { // Only add if a chat is active
+                                    repository.addAssistantMessage(
+                                        chatId = _chatId.value,
+                                        content = "Authentication failed. Please log in again."
+                                    )
+                                }
+                            }
+                        }
+                        _isResponding.value = false
+                    }
+                    is WebSocketEvent.Message -> { 
+                        Log.d(TAG, "Message received from server: ${event.text}")
+                        var isErrorHandled = false
+                        var messageContentForChat = event.text 
+                        var isAsanaAuthError = false
+                        var speakThisMessage = _isVoiceResponseEnabled.value 
+
+                        // Attempt to parse as JSON first, as both Asana and Claude auth errors are JSON
+                        try {
+                            val jsonObject = JSONObject(event.text)
+                            if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
+                                val errorCode = jsonObject.getString("code")
+                                val errorMessage = jsonObject.optString("message", "An authentication error occurred.") // Use optString for safety
+
+                                when (errorCode) {
+                                    "ASANA_AUTH_ERROR", "AsanaAuthErrorHandled" -> { // Match code from server if it's specific
+                                        // Or rely on the field checks if asana_tools sends the full JSON directly
+                                        if (jsonObject.has("error") && jsonObject.getString("error").contains("Asana authentication failed")) {
+                                            Log.w(TAG, "Handling Asana authentication error JSON from server.")
+                                            _showAsanaSetupDialog.value = true // Keep specific dialog for Asana for now
+                                            isAsanaAuthError = true // Mark as Asana error
+                                            messageContentForChat = errorMessage // Use message from JSON
+                                            speakThisMessage = false
+                                            isErrorHandled = true
+                                        }
+                                    }
+                                    "CLAUDE_AUTHENTICATION_ERROR" -> {
+                                        Log.w(TAG, "Handling Claude authentication error JSON from server.")
+                                        _showAuthErrorDialog.value = errorMessage // Use the generic auth error dialog
+                                        messageContentForChat = errorMessage // Use message from JSON for chat history
+                                        speakThisMessage = false
+                                        isErrorHandled = true
+                                    }
+                                    "CLAUDE_API_KEY_MISSING" -> { // This might also come via JSON now
+                                        Log.w(TAG, "Handling Claude API key missing error JSON from server.")
+                                        _showAuthErrorDialog.value = errorMessage
+                                        messageContentForChat = errorMessage
+                                        speakThisMessage = false
+                                        isErrorHandled = true
+                                    }
+                                    // Potentially other specific error codes from the server
+                                    else -> {
+                                        // Handle other structured errors if necessary
+                                        if (jsonObject.has("error")) { // Generic tool error or other server error
+                                            val errorDetail = jsonObject.optString("detail", "")
+                                            messageContentForChat = "Server Error: $errorMessage ${if (errorDetail.isNotEmpty()) "- $errorDetail" else ""}"
+                                            Log.e(TAG, "Structured server error: $messageContentForChat")
+                                            speakThisMessage = false
+                                            isErrorHandled = true // Assume structured errors are handled
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: JSONException) {
+                            // Message is not a simple JSON error object, could be regular text or old Asana plain text error
+                            Log.d(TAG, "Received message is not a JSON object or not a recognized error structure: ${event.text}")
+                            // Fallback to legacy string checks if needed, though ideally all errors are JSON
+                            val asanaAuthErrorSignature = "\"error\":\"Asana authentication failed. Please check your Asana Access Token in settings.\""
+                            val asanaStatusCodeSignature = "\"status_code\":401"
+                            if (event.text.contains(asanaAuthErrorSignature) && event.text.contains(asanaStatusCodeSignature)) {
+                                Log.w(TAG, "Detected legacy Asana authentication error signature in message.")
+                                _showAsanaSetupDialog.value = true
+                                isAsanaAuthError = true
+                                messageContentForChat = "Asana authentication failed. Please check your token in Settings."
+                                speakThisMessage = false
+                                isErrorHandled = true
+                            }
+                        }
+
+                        // Add message to chat history, unless it was an error that shouldn't be shown or was handled by a dialog
+                        if (_chatId.value > 0) {
+                            // Decide if the raw server message (even if an error) should be added or a custom one.
+                            // For now, messageContentForChat holds the potentially modified message.
+                            repository.addAssistantMessage(_chatId.value, messageContentForChat)
+                        }
+                        
+                        // If error was handled by a dialog, TTS might have been disabled already.
+                        // If not an error, or error that still allows TTS:
+                        if (speakThisMessage && _isTTSInitialized.value && _chatId.value > 0) { 
+                            val utteranceId = UUID.randomUUID().toString()
+                            tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
+                        }
+                        _isResponding.value = false
                     }
                 }
             }
         }
     }
-
 
     private suspend fun handleServerMessage(responseText: String) {
         var currentChatId = _chatId.value // Get current ID before modification
@@ -229,39 +359,50 @@ class ChatViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "TTS Initialized successfully.")
                 _isTTSInitialized.value = true
-                // Set listener to track utterance completion
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        Log.d(TAG, "TTS onStart: $utteranceId")
-                        _isSpeaking.value = true
-                        // Pause speech recognition when TTS starts
-                        pauseSpeechRecognitionDuringTTS()
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        Log.d(TAG, "TTS onDone: $utteranceId")
-                        _isSpeaking.value = false
-                        // Resume speech recognition when TTS finishes
-                        resumeSpeechRecognitionAfterTTS()
-                    }
-
-                    override fun onError(utteranceId: String?) {
-                        Log.e(TAG, "TTS onError: $utteranceId")
-                        _isSpeaking.value = false
-                        // Resume speech recognition even if TTS errors out
-                        resumeSpeechRecognitionAfterTTS()
-                    }
-
-                    // Deprecated but might be called on older APIs
-                    override fun onError(utteranceId: String?, errorCode: Int) {
-                        Log.e(TAG, "TTS onError (deprecated): $utteranceId, code: $errorCode")
-                        _isSpeaking.value = false
-                        resumeSpeechRecognitionAfterTTS()
-                    }
-                })
             }
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    Log.d(TAG, "TTS onStart for $utteranceId")
+                    _isSpeaking.value = true
+                    if (speechRecognitionService.isListening.value) {
+                        wasListeningBeforeTTS = true
+                        speechRecognitionService.stopListening() 
+                        Log.d(TAG, "TTS starting, stopping ASR. wasListeningBeforeTTS = true")
+                    } else {
+                        wasListeningBeforeTTS = false
+                        Log.d(TAG, "TTS starting, ASR was not active. wasListeningBeforeTTS = false")
+                    }
+                }
+
+                override fun onDone(utteranceId: String?) {
+                    Log.d(TAG, "TTS onDone for $utteranceId")
+                    _isSpeaking.value = false
+                    if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                        Log.d(TAG, "TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
+                        speechRecognitionService.startListening { transcription ->
+                            this@ChatViewModel.processAndSendTranscription(transcription)
+                        }
+                    } else {
+                         Log.d(TAG, "TTS done, wasListeningBeforeTTS=$wasListeningBeforeTTS or voice response disabled, not restarting ASR.")
+                    }
+                    wasListeningBeforeTTS = false
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    Log.e(TAG, "TTS onError for $utteranceId")
+                    _isSpeaking.value = false
+                    if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                        Log.d(TAG, "TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
+                        speechRecognitionService.startListening { transcription ->
+                            this@ChatViewModel.processAndSendTranscription(transcription)
+                        }
+                    }
+                    wasListeningBeforeTTS = false 
+                }
+            })
         } else {
-            Log.e(TAG, "TTS Initialization failed with status: $status")
+            Log.e(TAG, "TTS Initialization Failed! Status: $status")
             _isTTSInitialized.value = false
         }
     }
@@ -402,6 +543,11 @@ class ChatViewModel @Inject constructor(
 
     // --- Internal Helper Functions ---
 
+    private fun processAndSendTranscription(transcription: String) {
+        _inputText.value = transcription
+        sendInputText() 
+    }
+
     private suspend fun generateAssistantResponse(chatId: Long) {
         if (chatId <= 0 || configUseRemoteAgent) return // Don't run if using remote or invalid ID
 
@@ -438,36 +584,6 @@ class ChatViewModel @Inject constructor(
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
-    private fun pauseSpeechRecognitionDuringTTS() {
-        if (isListening.value) {
-            wasListeningBeforeTTS = true // Remember that we were listening
-            speechRecognitionService.stopListening()
-            Log.d(TAG, "Paused speech recognition for TTS.")
-        } else {
-            wasListeningBeforeTTS = false
-        }
-    }
-
-    private fun resumeSpeechRecognitionAfterTTS() {
-        if (wasListeningBeforeTTS) {
-            // Restart listening only if it was active before TTS started
-            // Give a small delay to avoid immediate re-triggering if there's noise
-            viewModelScope.launch {
-                delay(500) // Adjust delay as needed
-                // Check if still in voice mode and not speaking again immediately
-                if (wasListeningBeforeTTS && !_isSpeaking.value) {
-                    Log.d(TAG, "Resuming speech recognition after TTS.")
-                    // Re-initiate listening via the toggle function logic if needed
-                    // For simplicity, directly call startListening here
-                    speechRecognitionService.startListening { finalText ->
-                        sendUserInput(finalText)
-                    }
-                }
-                wasListeningBeforeTTS = false // Reset the flag
-            }
-        }
-    }
-
     private fun schedulePersistenceCheck(chatId: Long) {
         if (chatId <= 0) return
         persistenceJob?.cancel()
@@ -476,6 +592,10 @@ class ChatViewModel @Inject constructor(
                 repository.updateChatLastMessageTime(chatId)
             }
         }
+    }
+
+    private fun clearInputText() {
+        _inputText.value = ""
     }
 
     // --- ViewModel Lifecycle ---
@@ -492,6 +612,43 @@ class ChatViewModel @Inject constructor(
             whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
+    }
+
+    // Moved sendInputText here and made explicitly public
+    public fun sendInputText() {
+        val textToSend = _inputText.value.trim()
+        if (textToSend.isBlank()) return
+
+        _isResponding.value = true
+
+        viewModelScope.launch {
+            if (_chatId.value <= 0) {
+                val newChatId = repository.createChat(repository.deriveChatTitle(textToSend))
+                _chatId.value = newChatId
+                if (newChatId <=0) {
+                    Log.e(TAG, "Failed to create new chat.")
+                    _isResponding.value = false
+                    _errorState.value = "Failed to create chat. Please try again."
+                    return@launch
+                }
+            }
+            repository.addUserMessage(_chatId.value, textToSend)
+
+            if (configUseRemoteAgent) {
+                val success = whizServerRepository.sendMessage(textToSend)
+                if (!success) {
+                    _isResponding.value = false
+                    _errorState.value = "Failed to send message. Check connection."
+                     repository.addAssistantMessage(
+                        _chatId.value, 
+                        "System: Failed to send message. Please check your connection and try again."
+                    )
+                }
+            } else {
+                _isResponding.value = false 
+            }
+        }
+        clearInputText()
     }
 
     // Called when permission is granted from UI
@@ -531,5 +688,13 @@ class ChatViewModel @Inject constructor(
 
     fun onLoginNavigationComplete() { // Renamed for clarity
         _navigateToLogin.value = false
+    }
+
+    fun onAsanaSetupDialogDismissed() {
+        _showAsanaSetupDialog.value = false
+    }
+
+    fun onAuthErrorDialogDismissed() {
+        _showAuthErrorDialog.value = null
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
+import com.example.whiz.data.remote.AuthApi
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -16,10 +17,18 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// Actual data classes for network request/response
+data class RefreshTokenRequest(val refresh_token: String)
+data class NewAccessTokenResponse(
+    val access_token: String,
+    val token_type: String = "bearer" // Defaulted, server might not send it
+)
+
 // Preference keys
 private object PreferenceKeys {
     const val AUTH_TOKEN = "auth_token"
     const val SERVER_TOKEN = "server_token"
+    const val REFRESH_TOKEN = "refresh_token"
     const val USER_ID = "user_id"
     const val USER_NAME = "user_name"
     const val USER_EMAIL = "user_email"
@@ -42,9 +51,24 @@ data class UserProfile(
     val photoUrl: String?
 )
 
+// Placeholder for where your network API calls are defined (e.g., AuthApi.kt or similar)
+// You'll need to add these to your actual Retrofit interface.
+/*
+interface AuthServerApi {
+    @POST("/auth/refresh") // Ensure this path matches your server
+    suspend fun refreshAccessToken(@Body request: RefreshTokenRequest): NewAccessTokenResponse
+}
+data class RefreshTokenRequest(val refresh_token: String)
+data class NewAccessTokenResponse(
+    val access_token: String,
+    val token_type: String = "bearer" // Defaulted, server might not send it
+)
+*/
+
 @Singleton
 class AuthRepository @Inject constructor(
-    private val context: Context
+    private val context: Context,
+    private val authApi: AuthApi // Inject your actual AuthApi interface
 ) {
     private val TAG = "AuthRepository"
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences(
@@ -137,16 +161,56 @@ class AuthRepository @Inject constructor(
         }
     }
     
-    // Save the server-issued JWT token
-    suspend fun saveServerToken(token: String) {
+    // Renamed to reflect it saves tokens from our backend server
+    suspend fun saveAuthTokensFromServer(accessToken: String, refreshToken: String) {
         withContext(Dispatchers.IO) {
-            Log.d(TAG, "Saving server token to preferences: $token")
-            sharedPreferences.edit()
-                .putString(PreferenceKeys.SERVER_TOKEN, token)
-                .apply()
-            Log.d(TAG, "Server token saved to preferences")
-            _serverTokenFlow.value = token
-            Log.d(TAG, "_serverTokenFlow updated: ${_serverTokenFlow.value}")
+            Log.d(TAG, "Saving server tokens to preferences.")
+            sharedPreferences.edit().apply {
+                putString(PreferenceKeys.SERVER_TOKEN, accessToken)
+                putString(PreferenceKeys.REFRESH_TOKEN, refreshToken)
+                apply()
+            }
+            Log.d(TAG, "Access and Refresh tokens saved to preferences.")
+            _serverTokenFlow.value = accessToken // Update flow with the new access token
+            Log.d(TAG, "_serverTokenFlow updated with new access token.")
+        }
+    }
+
+    private fun getRefreshToken(): String? {
+        return sharedPreferences.getString(PreferenceKeys.REFRESH_TOKEN, null)
+    }
+
+    // The authServerApi parameter is removed as we now use the injected authApi.
+    suspend fun refreshAccessToken(): Boolean {
+        val currentRefreshToken = getRefreshToken()
+        if (currentRefreshToken == null) {
+            Log.w(TAG, "No refresh token available. Cannot refresh access token.")
+            return false
+        }
+
+        return try {
+            // ACTUAL API CALL using the injected authApi
+            val response = authApi.refreshAccessToken(RefreshTokenRequest(currentRefreshToken))
+            // Assuming successful response (2xx), Retrofit would have populated this.
+            // If server returns non-2xx, Retrofit throws HttpException, caught below.
+            
+            Log.i(TAG, "Access token refreshed successfully. New token: ${response.access_token.take(10)}...")
+            // Save the new access token. The refresh token remains the same in this iteration.
+            saveAuthTokensFromServer(response.access_token, currentRefreshToken)
+            true
+        } catch (e: retrofit2.HttpException) { // Catch specific HttpException from Retrofit
+            Log.e(TAG, "HttpException during access token refresh. Code: ${e.code()}", e)
+            if (e.code() == 401 || e.code() == 403) { // Unauthorized or Forbidden
+                Log.w(TAG, "Refresh token rejected by server (HTTP ${e.code()}). Signing out.")
+                signOut() // Critical: If refresh fails due to bad refresh token, sign out user
+            }
+            // For other HTTP errors, we might not sign out immediately, just return false.
+            // Depending on policy, could also sign out for e.g. 400 Bad Request if it means malformed refresh token.
+            false
+        } catch (e: Exception) { // Catch other exceptions (network, IO, etc.)
+            Log.e(TAG, "Generic exception during access token refresh", e)
+            // For generic errors (like no network), don't automatically sign out, just indicate refresh failed.
+            false
         }
     }
     
@@ -179,6 +243,7 @@ class AuthRepository @Inject constructor(
                 sharedPreferences.edit().apply {
                     remove(PreferenceKeys.AUTH_TOKEN)
                     remove(PreferenceKeys.SERVER_TOKEN)
+                    remove(PreferenceKeys.REFRESH_TOKEN) // Clear refresh token
                     remove(PreferenceKeys.USER_ID)
                     remove(PreferenceKeys.USER_NAME)
                     remove(PreferenceKeys.USER_EMAIL)
@@ -188,6 +253,7 @@ class AuthRepository @Inject constructor(
                 
                 // Update the flow
                 refreshUserProfile()
+                _serverTokenFlow.value = null
                 
                 // Then sign out from Google
                 googleSignInClient.signOut()

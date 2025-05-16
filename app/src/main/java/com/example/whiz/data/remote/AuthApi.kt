@@ -12,6 +12,8 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import android.util.Log
+import com.example.whiz.data.auth.RefreshTokenRequest
+import com.example.whiz.data.auth.NewAccessTokenResponse
 
 @Singleton
 class AuthApi @Inject constructor(
@@ -52,6 +54,7 @@ class AuthApi @Inject constructor(
             val jsonResponse = JSONObject(responseBody)
             val accessToken = jsonResponse.getString("access_token")
             val tokenType = jsonResponse.getString("token_type")
+            val refreshToken = jsonResponse.getString("refresh_token")
             val userJson = jsonResponse.getJSONObject("user")
             
             val user = User(
@@ -65,12 +68,62 @@ class AuthApi @Inject constructor(
                 AuthResponse(
                     accessToken = accessToken,
                     tokenType = tokenType,
+                    refreshToken = refreshToken,
                     user = user
                 )
             )
         } catch (e: Exception) {
             Log.e(TAG, "Exception during authenticateWithGoogle", e)
             return@withContext Result.failure(e)
+        }
+    }
+    
+    /**
+     * Refresh the access token using a refresh token.
+     */
+    suspend fun refreshAccessToken(requestPayload: RefreshTokenRequest): NewAccessTokenResponse = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("refresh_token", requestPayload.refresh_token)
+            }
+            val requestBody = jsonBody.toString().toRequestBody(JSON)
+
+            val request = Request.Builder()
+                .url("$SERVER_URL/auth/refresh") // Ensure this path is correct
+                .post(requestBody)
+                .build()
+
+            Log.d(TAG, "Sending refresh token request to $SERVER_URL/auth/refresh")
+            val response = okHttpClient.newCall(request).execute()
+            val responseBody = response.body?.string()
+            Log.d(TAG, "Raw /auth/refresh response body: $responseBody")
+
+            if (!response.isSuccessful || responseBody == null) {
+                Log.e(TAG, "Refresh token failed with code: ${response.code}, message: ${response.message}")
+                // For TokenAuthenticator to properly react, it expects an exception here if refresh fails due to auth (401/403)
+                // Throwing a specific exception would be better, but IOException works for now to signal failure.
+                // In a Retrofit setup, HttpException would be thrown automatically for non-2xx.
+                throw IOException("Refresh token failed: ${response.code} - ${response.message}") 
+            }
+
+            Log.d(TAG, "Refresh token successful, processing response")
+            val jsonResponse = JSONObject(responseBody)
+            val newAccessToken = jsonResponse.getString("access_token")
+            val tokenType = jsonResponse.optString("token_type", "bearer") // Default to bearer if not present
+            
+            NewAccessTokenResponse(
+                access_token = newAccessToken,
+                token_type = tokenType
+            )
+        } catch (e: JSONException) {
+            Log.e(TAG, "JSONException during refreshAccessToken", e)
+            throw IOException("Failed to parse refresh token response", e) // Propagate as IOException or custom
+        } catch (e: IOException) {
+            Log.e(TAG, "IOException during refreshAccessToken", e)
+            throw e // Re-throw original IOException
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected exception during refreshAccessToken", e)
+            throw IOException("Unexpected error during token refresh", e) // Propagate as IOException or custom
         }
     }
     
@@ -115,6 +168,7 @@ class AuthApi @Inject constructor(
 data class AuthResponse(
     val accessToken: String,
     val tokenType: String,
+    val refreshToken: String,
     val user: User
 )
 
