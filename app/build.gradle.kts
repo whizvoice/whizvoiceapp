@@ -35,6 +35,8 @@ android {
         }
     }
 
+    buildToolsVersion = "35.0.0"
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -53,9 +55,7 @@ android {
     }
     buildFeatures {
         compose = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "2.0.21"
+        buildConfig = true
     }
     packaging {
         resources {
