@@ -78,6 +78,7 @@ fun ChatScreen(
     val connectionError by viewModel.connectionError.collectAsState() // General connection errors
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
+    val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
 
     // UI State
     val listState = rememberLazyListState()
@@ -170,8 +171,8 @@ fun ChatScreen(
     }
 
     // Function to navigate to Settings
-    fun navigateToSettings(navController: NavController) {
-        navController.navigate(Screen.Settings.route)
+    fun navigateToSettings(navController: NavController, focusSection: String? = null) {
+        navController.navigate(Screen.Settings.createRoute(focusSection))
     }
 
     // Navigate to Login if required
@@ -255,25 +256,58 @@ fun ChatScreen(
         }
     }
 
+    // Dialog for missing Asana Token
+    if (showAsanaSetupDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onAsanaSetupDialogDismissed() },
+            title = { Text("Asana Account Setup") },
+            text = { Text("Your Asana access token is missing or invalid. Please set it up in Settings to use Asana features.") },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.onAsanaSetupDialogDismissed()
+                    navigateToSettings(navController, focusSection = "asana")
+                }) {
+                    Text("Go to Settings")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { viewModel.onAsanaSetupDialogDismissed() }) {
+                    Text("Dismiss")
+                }
+            }
+        )
+    }
+
     // Show Auth Error Dialog (handles API key issues and other non-login auth errors)
     if (authErrorMessage != null) {
-        val actualAuthErrorMessage = authErrorMessage!! // Or authErrorMessage.value if its type is State<String?>
-        val dialogTitle = if (actualAuthErrorMessage.contains("API key", ignoreCase = true)) {
-            "API Key Issue"
-        } else {
-            "Authentication Error"
+        val actualAuthErrorMessage = authErrorMessage!! 
+        
+        // Determine dialog title and if it's a Claude specific API key issue
+        var dialogTitle = "Authentication Error" // Default title
+        var focusTarget: String? = null
+
+        if (actualAuthErrorMessage.contains("API key", ignoreCase = true)) {
+            dialogTitle = "API Key Issue"
+            // Check if it specifically mentions Claude to enable focused navigation
+            if (actualAuthErrorMessage.contains("Claude", ignoreCase = true)) {
+                focusTarget = "claude"
+            }
+            // Potentially add Asana check here if its errors also use this dialog and need focus
+            // else if (actualAuthErrorMessage.contains("Asana", ignoreCase = true)) {
+            //     focusTarget = "asana" 
+            // }
         }
+
         AlertDialog(
-            onDismissRequest = { /* Don't allow dismissal for API key issues, 
-                                 could allow for general auth errors if needed */
+            onDismissRequest = { 
                             if (!dialogTitle.contains("API Key")) viewModel.clearAuthErrorDialog()
                            },
             title = { Text(dialogTitle) },
-            text = { Text(actualAuthErrorMessage ?: "An unknown authentication error occurred.") },
+            text = { Text(actualAuthErrorMessage) }, // Removed elvis operator, already asserted not null
             confirmButton = {
                 Button(onClick = {
                     viewModel.clearAuthErrorDialog()
-                    navigateToSettings(navController)
+                    navigateToSettings(navController, focusSection = focusTarget) // Pass focusTarget
                 }) {
                     Text("Go to Settings")
                 }

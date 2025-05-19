@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.util.Log
+import com.example.whiz.data.auth.AuthenticationRequiredException
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -40,11 +41,18 @@ class SettingsViewModel @Inject constructor(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    // State to trigger navigation to Login screen
+    private val _navigateToLogin = MutableStateFlow(false)
+    val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
+
     init {
         Log.d(TAG, "Initializing SettingsViewModel")
         viewModelScope.launch {
             try {
-                userPreferences.initializeTokenStatus()
+                userPreferences.initializeTokenStatus() // This might throw AuthenticationRequiredException
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required, navigating to login screen.", e)
+                _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing token status in ViewModel", e)
                 _errorMessage.value = "Error loading initial token status."
@@ -90,6 +98,9 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     _errorMessage.value = "Claude API Key saved successfully!"
                 }
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during save/clear Claude token, navigating to login screen.", e)
+                _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving/clearing Claude token", e)
                 if (token.isBlank()) {
@@ -115,6 +126,9 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     _errorMessage.value = "Asana Access Token saved successfully!"
                 }
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during save/clear Asana token, navigating to login screen.", e)
+                _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving/clearing Asana token", e)
                 if (token.isBlank()) {
@@ -130,5 +144,10 @@ class SettingsViewModel @Inject constructor(
 
     fun clearErrorMessage() {
         _errorMessage.value = null
+    }
+
+    // Method to reset navigation trigger after navigation has occurred
+    fun onLoginNavigationComplete() {
+        _navigateToLogin.value = false
     }
 }
