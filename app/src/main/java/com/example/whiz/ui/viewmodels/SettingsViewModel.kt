@@ -98,6 +98,9 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     _errorMessage.value = "Claude API Key saved successfully!"
                 }
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during save/clear Claude token, navigating to login screen.", e)
+                _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving/clearing Claude token", e)
                 if (token.isBlank()) {
@@ -123,6 +126,9 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     _errorMessage.value = "Asana Access Token saved successfully!"
                 }
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during save/clear Asana token, navigating to login screen.", e)
+                _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving/clearing Asana token", e)
                 if (token.isBlank()) {

@@ -125,7 +125,7 @@ class ChatViewModel @Inject constructor(
 
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
-    val navigateToLogin = _navigateToLogin.asStateFlow()
+    val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
 
     private var isDisconnectingForAuthError = false
 
@@ -231,84 +231,90 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.Message -> {
                         Log.d(TAG, "Message received from server: ${event.text}")
                         var isErrorHandled = false
-                        var messageContentForChat = event.text 
-                        var isAsanaAuthError = false
-                        var speakThisMessage = _isVoiceResponseEnabled.value 
+                        var messageContentForChat = event.text
+                        var speakThisMessage = _isVoiceResponseEnabled.value
 
-                        // Attempt to parse as JSON first, as both Asana and Claude auth errors are JSON
+                        // Create a unique event identifier for logging, e.g., based on event.text and current time
+                        val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:${System.currentTimeMillis()}]"
+                        Log.d(TAG, "$eventLogId Processing WebSocketEvent.Message.")
+
+                        // Attempt to parse as JSON first
                         try {
                             val jsonObject = JSONObject(event.text)
-                            if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
-                                val errorCode = jsonObject.getString("code")
-                                val errorMessage = jsonObject.optString("message", "An authentication error occurred.") // Use optString for safety
+                            
+                            if (jsonObject.has("error") && jsonObject.has("status_code")) {
+                                val errorMsg = jsonObject.getString("error")
+                                val statusCode = jsonObject.getInt("status_code")
 
-                                when (errorCode) {
-                                    "ASANA_AUTH_ERROR", "AsanaAuthErrorHandled" -> { // Match code from server if it's specific
-                                        // Or rely on the field checks if asana_tools sends the full JSON directly
-                                        if (jsonObject.has("error") && jsonObject.getString("error").contains("Asana authentication failed")) {
-                                            Log.w(TAG, "Handling Asana authentication error JSON from server.")
-                                            _showAsanaSetupDialog.value = true // Keep specific dialog for Asana for now
-                                            isAsanaAuthError = true // Mark as Asana error
-                                            messageContentForChat = errorMessage // Use message from JSON
-                                            speakThisMessage = false
-                                            isErrorHandled = true
-                                        }
-                                    }
-                                    "CLAUDE_AUTHENTICATION_ERROR" -> {
-                                        Log.w(TAG, "Handling Claude authentication error JSON from server.")
-                                        _showAuthErrorDialog.value = errorMessage // Use the generic auth error dialog
-                                        messageContentForChat = errorMessage // Use message from JSON for chat history
-                                        speakThisMessage = false
-                                        isErrorHandled = true
-                                    }
-                                    "CLAUDE_API_KEY_MISSING" -> { // This might also come via JSON now
-                                        Log.w(TAG, "Handling Claude API key missing error JSON from server.")
-                                        _showAuthErrorDialog.value = errorMessage
-                                        messageContentForChat = errorMessage
-                                        speakThisMessage = false
-                                        isErrorHandled = true
-                                    }
-                                    // Potentially other specific error codes from the server
-                                    else -> {
-                                        // Handle other structured errors if necessary
-                                        if (jsonObject.has("error")) { // Generic tool error or other server error
-                                            val errorDetail = jsonObject.optString("detail", "")
-                                            messageContentForChat = "Server Error: $errorMessage ${if (errorDetail.isNotEmpty()) "- $errorDetail" else ""}"
-                                            Log.e(TAG, "Structured server error: $messageContentForChat")
-                                            speakThisMessage = false
-                                            isErrorHandled = true // Assume structured errors are handled
-                                        }
-                                    }
+                                if (statusCode == 401 && errorMsg.contains("Asana authentication failed")) {
+                                    Log.w(TAG, "Detected Asana 401 error from tool result. Showing Asana setup dialog.")
+                                    messageContentForChat = "Asana authentication failed. Please update your token in Settings."
+                                    _showAsanaSetupDialog.value = true // Show dialog instead of direct navigation
+                                    isErrorHandled = true 
+                                    speakThisMessage = false 
                                 }
                             }
-                        } catch (e: JSONException) {
-                            // Message is not a simple JSON error object, could be regular text or old Asana plain text error
-                            Log.d(TAG, "Received message is not a JSON object or not a recognized error structure: ${event.text}")
-                            // Fallback to legacy string checks if needed, though ideally all errors are JSON
-                            val asanaAuthErrorSignature = "\"error\":\"Asana authentication failed. Please check your Asana Access Token in settings.\""
-                            val asanaStatusCodeSignature = "\"status_code\":401"
-                            if (event.text.contains(asanaAuthErrorSignature) && event.text.contains(asanaStatusCodeSignature)) {
-                                Log.w(TAG, "Detected legacy Asana authentication error signature in message.")
-                                _showAsanaSetupDialog.value = true
-                                isAsanaAuthError = true
-                                messageContentForChat = "Asana authentication failed. Please check your token in Settings."
-                                speakThisMessage = false
-                                isErrorHandled = true
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
+                                val errorCode = jsonObject.getString("code")
+                                val errorMessageFromServer = jsonObject.optString("message", "An error occurred.")
+                                messageContentForChat = errorMessageFromServer 
+                                speakThisMessage = false 
+                                isErrorHandled = true 
+
+                                when (errorCode) {
+                                    "ASANA_AUTH_ERROR", "AsanaAuthErrorHandled" -> {
+                                        Log.w(TAG, "Handling structured ASANA_AUTH_ERROR from server: $errorMessageFromServer")
+                                        _showAsanaSetupDialog.value = true // Show dialog
+                                    }
+                                    "CLAUDE_AUTHENTICATION_ERROR", "CLAUDE_API_KEY_MISSING" -> {
+                                        Log.w(TAG, "Handling Claude authentication error ($errorCode) from server: $errorMessageFromServer")
+                                        _showAuthErrorDialog.value = errorMessageFromServer 
+                                    }
+                                    else -> {
+                                        val errorDetail = jsonObject.optString("detail", "")
+                                        messageContentForChat = "Server Error: $errorMessageFromServer ${if (errorDetail.isNotEmpty()) "- $errorDetail" else ""}"
+                                        Log.e(TAG, "Structured server error (unhandled code '$errorCode'): $messageContentForChat")
+                                    }
+                                }
+                            } else {
+                                isErrorHandled = false 
                             }
+                        } catch (e: JSONException) {
+                            Log.d(TAG, "Message is not a JSON object or failed to parse: ${event.text}")
+                            isErrorHandled = false 
                         }
 
-                        // Add message to chat history, unless it was an error that shouldn't be shown or was handled by a dialog
+                        // Add the message to chat
+                        Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Chat ID: ${_chatId.value}, Content: '$messageContentForChat'")
                         if (_chatId.value > 0) {
-                            // Decide if the raw server message (even if an error) should be added or a custom one.
-                            // For now, messageContentForChat holds the potentially modified message.
-                            repository.addAssistantMessage(_chatId.value, messageContentForChat)
+                            repository.addAssistantMessage(
+                                chatId = _chatId.value,
+                                content = messageContentForChat
+                            )
+                            Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Content: '$messageContentForChat'")
+                        } else {
+                            Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because chatId is not > 0 (Value: ${_chatId.value})")
                         }
-                        
-                        // If error was handled by a dialog, TTS might have been disabled already.
-                        // If not an error, or error that still allows TTS:
-                        if (speakThisMessage && _isTTSInitialized.value && _chatId.value > 0) { 
+
+                        if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
+                            if (isListening.value) {
+                                wasListeningBeforeTTS = true
+                                speechRecognitionService.stopListening() // Stop STT before TTS speaks
+                            }
                             val utteranceId = UUID.randomUUID().toString()
+                            _isSpeaking.value = true // Indicate TTS is starting
                             tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
+                            // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
+                        } else {
+                            // If not speaking, ensure STT resumes if it was interrupted by a previous TTS cycle that has now completed.
+                            if (wasListeningBeforeTTS && !_isSpeaking.value) {
+                                speechRecognitionService.startListening { finalTranscription ->
+                                    if (finalTranscription.isNotBlank()) {
+                                        sendUserInput(finalTranscription)
+                                    }
+                                }
+                                wasListeningBeforeTTS = false
+                            }
                         }
                         _isResponding.value = false
                     }
@@ -612,6 +618,7 @@ class ChatViewModel @Inject constructor(
             whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
+        Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected.")
     }
 
     // Moved sendInputText here and made explicitly public

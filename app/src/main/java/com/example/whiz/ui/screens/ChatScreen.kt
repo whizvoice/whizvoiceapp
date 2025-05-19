@@ -261,7 +261,7 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { viewModel.onAsanaSetupDialogDismissed() },
             title = { Text("Asana Account Setup") },
-            text = { Text("Your Asana access token is missing. Please set it up in Settings to use Asana features.") },
+            text = { Text("Your Asana access token is missing or invalid. Please set it up in Settings to use Asana features.") },
             confirmButton = {
                 Button(onClick = {
                     viewModel.onAsanaSetupDialogDismissed()
