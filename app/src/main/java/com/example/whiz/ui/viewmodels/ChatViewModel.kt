@@ -228,7 +228,7 @@ class ChatViewModel @Inject constructor(
                         }
                         _isResponding.value = false
                     }
-                    is WebSocketEvent.Message -> { 
+                    is WebSocketEvent.Message -> {
                         Log.d(TAG, "Message received from server: ${event.text}")
                         var isErrorHandled = false
                         var messageContentForChat = event.text 
@@ -360,10 +360,10 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "TTS Initialized successfully.")
                 _isTTSInitialized.value = true
             }
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
                     Log.d(TAG, "TTS onStart for $utteranceId")
-                    _isSpeaking.value = true
+                        _isSpeaking.value = true
                     if (speechRecognitionService.isListening.value) {
                         wasListeningBeforeTTS = true
                         speechRecognitionService.stopListening() 
@@ -372,11 +372,11 @@ class ChatViewModel @Inject constructor(
                         wasListeningBeforeTTS = false
                         Log.d(TAG, "TTS starting, ASR was not active. wasListeningBeforeTTS = false")
                     }
-                }
+                    }
 
-                override fun onDone(utteranceId: String?) {
+                    override fun onDone(utteranceId: String?) {
                     Log.d(TAG, "TTS onDone for $utteranceId")
-                    _isSpeaking.value = false
+                        _isSpeaking.value = false
                     if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
                         Log.d(TAG, "TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                         speechRecognitionService.startListening { transcription ->
@@ -391,7 +391,7 @@ class ChatViewModel @Inject constructor(
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
                     Log.e(TAG, "TTS onError for $utteranceId")
-                    _isSpeaking.value = false
+                        _isSpeaking.value = false
                     if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
                         Log.d(TAG, "TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                         speechRecognitionService.startListening { transcription ->
