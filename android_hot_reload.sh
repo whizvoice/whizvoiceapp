@@ -126,7 +126,7 @@ echo "------------------------------------"
 
 echo "[INFO] Starting logcat. Press Ctrl+C to stop."
 # Output logs with tags, at Debug level for all tags, to identify sources
-$ADB_CMD logcat -v tag "*:D"
+$ADB_CMD logcat *:I | grep -i "whiz"
 
 echo "------------------------------------"
 
