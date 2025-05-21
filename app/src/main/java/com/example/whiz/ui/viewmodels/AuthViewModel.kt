@@ -81,48 +81,47 @@ class AuthViewModel @Inject constructor(
             _isLoading.value = false // Ensure loading is stopped
             return
         }
-
+        
         Log.d(TAG, "Processing sign in for account: ${account.email}, has ID token: ${account.idToken != null}")
         _isLoading.value = true
-        _errorState.value = null // Clear previous errors
-
-        viewModelScope.launch { // Launch coroutine here
-            try {
-                // First save the basic account info locally
-                authRepository.processSignInAccount(account) // Suspend call
-
-                // Get ID token and authenticate with server
-                val idToken = account.idToken
-                if (idToken != null) {
-                    Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
-                    val result = authApi.authenticateWithGoogle(idToken) // Suspend call
-                    Log.d(TAG, "Server /auth/google result: $result")
-
-                    if (result.isSuccess) {
-                        val authResponse = result.getOrThrow()
-                        Log.d(TAG, "Server authentication successful: ${authResponse.user.email}")
-
-                        // Save the server token
-                        Log.d(TAG, "Saving server tokens: Access: ${authResponse.accessToken.take(10)}..., Refresh: ${authResponse.refreshToken.take(10)}...")
-                        authRepository.saveAuthTokensFromServer(authResponse.accessToken, authResponse.refreshToken) // Suspend call, now using both tokens
-                        
-                        _navigateToHome.value = true // Trigger navigation on success
-                        Log.d(TAG, "Sign-in process complete, navigateToHome set to true")
-
-                    } else {
-                        val exception = result.exceptionOrNull()
-                        Log.e(TAG, "Server authentication failed", exception)
-                        _errorState.value = "Server authentication failed: ${exception?.message}"
-                    }
+        _errorState.value = null
+        
+        viewModelScope.launch {
+        try {
+            // First save the basic account info locally
+            authRepository.processSignInAccount(account)
+            
+            // Get ID token and authenticate with server
+            val idToken = account.idToken
+            if (idToken != null) {
+                Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
+                val result = authApi.authenticateWithGoogle(idToken)
+                Log.d(TAG, "Server /auth/google result: $result")
+                
+                if (result.isSuccess) {
+                    val authResponse = result.getOrThrow()
+                    Log.d(TAG, "Server authentication successful: ${authResponse.user.email}")
+                    
+                    // Save the server token
+                    Log.d(TAG, "Saving server token: ${authResponse.accessToken}")
+                        authRepository.saveAuthTokensFromServer(
+                            accessToken = authResponse.accessToken,
+                            refreshToken = authResponse.refreshToken ?: ""
+                        )
                 } else {
-                    Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
-                    _errorState.value = "No ID token available for server authentication"
+                    val exception = result.exceptionOrNull()
+                    Log.e(TAG, "Server authentication failed", exception)
+                    _errorState.value = "Server authentication failed: ${exception?.message}"
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing sign in", e)
-                _errorState.value = "Error processing sign in: ${e.message}"
-            } finally {
-                _isLoading.value = false
+            } else {
+                Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
+                _errorState.value = "No ID token available for server authentication"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing sign in", e)
+            _errorState.value = "Error processing sign in: ${e.message}"
+        } finally {
+            _isLoading.value = false
             }
         }
     }

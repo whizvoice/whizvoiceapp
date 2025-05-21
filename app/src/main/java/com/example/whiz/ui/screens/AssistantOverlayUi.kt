@@ -29,13 +29,17 @@ import com.example.whiz.data.local.MessageType // Import MessageType
 import android.util.Log // Import Log
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
 fun AssistantOverlayUi(
-    viewModel: ChatViewModel = hiltViewModel(),
+    viewModel: ChatViewModel = viewModel(), // Use viewModel() instead of hiltViewModel()
     onDismiss: () -> Unit // Callback to close the activity
 ) {
     val TAG = "AssistantOverlayUi" // Tag for logging
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // Collect necessary state from ViewModel
     val inputText by viewModel.inputText.collectAsState()
@@ -81,36 +85,6 @@ fun AssistantOverlayUi(
             // *** Step 3: Add Logging ***
             val lastMessage = messagesState.lastOrNull() // Get the actual last message
             Log.d("AssistantOverlayUi", "Recomposing: lastMessage content = ${lastMessage?.content}")
-
-            // --- Step 2: Comment out AnimatedVisibility block ---
-            /*
-            // --- Display Last Assistant Response Conditionally ---
-            AnimatedVisibility(
-                // Show if message is not null
-                visible = lastAssistantMessage != null, // Uses the commented out variable
-                enter = fadeIn() + slideInVertically(),
-                exit = fadeOut() + slideOutVertically()
-            ) {
-                // Smart cast should work here because of visible check
-                lastAssistantMessage?.let { message ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth(0.9f) // Responsive width
-                            .padding(bottom = 16.dp), // Space between response and input bar
-                        shape = MaterialTheme.shapes.medium, // Rounded corners for response bubble
-                        color = MaterialTheme.colorScheme.surfaceVariant, // Background color for response
-                        tonalElevation = 4.dp // Add elevation
-                    ) {
-                        Text(
-                            text = message.content,
-                            modifier = Modifier.padding(16.dp), // Padding inside the bubble
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-                }
-            } // End AnimatedVisibility
-            */
 
             // *** Step 4: Add Simplified Display ***
             if (lastMessage != null) {

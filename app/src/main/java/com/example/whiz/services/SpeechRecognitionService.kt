@@ -43,27 +43,34 @@ class SpeechRecognitionService @Inject constructor(
     private var utteranceFinalized = false
     private var recognizerIntent: Intent? = null // Store the intent for restarting
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
-    private var isInitialized = false
+    private var _isInitialized = false
+    val isInitialized: Boolean
+        get() = _isInitialized
+
+    // --- Continuous Listening State ---
+    var continuousListeningEnabled: Boolean = false
 
     fun initialize() {
         // Check availability first without doing anything that could crash
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e(TAG, "Speech recognition is not available on this device.")
             _errorState.value = "Speech recognition not available."
-            isInitialized = false
+            _isInitialized = false
             return
         }
         
-        setupRecognizerIntent() // Setup intent once
+        // Reset all state
+        _isListening.value = false
+        _transcriptionState.value = ""
+        manualStopInProgress = false
+        utteranceFinalized = false
+        recognitionCallback = null
         
-        // Safely release any existing recognizer
-        try {
-            speechRecognizer?.cancel()
-            speechRecognizer?.destroy()
-            speechRecognizer = null
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing existing recognizer", e)
-        }
+        // Safely release any existing recognizer first
+        releaseInternal(isReinitializing = true)
+        
+        // Setup intent
+        setupRecognizerIntent()
         
         // Create the new recognizer with error handling
         try {
@@ -71,12 +78,19 @@ class SpeechRecognitionService @Inject constructor(
             speechRecognizer?.setRecognitionListener(createRecognitionListener())
             Log.d(TAG, "Speech recognizer initialized successfully.")
             _errorState.value = null
-            isInitialized = true
+            _isInitialized = true
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SpeechRecognizer", e)
             _errorState.value = "Failed to initialize speech service."
             speechRecognizer = null
-            isInitialized = false
+            _isInitialized = false
+            // Try to clean up
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (cleanupError: Exception) {
+                Log.e(TAG, "Error during cleanup", cleanupError)
+            }
         }
     }
 
@@ -95,86 +109,82 @@ class SpeechRecognitionService @Inject constructor(
     }
 
 
-    fun startListening(onFinalTranscription: (String) -> Unit) {
-        // Check if already listening
-        if (_isListening.value) {
-            Log.w(TAG, "Already listening, ignoring startListening request.")
-            return
-        }
-
-        // Ensure initialized (important!)
+    fun startListening(callback: (String) -> Unit) {
+        Log.d(TAG, "[DEBUG] startListening called. isInitialized=$isInitialized, isListening=${_isListening.value}")
         if (!isInitialized) {
-            Log.w(TAG, "Recognizer not initialized. Attempting initialization.")
-            initialize()
+            Log.w(TAG, "[DEBUG] SpeechRecognitionService not initialized")
+            initialize() // Try to initialize if not initialized
             if (!isInitialized) {
-                _errorState.value = "Speech service not ready. Please try again."
-                Log.e(TAG, "Initialization failed, cannot start listening.")
-                return // Abort if init failed
+                Log.e(TAG, "[DEBUG] Failed to initialize speech recognition")
+                _errorState.value = "Failed to initialize speech recognition"
+                return
             }
         }
 
-        // Check recognizer/intent again after potential init
-        if (speechRecognizer == null || recognizerIntent == null) {
-            Log.e(TAG, "Cannot start listening, recognizer or intent is null AFTER init check.")
-            _errorState.value = "Speech service encountered an internal error."
-            _isListening.value = false // Ensure state consistency
+        if (_isListening.value) {
+            Log.w(TAG, "[DEBUG] startListening called but already listening. Ignoring new request.")
             return
         }
 
-        Log.d(TAG, "Preparing to start listening.")
-        _transcriptionState.value = ""
-        _errorState.value = null
-        recognitionCallback = onFinalTranscription
-        manualStopInProgress = false
-        utteranceFinalized = false
-
-        // Make sure triggerListeningStart is called correctly
-        triggerListeningStart("startListening_entry") // Pass context for logging
-    }
-
-    // And ensure triggerListeningStart logs clearly and sets state:
-    private fun triggerListeningStart(reason: String) {
-        // ... (null checks as before) ...
-        Log.d(TAG, "Attempting triggerListeningStart from [$reason]")
         try {
+            Log.d(TAG, "[DEBUG] Actually starting speech recognition")
+            _isListening.value = true // Set listening state to true
+            _errorState.value = null
             utteranceFinalized = false
-            // *** IMPORTANT: Set state BEFORE calling startListening ***
-            _isListening.value = true
+            recognitionCallback = callback
+            manualStopInProgress = false
+
+            if (speechRecognizer == null) {
+                Log.d(TAG, "[DEBUG] Creating new SpeechRecognizer instance")
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
+                speechRecognizer?.setRecognitionListener(createRecognitionListener())
+            }
+
+            setupRecognizerIntent()
+            Log.d(TAG, "[DEBUG] Calling startListening on SpeechRecognizer")
             speechRecognizer?.startListening(recognizerIntent)
-            Log.i(TAG, "SpeechRecognizer successfully called startListening (Reason: $reason). isListening state: ${_isListening.value}")
+            Log.d(TAG, "[DEBUG] Speech recognition started successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "Error in triggerListeningStart [$reason]", e)
-            _errorState.value = "Could not start listening."
-            _isListening.value = false // Reset state on error
+            Log.e(TAG, "[DEBUG] Error starting speech recognition", e)
+            _errorState.value = "Error starting speech recognition: ${e.message}"
+            _isListening.value = false // Reset listening state on error
+            recognitionCallback = null
+            // Try to clean up
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (cleanupError: Exception) {
+                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
+            }
         }
     }
-
 
     fun stopListening() {
-        if (!_isListening.value && !manualStopInProgress) {
-            Log.w(TAG, "Not listening or already stopping, ignoring stopListening request.")
+        Log.d(TAG, "[DEBUG] stopListening called. isListening=${_isListening.value}")
+        if (!_isListening.value) {
+            Log.d(TAG, "[DEBUG] Not listening, ignoring stop request")
+            return
         }
 
-        Log.i(TAG, "Manual stop requested.")
-        manualStopInProgress = true
-
-        // Cancel any pending restarts before stopping
-        serviceScope.launch { /* cancel pending restarts if using delays */ } // Placeholder if delays were used
-
-        speechRecognizer?.cancel()
-        speechRecognizer?.stopListening() // Request stop
-
-        if (_isListening.value) {
-            _isListening.value = false
-            Log.i(TAG, "Set isListening to false due to manual stop.")
-        }
-
-        val textToFinalize = _transcriptionState.value
-        if (textToFinalize.isNotEmpty()) {
-            Log.d(TAG, "Finalizing text on manual stop: '$textToFinalize'")
-            finalizeTranscription("manualStop")
-        } else {
-            _transcriptionState.value = ""
+        try {
+            Log.d(TAG, "[DEBUG] Stopping speech recognition")
+            manualStopInProgress = true
+            speechRecognizer?.stopListening()
+            _isListening.value = false // Set listening state to false
+            recognitionCallback = null
+            Log.d(TAG, "[DEBUG] Speech recognition stopped successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "[DEBUG] Error stopping speech recognition", e)
+            _errorState.value = "Error stopping speech recognition: ${e.message}"
+            _isListening.value = false // Ensure listening state is false on error
+            recognitionCallback = null
+            // Try to clean up
+            try {
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (cleanupError: Exception) {
+                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
+            }
         }
     }
 
@@ -212,127 +222,92 @@ class SpeechRecognitionService @Inject constructor(
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                Log.d(TAG, "onReadyForSpeech")
+                Log.d(TAG, "[DEBUG] onReadyForSpeech")
                 _errorState.value = null
                 manualStopInProgress = false
             }
 
             override fun onBeginningOfSpeech() {
-                Log.d(TAG, "onBeginningOfSpeech")
-                // Resetting here is good, but resetting before startListening is more reliable
-                // utteranceFinalized = false // Keep this for safety, but primary reset is before startListening call
+                Log.d(TAG, "[DEBUG] onBeginningOfSpeech")
             }
 
             override fun onRmsChanged(rmsdB: Float) { /* ... */ }
             override fun onBufferReceived(buffer: ByteArray?) { /* ... */ }
 
             override fun onEndOfSpeech() {
-                Log.d(TAG, "onEndOfSpeech")
+                Log.d(TAG, "[DEBUG] onEndOfSpeech")
                 // User stopped talking or recognizer hit a silence timeout.
                 if (manualStopInProgress) {
+                    Log.d(TAG, "[DEBUG] EndOfSpeech handled after manual stop.")
                     _isListening.value = false
                     manualStopInProgress = false
-                    Log.d(TAG,"EndOfSpeech handled after manual stop.")
-                } else if (_isListening.value) {
-                    // If still in voice mode, explicitly restart listening for the next phrase
-                    Log.d(TAG,"Natural end of speech detected, explicitly restarting listener.")
-                    // Add a small delay to prevent immediate restart if results are coming
-                    serviceScope.launch {
-                        delay(100) // Small delay (e.g., 100ms)
-                        if(_isListening.value) { // Re-check state after delay
-                            triggerListeningStart("onEndOfSpeech")
+                }
+                // If still in voice mode, explicitly restart listening for the next phrase
+                Log.d(TAG, "[DEBUG] Natural end of speech detected, explicitly restarting listener.")
+                // Add a small delay to prevent immediate restart if results are coming
+                serviceScope.launch {
+                    delay(100) // Small delay (e.g., 100ms)
+                    if(_isListening.value) { // Re-check state after delay
+                        try {
+                            speechRecognizer?.startListening(recognizerIntent)
+                            Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
+                            _isListening.value = false
+                            _errorState.value = "Error restarting listening: ${e.message}"
                         }
                     }
                 }
             }
 
             override fun onError(error: Int) {
-                val wasManuallyStopping = manualStopInProgress
-                manualStopInProgress = false
-
-                val errorMessage = getErrorMessage(error)
-                Log.e(TAG, "onError: $errorMessage (code: $error), wasManuallyStopping: $wasManuallyStopping, isListening: ${_isListening.value}")
-
-                val showError = shouldShowError(error, wasManuallyStopping)
-                if (showError) { /* ... (error reporting same as before) ... */
-                    if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT || error == SpeechRecognizer.ERROR_SERVER || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
-                        _errorState.value = "Speech service error. Please try again."
-                    } else {
-                        _errorState.value = errorMessage
-                    }
-                } else {
-                    _errorState.value = null
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match found"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "RecognitionService busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Server error"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+                    else -> "Unknown error"
                 }
+                Log.e(TAG, "[DEBUG] Speech recognition error: $errorMessage (code $error)")
+                _errorState.value = errorMessage
+                _isListening.value = false
 
-
-                // Don't finalize text on errors like NO_MATCH or CLIENT if stopping manually
-                if (error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT && _transcriptionState.value.isNotEmpty()) {
-                    Log.d(TAG, "Finalizing transcription due to speech timeout with text.")
-                    finalizeTranscription("timeoutWithError")
-                }
-
-                // Decide whether to attempt restart based on error and state
-                val shouldStopListening = when(error) {
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
-                    SpeechRecognizer.ERROR_AUDIO,
-                    SpeechRecognizer.ERROR_SERVER -> true // Fatal errors
-                    else -> false // For most others, try to restart if still in listening mode
-                }
-
-                if (shouldStopListening && _isListening.value) {
-                    Log.w(TAG, "Stopping listening permanently due to error: $error")
-                    _isListening.value = false // Stop listening state
-                } else if (_isListening.value) {
-                    // Attempt to restart on non-fatal errors if user hasn't manually stopped
-                    Log.w(TAG, "Attempting to restart listening after recoverable error: $error")
-                    // Add a delay before restarting after an error
+                // --- Continuous listening auto-restart logic ---
+                if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled) {
+                    Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
                     serviceScope.launch {
-                        delay(500) // Longer delay after error (e.g., 500ms)
-                        if(_isListening.value) { // Re-check state after delay
-                            triggerListeningStart("onErrorRestart")
-                        }
+                        delay(300) // Small delay to avoid immediate restart
+                        startListening(recognitionCallback ?: { })
                     }
                 }
             }
 
             override fun onResults(results: Bundle?) {
+                Log.d(TAG, "[DEBUG] onResults")
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val validResult = !matches.isNullOrEmpty() && matches[0].isNotEmpty()
-
-                if (validResult) {
-                    val text = matches!![0].trim()
-                    Log.i(TAG, "onResults: '$text'")
-                    _transcriptionState.value = text
-                    finalizeTranscription("onResults") // Finalize this utterance
-                } else {
-                    Log.w(TAG, "onResults received null, empty, or blank text.")
-                    if (_transcriptionState.value.isNotEmpty()) _transcriptionState.value = "" // Clear any old partial
-                    utteranceFinalized = false // Ensure flag allows next utterance
-                }
-
-                // ** CRITICAL: Restart listening if still in voice mode **
-                if (_isListening.value) {
-                    Log.d(TAG,"Restarting listener after processing results.")
-                    // No delay needed usually after successful result
-                    triggerListeningStart("onResultsRestart")
-                }
+                val finalText = matches?.firstOrNull() ?: ""
+                Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
+                _transcriptionState.value = finalText
+                recognitionCallback?.invoke(finalText)
+                _isListening.value = false
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
+                Log.d(TAG, "[DEBUG] onPartialResults")
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!matches.isNullOrEmpty() && matches[0].isNotEmpty()) {
-                    val partialText = matches[0]
-                    _transcriptionState.value = partialText
-                    // If we get a partial result, it means an utterance is in progress or starting
-                    // Ensure the finalized flag is false.
-                    if (utteranceFinalized) {
-                        Log.w(TAG, "Partial results received but utterance was marked final. Resetting flag.")
-                        utteranceFinalized = false
-                    }
-                }
+                val partialText = matches?.firstOrNull() ?: ""
+                Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
+                _transcriptionState.value = partialText
             }
 
-            override fun onEvent(eventType: Int, params: Bundle?) { /* ... */ }
+            override fun onEvent(eventType: Int, params: Bundle?) {
+                Log.d(TAG, "[DEBUG] onEvent: $eventType")
+            }
         }
     }
 

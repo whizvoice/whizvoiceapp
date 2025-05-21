@@ -25,12 +25,8 @@ class ChatsListViewModel @Inject constructor(
         )
 
     // Create a new chat
-    fun createNewChat(title: String = "New Chat"): Long {
-        var newChatId = -1L
-        viewModelScope.launch {
-            newChatId = repository.createChat(title)
-        }
-        return newChatId
+    suspend fun createNewChat(title: String = "New Chat"): Long {
+        return repository.createChat(title)
     }
 
     // Clear all chat history

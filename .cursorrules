@@ -1,6 +1,7 @@
 this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
 Please don't downgrade packages for no reason.
 Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./android_hot_reload.sh` to kick off the build in Android Studio so we can test the change right away.
+Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. 
 
 We use supabase for the database. Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 
