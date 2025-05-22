@@ -87,27 +87,31 @@ class AuthViewModel @Inject constructor(
         _errorState.value = null
         
         viewModelScope.launch {
-        try {
-            // First save the basic account info locally
-            authRepository.processSignInAccount(account)
-            
-            // Get ID token and authenticate with server
-            val idToken = account.idToken
-            if (idToken != null) {
-                Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
-                val result = authApi.authenticateWithGoogle(idToken)
-                Log.d(TAG, "Server /auth/google result: $result")
+            try {
+                // First save the basic account info locally
+                authRepository.processSignInAccount(account)
                 
-                if (result.isSuccess) {
-                    val authResponse = result.getOrThrow()
-                    Log.d(TAG, "Server authentication successful: ${authResponse.user.email}")
+                // Get ID token and authenticate with server
+                val idToken = account.idToken
+                if (idToken != null) {
+                    Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
+                    val result = authApi.authenticateWithGoogle(idToken)
+                    Log.d(TAG, "Server /auth/google result: $result")
                     
-                    // Save the server token
-                    Log.d(TAG, "Saving server token: ${authResponse.accessToken}")
+                    if (result.isSuccess) {
+                        val authResponse = result.getOrThrow()
+                        Log.d(TAG, "Server authentication successful: ${authResponse.user.email}")
+                        
+                        // Save the server token
+                        Log.d(TAG, "Saving server token: ${authResponse.accessToken}")
                         authRepository.saveAuthTokensFromServer(
                             accessToken = authResponse.accessToken,
                             refreshToken = authResponse.refreshToken ?: ""
                         )
+                    } else {
+                        Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
+                        _errorState.value = "No ID token available for server authentication"
+                    }
                 } else {
                     Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
                     _errorState.value = "No ID token available for server authentication"
@@ -117,12 +121,6 @@ class AuthViewModel @Inject constructor(
                 _errorState.value = "Error processing sign in: ${e.message}"
             } finally {
                 _isLoading.value = false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing sign in", e)
-            _errorState.value = "Error processing sign in: ${e.message}"
-        } finally {
-            _isLoading.value = false
             }
         }
     }
