@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.util.Log
+import com.example.whiz.services.SpeechRecognitionService
 
 /**
  * The main entry point for the Assistant integration with the Android system.
@@ -14,20 +15,24 @@ class WhizVoiceInteractionService : VoiceInteractionService() {
 
     private val TAG = "WhizVoiceInteractionSvc"
 
+    private lateinit var speechRecognitionService: SpeechRecognitionService
+
+    override fun onCreate() {
+        super.onCreate()
+        speechRecognitionService = SpeechRecognitionService(applicationContext)
+    }
+
     override fun onReady() {
         super.onReady()
         Log.d(TAG, "onReady - Service is ready.")
-        // You can perform any one-time setup here if needed.
-        // Hotword detection might be initialized here or in the session.
+        // Initialize speech recognition service
+        speechRecognitionService.initialize()
     }
 
     // This method is called when the system wants to start a voice interaction session.
     // It determines if your app can handle the intent. For now, we handle standard assist.
     override fun onGetSupportedVoiceActions(voiceActions: Set<String>): Set<String> {
-        // For now, let's say we support the basic assist action
-        // You might add custom voice actions later.
-        Log.d(TAG, "onGetSupportedVoiceActions - Checking supported actions.")
-        // Return an empty set for now, or declare specific actions if you implement them.
-        return HashSet() // Or return setOf("your.custom.ACTION") if defined
+        // Support the standard assist action
+        return setOf(Intent.ACTION_ASSIST)
     }
 }

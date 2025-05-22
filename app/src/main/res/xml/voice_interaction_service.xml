@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="com.example.whiz.assistant.WhizVoiceInteractionSessionService"
-    android:recognitionService="android/platform" android:supportsAssist="true"
-    android:supportsLaunchVoiceAssistFromKeyguard="true"
-    android:supportsLocalInteraction="true" />
+    android:recognitionService="com.example.whiz.assistant.WhizVoiceInteractionService"
+    android:supportsAssist="true" />

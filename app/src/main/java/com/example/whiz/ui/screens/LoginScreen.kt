@@ -73,7 +73,9 @@ fun LoginScreen(
             try {
                 val account = task.getResult(ApiException::class.java)
                 Log.d("LoginScreen", "Successfully got account: ${account.email}, calling ViewModel to process.")
+                scope.launch {
                 authViewModel.initiateSignInProcessing(account)
+                }
             } catch (e: ApiException) {
                 Log.e("LoginScreen", "Google sign in failed with status code: ${e.statusCode}", e)
                 // Show detailed error based on status code
@@ -120,13 +122,12 @@ fun LoginScreen(
         }
     }
 
-    // Navigate to home screen when ViewModel signals
-    LaunchedEffect(navigateToHome) {
-        if (navigateToHome) {
+    // Navigate to home screen when authenticated
+    LaunchedEffect(isAuthenticated) {
+        if (isAuthenticated) {
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Login.route) { inclusive = true }
             }
-            authViewModel.onNavigateToHomeConsumed() // Reset the trigger
         }
     }
 
@@ -155,8 +156,8 @@ fun LoginScreen(
         ) {
             // App Logo/Icon
             Image(
-                painter = painterResource(id = R.drawable.ic_launcher_foreground), // Update with your logo
-                contentDescription = "App Logo",
+                painter = painterResource(id = R.drawable.ic_launcher), // Use the pre-rendered WebP from drawable
+                contentDescription = "WhizVoice Logo",
                 modifier = Modifier.size(120.dp)
             )
             

@@ -55,21 +55,27 @@
 
         <service
             android:name=".assistant.WhizVoiceInteractionService"
-            android:exported="true"
             android:label="@string/app_name"
-            android:permission="android.permission.BIND_VOICE_INTERACTION">
-            <intent-filter>
-                <action android:name="android.service.voice.VoiceInteractionService" />
-            </intent-filter>
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
             <meta-data
                 android:name="android.voice_interaction"
                 android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
         </service>
 
         <service
             android:name=".assistant.WhizVoiceInteractionSessionService"
-            android:exported="true"
-            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Whiz.Assistant"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data
+                android:name="android.voice_interaction_session"
+                android:resource="@xml/voice_interaction_session" />
+        </service>
 
         <activity
             android:name=".ui.settings.SettingsActivity"

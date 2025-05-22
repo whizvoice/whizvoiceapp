@@ -124,9 +124,22 @@ $ADB_CMD logcat -c
 
 echo "------------------------------------"
 
+echo "[INFO] Starting filtered logcat for voice activation debugging..."
+# Show all logs from the app's package, not just filtered keywords
+$ADB_CMD logcat | grep "$PACKAGE_NAME"
+
 echo "[INFO] Starting logcat. Press Ctrl+C to stop."
 # Output logs with tags, at Debug level for all tags, to identify sources
+echo "[INFO] Starting general logcat..."
 $ADB_CMD logcat *:I | grep -i "whiz"
+# Start a second logcat process to capture AndroidRuntime errors and stack traces
+echo "[INFO] Starting AndroidRuntime error logcat..."
+$ADB_CMD logcat AndroidRuntime:E *:S
+# Start a third logcat process to capture all errors
+echo "[INFO] Starting error logcat..."
+$ADB_CMD logcat *:E
+# Wait for all background processes
+wait
 
 echo "------------------------------------"
 

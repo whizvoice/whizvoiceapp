@@ -49,6 +49,7 @@ import com.example.whiz.permissions.PermissionHandler
 import androidx.navigation.NavController
 import com.example.whiz.ui.navigation.Screen // Update this import
 import com.example.whiz.ui.viewmodels.AuthViewModel
+import android.util.Log
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,9 +62,36 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
     navController: NavController
 ) {
+    // Handle permission state - moved to top
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
+
+    // Check for voice mode flag
+    val enableVoiceMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
+    val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
+    Log.d("ChatScreen", "Composed with enableVoiceMode=$enableVoiceMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
+    
+    // Enable voice mode if flag is set
+    LaunchedEffect(enableVoiceMode) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission")
+        if (enableVoiceMode) {
+            if (hasPermission) {
+                Log.d("ChatScreen", "[LOG] Delaying toggleSpeechRecognition to ensure UI is ready")
+                kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
+                Log.d("ChatScreen", "[LOG] Calling toggleSpeechRecognition after delay")
+                viewModel.onMicrophonePermissionGranted()
+                viewModel.toggleSpeechRecognition()
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
+            } else {
+                Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")
+                showPermissionDialog = true
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
+            }
+        }
+    }
 
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
@@ -83,12 +111,10 @@ fun ChatScreen(
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
-
-    // Handle permission state
-    var showPermissionDialog by remember { mutableStateOf(false) }
     
     // Update viewModel with current permission state
     LaunchedEffect(hasPermission) {
+        Log.d("ChatScreen", "Permission state changed: hasPermission=$hasPermission")
         if (hasPermission) {
             viewModel.onMicrophonePermissionGranted()
         } else {
@@ -99,12 +125,15 @@ fun ChatScreen(
     // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
         if (!hasPermission) {
+            Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
         } else {
-            // Only allow mic toggle if not speaking or responding
             val isInputDisabled = isResponding || isSpeaking
             if (!isInputDisabled) {
+                Log.d("ChatScreen", "[LOG] Mic clicked, calling toggleSpeechRecognition")
                 viewModel.toggleSpeechRecognition()
+            } else {
+                Log.d("ChatScreen", "[LOG] Input disabled, cannot toggle speech recognition")
             }
         }
     }

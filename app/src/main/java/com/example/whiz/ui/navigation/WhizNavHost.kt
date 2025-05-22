@@ -40,6 +40,10 @@ fun WhizNavHost(
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
 
+    // Check if we're coming from assistant
+    val fromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false
+    val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
+
     // Custom extension to preload data before navigating
     fun NavHostController.preloadAndNavigate(route: String) {
         when {
@@ -56,7 +60,15 @@ fun WhizNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = if (isAuthenticated) Screen.Home.route else Screen.Login.route
+        startDestination = if (isAuthenticated) {
+            if (fromAssistant && chatId > 0) {
+                "chat/$chatId"
+            } else {
+                Screen.Home.route
+            }
+        } else {
+            Screen.Login.route
+        }
     ) {
         // Login Screen
         composable(

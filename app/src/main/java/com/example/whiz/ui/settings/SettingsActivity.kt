@@ -30,6 +30,12 @@ class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         
+        // Set the app icon in the action bar
+        supportActionBar?.apply {
+            setDisplayShowHomeEnabled(true)
+            setIcon(R.drawable.whiz_icon)
+        }
+        
         // Initialize views
         claudeTokenInput = findViewById(R.id.claudeTokenInput)
         asanaTokenInput = findViewById(R.id.asanaTokenInput)
