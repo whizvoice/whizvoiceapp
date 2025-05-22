@@ -274,7 +274,15 @@ class SpeechRecognitionService @Inject constructor(
                     else -> "Unknown error"
                 }
                 Log.e(TAG, "[DEBUG] Speech recognition error: $errorMessage (code $error)")
-                _errorState.value = errorMessage
+                
+                // Only show user-visible errors for critical issues, not for expected errors like NO_MATCH
+                if (shouldShowError(error, manualStopInProgress)) {
+                    _errorState.value = errorMessage
+                } else {
+                    Log.d(TAG, "[DEBUG] Suppressing user-visible error for expected error type: $errorMessage")
+                    _errorState.value = null // Clear any previous errors
+                }
+                
                 _isListening.value = false
 
                 // --- Continuous listening auto-restart logic ---
