@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -269,5 +270,28 @@ class AuthRepository @Inject constructor(
     // Expose last signed-in Google account
     fun getLastSignedInGoogleAccount(): GoogleSignInAccount? {
         return GoogleSignIn.getLastSignedInAccount(context)
+    }
+
+    // Renamed function
+    suspend fun setUserTimezone(timezone: String): Boolean {
+        return try {
+            // Ensure we have a server token before making the call
+            val currentServerToken = serverToken.first { it != null }
+            if (currentServerToken == null) {
+                Log.w(TAG, "Cannot set timezone via API, server token is null.")
+                return false
+            }
+            val response = authApi.setUserTimezone(AuthApi.SetTimezoneRequest(timezone))
+            if (response.isSuccessful) {
+                Log.i(TAG, "Successfully set timezone '$timezone' via API.")
+                true
+            } else {
+                Log.w(TAG, "Failed to set timezone via API. Code: ${response.code()}, Message: ${response.message()}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception while setting timezone '$timezone' via API", e)
+            false
+        }
     }
 } 
