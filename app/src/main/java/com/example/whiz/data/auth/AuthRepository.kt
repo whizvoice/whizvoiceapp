@@ -272,7 +272,6 @@ class AuthRepository @Inject constructor(
         return GoogleSignIn.getLastSignedInAccount(context)
     }
 
-    // Renamed function
     suspend fun setUserTimezone(timezone: String): Boolean {
         return try {
             // Ensure we have a server token before making the call
