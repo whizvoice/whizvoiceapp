@@ -310,8 +310,11 @@ class ChatViewModel @Inject constructor(
                             tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
                             // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
                         } else {
-                            // If not speaking, ensure STT resumes if it was interrupted by a previous TTS cycle that has now completed.
-                            if (wasListeningBeforeTTS && !_isSpeaking.value) {
+                            // Always restart continuous listening after assistant reply if enabled and not speaking
+                            if (continuousListeningEnabled && !_isSpeaking.value) {
+                                Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
+                                startContinuousListening()
+                            } else if (wasListeningBeforeTTS && !_isSpeaking.value) {
                                 Log.d(TAG, "[LOG] Not speaking, wasListeningBeforeTTS=true, restarting ASR.")
                                 speechRecognitionService.startListening { finalTranscription ->
                                     if (finalTranscription.isNotBlank()) {
@@ -319,11 +322,6 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }
                                 wasListeningBeforeTTS = false
-                            }
-                            // Always restart continuous listening after assistant reply if enabled
-                            if (continuousListeningEnabled) {
-                                Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
-                                startContinuousListening()
                             }
                         }
                         _isResponding.value = false
@@ -393,18 +391,18 @@ class ChatViewModel @Inject constructor(
                     override fun onDone(utteranceId: String?) {
                         Log.d(TAG, "[LOG] TTS onDone for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
-                        if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                        
+                        // Always restart continuous listening when TTS is done, if enabled
+                        if (continuousListeningEnabled) {
+                            Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR.")
+                            startContinuousListening()
+                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
                             Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                             speechRecognitionService.startListening { transcription ->
                                 this@ChatViewModel.processAndSendTranscription(transcription)
                             }
-                        } else if (continuousListeningEnabled) {
-                            Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
-                            }
                         } else {
-                            Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=$wasListeningBeforeTTS or voice response disabled, not restarting ASR.")
+                            Log.d(TAG, "[LOG] TTS done, not restarting ASR.")
                         }
                         wasListeningBeforeTTS = false
                     }
@@ -413,13 +411,13 @@ class ChatViewModel @Inject constructor(
                     override fun onError(utteranceId: String?) {
                         Log.e(TAG, "[LOG] TTS onError for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
-                        if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                            Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
-                            }
-                        } else if (continuousListeningEnabled) {
+                        
+                        // Always restart continuous listening when TTS errors, if enabled
+                        if (continuousListeningEnabled) {
                             Log.d(TAG, "[LOG] TTS error, continuous listening enabled, restarting ASR.")
+                            startContinuousListening()
+                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                            Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                             speechRecognitionService.startListening { transcription ->
                                 this@ChatViewModel.processAndSendTranscription(transcription)
                             }
@@ -479,6 +477,15 @@ class ChatViewModel @Inject constructor(
                 delay(100) // Small delay to ensure state propagation
                 whizServerRepository.connect()
             }
+
+            // Auto-enable continuous listening if we have microphone permission
+            if (_micPermissionGranted.value && !continuousListeningEnabled) {
+                Log.d(TAG, "[LOG] Auto-enabling continuous listening on chat load")
+                delay(200) // Small delay to ensure everything is properly initialized
+                continuousListeningEnabled = true
+                speechRecognitionService.continuousListeningEnabled = true
+                startContinuousListening()
+            }
         }
     }
 
@@ -488,8 +495,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun toggleSpeechRecognition() {
-        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
-        if (_isSpeaking.value) return // Don't allow mic toggle while speaking
+        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Microphone permission not granted")
             _errorState.value = "Microphone permission required" 
@@ -501,6 +507,12 @@ class ChatViewModel @Inject constructor(
             speechRecognitionService.continuousListeningEnabled = false
             speechRecognitionService.stopListening()
         } else {
+            // Prevent starting new listening while speaking OR responding
+            if (_isSpeaking.value || _isResponding.value) {
+                Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
+                _errorState.value = "Cannot start listening while assistant is busy"
+                return
+            }
             Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
             _inputText.value = ""
             continuousListeningEnabled = true
@@ -516,9 +528,17 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "[LOG] startContinuousListening: Clearing _inputText.value before sending. Previous value: '${_inputText.value}'")
             _inputText.value = "" // Clear the input bar before sending
             sendUserInput(finalText)
+            
+            // Always restart listening if continuous listening is enabled, regardless of responding state
             if (continuousListeningEnabled) {
-                Log.d(TAG, "[LOG] Continuous listening: restarting after result")
-                startContinuousListening()
+                Log.d(TAG, "[LOG] Continuous listening: restarting after result (isResponding=${_isResponding.value})")
+                viewModelScope.launch {
+                    // Small delay to ensure the previous listening session is fully stopped
+                    delay(100)
+                    if (continuousListeningEnabled && !_isSpeaking.value) {
+                        startContinuousListening()
+                    }
+                }
             } else {
                 Log.d(TAG, "[LOG] Continuous listening disabled, not restarting")
             }
@@ -716,10 +736,20 @@ class ChatViewModel @Inject constructor(
         _errorState.value = null
         
         // When permission is granted, make sure SpeechRecognitionService is properly initialized
-        // But don't start listening automatically
         try {
             Log.d(TAG, "Microphone permission granted, initializing speech service")
             speechRecognitionService.initialize()
+            
+            // Auto-enable continuous listening when permission is granted
+            if (_chatId.value != 0L && !continuousListeningEnabled) {
+                Log.d(TAG, "[LOG] Auto-enabling continuous listening after permission granted")
+                viewModelScope.launch {
+                    delay(100) // Small delay to ensure service is initialized
+                    continuousListeningEnabled = true
+                    speechRecognitionService.continuousListeningEnabled = true
+                    startContinuousListening()
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing speech service after permission granted", e)
             _errorState.value = "Error initializing speech. Please try again."

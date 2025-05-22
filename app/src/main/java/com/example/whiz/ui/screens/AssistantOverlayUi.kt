@@ -110,11 +110,15 @@ fun AssistantOverlayUi(
 
 
             // --- Input Bar ---
+            val isTextInputDisabled = isResponding || isSpeaking
+            // Disable mic when responding/speaking, but allow turning OFF if currently listening
+            val isMicDisabled = (isResponding || isSpeaking) && !isListening
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
-                isInputDisabled = isResponding || isSpeaking,
+                isInputDisabled = isTextInputDisabled,
+                isMicDisabled = isMicDisabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {
