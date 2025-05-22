@@ -4,7 +4,50 @@ Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp &
 Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. 
 If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation.
 
-We use supabase for the database. Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
+We use supabase for the database. There's a users table, a user_preferences table, a conversations table, and a messages table.
+
+users table:
+
+id | int8
+created_at | timestamp | now()
+email | text
+user_id | text
+google_assistant_user_id | text
+
+the user ID is given by google auth, and is a unique identifier for the user.
+
+user_preferences table:
+
+id | int8
+created_at | timestamp | now()
+user_id | text | foreign key to users.user_id
+preferences | jsonb
+encrypted_preferences | bytea
+last_updated | timestamp | now()
+
+conversations table:
+
+id | int8
+user_id | text | foreign key to users.user_id
+title | text
+created_at | timestamp | now()
+last_message_time | timestamp | now()
+source | text | 'app', 'voice', or 'web'
+google_session_id | text
+
+This table also has indexes idx_conversations_user_id on conversations(user_id) and idx_conversations_last_message on conversations(user_id, last_message_time DESC).
+
+messages table:
+
+id | int8
+conversation_id | int8 | foreign key to conversations.id
+content | text
+message_type | text | 'USER' or 'ASSISTANT'
+timestamp | timestamp | now()
+
+This table also has indexes idx_messages_conversation_id on messages(conversation_id) and idx_messages_timestamp on messages(conversation_id, timestamp ASC).
+
+Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 
 function for getting a specific key's value from regular (not encrypted) preferences
 

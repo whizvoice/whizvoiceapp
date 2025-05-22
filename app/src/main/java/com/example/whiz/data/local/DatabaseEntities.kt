@@ -10,6 +10,8 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import com.example.whiz.data.api.ApiService
 
 @Entity(tableName = "chats")
 data class ChatEntity(
@@ -75,6 +77,63 @@ object DateFormatter {
             messageTime.format(todayFormatter)
         } else {
             messageTime.format(pastFormatter)
+        }
+    }
+}
+
+// Extension functions to convert between API models and local entities
+
+// Convert API ConversationResponse to local ChatEntity
+fun ApiService.ConversationResponse.toChatEntity(): ChatEntity {
+    return ChatEntity(
+        id = this.id,
+        title = this.title,
+        createdAt = parseTimestampToMillis(this.created_at),
+        lastMessageTime = parseTimestampToMillis(this.last_message_time)
+    )
+}
+
+// Convert local ChatEntity to API ConversationCreate
+fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
+    return ApiService.ConversationCreate(
+        title = this.title,
+        source = "app"
+    )
+}
+
+// Convert API MessageResponse to local MessageEntity  
+fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
+    return MessageEntity(
+        id = this.id,
+        chatId = this.conversation_id,
+        content = this.content,
+        type = MessageType.valueOf(this.message_type),
+        timestamp = parseTimestampToMillis(this.timestamp)
+    )
+}
+
+// Convert local MessageEntity to API MessageCreate
+fun MessageEntity.toMessageCreate(): ApiService.MessageCreate {
+    return ApiService.MessageCreate(
+        conversation_id = this.chatId,
+        content = this.content,
+        message_type = this.type.name
+    )
+}
+
+// Helper function to parse ISO timestamp to millis
+private fun parseTimestampToMillis(timestamp: String): Long {
+    return try {
+        // Parse ISO format like "2023-12-15T10:30:00Z" or "2023-12-15T10:30:00.123456+00:00"
+        val instant = Instant.parse(timestamp)
+        instant.toEpochMilli()
+    } catch (e: DateTimeParseException) {
+        // Fallback: try to parse as epoch millis if it's a number
+        try {
+            timestamp.toLong()
+        } catch (e: NumberFormatException) {
+            // If all parsing fails, use current time
+            System.currentTimeMillis()
         }
     }
 }
