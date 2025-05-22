@@ -104,6 +104,7 @@ fun LoginScreen(
                 }
             }
             // User canceled sign-in flow or it failed for another reason
+            authViewModel.cancelSignInAttempt()
         }
     }
 

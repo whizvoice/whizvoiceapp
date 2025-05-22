@@ -81,7 +81,7 @@ class AuthViewModel @Inject constructor(
             _isLoading.value = false // Ensure loading is stopped
             return
         }
-        
+
         Log.d(TAG, "Processing sign in for account: ${account.email}, has ID token: ${account.idToken != null}")
         _isLoading.value = true
         _errorState.value = null
@@ -109,13 +109,14 @@ class AuthViewModel @Inject constructor(
                             refreshToken = authResponse.refreshToken ?: ""
                         )
                 } else {
-                    val exception = result.exceptionOrNull()
-                    Log.e(TAG, "Server authentication failed", exception)
-                    _errorState.value = "Server authentication failed: ${exception?.message}"
+                    Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
+                    _errorState.value = "No ID token available for server authentication"
                 }
-            } else {
-                Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
-                _errorState.value = "No ID token available for server authentication"
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing sign in", e)
+                _errorState.value = "Error processing sign in: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing sign in", e)
