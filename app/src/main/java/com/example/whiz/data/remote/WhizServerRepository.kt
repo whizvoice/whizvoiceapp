@@ -97,6 +97,23 @@ class WhizServerRepository @Inject constructor(
                         reconnectJob?.cancel() // Cancel any pending reconnect job
                         isManuallyDisconnected = false // Reset flag
                         scope.launch { _webSocketEvents.emit(WebSocketEvent.Connected) }
+
+                        // Send timezone via API endpoint after connection is established
+                        val timezone = java.util.TimeZone.getDefault().id
+                        scope.launch {
+                            try {
+                                val success = authRepository.setUserTimezone(timezone)
+                                if (success) {
+                                    Log.i(TAG, "Successfully set timezone via API: $timezone")
+                                } else {
+                                    Log.w(TAG, "Failed to set timezone via API: $timezone")
+                                    // Optionally, send an error event to the UI or retry
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error setting timezone via API", e)
+                                // Optionally, send an error event to the UI or retry
+                            }
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in onOpen", e)
                     }

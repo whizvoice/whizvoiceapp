@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
@@ -14,6 +15,9 @@ import javax.inject.Singleton
 import android.util.Log
 import com.example.whiz.data.auth.RefreshTokenRequest
 import com.example.whiz.data.auth.NewAccessTokenResponse
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.POST
 
 @Singleton
 class AuthApi @Inject constructor(
@@ -161,6 +165,42 @@ class AuthApi @Inject constructor(
             return@withContext Result.failure(e)
         } catch (e: Exception) {
             return@withContext Result.failure(e)
+        }
+    }
+
+    data class SetTimezoneRequest(val timezone: String)
+
+    @POST("user/timezone") // This annotation is informational if not using Retrofit to generate this class
+    suspend fun setUserTimezone(@Body requestBody: SetTimezoneRequest): Response<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject()
+            json.put("timezone", requestBody.timezone)
+            val body = json.toString().toRequestBody(JSON)
+
+            // Assuming an OkHttp Interceptor will add the Authorization header
+            val request = Request.Builder()
+                .url("$SERVER_URL/user/timezone")
+                // .header("Authorization", "Bearer $serverToken") // Removed: Interceptor should handle this
+                .post(body)
+                .build()
+
+            Log.d(TAG, "Sending setUserTimezone request to $SERVER_URL/user/timezone")
+            val okHttpResponse = okHttpClient.newCall(request).execute()
+
+            if (okHttpResponse.isSuccessful) {
+                Response.success(Unit, okHttpResponse.headers)
+            } else {
+                Response.error(okHttpResponse.code, okHttpResponse.body?.source()?.readByteString()?.toResponseBody(okHttpResponse.body?.contentType()) ?: "".toResponseBody(null))
+            }
+        } catch (e: JSONException) {
+            Log.e(TAG, "JSONException in setUserTimezone", e)
+            throw IOException("Failed to create JSON for setUserTimezone", e)
+        } catch (e: IOException) {
+            Log.e(TAG, "IOException in setUserTimezone", e)
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in setUserTimezone", e)
+            throw IOException("Unexpected error in setUserTimezone", e)
         }
     }
 }
