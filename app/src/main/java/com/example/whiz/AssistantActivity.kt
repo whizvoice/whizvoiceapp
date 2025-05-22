@@ -76,15 +76,22 @@ class AssistantActivity : AppCompatActivity() {
                             finish()
                         }
                     } else {
-                        Log.e(TAG, "Failed to create new chat from assistant.")
-                        // Fallback to home screen
+                        Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
+                        // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
                         val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                            putExtra("FROM_ASSISTANT", true)
+                            putExtra("ENABLE_VOICE_MODE", true)
+                            putExtra("CREATE_NEW_CHAT_ON_START", true)
+                            // Add transcription if available
+                            transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                         }
-                        Log.d(TAG, "Falling back to home screen")
-                        startActivity(intent)
-                        isFinishing = true
-                        finish()
+                        Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                        if (!isFinishing) {
+                            isFinishing = true
+                            startActivity(intent)
+                            finish()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error creating new chat or starting MainActivity: ", e)

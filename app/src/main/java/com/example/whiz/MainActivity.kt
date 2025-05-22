@@ -109,9 +109,49 @@ class MainActivity : ComponentActivity() {
         val fromPowerButton = intent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
         Log.d(TAG, "[LOG] ENABLE_VOICE_MODE: $enableVoiceMode, FROM_POWER_BUTTON: $fromPowerButton")
         
-        intent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
-            Log.d(TAG, "Intent to navigate to chat ID: $chatId")
-            if (::navController.isInitialized) {
+        // Check if we need to create a new chat on start (fallback from AssistantActivity)
+        val createNewChatOnStart = intent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
+        val initialTranscription = intent?.getStringExtra("INITIAL_TRANSCRIPTION")
+        
+        if (createNewChatOnStart && ::navController.isInitialized) {
+            Log.d(TAG, "CREATE_NEW_CHAT_ON_START flag detected, creating new chat")
+            lifecycleScope.launch {
+                try {
+                    val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
+                    Log.d(TAG, "New chat created with ID: $newChatId for CREATE_NEW_CHAT_ON_START")
+                    if (newChatId > 0) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            Log.d(TAG, "Navigating to new chat/$newChatId from CREATE_NEW_CHAT_ON_START")
+                            navController.navigate("chat/$newChatId") {
+                                popUpTo(0) { inclusive = true } // Clear entire back stack
+                                launchSingleTop = true
+                            }
+                            // Pass the voice mode flag and initial transcription to the ChatScreen
+                            if (enableVoiceMode) {
+                                Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
+                                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                            }
+                            initialTranscription?.let {
+                                Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
+                                navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                            }
+                            // Clear the extras
+                            getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
+                            getIntent().removeExtra("FROM_ASSISTANT")
+                            getIntent().removeExtra("ENABLE_VOICE_MODE")
+                            getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+                        }, 500) // 500ms delay
+                    } else {
+                        Log.e(TAG, "Failed to create new chat from CREATE_NEW_CHAT_ON_START, staying on home screen")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error creating new chat from CREATE_NEW_CHAT_ON_START", e)
+                }
+            }
+        } else {
+            intent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
+                Log.d(TAG, "Intent to navigate to chat ID: $chatId")
+                if (::navController.isInitialized) {
                 val fromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
                 val forceNavigation = intent.getBooleanExtra("FORCE_NAVIGATION", false)
                 val delayNavigation = intent.getBooleanExtra("DELAY_NAVIGATION", false)
@@ -227,8 +267,9 @@ class MainActivity : ComponentActivity() {
                         Log.e(TAG, "Error creating new chat from power button", e)
                     }
                 }
-            } else {
-                Log.d(TAG, "Skipping power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, navController initialized: ${::navController.isInitialized}")
+                            } else {
+                    Log.d(TAG, "Skipping power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, navController initialized: ${::navController.isInitialized}")
+                }
             }
         }
     }
