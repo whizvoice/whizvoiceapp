@@ -70,7 +70,7 @@ class ChatViewModel @Inject constructor(
         }
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly, // Changed from WhileSubscribed to Eagerly
         initialValue = emptyList()
     )
 
@@ -289,11 +289,13 @@ class ChatViewModel @Inject constructor(
                         // Add the message to chat
                         Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Chat ID: ${_chatId.value}, Content: '$messageContentForChat'")
                         if (_chatId.value > 0) {
-                            repository.addAssistantMessage(
-                                chatId = _chatId.value,
-                                content = messageContentForChat
-                            )
-                            Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Content: '$messageContentForChat'")
+                            viewModelScope.launch {
+                                val messageId = repository.addAssistantMessage(
+                                    chatId = _chatId.value,
+                                    content = messageContentForChat
+                                )
+                                Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId, Content: '$messageContentForChat'")
+                            }
                         } else {
                             Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because chatId is not > 0 (Value: ${_chatId.value})")
                         }
@@ -467,6 +469,10 @@ class ChatViewModel @Inject constructor(
             tts?.stop()
             _isSpeaking.value = false
 
+            // Refresh messages to ensure we have latest data
+            if (_chatId.value > 0) {
+                repository.refreshMessages()
+            }
 
             // Connect to server if needed *after* chat ID is set
             if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
@@ -549,24 +555,30 @@ class ChatViewModel @Inject constructor(
 
             // --- Server Interaction ---
             if (configUseRemoteAgent) {
+                Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 if (_isConnectedToServer.value) {
                     _isResponding.value = true // Show thinking indicator
+                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText'")
                     val success = whizServerRepository.sendMessage(trimmedText)
                     if (!success) {
                         _isResponding.value = false // Stop indicator if send failed
                         _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
+                    } else {
+                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket")
                     }
                     // Response handling is done in observeServerMessages
                 } else {
-                    Log.w(TAG, "Cannot send message: Not connected to server.")
-                    _connectionError.value = "Not connected to server. Please try again."
-                    // Handle error (e.g., show snackbar "Not connected")
-                    // Optionally fallback to local response or queue message
-                    generateAssistantResponse(currentChatId) // Fallback to local?
+                    Log.w(TAG, "Cannot send message: Not connected to server. Attempting to connect...")
+                    _connectionError.value = "Not connected to server. Connecting..."
+                    // Try to connect
+                    whizServerRepository.connect()
+                    // Use local fallback for now
+                    generateAssistantResponse(currentChatId) 
                 }
             } else {
                 // --- Local Fallback ---
+                Log.d(TAG, "sendUserInput: Using local fallback")
                 generateAssistantResponse(currentChatId)
             }
 

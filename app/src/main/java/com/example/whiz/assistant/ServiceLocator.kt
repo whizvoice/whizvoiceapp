@@ -10,8 +10,11 @@ import com.example.whiz.data.local.ChatDao
 import com.example.whiz.data.local.MessageDao
 import com.example.whiz.data.local.WhizDatabase
 import com.example.whiz.data.remote.AuthApi
+import com.example.whiz.data.api.ApiService
 import androidx.room.Room
 import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object ServiceLocator {
@@ -23,6 +26,7 @@ object ServiceLocator {
     private var database: WhizDatabase? = null
     private var okHttpClient: OkHttpClient? = null
     private var authApi: AuthApi? = null
+    private var apiService: ApiService? = null
 
     fun getChatViewModel(context: Context): ChatViewModel {
         if (chatViewModel == null) {
@@ -44,8 +48,8 @@ object ServiceLocator {
 
     private fun getWhizRepository(context: Context): WhizRepository {
         if (whizRepository == null) {
-            val db = getDatabase(context)
-            whizRepository = WhizRepository(db.chatDao(), db.messageDao())
+            val api = getApiService()
+            whizRepository = WhizRepository(api)
         }
         return whizRepository!!
     }
@@ -94,5 +98,17 @@ object ServiceLocator {
             authApi = AuthApi(getOkHttpClient())
         }
         return authApi!!
+    }
+
+    private fun getApiService(): ApiService {
+        if (apiService == null) {
+            apiService = Retrofit.Builder()
+                .baseUrl("https://whizvoice.com/")
+                .client(getOkHttpClient())
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(ApiService::class.java)
+        }
+        return apiService!!
     }
 } 

@@ -3,6 +3,9 @@ package com.example.whiz.data.api
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.DELETE
+import retrofit2.http.Path
 import android.util.Log
 
 interface ApiService {
@@ -21,6 +24,46 @@ interface ApiService {
         val has_asana_token: Boolean
     )
 
+    // ========== CONVERSATION API MODELS ==========
+    data class ConversationCreate(
+        val title: String,
+        val source: String = "app",
+        val google_session_id: String? = null
+    )
+
+    data class ConversationUpdate(
+        val title: String? = null
+    )
+
+    data class ConversationResponse(
+        val id: Long,
+        val user_id: String,
+        val title: String,
+        val created_at: String,
+        val last_message_time: String,
+        val source: String,
+        val google_session_id: String? = null
+    )
+
+    data class MessageCreate(
+        val conversation_id: Long,
+        val content: String,
+        val message_type: String  // 'USER' or 'ASSISTANT'
+    )
+
+    data class MessageResponse(
+        val id: Long,
+        val conversation_id: Long,
+        val content: String,
+        val message_type: String,
+        val timestamp: String
+    )
+
+    data class MessageCountResponse(
+        val count: Int
+    )
+
+    // ========== EXISTING TOKEN ENDPOINTS ==========
     @GET("/api/preferences/tokens")
     suspend fun getApiTokens(): TokenResponse
 
@@ -29,4 +72,33 @@ interface ApiService {
 
     @POST("/api/user/api_key")
     suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): Map<String, String>
+
+    // ========== CONVERSATION ENDPOINTS ==========
+    @GET("/api/conversations")
+    suspend fun getConversations(): List<ConversationResponse>
+
+    @POST("/api/conversations")
+    suspend fun createConversation(@Body request: ConversationCreate): ConversationResponse
+
+    @GET("/api/conversations/{id}")
+    suspend fun getConversation(@Path("id") id: Long): ConversationResponse
+
+    @PUT("/api/conversations/{id}")
+    suspend fun updateConversation(@Path("id") id: Long, @Body request: ConversationUpdate): ConversationResponse
+
+    @DELETE("/api/conversations")
+    suspend fun deleteAllConversations(): Map<String, String>
+
+    @PUT("/api/conversations/{id}/last_message_time")
+    suspend fun updateConversationLastMessageTime(@Path("id") id: Long): Map<String, String>
+
+    // ========== MESSAGE ENDPOINTS ==========
+    @GET("/api/conversations/{id}/messages")
+    suspend fun getMessages(@Path("id") conversationId: Long): List<MessageResponse>
+
+    @POST("/api/messages")
+    suspend fun createMessage(@Body request: MessageCreate): MessageResponse
+
+    @GET("/api/conversations/{id}/messages/count")
+    suspend fun getMessageCount(@Path("id") conversationId: Long): MessageCountResponse
 } 
