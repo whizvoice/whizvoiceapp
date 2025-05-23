@@ -351,6 +351,12 @@ class ChatViewModel @Inject constructor(
                             Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
                             
                             if (targetChatId > 0) {
+                                // 🔧 Clear input text IMMEDIATELY and synchronously before async operations
+                                if (isResponseForCurrentChat) {
+                                    Log.d(TAG, "$eventLogId 🔥 CLEARING input text SYNCHRONOUSLY after bot response (was: '${_inputText.value}')")
+                                    _inputText.value = ""
+                                }
+                                
                                 try {
                                     viewModelScope.launch {
                                         val messageId = repository.addAssistantMessage(
@@ -368,6 +374,9 @@ class ChatViewModel @Inject constructor(
                             }
 
                             // TTS and UI updates (only for current chat)
+                            // 🔧 Update responding state FIRST, before trying to restart listening
+                            updateRespondingStateForCurrentChat()
+                            
                             try {
                                 if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
                                     if (isListening.value) {
@@ -397,8 +406,8 @@ class ChatViewModel @Inject constructor(
                                 Log.e(TAG, "$eventLogId Error in TTS/listening handling", e)
                             }
                             
-                            // 🔧 Update responding state based on current chat's pending requests
-                            updateRespondingStateForCurrentChat()
+                            // 🔧 Add logging to track input text state after response processing
+                            Log.d(TAG, "$eventLogId After response processing: _inputText.value = '${_inputText.value}', _isResponding = ${_isResponding.value}")
                         } catch (e: Exception) {
                             Log.e(TAG, "$eventLogId Unexpected error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
@@ -663,7 +672,16 @@ class ChatViewModel @Inject constructor(
     }
 
     fun updateInputText(text: String) {
-        Log.d(TAG, "[LOG] updateInputText called. Setting _inputText.value to: '$text'")
+        Log.d(TAG, "[LOG] 🔥 updateInputText called. SETTING _inputText.value from '${_inputText.value}' to: '$text'")
+        Log.d(TAG, "[LOG] 🔥 updateInputText stack trace:", Exception("Stack trace for updateInputText"))
+        
+        // 🔧 Prevent setting input text back if we just cleared it due to assistant response
+        // This prevents UI recomposition from overriding our intentional clearing
+        if (_inputText.value.isEmpty() && text.isNotEmpty() && _isResponding.value) {
+            Log.d(TAG, "[LOG] 🔥 updateInputText BLOCKED: Preventing input restoration during response processing (would set to: '$text')")
+            return
+        }
+        
         _inputText.value = text
     }
 
@@ -695,12 +713,21 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun startContinuousListening() {
-        Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=$continuousListeningEnabled")
+        Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=$continuousListeningEnabled, isResponding=${_isResponding.value}")
+        
+        // 🔧 Don't start listening while assistant is responding - better UX
+        if (_isResponding.value) {
+            Log.d(TAG, "[LOG] startContinuousListening: Skipping start while assistant is responding (will restart when response complete)")
+            return
+        }
+        
         speechRecognitionService.startListening { finalText ->
-            Log.d(TAG, "[LOG] startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
-            Log.d(TAG, "[LOG] startContinuousListening: Clearing _inputText.value before sending. Previous value: '${_inputText.value}'")
-            _inputText.value = "" // Clear the input bar before sending
-            sendUserInput(finalText)
+            Log.d(TAG, "[LOG] startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText', isResponding=${_isResponding.value}")
+            
+            // 🔧 Set transcribed text to input field and send immediately
+            Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field for UX: '$finalText'")
+            _inputText.value = finalText
+            sendUserInput(finalText) // Send the transcription
             
             // Always restart listening if continuous listening is enabled, regardless of responding state
             if (continuousListeningEnabled) {
@@ -709,7 +736,7 @@ class ChatViewModel @Inject constructor(
                     // Small delay to ensure the previous listening session is fully stopped
                     delay(100)
                     if (continuousListeningEnabled && !_isSpeaking.value) {
-                        startContinuousListening()
+                        startContinuousListening() // This will check isResponding again
                     }
                 }
             } else {
@@ -721,6 +748,10 @@ class ChatViewModel @Inject constructor(
     fun sendUserInput(text: String = _inputText.value) {
         val trimmedText = text.trim()
         if (trimmedText.isBlank() || _isResponding.value) return
+
+        // 🔧 DON'T clear input when sending - keep it grayed out for UX feedback
+        // Input will be cleared when bot response is received
+        Log.d(TAG, "[LOG] 🔥 sendUserInput: NOT clearing input (good UX - shows what's being processed)")
 
         viewModelScope.launch {
             var currentChatId = _chatId.value
@@ -742,9 +773,8 @@ class ChatViewModel @Inject constructor(
             // Add user message (remains the same)
             repository.addUserMessage(currentChatId, trimmedText)
 
-            // Clear input (remains the same)
-            Log.d(TAG, "[LOG] sendUserInput: Clearing _inputText.value after sending. Previous value: '${_inputText.value}'")
-            _inputText.value = ""
+            // 🔧 Input will be cleared when bot responds (better UX)
+            Log.d(TAG, "[LOG] sendUserInput: Input kept for UX feedback (current input: '${_inputText.value}')")
 
             // --- Server Interaction ---
             if (configUseRemoteAgent) {
@@ -796,9 +826,10 @@ class ChatViewModel @Inject constructor(
     // --- Internal Helper Functions ---
 
     private fun processAndSendTranscription(transcription: String) {
-        Log.d(TAG, "[LOG] processAndSendTranscription called. Setting _inputText.value to transcription: '$transcription'")
-        _inputText.value = transcription
-        sendInputText() 
+        Log.d(TAG, "[LOG] processAndSendTranscription called with transcription: '$transcription'")
+        // 🔧 Don't set _inputText.value as this causes the transcription to appear in the input box
+        // and can cause previously sent messages to reappear. Instead, send the transcription directly.
+        sendUserInput(transcription) // Pass the transcription directly instead of setting input text
     }
 
     private suspend fun generateAssistantResponse(chatId: Long) {
@@ -845,11 +876,6 @@ class ChatViewModel @Inject constructor(
                 repository.updateChatLastMessageTime(chatId)
             }
         }
-    }
-
-    private fun clearInputText() {
-        Log.d(TAG, "[LOG] clearInputText called. Clearing _inputText.value. Previous value: '${_inputText.value}'")
-        _inputText.value = ""
     }
 
     // --- ViewModel Lifecycle ---
@@ -912,6 +938,9 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "🔥 sendInputText: Adding user message to chat ${_chatId.value}: '$textToSend'")
             repository.addUserMessage(_chatId.value, textToSend)
 
+            // 🔧 Input will be cleared when bot responds (better UX)
+            Log.d(TAG, "[LOG] sendInputText: Input kept for UX feedback (current input: '${_inputText.value}')")
+
             if (configUseRemoteAgent) {
                 // Generate request ID and track this request
                 val requestId = java.util.UUID.randomUUID().toString()
@@ -927,8 +956,8 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat() // Update based on remaining requests (should be none for local)
             }
         }
-        Log.d(TAG, "[LOG] sendInputText: Clearing _inputText.value after sending. Previous value: '${_inputText.value}'")
-        clearInputText()
+        // 🔧 Don't clear input when sending - will be cleared when bot responds
+        Log.d(TAG, "[LOG] sendInputText: NOT clearing input (better UX - kept for feedback)")
     }
 
     // Called when permission is granted from UI
