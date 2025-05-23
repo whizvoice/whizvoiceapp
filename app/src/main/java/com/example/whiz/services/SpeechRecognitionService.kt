@@ -117,10 +117,13 @@ class SpeechRecognitionService @Inject constructor(
     fun startListening(callback: (String) -> Unit) {
         Log.d(TAG, "[DEBUG] startListening called. isInitialized=$isInitialized, isListening=${_isListening.value}")
         
-        // 🔧 Rate limiting check
+        // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
+        recognitionCallback = callback
+        
+        // 🔧 Rate limiting check - but don't return early if already listening (callback is set above)
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastStartTime < RESTART_DELAY_MS) {
-            Log.d(TAG, "[DEBUG] startListening rate limited. Last start was ${currentTime - lastStartTime}ms ago")
+        if (currentTime - lastStartTime < RESTART_DELAY_MS && !_isListening.value) {
+            Log.d(TAG, "[DEBUG] startListening rate limited and not currently listening. Last start was ${currentTime - lastStartTime}ms ago")
             return
         }
         lastStartTime = currentTime
@@ -136,7 +139,7 @@ class SpeechRecognitionService @Inject constructor(
         }
 
         if (_isListening.value) {
-            Log.w(TAG, "[DEBUG] startListening called but already listening. Ignoring new request.")
+            Log.w(TAG, "[DEBUG] startListening called but already listening. Callback updated, ignoring new start request.")
             return
         }
 
@@ -145,7 +148,6 @@ class SpeechRecognitionService @Inject constructor(
             _isListening.value = true // Set listening state to true
             _errorState.value = null
             utteranceFinalized = false
-            recognitionCallback = callback
             manualStopInProgress = false
 
             if (speechRecognizer == null) {
@@ -329,6 +331,10 @@ class SpeechRecognitionService @Inject constructor(
                 _transcriptionState.value = finalText
                 recognitionCallback?.invoke(finalText)
                 _isListening.value = false
+                
+                // 🔧 Clear transcription state after callback to prevent UI from showing stale text
+                _transcriptionState.value = ""
+                Log.d(TAG, "[DEBUG] Cleared transcription state after processing results")
             }
 
             override fun onPartialResults(partialResults: Bundle?) {

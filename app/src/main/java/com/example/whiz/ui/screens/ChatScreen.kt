@@ -514,9 +514,15 @@ fun ChatInputBar(
     shape: Shape = RectangleShape
 ) {
     val hasInputText = inputText.isNotBlank()
-    // Display transcription if listening, otherwise input text. Show placeholder within TextField.
-    val displayValue = if (isListening) transcription else inputText
-    val placeholderText = if (isListening) "Listening..." else "Type or tap mic..."
+    
+    // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
+    val displayValue = when {
+        inputText.isNotBlank() -> inputText // Always show sent message if present (grayed out when disabled)
+        isListening -> transcription // Show live transcription only when no sent message
+        else -> inputText // Default to input text
+    }
+    
+    val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
 
     Surface(
         color = surfaceColor,
