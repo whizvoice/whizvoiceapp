@@ -23,7 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 
 sealed class WebSocketEvent {
-    data class Message(val text: String) : WebSocketEvent()
+    data class Message(val text: String, val requestId: String? = null) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     object Closed : WebSocketEvent()
@@ -124,9 +124,25 @@ class WhizServerRepository @Inject constructor(
                         Log.i(TAG, "WebSocket message received: $text")
                         
                         var messageHandled = false
-                        // Attempt to parse as JSON for structured errors
+                        var requestId: String? = null
+                        
+                        // Attempt to parse as JSON first to extract request_id and handle structured responses
                         try {
                             val jsonObject = org.json.JSONObject(text)
+                            
+                            // Extract request_id if present (could be in regular response or error)
+                            requestId = if (jsonObject.has("request_id")) {
+                                jsonObject.getString("request_id")
+                            } else null
+                            
+                            // Check if this is a regular response with message content
+                            if (jsonObject.has("response") && jsonObject.has("request_id")) {
+                                val responseText = jsonObject.getString("response")
+                                Log.d(TAG, "Received structured response with request_id: $requestId")
+                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId)) }
+                                messageHandled = true
+                            }
+                            // Handle structured errors (existing logic)
                             if (jsonObject.optString("type") == "error") {
                                 val errorCode = jsonObject.optString("code")
                                 val errorMessage = jsonObject.optString("message", "An unknown error occurred.")
@@ -146,14 +162,14 @@ class WhizServerRepository @Inject constructor(
                                          errorCode == "ASANA_AUTH_ERROR" || // Assuming Asana errors also use "ASANA_AUTH_ERROR" code
                                          errorCode == "AsanaAuthErrorHandled") { // Or the one from app.py StopIteration
                                     Log.i(TAG, "Received structured service error JSON: $errorCode. Passing as WebSocketEvent.Message.")
-                                    scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) }
+                                    scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text, requestId)) }
                                     messageHandled = true
                                 }
                                 // For other structured errors that aren't WebSocket auth or known service errors,
                                 // also pass them as a Message event for ChatViewModel to potentially display.
                                 else if (jsonObject.has("error")) { // A generic structured error from the server
                                     Log.w(TAG, "Received other structured error JSON: $errorCode. Passing as WebSocketEvent.Message.")
-                                    scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) }
+                                    scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text, requestId)) }
                                     messageHandled = true
                                 }
                                 // If it's a JSON error but not one of the above, it's unexpected or a new type.
@@ -161,7 +177,7 @@ class WhizServerRepository @Inject constructor(
                                 // For now, let it fall through if not explicitly handled as Message or AuthError.
                                 else {
                                      Log.w(TAG, "Received unhandled structured JSON error type: $errorCode. Current default is to pass as Message.")
-                                     scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) } // Default for unknown JSON errors
+                                     scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text, requestId)) } // Default for unknown JSON errors
                                      messageHandled = true
                                 }
                             }
@@ -187,7 +203,7 @@ class WhizServerRepository @Inject constructor(
                             } else {
                                 // Default for any unhandled or plain text message
                                 Log.d(TAG, "Emitting as generic WebSocketEvent.Message: $text")
-                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text)) }
+                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text, requestId)) }
                             }
                         }
                     } catch (e: Exception) {
@@ -258,11 +274,17 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendMessage(message: String): Boolean {
+    fun sendMessage(message: String, requestId: String): Boolean {
         return try {
             if (webSocket != null) {
-                Log.d(TAG, "Sending message: $message")
-                webSocket!!.send(message)
+                // Send structured JSON with request ID
+                val messageJson = org.json.JSONObject().apply {
+                    put("message", message)
+                    put("request_id", requestId)
+                }
+                val jsonMessage = messageJson.toString()
+                Log.d(TAG, "Sending structured message: $jsonMessage")
+                webSocket!!.send(jsonMessage)
                 true
             } else {
                 Log.w(TAG, "Cannot send message, WebSocket is not connected.")

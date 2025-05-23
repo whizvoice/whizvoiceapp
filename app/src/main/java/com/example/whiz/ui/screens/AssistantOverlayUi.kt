@@ -80,7 +80,12 @@ fun AssistantOverlayUi(
         }
         // Small delay to ensure permission state is set
         delay(100)
+        // Load new chat (this will reset isResponding state for fresh chat)
         viewModel.loadChat(-1L)
+        
+        // Additional delay to ensure chat is loaded and responding state is reset
+        delay(200)
+        Log.d(TAG, "LaunchedEffect: Chat loaded. Responding: $isResponding, Speaking: $isSpeaking, Listening: $isListening")
     }
 
     // The main Box fills the screen but is transparent

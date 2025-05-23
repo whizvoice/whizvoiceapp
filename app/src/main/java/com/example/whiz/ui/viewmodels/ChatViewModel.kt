@@ -56,6 +56,9 @@ class ChatViewModel @Inject constructor(
     val chatId: StateFlow<Long> = _chatId.asStateFlow()
     private val _chatTitle = MutableStateFlow<String>("New Chat")
     val chatTitle = _chatTitle.asStateFlow()
+    
+    // Track multiple pending WebSocket requests by request ID
+    private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
     // UI state for the text input
     private val _inputText = MutableStateFlow("")
@@ -172,6 +175,7 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.Closed -> {
                         Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on connection close
                         if (isDisconnectingForAuthError) {
                             Log.d(TAG, "WebSocketEvent.Closed: Intentional disconnect due to AuthError. Not queueing further actions here.")
                         } else if (_navigateToLogin.value) {
@@ -188,10 +192,11 @@ class ChatViewModel @Inject constructor(
                         _connectionError.value = "Connection error: ${event.error.message ?: "Unknown connection failure"}"
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on connection error
                         if (_chatId.value > 0) { // Only add if a chat is active
                             repository.addAssistantMessage(
                                 chatId = _chatId.value,
-                                content = "Error: ${event.error.message ?: "Unknown connection error"}"
+                                content = "Error: ${event.error.message ?: "Connection error occurred"}"
                                 // Timestamp is handled by repository or MessageEntity default
                             )
                         }
@@ -200,6 +205,7 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on auth error
                         viewModelScope.launch {
                             val refreshSuccessful = authRepository.refreshAccessToken()
                             if (refreshSuccessful) {
@@ -258,7 +264,7 @@ class ChatViewModel @Inject constructor(
                             }
                             else if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
                                 val errorCode = jsonObject.getString("code")
-                                val errorMessageFromServer = jsonObject.optString("message", "An error occurred.")
+                                val errorMessageFromServer = jsonObject.optString("message", "Server error occurred")
                                 messageContentForChat = errorMessageFromServer 
                                 speakThisMessage = false 
                                 isErrorHandled = true 
@@ -286,20 +292,49 @@ class ChatViewModel @Inject constructor(
                             isErrorHandled = false 
                         }
 
-                        // Add the message to chat
-                        Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Chat ID: ${_chatId.value}, Content: '$messageContentForChat'")
-                        if (_chatId.value > 0) {
-                            viewModelScope.launch {
-                                val messageId = repository.addAssistantMessage(
-                                    chatId = _chatId.value,
-                                    content = messageContentForChat
-                                )
-                                Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId, Content: '$messageContentForChat'")
+                        // 🔧 Enhanced request ID validation
+                        val targetChatId = if (event.requestId != null) {
+                            if (pendingRequests.containsKey(event.requestId)) {
+                                val chatId = pendingRequests[event.requestId]!!
+                                pendingRequests.remove(event.requestId) // Remove completed request
+                                Log.d(TAG, "$eventLogId Request ID ${event.requestId} mapped to chat $chatId (current: ${_chatId.value})")
+                                chatId
+                            } else {
+                                // Request ID provided but not found in pending requests
+                                Log.w(TAG, "$eventLogId Request ID ${event.requestId} not found in pending requests. This response might be for a different chat or session. Available: ${pendingRequests.keys}")
+                                // Don't process this message as it's likely for a different chat/session
+                                Log.w(TAG, "$eventLogId Skipping message processing - orphaned response")
+                                return@collect // Skip processing this message entirely
                             }
                         } else {
-                            Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because chatId is not > 0 (Value: ${_chatId.value})")
+                            // No request ID - this is a legacy message or server-initiated message
+                            Log.w(TAG, "$eventLogId No request ID provided. Using current chat as fallback.")
+                            _chatId.value
+                        }
+                        
+                        val isResponseForCurrentChat = (targetChatId == _chatId.value)
+                        
+                        // 🔧 Additional validation: only process if target chat is current chat
+                        if (!isResponseForCurrentChat) {
+                            Log.w(TAG, "$eventLogId Response is for chat $targetChatId but current chat is ${_chatId.value}. Skipping processing to prevent cross-chat contamination.")
+                            return@collect
+                        }
+                        
+                        Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
+                        
+                        if (targetChatId > 0) {
+                            viewModelScope.launch {
+                                val messageId = repository.addAssistantMessage(
+                                    chatId = targetChatId,
+                                    content = messageContentForChat
+                                )
+                                Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId added to chat: $targetChatId")
+                            }
+                        } else {
+                            Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because target chatId is not > 0 (Value: $targetChatId)")
                         }
 
+                        // TTS and UI updates (only for current chat)
                         if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
                             if (isListening.value) {
                                 wasListeningBeforeTTS = true
@@ -435,16 +470,27 @@ class ChatViewModel @Inject constructor(
 
     fun loadChat(chatId: Long) {
         viewModelScope.launch {
+            // 🔧 Enhanced cleanup when switching chats
+            Log.d(TAG, "Loading chat $chatId. Current chat: ${_chatId.value}, Pending requests: ${pendingRequests.size}")
+            
             // Disconnect from server if switching chats or loading new
             if (configUseRemoteAgent) {
                 whizServerRepository.disconnect()
                 _isConnectedToServer.value = false
             }
+            
+            // 🔧 Clear pending requests and log what we're clearing
+            if (pendingRequests.isNotEmpty()) {
+                Log.w(TAG, "loadChat: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                pendingRequests.clear()
+            }
 
             if (chatId <= 0) {
-                // ... (handle new chat creation as before)
+                // Handle new chat creation - reset responding state since this is a fresh chat
                 _chatId.value = -1
                 _chatTitle.value = "New Chat"
+                _isResponding.value = false // 🔧 New chat has no pending requests
+                Log.d(TAG, "loadChat: Setup for new chat (ID: -1)")
             } else {
                 // ... (handle loading existing chat as before)
                 Log.d(TAG, "Loading chat with ID: $chatId")
@@ -463,6 +509,8 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
             _inputText.value = ""
             _isResponding.value = false
+            _errorState.value = null // 🔧 Clear any error states when switching chats
+            _connectionError.value = null // 🔧 Clear connection errors too
             speechRecognitionService.stopListening()
             tts?.stop()
             _isSpeaking.value = false
@@ -578,14 +626,18 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 if (_isConnectedToServer.value) {
                     _isResponding.value = true // Show thinking indicator
-                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText'")
-                    val success = whizServerRepository.sendMessage(trimmedText)
+                    // 🔧 Generate unique request ID and track which chat this request belongs to
+                    val requestId = java.util.UUID.randomUUID().toString()
+                    pendingRequests[requestId] = currentChatId
+                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
+                    val success = whizServerRepository.sendMessage(trimmedText, requestId)
                     if (!success) {
                         _isResponding.value = false // Stop indicator if send failed
+                        pendingRequests.remove(requestId) // Clear tracking on failure
                         _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
                     } else {
-                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket")
+                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
                     }
                     // Response handling is done in observeServerMessages
                 } else {
@@ -679,17 +731,33 @@ class ChatViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         Log.d(TAG, "ViewModel cleared. Releasing resources.")
+        
+        // 🔧 Enhanced cleanup logging
+        if (pendingRequests.isNotEmpty()) {
+            Log.w(TAG, "onCleared: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            pendingRequests.clear()
+        }
+        
         speechRecognitionService.release()
         tts?.stop()
         tts?.shutdown()
         tts = null
         persistenceJob?.cancel()
+        
         // Disconnect WebSocket
         if (configUseRemoteAgent) {
+            Log.d(TAG, "onCleared: Disconnecting WebSocket")
             whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
-        Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected.")
+        
+        // Reset states
+        _isResponding.value = false
+        _isConnectedToServer.value = false
+        _isSpeaking.value = false
+        continuousListeningEnabled = false
+        
+        Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
     }
 
     // Moved sendInputText here and made explicitly public
@@ -713,9 +781,13 @@ class ChatViewModel @Inject constructor(
             repository.addUserMessage(_chatId.value, textToSend)
 
             if (configUseRemoteAgent) {
-                val success = whizServerRepository.sendMessage(textToSend)
+                // Generate request ID and track this request
+                val requestId = java.util.UUID.randomUUID().toString()
+                pendingRequests[requestId] = _chatId.value
+                val success = whizServerRepository.sendMessage(textToSend, requestId)
                 if (!success) {
                     _isResponding.value = false
+                    pendingRequests.remove(requestId) // Clear on failure
                     _errorState.value = "Failed to send message. Check connection."
                      repository.addAssistantMessage(
                         _chatId.value, 
