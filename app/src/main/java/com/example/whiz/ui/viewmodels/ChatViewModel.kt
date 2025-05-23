@@ -1001,6 +1001,36 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // Called when app comes back to foreground - restart continuous listening if it was enabled
+    fun onAppForegrounded() {
+        Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
+        
+        // Only restart if we have permission, are in a chat, and continuous listening was enabled
+        if (_micPermissionGranted.value && _chatId.value > 0 && continuousListeningEnabled) {
+            try {
+                // Re-enable continuous listening in the service
+                speechRecognitionService.continuousListeningEnabled = true
+                
+                // Start listening if not already listening and not busy
+                if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
+                    Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
+                    viewModelScope.launch {
+                        delay(200) // Small delay to ensure app is fully resumed
+                        if (continuousListeningEnabled && !_isSpeaking.value && !_isResponding.value) {
+                            startContinuousListening()
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "[LOG] Not restarting continuous listening - isListening: ${isListening.value}, isSpeaking: ${_isSpeaking.value}, isResponding: ${_isResponding.value}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error restarting continuous listening after app foregrounded", e)
+            }
+        } else {
+            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}, continuousEnabled: $continuousListeningEnabled")
+        }
+    }
+
     fun clearAuthErrorDialog() {
         _showAuthErrorDialog.value = null
     }

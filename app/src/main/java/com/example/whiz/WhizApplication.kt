@@ -3,13 +3,25 @@ package com.example.whiz
 import android.app.Application
 import android.util.Log
 import android.widget.Toast
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlin.system.exitProcess
 import dagger.hilt.android.HiltAndroidApp
+import com.example.whiz.services.SpeechRecognitionService
+import javax.inject.Inject
 
 @HiltAndroidApp
-class WhizApplication : Application() {
+class WhizApplication : Application(), DefaultLifecycleObserver {
+
+    @Inject
+    lateinit var speechRecognitionService: SpeechRecognitionService
+    
     override fun onCreate() {
-        super.onCreate()
+        super<Application>.onCreate()
+        
+        // Register for app lifecycle events
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         
         // Set up global exception handler
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -33,6 +45,34 @@ class WhizApplication : Application() {
                 // Kill the process
                 exitProcess(1)
             }
+        }
+    }
+    
+    override fun onStop(owner: LifecycleOwner) {
+        super<DefaultLifecycleObserver>.onStop(owner)
+        Log.d("WhizApplication", "App moved to background - stopping continuous listening")
+        try {
+            // Stop continuous listening to prevent microphone staying active when app is in background
+            speechRecognitionService.continuousListeningEnabled = false
+            speechRecognitionService.stopListening()
+        } catch (e: Exception) {
+            Log.e("WhizApplication", "Error stopping speech recognition on background", e)
+        }
+    }
+    
+    override fun onStart(owner: LifecycleOwner) {
+        super<DefaultLifecycleObserver>.onStart(owner)
+        Log.d("WhizApplication", "App moved to foreground")
+        // Don't automatically restart continuous listening here - let the ChatViewModel handle it
+        // based on the current state and user preferences
+        
+        // Set a flag that ChatViewModels can observe to know the app came to foreground
+        try {
+            // We could use a shared preference or other mechanism, but for now just log
+            // The ChatViewModel will handle restarting continuous listening in its own lifecycle
+            Log.d("WhizApplication", "App foregrounded - ChatViewModels should handle continuous listening restart")
+        } catch (e: Exception) {
+            Log.e("WhizApplication", "Error handling app foreground", e)
         }
     }
 } 
