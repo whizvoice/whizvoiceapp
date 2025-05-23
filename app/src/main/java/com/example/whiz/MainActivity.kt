@@ -284,6 +284,7 @@ class MainActivity : ComponentActivity() {
     
     override fun onResume() {
         super.onResume()
+        Log.d("MainActivity", "Main Activity Resumed")
         // Re-check permission when activity resumes in case it was changed in settings
         permissionManager.checkMicrophonePermission()
         // If NavController is initialized, handle current intent again in case it was delivered while paused
@@ -291,6 +292,14 @@ class MainActivity : ComponentActivity() {
         // This is a bit of an edge case, but ensures the navigation occurs if pending.
         if (::navController.isInitialized) {
              handleIntentNavigation(intent) // Process current intent again
+             
+             // Check if we're currently in a chat screen and potentially restart continuous listening
+             val currentDestination = navController.currentDestination?.route
+             if (currentDestination?.startsWith("chat/") == true) {
+                 Log.d("MainActivity", "Resumed in chat screen - continuous listening may need to be restarted by ChatViewModel")
+                 // The ChatViewModel will handle this through its own lifecycle and state management
+                 // We don't need to do anything specific here since the ChatViewModel observes app state
+             }
         }
     }
 
