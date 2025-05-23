@@ -57,9 +57,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideWhizRepository(
-        apiService: ApiService
+        apiService: ApiService,
+        @ApplicationContext context: Context
     ): WhizRepository {
-        return WhizRepository(apiService)
+        return WhizRepository(apiService, context)
     }
 
     @Provides

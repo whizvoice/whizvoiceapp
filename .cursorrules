@@ -34,8 +34,12 @@ created_at | timestamp | now()
 last_message_time | timestamp | now()
 source | text | 'app', 'voice', or 'web'
 google_session_id | text
+updated_at | timestamp | now()
 
-This table also has indexes idx_conversations_user_id on conversations(user_id) and idx_conversations_last_message on conversations(user_id, last_message_time DESC).
+This table also has indexes
+- idx_conversations_user_id on conversations(user_id)
+- idx_conversations_last_message on conversations(user_id, last_message_time DESC)
+- idx_conversations_user_updated on conversations(user_id, updated_at DESC)
 
 messages table:
 
@@ -44,8 +48,27 @@ conversation_id | int8 | foreign key to conversations.id
 content | text
 message_type | text | 'USER' or 'ASSISTANT'
 timestamp | timestamp | now()
+updated_at | timestamp | now()
 
-This table also has indexes idx_messages_conversation_id on messages(conversation_id) and idx_messages_timestamp on messages(conversation_id, timestamp ASC).
+This table also has indexes
+- idx_messages_conversation_id on messages(conversation_id)
+- idx_messages_timestamp on messages(conversation_id, timestamp ASC)
+- idx_messages_conversation_updated on messages(conversation_id, updated_at DESC)
+
+sync_metadata table:
+
+id | int8
+user_id | text | foreign key to users.user_id
+entity_type | text | 'conversations', 'messages'
+entity_id | int8 | foreign key to conversations.id or messages.id
+last_sync_timestamp | timestamp
+created_at | timestamp | now()
+updated_at | timestamp | now()
+
+the combination of user_id, entity_type, and entity_id is unique.
+
+This table also has indexes
+- idx_sync_metadata_user_entity on sync_metadata(user_id, entity_type, entity_id)
 
 Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 
@@ -237,3 +260,52 @@ BEGIN
    -- END IF;
 END;
 $$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+triggers to automatically update updated_at timestamp:
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+triggers to auto-update timestamps:
+
+CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+policies:
+
+CREATE POLICY "Users can view their own sync metadata" ON sync_metadata
+    FOR SELECT USING (user_id = current_setting('app.current_user_id', true));
+
+CREATE POLICY "Users can insert their own sync metadata" ON sync_metadata
+    FOR INSERT WITH CHECK (user_id = current_setting('app.current_user_id', true));
+
+CREATE POLICY "Users can update their own sync metadata" ON sync_metadata
+    FOR UPDATE USING (user_id = current_setting('app.current_user_id', true));

@@ -49,7 +49,7 @@ object ServiceLocator {
     private fun getWhizRepository(context: Context): WhizRepository {
         if (whizRepository == null) {
             val api = getApiService()
-            whizRepository = WhizRepository(api)
+            whizRepository = WhizRepository(api, context)
         }
         return whizRepository!!
     }

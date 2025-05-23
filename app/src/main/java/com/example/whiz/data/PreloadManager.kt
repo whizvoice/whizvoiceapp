@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -16,7 +17,7 @@ class PreloadManager @Inject constructor(
 
     fun preloadChatsList() {
         preloadScope.launch {
-            repository.getAllChats().collect { }
+            repository.getAllChatsFlow().collect { }
         }
     }
 
