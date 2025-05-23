@@ -44,6 +44,11 @@ class SpeechRecognitionService @Inject constructor(
     private var recognizerIntent: Intent? = null // Store the intent for restarting
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
     private var _isInitialized = false
+    
+    // 🔧 Rate limiting for restarts
+    private var lastStartTime = 0L
+    private val RESTART_DELAY_MS = 500L // Minimum delay between restarts
+    
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -111,6 +116,15 @@ class SpeechRecognitionService @Inject constructor(
 
     fun startListening(callback: (String) -> Unit) {
         Log.d(TAG, "[DEBUG] startListening called. isInitialized=$isInitialized, isListening=${_isListening.value}")
+        
+        // 🔧 Rate limiting check
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastStartTime < RESTART_DELAY_MS) {
+            Log.d(TAG, "[DEBUG] startListening rate limited. Last start was ${currentTime - lastStartTime}ms ago")
+            return
+        }
+        lastStartTime = currentTime
+        
         if (!isInitialized) {
             Log.w(TAG, "[DEBUG] SpeechRecognitionService not initialized")
             initialize() // Try to initialize if not initialized
@@ -249,8 +263,15 @@ class SpeechRecognitionService @Inject constructor(
                     delay(100) // Small delay (e.g., 100ms)
                     if(_isListening.value) { // Re-check state after delay
                         try {
-                            speechRecognizer?.startListening(recognizerIntent)
-                            Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                            // 🔧 Rate limiting check before restart
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastStartTime >= RESTART_DELAY_MS) {
+                                speechRecognizer?.startListening(recognizerIntent)
+                                lastStartTime = currentTime // Update last start time
+                                Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                            } else {
+                                Log.d(TAG, "[DEBUG] Restart after end of speech skipped due to rate limiting")
+                            }
                         } catch (e: Exception) {
                             Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
                             _isListening.value = false
@@ -271,18 +292,31 @@ class SpeechRecognitionService @Inject constructor(
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "RecognitionService busy"
                     SpeechRecognizer.ERROR_SERVER -> "Server error"
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
-                    else -> "Unknown error"
+                    else -> "Unknown speech recognition error (code: $error)"
                 }
                 Log.e(TAG, "[DEBUG] Speech recognition error: $errorMessage (code $error)")
-                _errorState.value = errorMessage
+                
+                // Only show user-visible errors for critical issues, not for expected errors like NO_MATCH
+                if (shouldShowError(error, manualStopInProgress)) {
+                    _errorState.value = errorMessage
+                } else {
+                    Log.d(TAG, "[DEBUG] Error $errorMessage (code $error) not shown to user due to shouldShowError policy")
+                }
+                
                 _isListening.value = false
 
                 // --- Continuous listening auto-restart logic ---
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled) {
                     Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
                     serviceScope.launch {
-                        delay(300) // Small delay to avoid immediate restart
-                        startListening(recognitionCallback ?: { })
+                        delay(500) // Increased delay to prevent rapid restarts
+                        // 🔧 Additional rate limiting check before auto-restart
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastStartTime >= RESTART_DELAY_MS && continuousListeningEnabled) {
+                            startListening(recognitionCallback ?: { })
+                        } else {
+                            Log.d(TAG, "[LOG] Auto-restart skipped due to rate limiting or disabled continuous listening")
+                        }
                     }
                 }
             }

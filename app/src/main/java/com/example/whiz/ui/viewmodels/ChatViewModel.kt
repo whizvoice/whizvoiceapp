@@ -56,6 +56,22 @@ class ChatViewModel @Inject constructor(
     val chatId: StateFlow<Long> = _chatId.asStateFlow()
     private val _chatTitle = MutableStateFlow<String>("New Chat")
     val chatTitle = _chatTitle.asStateFlow()
+    
+    // Track multiple pending WebSocket requests by request ID
+    private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
+
+    // Helper function to update responding state based on current chat's pending requests
+    private fun updateRespondingStateForCurrentChat() {
+        try {
+            val currentChatId = _chatId.value
+            val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
+            _isResponding.value = hasPendingRequests
+            Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in updateRespondingStateForCurrentChat", e)
+            _errorState.value = "Error updating chat state: ${e.message}"
+        }
+    }
 
     // UI state for the text input
     private val _inputText = MutableStateFlow("")
@@ -172,6 +188,7 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.Closed -> {
                         Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on connection close
                         if (isDisconnectingForAuthError) {
                             Log.d(TAG, "WebSocketEvent.Closed: Intentional disconnect due to AuthError. Not queueing further actions here.")
                         } else if (_navigateToLogin.value) {
@@ -188,10 +205,11 @@ class ChatViewModel @Inject constructor(
                         _connectionError.value = "Connection error: ${event.error.message ?: "Unknown connection failure"}"
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on connection error
                         if (_chatId.value > 0) { // Only add if a chat is active
                             repository.addAssistantMessage(
                                 chatId = _chatId.value,
-                                content = "Error: ${event.error.message ?: "Unknown connection error"}"
+                                content = "Error: ${event.error.message ?: "Connection error occurred"}"
                                 // Timestamp is handled by repository or MessageEntity default
                             )
                         }
@@ -200,6 +218,7 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
+                        pendingRequests.clear() // 🔧 Clear all pending requests on auth error
                         viewModelScope.launch {
                             val refreshSuccessful = authRepository.refreshAccessToken()
                             if (refreshSuccessful) {
@@ -232,101 +251,159 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.Message -> {
                         Log.d(TAG, "[LOG] WebSocketEvent.Message received. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
-                        var isErrorHandled = false
-                        var messageContentForChat = event.text
-                        var speakThisMessage = _isVoiceResponseEnabled.value
-
-                        // Create a unique event identifier for logging, e.g., based on event.text and current time
+                        
+                        // Create a unique event identifier for logging
                         val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:${System.currentTimeMillis()}]"
                         Log.d(TAG, "$eventLogId Processing WebSocketEvent.Message.")
-
-                        // Attempt to parse as JSON first
+                        
                         try {
-                            val jsonObject = JSONObject(event.text)
-                            
-                            if (jsonObject.has("error") && jsonObject.has("status_code")) {
-                                val errorMsg = jsonObject.getString("error")
-                                val statusCode = jsonObject.getInt("status_code")
+                            var isErrorHandled = false
+                            var messageContentForChat = event.text
+                            var speakThisMessage = _isVoiceResponseEnabled.value
 
-                                if (statusCode == 401 && errorMsg.contains("Asana authentication failed")) {
-                                    Log.w(TAG, "Detected Asana 401 error from tool result. Showing Asana setup dialog.")
-                                    messageContentForChat = "Asana authentication failed. Please update your token in Settings."
-                                    _showAsanaSetupDialog.value = true // Show dialog instead of direct navigation
-                                    isErrorHandled = true 
-                                    speakThisMessage = false 
+                            // Attempt to parse as JSON first
+                            try {
+                                val jsonObject = JSONObject(event.text)
+                                
+                                if (jsonObject.has("error") && jsonObject.has("status_code")) {
+                                    val errorMsg = jsonObject.getString("error")
+                                    val statusCode = jsonObject.getInt("status_code")
+
+                                    if (statusCode == 401 && errorMsg.contains("Asana authentication failed")) {
+                                        Log.w(TAG, "Detected Asana 401 error from tool result. Showing Asana setup dialog.")
+                                        messageContentForChat = "Asana authentication failed. Please update your token in Settings."
+                                        _showAsanaSetupDialog.value = true // Show dialog instead of direct navigation
+                                        isErrorHandled = true 
+                                        speakThisMessage = false 
+                                    }
                                 }
-                            }
-                            else if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
-                                val errorCode = jsonObject.getString("code")
-                                val errorMessageFromServer = jsonObject.optString("message", "An error occurred.")
-                                messageContentForChat = errorMessageFromServer 
-                                speakThisMessage = false 
-                                isErrorHandled = true 
+                                else if (jsonObject.has("type") && jsonObject.getString("type") == "error" && jsonObject.has("code")) {
+                                    val errorCode = jsonObject.getString("code")
+                                    val errorMessageFromServer = jsonObject.optString("message", "Server error occurred")
+                                    messageContentForChat = errorMessageFromServer 
+                                    speakThisMessage = false 
+                                    isErrorHandled = true 
 
-                                when (errorCode) {
-                                    "ASANA_AUTH_ERROR", "AsanaAuthErrorHandled" -> {
-                                        Log.w(TAG, "Handling structured ASANA_AUTH_ERROR from server: $errorMessageFromServer")
-                                        _showAsanaSetupDialog.value = true // Show dialog
+                                    when (errorCode) {
+                                        "ASANA_AUTH_ERROR", "AsanaAuthErrorHandled" -> {
+                                            Log.w(TAG, "Handling structured ASANA_AUTH_ERROR from server: $errorMessageFromServer")
+                                            _showAsanaSetupDialog.value = true // Show dialog
+                                        }
+                                        "CLAUDE_AUTHENTICATION_ERROR", "CLAUDE_API_KEY_MISSING" -> {
+                                            Log.w(TAG, "Handling Claude authentication error ($errorCode) from server: $errorMessageFromServer")
+                                            _showAuthErrorDialog.value = errorMessageFromServer 
+                                        }
+                                        else -> {
+                                            val errorDetail = jsonObject.optString("detail", "")
+                                            messageContentForChat = "Server Error: $errorMessageFromServer ${if (errorDetail.isNotEmpty()) "- $errorDetail" else ""}"
+                                            Log.e(TAG, "Structured server error (unhandled code '$errorCode'): $messageContentForChat")
+                                        }
                                     }
-                                    "CLAUDE_AUTHENTICATION_ERROR", "CLAUDE_API_KEY_MISSING" -> {
-                                        Log.w(TAG, "Handling Claude authentication error ($errorCode) from server: $errorMessageFromServer")
-                                        _showAuthErrorDialog.value = errorMessageFromServer 
+                                } else {
+                                    isErrorHandled = false 
+                                }
+                            } catch (e: JSONException) {
+                                Log.d(TAG, "Message is not a JSON object or failed to parse: ${event.text}")
+                                isErrorHandled = false 
+                            } catch (e: Exception) {
+                                Log.e(TAG, "$eventLogId Error parsing JSON message", e)
+                                isErrorHandled = false
+                            }
+
+                            // 🔧 Enhanced request ID validation with error handling
+                            val targetChatId = try {
+                                if (event.requestId != null) {
+                                    if (pendingRequests.containsKey(event.requestId)) {
+                                        val chatId = pendingRequests[event.requestId]!!
+                                        pendingRequests.remove(event.requestId) // Remove completed request
+                                        Log.d(TAG, "$eventLogId Request ID ${event.requestId} mapped to chat $chatId (current: ${_chatId.value})")
+                                        chatId
+                                    } else {
+                                        // Request ID provided but not found in pending requests
+                                        Log.w(TAG, "$eventLogId Request ID ${event.requestId} not found in pending requests. This response might be for a different chat or session. Available: ${pendingRequests.keys}")
+                                        // Don't process this message as it's likely for a different chat/session
+                                        Log.w(TAG, "$eventLogId Skipping message processing - orphaned response")
+                                        updateRespondingStateForCurrentChat()
+                                        return@collect // Skip processing this message entirely
                                     }
-                                    else -> {
-                                        val errorDetail = jsonObject.optString("detail", "")
-                                        messageContentForChat = "Server Error: $errorMessageFromServer ${if (errorDetail.isNotEmpty()) "- $errorDetail" else ""}"
-                                        Log.e(TAG, "Structured server error (unhandled code '$errorCode'): $messageContentForChat")
+                                } else {
+                                    // No request ID - this is a legacy message or server-initiated message
+                                    Log.w(TAG, "$eventLogId No request ID provided. Using current chat as fallback.")
+                                    _chatId.value
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "$eventLogId Error processing request ID validation", e)
+                                _errorState.value = "Error processing server response: ${e.message}"
+                                updateRespondingStateForCurrentChat()
+                                return@collect
+                            }
+                            
+                            val isResponseForCurrentChat = (targetChatId == _chatId.value)
+                            
+                            // 🔧 Additional validation: only process if target chat is current chat
+                            if (!isResponseForCurrentChat) {
+                                Log.w(TAG, "$eventLogId Response is for chat $targetChatId but current chat is ${_chatId.value}. Skipping processing to prevent cross-chat contamination.")
+                                // 🔧 Update responding state for current chat since we're not processing this response
+                                updateRespondingStateForCurrentChat()
+                                return@collect
+                            }
+                            
+                            Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
+                            
+                            if (targetChatId > 0) {
+                                try {
+                                    viewModelScope.launch {
+                                        val messageId = repository.addAssistantMessage(
+                                            chatId = targetChatId,
+                                            content = messageContentForChat
+                                        )
+                                        Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId added to chat: $targetChatId")
                                     }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "$eventLogId Error adding assistant message to repository", e)
+                                    _errorState.value = "Error saving response: ${e.message}"
                                 }
                             } else {
-                                isErrorHandled = false 
+                                Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because target chatId is not > 0 (Value: $targetChatId)")
                             }
-                        } catch (e: JSONException) {
-                            Log.d(TAG, "Message is not a JSON object or failed to parse: ${event.text}")
-                            isErrorHandled = false 
-                        }
 
-                        // Add the message to chat
-                        Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Chat ID: ${_chatId.value}, Content: '$messageContentForChat'")
-                        if (_chatId.value > 0) {
-                            viewModelScope.launch {
-                                val messageId = repository.addAssistantMessage(
-                                    chatId = _chatId.value,
-                                    content = messageContentForChat
-                                )
-                                Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId, Content: '$messageContentForChat'")
-                            }
-                        } else {
-                            Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because chatId is not > 0 (Value: ${_chatId.value})")
-                        }
-
-                        if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
-                            if (isListening.value) {
-                                wasListeningBeforeTTS = true
-                                speechRecognitionService.stopListening() // Stop STT before TTS speaks
-                            }
-                            val utteranceId = UUID.randomUUID().toString()
-                            _isSpeaking.value = true // Indicate TTS is starting
-                            tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
-                            // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
-                        } else {
-                            // If not speaking, ensure STT resumes if it was interrupted by a previous TTS cycle that has now completed.
-                            if (wasListeningBeforeTTS && !_isSpeaking.value) {
-                                Log.d(TAG, "[LOG] Not speaking, wasListeningBeforeTTS=true, restarting ASR.")
-                                speechRecognitionService.startListening { finalTranscription ->
-                                    if (finalTranscription.isNotBlank()) {
-                                        sendUserInput(finalTranscription)
+                            // TTS and UI updates (only for current chat)
+                            try {
+                                if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
+                                    if (isListening.value) {
+                                        wasListeningBeforeTTS = true
+                                        speechRecognitionService.stopListening() // Stop STT before TTS speaks
+                                    }
+                                    val utteranceId = UUID.randomUUID().toString()
+                                    _isSpeaking.value = true // Indicate TTS is starting
+                                    tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
+                                    // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
+                                } else {
+                                    // Always restart continuous listening after assistant reply if enabled and not speaking
+                                    if (continuousListeningEnabled && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
+                                        startContinuousListening()
+                                    } else if (wasListeningBeforeTTS && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not speaking, wasListeningBeforeTTS=true, restarting ASR.")
+                                        speechRecognitionService.startListening { finalTranscription ->
+                                            if (finalTranscription.isNotBlank()) {
+                                                sendUserInput(finalTranscription)
+                                            }
+                                        }
+                                        wasListeningBeforeTTS = false
                                     }
                                 }
-                                wasListeningBeforeTTS = false
+                            } catch (e: Exception) {
+                                Log.e(TAG, "$eventLogId Error in TTS/listening handling", e)
                             }
-                            // Always restart continuous listening after assistant reply if enabled
-                            if (continuousListeningEnabled) {
-                                Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
-                                startContinuousListening()
-                            }
+                            
+                            // 🔧 Update responding state based on current chat's pending requests
+                            updateRespondingStateForCurrentChat()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "$eventLogId Unexpected error processing WebSocket message", e)
+                            _errorState.value = "Error processing server message: ${e.message}"
+                            updateRespondingStateForCurrentChat()
                         }
-                        _isResponding.value = false
                     }
                 }
             }
@@ -393,18 +470,18 @@ class ChatViewModel @Inject constructor(
                     override fun onDone(utteranceId: String?) {
                         Log.d(TAG, "[LOG] TTS onDone for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
-                        if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                        
+                        // Always restart continuous listening when TTS is done, if enabled
+                        if (continuousListeningEnabled) {
+                            Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR.")
+                            startContinuousListening()
+                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
                             Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                             speechRecognitionService.startListening { transcription ->
                                 this@ChatViewModel.processAndSendTranscription(transcription)
                             }
-                        } else if (continuousListeningEnabled) {
-                            Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
-                            }
                         } else {
-                            Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=$wasListeningBeforeTTS or voice response disabled, not restarting ASR.")
+                            Log.d(TAG, "[LOG] TTS done, not restarting ASR.")
                         }
                         wasListeningBeforeTTS = false
                     }
@@ -413,13 +490,13 @@ class ChatViewModel @Inject constructor(
                     override fun onError(utteranceId: String?) {
                         Log.e(TAG, "[LOG] TTS onError for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
-                        if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                            Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
-                            }
-                        } else if (continuousListeningEnabled) {
+                        
+                        // Always restart continuous listening when TTS errors, if enabled
+                        if (continuousListeningEnabled) {
                             Log.d(TAG, "[LOG] TTS error, continuous listening enabled, restarting ASR.")
+                            startContinuousListening()
+                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                            Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
                             speechRecognitionService.startListening { transcription ->
                                 this@ChatViewModel.processAndSendTranscription(transcription)
                             }
@@ -436,49 +513,152 @@ class ChatViewModel @Inject constructor(
     // --- Public Functions ---
 
     fun loadChat(chatId: Long) {
+        Log.d(TAG, "🔥 loadChat STARTED for chatId: $chatId")
         viewModelScope.launch {
-            // Disconnect from server if switching chats or loading new
-            if (configUseRemoteAgent) {
-                whizServerRepository.disconnect()
-                _isConnectedToServer.value = false
-            }
+            try {
+                // 🔧 Enhanced cleanup when switching chats
+                Log.d(TAG, "Loading chat $chatId. Current chat: ${_chatId.value}, Pending requests: ${pendingRequests.size}")
+                
+                // Disconnect from server if switching chats or loading new
+                if (configUseRemoteAgent) {
+                    try {
+                        whizServerRepository.disconnect()
+                        _isConnectedToServer.value = false
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error disconnecting WebSocket during loadChat", e)
+                    }
+                }
+                
+                // 🔧 Clear pending requests and log what we're clearing
+                try {
+                    if (pendingRequests.isNotEmpty()) {
+                        Log.w(TAG, "loadChat: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        pendingRequests.clear()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error clearing pending requests during loadChat", e)
+                }
 
-            if (chatId <= 0) {
-                // ... (handle new chat creation as before)
-                _chatId.value = -1
-                _chatTitle.value = "New Chat"
-            } else {
-                // ... (handle loading existing chat as before)
-                Log.d(TAG, "Loading chat with ID: $chatId")
-                val chat = repository.getChatById(chatId)
-                if (chat != null) {
-                    _chatId.value = chatId
-                    _chatTitle.value = chat.title
-                    Log.d(TAG, "Loaded chat: ${chat.title} (ID: $chatId)")
-                } else {
+                if (chatId <= 0) {
+                    // Handle new chat creation - immediately reset responding state since this is a fresh chat
                     _chatId.value = -1
                     _chatTitle.value = "New Chat"
-                    Log.d(TAG, "Chat not found, creating new chat")
+                    _isResponding.value = false // 🔧 Immediately set to false for new chats
+                    Log.d(TAG, "🔥 loadChat: Setup for new chat (ID: -1), responding state reset to false")
+                } else {
+                    // ... (handle loading existing chat as before)
+                    Log.d(TAG, "Loading chat with ID: $chatId")
+                    try {
+                        val chat = repository.getChatById(chatId)
+                        if (chat != null) {
+                            _chatId.value = chatId
+                            _chatTitle.value = chat.title
+                            Log.d(TAG, "🔥 loadChat: LOADED chat: ${chat.title} (ID: $chatId)")
+                            // 🔧 For existing chats, update based on actual pending requests
+                            updateRespondingStateForCurrentChat()
+                        } else {
+                            _chatId.value = -1
+                            _chatTitle.value = "New Chat"
+                            _isResponding.value = false // 🔧 Immediately set to false for new chats
+                            Log.d(TAG, "🔥 loadChat: Chat not found, creating new chat, responding state reset to false")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error loading chat from repository", e)
+                        _chatId.value = -1
+                        _chatTitle.value = "New Chat"
+                        _isResponding.value = false // 🔧 Immediately set to false on error
+                        _errorState.value = "Error loading chat: ${e.message}"
+                    }
+                }
+                
+                // Reset states
+                Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
+                _inputText.value = ""
+                // 🔧 Update responding state based on current chat's pending requests
+                updateRespondingStateForCurrentChat()
+                _errorState.value = null // 🔧 Clear any error states when switching chats
+                _connectionError.value = null // 🔧 Clear connection errors too
+                
+                try {
+                    Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
+                    speechRecognitionService.stopListening()
+                    Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${_isSpeaking.value})")
+                    tts?.stop()
+                    _isSpeaking.value = false
+                    Log.d(TAG, "loadChat: Speech services stopped successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping speech services during loadChat", e)
+                }
+
+                // Refresh messages to ensure we have latest data
+                if (_chatId.value > 0) {
+                    try {
+                        repository.refreshMessages()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error refreshing messages during loadChat", e)
+                    }
+                }
+
+                // Connect to server if needed *after* chat ID is set
+                if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
+                    try {
+                        delay(100) // Small delay to ensure state propagation
+                        whizServerRepository.connect()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
+                        _connectionError.value = "Failed to connect to server: ${e.message}"
+                    }
+                }
+
+                // Auto-enable continuous listening if we have microphone permission
+                // 🔧 Double-check permission state to ensure it's current
+                val actualPermissionState = PermissionHandler.hasMicrophonePermission(context)
+                if (_micPermissionGranted.value != actualPermissionState) {
+                    Log.d(TAG, "[LOG] Updating permission state from ${_micPermissionGranted.value} to $actualPermissionState")
+                    _micPermissionGranted.value = actualPermissionState
+                }
+                
+                if (_micPermissionGranted.value) {
+                    try {
+                        Log.d(TAG, "[LOG] Auto-enabling continuous listening on chat load (permission granted)")
+                        delay(500) // Increased delay to ensure speech service is fully stopped
+                        
+                        // Always enable continuous listening and start it, regardless of current state
+                        continuousListeningEnabled = true
+                        speechRecognitionService.continuousListeningEnabled = true
+                        
+                        // Force start continuous listening, but add additional delay to ensure clean state
+                        delay(200) // Additional delay to ensure isListening state is updated
+                        val currentListening = isListening.value
+                        Log.d(TAG, "[LOG] About to start continuous listening - isListening: $currentListening, speaking: ${_isSpeaking.value}, responding: ${_isResponding.value}")
+                        
+                        if (!currentListening && !_isSpeaking.value && !_isResponding.value) {
+                            Log.d(TAG, "[LOG] Starting continuous listening (conditions met)")
+                            startContinuousListening()
+                        } else {
+                            Log.d(TAG, "[LOG] Force starting continuous listening despite state - isListening: $currentListening")
+                            // Force start anyway since we just loaded a new chat
+                            startContinuousListening()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error starting continuous listening during loadChat", e)
+                    }
+                } else {
+                    Log.w(TAG, "[LOG] Cannot auto-enable continuous listening - no microphone permission")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error in loadChat", e)
+                _errorState.value = "Failed to load chat: ${e.message}"
+                // Try to recover to a safe state
+                try {
+                    _chatId.value = -1
+                    _chatTitle.value = "New Chat"
+                    updateRespondingStateForCurrentChat()
+                } catch (recoveryError: Exception) {
+                    Log.e(TAG, "Error during loadChat recovery", recoveryError)
                 }
             }
-            // Reset states
-            Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
-            _inputText.value = ""
-            _isResponding.value = false
-            speechRecognitionService.stopListening()
-            tts?.stop()
-            _isSpeaking.value = false
-
-            // Refresh messages to ensure we have latest data
-            if (_chatId.value > 0) {
-                repository.refreshMessages()
-            }
-
-            // Connect to server if needed *after* chat ID is set
-            if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
-                delay(100) // Small delay to ensure state propagation
-                whizServerRepository.connect()
-            }
+            Log.d(TAG, "🔥 loadChat COMPLETED for chatId: $chatId, final _chatId.value: ${_chatId.value}")
         }
     }
 
@@ -488,8 +668,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun toggleSpeechRecognition() {
-        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
-        if (_isSpeaking.value) return // Don't allow mic toggle while speaking
+        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Microphone permission not granted")
             _errorState.value = "Microphone permission required" 
@@ -501,6 +680,12 @@ class ChatViewModel @Inject constructor(
             speechRecognitionService.continuousListeningEnabled = false
             speechRecognitionService.stopListening()
         } else {
+            // Prevent starting new listening while speaking OR responding
+            if (_isSpeaking.value || _isResponding.value) {
+                Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
+                _errorState.value = "Cannot start listening while assistant is busy"
+                return
+            }
             Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
             _inputText.value = ""
             continuousListeningEnabled = true
@@ -516,9 +701,17 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "[LOG] startContinuousListening: Clearing _inputText.value before sending. Previous value: '${_inputText.value}'")
             _inputText.value = "" // Clear the input bar before sending
             sendUserInput(finalText)
+            
+            // Always restart listening if continuous listening is enabled, regardless of responding state
             if (continuousListeningEnabled) {
-                Log.d(TAG, "[LOG] Continuous listening: restarting after result")
-                startContinuousListening()
+                Log.d(TAG, "[LOG] Continuous listening: restarting after result (isResponding=${_isResponding.value})")
+                viewModelScope.launch {
+                    // Small delay to ensure the previous listening session is fully stopped
+                    delay(100)
+                    if (continuousListeningEnabled && !_isSpeaking.value) {
+                        startContinuousListening()
+                    }
+                }
             } else {
                 Log.d(TAG, "[LOG] Continuous listening disabled, not restarting")
             }
@@ -558,14 +751,18 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 if (_isConnectedToServer.value) {
                     _isResponding.value = true // Show thinking indicator
-                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText'")
-                    val success = whizServerRepository.sendMessage(trimmedText)
+                    // 🔧 Generate unique request ID and track which chat this request belongs to
+                    val requestId = java.util.UUID.randomUUID().toString()
+                    pendingRequests[requestId] = currentChatId
+                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
+                    val success = whizServerRepository.sendMessage(trimmedText, requestId)
                     if (!success) {
-                        _isResponding.value = false // Stop indicator if send failed
+                        pendingRequests.remove(requestId) // Clear tracking on failure
+                        updateRespondingStateForCurrentChat() // Update based on remaining requests
                         _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
                     } else {
-                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket")
+                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
                     }
                     // Response handling is done in observeServerMessages
                 } else {
@@ -620,7 +817,7 @@ class ChatViewModel @Inject constructor(
         val responseText = responses.random()
 
         repository.addAssistantMessage(chatId, responseText)
-        _isResponding.value = false
+        updateRespondingStateForCurrentChat() // Update based on remaining requests
 
         // Speak the response if enabled
         if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
@@ -659,17 +856,33 @@ class ChatViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         Log.d(TAG, "ViewModel cleared. Releasing resources.")
+        
+        // 🔧 Enhanced cleanup logging
+        if (pendingRequests.isNotEmpty()) {
+            Log.w(TAG, "onCleared: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            pendingRequests.clear()
+        }
+        
         speechRecognitionService.release()
         tts?.stop()
         tts?.shutdown()
         tts = null
         persistenceJob?.cancel()
+        
         // Disconnect WebSocket
         if (configUseRemoteAgent) {
+            Log.d(TAG, "onCleared: Disconnecting WebSocket")
             whizServerRepository.disconnect()
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
-        Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected.")
+        
+        // Reset states
+        _isResponding.value = false
+        _isConnectedToServer.value = false
+        _isSpeaking.value = false
+        continuousListeningEnabled = false
+        
+        Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
     }
 
     // Moved sendInputText here and made explicitly public
@@ -677,33 +890,41 @@ class ChatViewModel @Inject constructor(
         val textToSend = _inputText.value.trim()
         if (textToSend.isBlank()) return
 
+        Log.d(TAG, "🔥 sendInputText called with text: '$textToSend', current chatId: ${_chatId.value}")
         _isResponding.value = true
 
         viewModelScope.launch {
             if (_chatId.value <= 0) {
+                Log.w(TAG, "🔥 sendInputText: chatId is ${_chatId.value}, creating NEW chat (this might be wrong if we should use an existing chat)")
                 val newChatId = repository.createChat(repository.deriveChatTitle(textToSend))
                 _chatId.value = newChatId
+                Log.d(TAG, "🔥 sendInputText: Created new chat with ID: $newChatId")
                 if (newChatId <=0) {
                     Log.e(TAG, "Failed to create new chat.")
-                    _isResponding.value = false
+                    updateRespondingStateForCurrentChat() // Update based on remaining requests
                     _errorState.value = "Failed to create chat. Please try again."
                     return@launch
                 }
+            } else {
+                Log.d(TAG, "🔥 sendInputText: Using existing chatId: ${_chatId.value}")
             }
+            
+            Log.d(TAG, "🔥 sendInputText: Adding user message to chat ${_chatId.value}: '$textToSend'")
             repository.addUserMessage(_chatId.value, textToSend)
 
             if (configUseRemoteAgent) {
-                val success = whizServerRepository.sendMessage(textToSend)
+                // Generate request ID and track this request
+                val requestId = java.util.UUID.randomUUID().toString()
+                pendingRequests[requestId] = _chatId.value
+                val success = whizServerRepository.sendMessage(textToSend, requestId)
                 if (!success) {
-                    _isResponding.value = false
-                    _errorState.value = "Failed to send message. Check connection."
-                     repository.addAssistantMessage(
-                        _chatId.value, 
-                        "System: Failed to send message. Please check your connection and try again."
-                    )
+                    pendingRequests.remove(requestId) // Clear tracking on failure
+                    updateRespondingStateForCurrentChat() // Update based on remaining requests
+                    _connectionError.value = "Failed to send message. Please try again."
+                    Log.e(TAG, "Failed to send message via WebSocket")
                 }
             } else {
-                _isResponding.value = false 
+                updateRespondingStateForCurrentChat() // Update based on remaining requests (should be none for local)
             }
         }
         Log.d(TAG, "[LOG] sendInputText: Clearing _inputText.value after sending. Previous value: '${_inputText.value}'")
@@ -716,10 +937,20 @@ class ChatViewModel @Inject constructor(
         _errorState.value = null
         
         // When permission is granted, make sure SpeechRecognitionService is properly initialized
-        // But don't start listening automatically
         try {
             Log.d(TAG, "Microphone permission granted, initializing speech service")
             speechRecognitionService.initialize()
+            
+            // Auto-enable continuous listening when permission is granted
+            if (_chatId.value != 0L && !continuousListeningEnabled) {
+                Log.d(TAG, "[LOG] Auto-enabling continuous listening after permission granted")
+                viewModelScope.launch {
+                    delay(100) // Small delay to ensure service is initialized
+                    continuousListeningEnabled = true
+                    speechRecognitionService.continuousListeningEnabled = true
+                    startContinuousListening()
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing speech service after permission granted", e)
             _errorState.value = "Error initializing speech. Please try again."

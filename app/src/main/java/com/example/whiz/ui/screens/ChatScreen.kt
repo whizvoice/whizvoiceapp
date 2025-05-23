@@ -128,13 +128,9 @@ fun ChatScreen(
             Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
         } else {
-            val isInputDisabled = isResponding || isSpeaking
-            if (!isInputDisabled) {
-                Log.d("ChatScreen", "[LOG] Mic clicked, calling toggleSpeechRecognition")
-                viewModel.toggleSpeechRecognition()
-            } else {
-                Log.d("ChatScreen", "[LOG] Input disabled, cannot toggle speech recognition")
-            }
+            // The ViewModel will handle when microphone can be turned on/off
+            Log.d("ChatScreen", "[LOG] Mic clicked, calling toggleSpeechRecognition")
+            viewModel.toggleSpeechRecognition()
         }
     }
 
@@ -241,13 +237,16 @@ fun ChatScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // Pass the combined state to disable input correctly
-            val isInputDisabled = isResponding || isSpeaking
+            // Disable text input when responding or speaking
+            val isTextInputDisabled = isResponding || isSpeaking
+            // Disable mic when responding/speaking, but allow turning OFF if currently listening
+            val isMicDisabled = (isResponding || isSpeaking) && !isListening
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
-                isInputDisabled = isInputDisabled, // Use a combined state
+                isInputDisabled = isTextInputDisabled,
+                isMicDisabled = isMicDisabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
                 onMicClick = { handleMicClick() },
@@ -467,7 +466,7 @@ fun TypingIndicator() {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp) // Match message padding
         ) {
             Text(
-                text = "Whiz is thinking",
+                text = "Whiz is computing",
                 style = MaterialTheme.typography.bodyMedium // Consistent style
             )
             Spacer(modifier = Modifier.width(8.dp)) // Space before dots
@@ -506,7 +505,8 @@ fun ChatInputBar(
     inputText: String,
     transcription: String,
     isListening: Boolean,
-    isInputDisabled: Boolean, // Combined disabled state (responding OR speaking)
+    isInputDisabled: Boolean, // Text input disabled state
+    isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onMicClick: () -> Unit,
@@ -577,15 +577,16 @@ fun ChatInputBar(
                         else -> MaterialTheme.colorScheme.primary // Primary color for mic start
                     }
 
+                    val isButtonEnabled = if (isListening || !canSend) !isMicDisabled else !isInputDisabled
                     IconButton(
                         onClick = if (isListening) onMicClick else { if (canSend) onSendClick else onMicClick },
-                        enabled = !isInputDisabled // Use the combined disabled state
+                        enabled = isButtonEnabled // Use mic-specific disabled state for mic actions, input disabled for send
                     ) {
                         Icon(
                             imageVector = icon,
                             contentDescription = description,
                             // Apply tint based on state, dim if disabled
-                            tint = if (!isInputDisabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                     }
                 }

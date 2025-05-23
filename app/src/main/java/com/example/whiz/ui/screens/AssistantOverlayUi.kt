@@ -32,14 +32,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.whiz.permissions.PermissionHandler
+import kotlinx.coroutines.delay
 
 @Composable
 fun AssistantOverlayUi(
-    viewModel: ChatViewModel = viewModel(), // Use viewModel() instead of hiltViewModel()
+    viewModel: ChatViewModel = hiltViewModel(), // Use hiltViewModel for proper DI
     onDismiss: () -> Unit // Callback to close the activity
 ) {
     val TAG = "AssistantOverlayUi" // Tag for logging
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
 
     // Collect necessary state from ViewModel
     val inputText by viewModel.inputText.collectAsState()
@@ -52,6 +55,11 @@ fun AssistantOverlayUi(
     // 1. Collect the state containing the full list of messages
     val messagesState by viewModel.messages.collectAsState()
 
+    // Check microphone permission
+    val hasPermission = remember {
+        PermissionHandler.hasMicrophonePermission(context)
+    }
+
     // *** Step 1: Comment out the derived state ***
     /*
     // 2. Derive the last assistant message from the current value of the state
@@ -63,8 +71,21 @@ fun AssistantOverlayUi(
 
     // *** Restore LaunchedEffect to load chat and attempt auto-listening ***
     LaunchedEffect(Unit) {
-        Log.d(TAG, "LaunchedEffect: Initializing Assistant State. Permission: $micPermissionGranted")
+        Log.d(TAG, "LaunchedEffect: Initializing Assistant State. Permission: $micPermissionGranted, hasPermission: $hasPermission")
+        // Set permission state first
+        if (hasPermission) {
+            viewModel.onMicrophonePermissionGranted()
+        } else {
+            viewModel.onMicrophonePermissionDenied()
+        }
+        // Small delay to ensure permission state is set
+        delay(100)
+        // Load new chat (this will reset isResponding state for fresh chat)
         viewModel.loadChat(-1L)
+        
+        // Additional delay to ensure chat is loaded and responding state is reset
+        delay(200)
+        Log.d(TAG, "LaunchedEffect: Chat loaded. Responding: $isResponding, Speaking: $isSpeaking, Listening: $isListening")
     }
 
     // The main Box fills the screen but is transparent
@@ -110,11 +131,15 @@ fun AssistantOverlayUi(
 
 
             // --- Input Bar ---
+            val isTextInputDisabled = isResponding || isSpeaking
+            // Disable mic when responding/speaking, but allow turning OFF if currently listening
+            val isMicDisabled = (isResponding || isSpeaking) && !isListening
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
-                isInputDisabled = isResponding || isSpeaking,
+                isInputDisabled = isTextInputDisabled,
+                isMicDisabled = isMicDisabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {
