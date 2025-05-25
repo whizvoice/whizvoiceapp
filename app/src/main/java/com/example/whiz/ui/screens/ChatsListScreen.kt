@@ -30,16 +30,20 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.local.DateFormatter
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +56,10 @@ fun ChatsListScreen(
     viewModel: ChatsListViewModel = hiltViewModel()
 ) {
     val chats by viewModel.chats.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    
+    // SwipeRefresh state
+    val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
 
     Scaffold(
         topBar = {
@@ -90,7 +98,9 @@ fun ChatsListScreen(
             }
         }
     ) { paddingValues ->
-        Box(
+        SwipeRefresh(
+            state = swipeRefreshState,
+            onRefresh = { viewModel.refreshChats() },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)

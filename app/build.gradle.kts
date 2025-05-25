@@ -126,6 +126,9 @@ dependencies {
     // Google Sign-In dependencies
     implementation("com.google.android.gms:play-services-auth:20.7.0")
     
+    // SwipeRefresh for pull-to-refresh functionality
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
+    
     // JWT token processing
     implementation("io.jsonwebtoken:jjwt-api:0.12.3")
     implementation("io.jsonwebtoken:jjwt-impl:0.12.3")
