@@ -55,7 +55,7 @@ class WhizServerRepository @Inject constructor(
     private var reconnectJob: Job? = null
     private var isManuallyDisconnected = false // Flag to prevent reconnect on manual disconnect
 
-    fun connect() {
+    fun connect(conversationId: Long? = null) {
         if (webSocket != null && webSocket?.send("") == true) { // Crude check if socket is still valid
             Log.w(TAG, "WebSocket already connected or connecting and seems active.")
             // If successfully connected, reset manual disconnect flag
@@ -83,9 +83,16 @@ class WhizServerRepository @Inject constructor(
                 return
             }
             
-            Log.d(TAG, "Attempting to connect to $WHIZ_SERVER_URL with server token")
+            // Build WebSocket URL with conversation_id parameter if provided
+            val websocketUrl = if (conversationId != null && conversationId > 0) {
+                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
+            } else {
+                WHIZ_SERVER_URL
+            }
             
-            val requestBuilder = Request.Builder().url(WHIZ_SERVER_URL)
+            Log.d(TAG, "Attempting to connect to $websocketUrl with server token (conversation_id: $conversationId)")
+            
+            val requestBuilder = Request.Builder().url(websocketUrl)
             requestBuilder.header("Authorization", "Bearer $serverToken")
             
             val request = requestBuilder.build()

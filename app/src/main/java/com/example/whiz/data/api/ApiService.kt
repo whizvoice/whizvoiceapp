@@ -6,6 +6,7 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.DELETE
 import retrofit2.http.Path
+import retrofit2.http.Query
 import android.util.Log
 
 interface ApiService {
@@ -63,6 +64,23 @@ interface ApiService {
         val count: Int
     )
 
+    // ========== INCREMENTAL SYNC MODELS ==========
+    data class ConversationsResponse(
+        val conversations: List<ConversationResponse>,
+        val server_timestamp: String,
+        val is_incremental: Boolean,
+        val count: Int
+    )
+
+    data class MessagesResponse(
+        val messages: List<MessageResponse>,
+        val conversation_id: Long,
+        val server_timestamp: String,
+        val is_incremental: Boolean,
+        val count: Int,
+        val has_more: Boolean
+    )
+
     // ========== EXISTING TOKEN ENDPOINTS ==========
     @GET("/api/preferences/tokens")
     suspend fun getApiTokens(): TokenResponse
@@ -76,6 +94,11 @@ interface ApiService {
     // ========== CONVERSATION ENDPOINTS ==========
     @GET("/api/conversations")
     suspend fun getConversations(): List<ConversationResponse>
+
+    @GET("/api/conversations")
+    suspend fun getConversationsIncremental(
+        @Query("since") since: String? = null
+    ): ConversationsResponse
 
     @POST("/api/conversations")
     suspend fun createConversation(@Body request: ConversationCreate): ConversationResponse
@@ -95,6 +118,13 @@ interface ApiService {
     // ========== MESSAGE ENDPOINTS ==========
     @GET("/api/conversations/{id}/messages")
     suspend fun getMessages(@Path("id") conversationId: Long): List<MessageResponse>
+
+    @GET("/api/conversations/{id}/messages")
+    suspend fun getMessagesIncremental(
+        @Path("id") conversationId: Long,
+        @Query("since") since: String? = null,
+        @Query("limit") limit: Int = 100
+    ): MessagesResponse
 
     @POST("/api/messages")
     suspend fun createMessage(@Body request: MessageCreate): MessageResponse

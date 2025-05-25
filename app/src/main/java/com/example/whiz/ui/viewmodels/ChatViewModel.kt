@@ -145,7 +145,15 @@ class ChatViewModel @Inject constructor(
 
     private var isDisconnectingForAuthError = false
 
-    private var continuousListeningEnabled = false
+    // Continuous listening state - exposed to UI
+    private val _isContinuousListeningEnabled = MutableStateFlow(false)
+    val isContinuousListeningEnabled = _isContinuousListeningEnabled.asStateFlow()
+    
+    private var continuousListeningEnabled: Boolean
+        get() = _isContinuousListeningEnabled.value
+        set(value) {
+            _isContinuousListeningEnabled.value = value
+        }
 
     init {
         // Check if the app already has microphone permission
@@ -225,7 +233,8 @@ class ChatViewModel @Inject constructor(
                                 Log.i(TAG, "Token refresh successful after WebSocket AuthError. Attempting to reconnect WebSocket.")
                                 isDisconnectingForAuthError = false
                                 _navigateToLogin.value = false
-                                whizServerRepository.connect()
+                                val conversationId = if (_chatId.value > 0) _chatId.value else null
+                                whizServerRepository.connect(conversationId)
                             } else {
                                 Log.w(TAG, "Token refresh failed after WebSocket AuthError. Navigating to login.")
                                 _navigateToLogin.value = true 
@@ -357,17 +366,35 @@ class ChatViewModel @Inject constructor(
                                     _inputText.value = ""
                                 }
                                 
-                                try {
-                                    viewModelScope.launch {
-                                        val messageId = repository.addAssistantMessage(
-                                            chatId = targetChatId,
-                                            content = messageContentForChat
-                                        )
-                                        Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId added to chat: $targetChatId")
+                                // Only save assistant message to local DB if NOT using remote agent
+                                // Remote agent (WebSocket server) handles message persistence
+                                if (!configUseRemoteAgent) {
+                                    try {
+                                        viewModelScope.launch {
+                                            val messageId = repository.addAssistantMessage(
+                                                chatId = targetChatId,
+                                                content = messageContentForChat
+                                            )
+                                            Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId added to chat: $targetChatId")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "$eventLogId Error adding assistant message to repository", e)
+                                        _errorState.value = "Error saving response: ${e.message}"
                                     }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "$eventLogId Error adding assistant message to repository", e)
-                                    _errorState.value = "Error saving response: ${e.message}"
+                                } else {
+                                    Log.d(TAG, "$eventLogId Skipping local assistant message save - remote agent handles persistence")
+                                    // Trigger UI refresh to show messages saved by WebSocket server
+                                    try {
+                                        viewModelScope.launch {
+                                            repository.refreshMessages()
+                                            // Also refresh conversations in case a new one was created
+                                            repository.refreshConversations()
+                                            Log.d(TAG, "$eventLogId Triggered messages and conversations refresh for remote agent")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "$eventLogId Error triggering refresh", e)
+                                        _errorState.value = "Error refreshing data: ${e.message}"
+                                    }
                                 }
                             } else {
                                 Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because target chatId is not > 0 (Value: $targetChatId)")
@@ -554,6 +581,14 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = "New Chat"
                     _isResponding.value = false // 🔧 Immediately set to false for new chats
                     Log.d(TAG, "🔥 loadChat: Setup for new chat (ID: -1), responding state reset to false")
+                    
+                    // Refresh conversations list when going to home page
+                    try {
+                        repository.refreshConversations()
+                        Log.d(TAG, "loadChat: Triggered conversations refresh for home page")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error refreshing conversations during loadChat for home page", e)
+                    }
                 } else {
                     // ... (handle loading existing chat as before)
                     Log.d(TAG, "Loading chat with ID: $chatId")
@@ -612,7 +647,9 @@ class ChatViewModel @Inject constructor(
                 if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
                     try {
                         delay(100) // Small delay to ensure state propagation
-                        whizServerRepository.connect()
+                        // Pass the conversation ID for existing chats, null for new chats (chatId = -1)
+                        val conversationId = if (_chatId.value > 0) _chatId.value else null
+                        whizServerRepository.connect(conversationId)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
                         _connectionError.value = "Failed to connect to server: ${e.message}"
@@ -686,30 +723,44 @@ class ChatViewModel @Inject constructor(
     }
 
     fun toggleSpeechRecognition() {
-        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
+        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=$continuousListeningEnabled")
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Microphone permission not granted")
             _errorState.value = "Microphone permission required" 
             return
         }
+        
+        // Case 1: Microphone is actively listening - always allow stopping
         if (isListening.value) {
-            Log.d(TAG, "[LOG] Stopping speech recognition and continuous listening")
+            Log.d(TAG, "[LOG] Stopping active speech recognition and continuous listening")
             continuousListeningEnabled = false
             speechRecognitionService.continuousListeningEnabled = false
             speechRecognitionService.stopListening()
-        } else {
-            // Prevent starting new listening while speaking OR responding
-            if (_isSpeaking.value || _isResponding.value) {
-                Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
-                _errorState.value = "Cannot start listening while assistant is busy"
-                return
-            }
-            Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
-            _inputText.value = ""
-            continuousListeningEnabled = true
-            speechRecognitionService.continuousListeningEnabled = true
-            startContinuousListening()
+            return
         }
+        
+        // Case 2: Continuous listening is enabled but mic not actively listening (e.g., during responses)
+        // Allow user to disable continuous listening mode
+        if (continuousListeningEnabled) {
+            Log.d(TAG, "[LOG] Disabling continuous listening mode (was enabled but not actively listening)")
+            continuousListeningEnabled = false
+            speechRecognitionService.continuousListeningEnabled = false
+            return
+        }
+        
+        // Case 3: Want to enable continuous listening - prevent during speaking/responding
+        if (_isSpeaking.value || _isResponding.value) {
+            Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
+            _errorState.value = "Cannot start listening while assistant is busy"
+            return
+        }
+        
+        // Case 4: Enable continuous listening
+        Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
+        _inputText.value = ""
+        continuousListeningEnabled = true
+        speechRecognitionService.continuousListeningEnabled = true
+        startContinuousListening()
     }
 
     private fun startContinuousListening() {
@@ -756,22 +807,36 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             var currentChatId = _chatId.value
 
-            // Create a new chat if needed (this part remains the same)
+            // Handle new chat creation differently for remote vs local agent
             if (currentChatId <= 0) {
-                val chatTitle = repository.deriveChatTitle(trimmedText)
-                val newChatId = repository.createChat(chatTitle)
-                _chatId.value = newChatId
-                _chatTitle.value = chatTitle
-                currentChatId = newChatId
+                if (configUseRemoteAgent) {
+                    // For remote agent: Don't create conversation locally
+                    // Let the WebSocket server create it and then sync
+                    Log.d(TAG, "sendUserInput: Using remote agent for new chat - server will create conversation")
+                    currentChatId = -1 // Keep as new chat indicator
+                } else {
+                    // For local agent: Create conversation locally as before
+                    val chatTitle = repository.deriveChatTitle(trimmedText)
+                    val newChatId = repository.createChat(chatTitle)
+                    _chatId.value = newChatId
+                    _chatTitle.value = chatTitle
+                    currentChatId = newChatId
+                }
 
-                // If this was a new chat and we use remote agent, connect now
+                // Connect to WebSocket if using remote agent and not connected
                 if(configUseRemoteAgent && !_isConnectedToServer.value) {
-                    whizServerRepository.connect()
+                    // For new chats, we don't have a conversation_id yet, so pass null
+                    whizServerRepository.connect(null)
                 }
             }
 
-            // Add user message (remains the same)
-            repository.addUserMessage(currentChatId, trimmedText)
+            // Only save user message to local DB if NOT using remote agent
+            // Remote agent (WebSocket server) handles message persistence
+            if (!configUseRemoteAgent && currentChatId > 0) {
+                repository.addUserMessage(currentChatId, trimmedText)
+            } else {
+                Log.d(TAG, "sendUserInput: Skipping local user message save - remote agent will handle persistence")
+            }
 
             // 🔧 Input will be cleared when bot responds (better UX)
             Log.d(TAG, "[LOG] sendUserInput: Input kept for UX feedback (current input: '${_inputText.value}')")
@@ -793,24 +858,68 @@ class ChatViewModel @Inject constructor(
                         Log.e(TAG, "Failed to send message via WebSocket")
                     } else {
                         Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
+                        // For new chats, we need to refresh conversations list after server creates it
+                        if (currentChatId <= 0) {
+                            try {
+                                viewModelScope.launch {
+                                    delay(500) // Delay to ensure server creates conversation
+                                    repository.refreshConversations()
+                                    Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
+                                    
+                                    // Try to find the newly created conversation and switch to it
+                                    val conversations = repository.conversations.value
+                                    if (conversations.isNotEmpty()) {
+                                        val newestConversation = conversations.first() // Most recent
+                                        _chatId.value = newestConversation.id
+                                        _chatTitle.value = newestConversation.title
+                                        Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
+                            }
+                        }
+                        
+                        // Trigger UI refresh to show user message saved by WebSocket server
+                        try {
+                            viewModelScope.launch {
+                                delay(300) // Increased delay to ensure server processes the message
+                                repository.refreshMessages()
+                                Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
+                                
+                                // Additional refresh after a bit more time to catch any delayed server processing
+                                delay(500)
+                                repository.refreshMessages()
+                                Log.d(TAG, "sendUserInput: Triggered secondary messages refresh")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
+                        }
                     }
                     // Response handling is done in observeServerMessages
                 } else {
                     Log.w(TAG, "Cannot send message: Not connected to server. Attempting to connect...")
                     _connectionError.value = "Not connected to server. Connecting..."
-                    // Try to connect
-                    whizServerRepository.connect()
+                    // Try to connect with current conversation ID
+                    val conversationId = if (_chatId.value > 0) _chatId.value else null
+                    whizServerRepository.connect(conversationId)
                     // Use local fallback for now
-                    generateAssistantResponse(currentChatId) 
+                    if (currentChatId > 0) {
+                        generateAssistantResponse(currentChatId)
+                    }
                 }
             } else {
                 // --- Local Fallback ---
                 Log.d(TAG, "sendUserInput: Using local fallback")
-                generateAssistantResponse(currentChatId)
+                if (currentChatId > 0) {
+                    generateAssistantResponse(currentChatId)
+                }
             }
 
-            // Schedule persistence check (remains the same)
-            schedulePersistenceCheck(currentChatId)
+            // Schedule persistence check (only for local agent)
+            if (!configUseRemoteAgent && currentChatId > 0) {
+                schedulePersistenceCheck(currentChatId)
+            }
         }
     }
 
@@ -921,22 +1030,36 @@ class ChatViewModel @Inject constructor(
 
         viewModelScope.launch {
             if (_chatId.value <= 0) {
-                Log.w(TAG, "🔥 sendInputText: chatId is ${_chatId.value}, creating NEW chat (this might be wrong if we should use an existing chat)")
-                val newChatId = repository.createChat(repository.deriveChatTitle(textToSend))
-                _chatId.value = newChatId
-                Log.d(TAG, "🔥 sendInputText: Created new chat with ID: $newChatId")
-                if (newChatId <=0) {
-                    Log.e(TAG, "Failed to create new chat.")
-                    updateRespondingStateForCurrentChat() // Update based on remaining requests
-                    _errorState.value = "Failed to create chat. Please try again."
-                    return@launch
+                if (configUseRemoteAgent) {
+                    // For remote agent: Don't create conversation locally
+                    // Let the WebSocket server create it and then sync
+                    Log.d(TAG, "sendInputText: Using remote agent for new chat - server will create conversation")
+                    // Keep _chatId.value as -1 for now
+                } else {
+                    // For local agent: Create conversation locally as before
+                    Log.w(TAG, "🔥 sendInputText: chatId is ${_chatId.value}, creating NEW chat")
+                    val newChatId = repository.createChat(repository.deriveChatTitle(textToSend))
+                    _chatId.value = newChatId
+                    Log.d(TAG, "🔥 sendInputText: Created new chat with ID: $newChatId")
+                    if (newChatId <=0) {
+                        Log.e(TAG, "Failed to create new chat.")
+                        updateRespondingStateForCurrentChat() // Update based on remaining requests
+                        _errorState.value = "Failed to create chat. Please try again."
+                        return@launch
+                    }
                 }
             } else {
                 Log.d(TAG, "🔥 sendInputText: Using existing chatId: ${_chatId.value}")
             }
             
             Log.d(TAG, "🔥 sendInputText: Adding user message to chat ${_chatId.value}: '$textToSend'")
-            repository.addUserMessage(_chatId.value, textToSend)
+            // Only save user message to local DB if NOT using remote agent
+            // Remote agent (WebSocket server) handles message persistence
+            if (!configUseRemoteAgent && _chatId.value > 0) {
+                repository.addUserMessage(_chatId.value, textToSend)
+            } else {
+                Log.d(TAG, "sendInputText: Skipping local user message save - remote agent will handle persistence")
+            }
 
             // 🔧 Input will be cleared when bot responds (better UX)
             Log.d(TAG, "[LOG] sendInputText: Input kept for UX feedback (current input: '${_inputText.value}')")
@@ -951,6 +1074,28 @@ class ChatViewModel @Inject constructor(
                     updateRespondingStateForCurrentChat() // Update based on remaining requests
                     _connectionError.value = "Failed to send message. Please try again."
                     Log.e(TAG, "Failed to send message via WebSocket")
+                } else {
+                    // For new chats, refresh conversations after server creates it
+                    if (_chatId.value <= 0) {
+                        try {
+                            viewModelScope.launch {
+                                delay(500) // Delay to ensure server creates conversation
+                                repository.refreshConversations()
+                                Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
+                                
+                                // Try to find the newly created conversation and switch to it
+                                val conversations = repository.conversations.value
+                                if (conversations.isNotEmpty()) {
+                                    val newestConversation = conversations.first() // Most recent
+                                    _chatId.value = newestConversation.id
+                                    _chatTitle.value = newestConversation.title
+                                    Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
+                        }
+                    }
                 }
             } else {
                 updateRespondingStateForCurrentChat() // Update based on remaining requests (should be none for local)

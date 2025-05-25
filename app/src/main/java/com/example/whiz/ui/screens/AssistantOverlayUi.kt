@@ -51,6 +51,7 @@ fun AssistantOverlayUi(
     val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
     val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
     val micPermissionGranted by viewModel.micPermissionGranted.collectAsState()
+    val isContinuousListeningEnabled by viewModel.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
     // 1. Collect the state containing the full list of messages
     val messagesState by viewModel.messages.collectAsState()
@@ -140,6 +141,8 @@ fun AssistantOverlayUi(
                 isListening = isListening,
                 isInputDisabled = isTextInputDisabled,
                 isMicDisabled = isMicDisabled,
+                isResponding = isResponding,
+                isContinuousListeningEnabled = isContinuousListeningEnabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {

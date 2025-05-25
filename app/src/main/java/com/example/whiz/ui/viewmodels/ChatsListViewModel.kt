@@ -17,7 +17,7 @@ class ChatsListViewModel @Inject constructor(
 ) : ViewModel() {
 
     // All chats, ordered by most recent first
-    val chats: StateFlow<List<ChatEntity>> = repository.getAllChats()
+    val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -33,6 +33,13 @@ class ChatsListViewModel @Inject constructor(
     fun clearAllChatHistory() {
         viewModelScope.launch {
             repository.deleteAllChats()
+        }
+    }
+
+    // Force a complete refresh by clearing sync timestamps
+    fun forceRefresh() {
+        viewModelScope.launch {
+            repository.forceFullRefresh()
         }
     }
 }
