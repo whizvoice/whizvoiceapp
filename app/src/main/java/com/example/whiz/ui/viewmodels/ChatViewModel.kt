@@ -383,9 +383,18 @@ class ChatViewModel @Inject constructor(
                                     }
                                 } else {
                                     Log.d(TAG, "$eventLogId Skipping local assistant message save - remote agent handles persistence")
-                                    // For remote agent, we don't need to manually refresh since the reactive flow
-                                    // should automatically update when the server saves the message
-                                    Log.d(TAG, "$eventLogId Remote agent - skipping manual refresh, letting reactive flow handle updates")
+                                    // For remote agent, we need to manually refresh to show the server-saved message
+                                    Log.d(TAG, "$eventLogId Remote agent - triggering manual refresh to show server-saved message")
+                                    
+                                    try {
+                                        viewModelScope.launch {
+                                            delay(100) // Brief delay for server processing
+                                            repository.refreshMessages()
+                                            Log.d(TAG, "$eventLogId Triggered messages refresh for remote agent response")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "$eventLogId Error refreshing messages for remote agent response", e)
+                                    }
                                     
                                     // Only refresh conversations if a new one might have been created
                                     if (targetChatId <= 0) {
