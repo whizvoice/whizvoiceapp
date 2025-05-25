@@ -41,6 +41,7 @@ fun SettingsScreen(
     val hasAsanaToken by viewModel.hasAsanaToken.collectAsState()
     val isSavingClaude by viewModel.isSavingClaude.collectAsState()
     val isSavingAsana by viewModel.isSavingAsana.collectAsState()
+    val isHardSyncing by viewModel.isHardSyncing.collectAsState()
 
     // Input states
     var claudeTokenInput by rememberSaveable { mutableStateOf("") }
@@ -119,6 +120,48 @@ fun SettingsScreen(
                 onClearClick = { viewModel.saveAsanaToken("") },
                 startInEditMode = focusSection == "asana"
             )
+
+            // Data Management Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Data Management", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(thickness = Dp.Hairline)
+
+            // Hard Sync Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Force Full Sync",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Clear local sync timestamps and re-download all data from server",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Button(
+                    onClick = { viewModel.performHardSync() },
+                    enabled = !isHardSyncing,
+                    modifier = Modifier.wrapContentWidth()
+                ) {
+                    if (isHardSyncing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Syncing...")
+                    } else {
+                        Text("Sync Now")
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.weight(1f)) // Push logout to bottom
 

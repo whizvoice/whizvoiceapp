@@ -10,11 +10,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import android.util.Log
 
 @HiltViewModel
 class ChatsListViewModel @Inject constructor(
     private val repository: WhizRepository
 ) : ViewModel() {
+
+    private val TAG = "ChatsListViewModel"
+
+    // Pull-to-refresh state
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     // All chats, ordered by most recent first
     val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
@@ -40,6 +49,23 @@ class ChatsListViewModel @Inject constructor(
     fun forceRefresh() {
         viewModelScope.launch {
             repository.forceFullRefresh()
+        }
+    }
+
+    // Pull-to-refresh: incremental sync
+    fun refreshChats() {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                Log.d(TAG, "refreshChats: Starting pull-to-refresh incremental sync")
+                repository.performIncrementalSync()
+                Log.d(TAG, "refreshChats: Pull-to-refresh completed successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "refreshChats: Error during pull-to-refresh", e)
+                // Error is handled by the repository and UI
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 }

@@ -383,17 +383,21 @@ class ChatViewModel @Inject constructor(
                                     }
                                 } else {
                                     Log.d(TAG, "$eventLogId Skipping local assistant message save - remote agent handles persistence")
-                                    // Trigger UI refresh to show messages saved by WebSocket server
-                                    try {
-                                        viewModelScope.launch {
-                                            repository.refreshMessages()
-                                            // Also refresh conversations in case a new one was created
-                                            repository.refreshConversations()
-                                            Log.d(TAG, "$eventLogId Triggered messages and conversations refresh for remote agent")
+                                    // For remote agent, we don't need to manually refresh since the reactive flow
+                                    // should automatically update when the server saves the message
+                                    Log.d(TAG, "$eventLogId Remote agent - skipping manual refresh, letting reactive flow handle updates")
+                                    
+                                    // Only refresh conversations if a new one might have been created
+                                    if (targetChatId <= 0) {
+                                        try {
+                                            viewModelScope.launch {
+                                                delay(200) // Brief delay for server processing
+                                                repository.refreshConversations()
+                                                Log.d(TAG, "$eventLogId Refreshed conversations for potential new chat creation")
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "$eventLogId Error refreshing conversations", e)
                                         }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "$eventLogId Error triggering refresh", e)
-                                        _errorState.value = "Error refreshing data: ${e.message}"
                                     }
                                 }
                             } else {
@@ -637,7 +641,9 @@ class ChatViewModel @Inject constructor(
                 // Refresh messages to ensure we have latest data
                 if (_chatId.value > 0) {
                     try {
-                        repository.refreshMessages()
+                        // Skip manual refresh - the reactive flow will update automatically when chatId changes
+                        Log.d(TAG, "loadChat: Skipping manual messages refresh - reactive flow will handle it")
+                        // repository.refreshMessages() // Commented out to prevent duplicate requests
                     } catch (e: Exception) {
                         Log.e(TAG, "Error refreshing messages during loadChat", e)
                     }
@@ -883,14 +889,9 @@ class ChatViewModel @Inject constructor(
                         // Trigger UI refresh to show user message saved by WebSocket server
                         try {
                             viewModelScope.launch {
-                                delay(300) // Increased delay to ensure server processes the message
+                                delay(500) // Single delay to ensure server processes the message
                                 repository.refreshMessages()
-                                Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
-                                
-                                // Additional refresh after a bit more time to catch any delayed server processing
-                                delay(500)
-                                repository.refreshMessages()
-                                Log.d(TAG, "sendUserInput: Triggered secondary messages refresh")
+                                Log.d(TAG, "sendUserInput: Triggered single messages refresh after sending user message")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)

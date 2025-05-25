@@ -24,6 +24,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -42,6 +49,13 @@ class WhizRepository @Inject constructor(
     val conversations: StateFlow<List<ChatEntity>> = _conversations.asStateFlow()
 
     private val syncPrefs = context.getSharedPreferences("sync_metadata", Context.MODE_PRIVATE)
+    
+    // Cache for message flows to prevent duplicate API calls for the same chat
+    private val messageFlowsCache = mutableMapOf<Long, Flow<List<MessageEntity>>>()
+    
+    // Track ongoing API requests to prevent duplicates
+    private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
+    private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
     init {
         // Initialize reactive data loading
@@ -70,8 +84,8 @@ class WhizRepository @Inject constructor(
     suspend fun getAllChats(forceFullSync: Boolean = false): List<ChatEntity> {
         Log.d(TAG, "getAllChats: fetching from API (triggered)")
         return try {
-            // Use incremental sync by default
-            val result = getAllChatsIncremental(forceFullSync)
+            // Use deduplication helper to prevent multiple concurrent API calls
+            val result = fetchConversationsWithDeduplication(forceFullSync)
             _conversations.value = result
             Log.d(TAG, "getAllChats: retrieved ${result.size} chats from API")
             result
@@ -159,26 +173,25 @@ class WhizRepository @Inject constructor(
 
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
-        // Return a flow that refreshes when trigger changes and always fetches fresh data
-        return _messagesRefreshTrigger.flatMapLatest {
-            flow {
-                try {
-                    Log.d(TAG, "getMessagesForChat: fetching messages for chat $chatId from API (triggered)")
-                    // Use incremental sync endpoint (without since parameter for full messages)
-                    val response = apiService.getMessagesIncremental(chatId, since = null)
-                    val messageEntities = response.messages.map { it.toMessageEntity() }
-                    Log.d(TAG, "getMessagesForChat: retrieved ${messageEntities.size} messages for chat $chatId")
-                    
+        // Return cached flow if it exists, otherwise create and cache a new one
+        return messageFlowsCache.getOrPut(chatId) {
+            _messagesRefreshTrigger.flatMapLatest { triggerValue ->
+                flow {
+                    Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
+                    // Use deduplication helper to prevent multiple concurrent API calls
+                    val messageEntities = fetchMessagesWithDeduplication(chatId)
                     emit(messageEntities)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error getting messages for chat $chatId from API", e)
-                    // Emit empty list on error for now
-                    emit(emptyList<MessageEntity>())
                 }
+            }.catch { e ->
+                Log.e(TAG, "Error in getMessagesForChat flow", e)
+                emit(emptyList<MessageEntity>()) // Emit empty list on error
+            }.shareIn(
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+                started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
+                replay = 1 // Always replay the latest value to new subscribers
+            ).also {
+                Log.d(TAG, "Created and cached message flow for chat $chatId")
             }
-        }.catch { e ->
-            Log.e(TAG, "Error in getMessagesForChat flow", e)
-            emit(emptyList<MessageEntity>()) // Emit empty list on error
         }
     }
 
@@ -265,11 +278,122 @@ class WhizRepository @Inject constructor(
 
     // Manual refresh functions for UI to call
     suspend fun refreshConversations() {
+        // Clear ongoing conversation request tracking to allow fresh requests
+        ongoingConversationRequests.clear()
+        Log.d(TAG, "refreshConversations: cleared ongoing conversation request tracking")
+        
         triggerConversationsRefresh()
     }
 
     suspend fun refreshMessages() {
+        // Clear the cache to force fresh API calls
+        messageFlowsCache.clear()
+        Log.d(TAG, "refreshMessages: cleared message flows cache")
+        
+        // Clear ongoing request tracking to allow fresh requests
+        ongoingMessageRequests.clear()
+        ongoingConversationRequests.clear()
+        Log.d(TAG, "refreshMessages: cleared ongoing request tracking")
+        
         triggerMessagesRefresh()
+    }
+    
+    // Clear message flow cache for a specific chat (useful when switching chats)
+    fun clearMessageFlowCache(chatId: Long) {
+        messageFlowsCache.remove(chatId)
+        Log.d(TAG, "Cleared message flow cache for chat $chatId")
+    }
+    
+    // Clear all message flow caches
+    fun clearAllMessageFlowCaches() {
+        messageFlowsCache.clear()
+        Log.d(TAG, "Cleared all message flow caches")
+    }
+
+    // Deduplicated message fetching - prevents multiple concurrent API calls for the same chat
+    private suspend fun fetchMessagesWithDeduplication(chatId: Long): List<MessageEntity> {
+        // Check if there's already an ongoing request for this chat
+        val ongoing = ongoingMessageRequests[chatId]
+        if (ongoing != null && ongoing.isActive) {
+            Log.d(TAG, "fetchMessagesWithDeduplication: Reusing ongoing request for chat $chatId")
+            return ongoing.await()
+        }
+        
+        // Start a new request and track it
+        val deferred = CoroutineScope(Dispatchers.IO).async {
+            try {
+                Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId")
+                val response = apiService.getMessagesIncremental(chatId, since = null)
+                val messageEntities = response.messages.map { it.toMessageEntity() }
+                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${messageEntities.size} messages for chat $chatId")
+                messageEntities
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in fetchMessagesWithDeduplication for chat $chatId", e)
+                emptyList<MessageEntity>()
+            } finally {
+                // Clean up the tracking when done
+                ongoingMessageRequests.remove(chatId)
+                Log.d(TAG, "fetchMessagesWithDeduplication: Cleaned up request tracking for chat $chatId")
+            }
+        }
+        
+        ongoingMessageRequests[chatId] = deferred
+        return deferred.await()
+    }
+
+    // Deduplicated conversation fetching - prevents multiple concurrent API calls
+    private suspend fun fetchConversationsWithDeduplication(forceFullSync: Boolean): List<ChatEntity> {
+        val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
+        
+        // Check if there's already an ongoing request
+        val ongoing = ongoingConversationRequests[requestKey]
+        if (ongoing != null && ongoing.isActive) {
+            Log.d(TAG, "fetchConversationsWithDeduplication: Reusing ongoing $requestKey request")
+            return ongoing.await()
+        }
+        
+        // Start a new request and track it
+        val deferred = CoroutineScope(Dispatchers.IO).async {
+            try {
+                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request")
+                val result = getAllChatsIncremental(forceFullSync)
+                Log.d(TAG, "fetchConversationsWithDeduplication: Retrieved ${result.size} conversations via $requestKey")
+                result
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in fetchConversationsWithDeduplication for $requestKey", e)
+                emptyList<ChatEntity>()
+            } finally {
+                // Clean up the tracking when done
+                ongoingConversationRequests.remove(requestKey)
+                Log.d(TAG, "fetchConversationsWithDeduplication: Cleaned up $requestKey request tracking")
+            }
+        }
+        
+        ongoingConversationRequests[requestKey] = deferred
+        return deferred.await()
+    }
+
+    // Incremental sync for pull-to-refresh - actually waits for completion
+    suspend fun performIncrementalSync(): List<ChatEntity> {
+        Log.d(TAG, "performIncrementalSync: starting incremental sync operation")
+        return try {
+            // Use deduplication helper for incremental sync
+            val conversations = fetchConversationsWithDeduplication(forceFullSync = false)
+            _conversations.value = conversations
+            Log.d(TAG, "performIncrementalSync: completed, got ${conversations.size} conversations")
+            
+            // Trigger messages refresh for any active chat flows
+            triggerMessagesRefresh()
+            Log.d(TAG, "performIncrementalSync: incremental sync completed successfully")
+            
+            conversations
+        } catch (e: Exception) {
+            Log.e(TAG, "performIncrementalSync: error during incremental sync", e)
+            // Trigger normal refresh as fallback
+            triggerConversationsRefresh()
+            triggerMessagesRefresh()
+            throw e // Re-throw so the UI can handle the error
+        }
     }
 
     // Force a complete refresh by clearing sync timestamps
@@ -277,8 +401,26 @@ class WhizRepository @Inject constructor(
         Log.d(TAG, "forceFullRefresh: clearing all sync timestamps")
         syncPrefs.edit().clear().apply()
         _conversations.value = emptyList()
-        triggerConversationsRefresh()
-        triggerMessagesRefresh()
+        
+        Log.d(TAG, "forceFullRefresh: starting actual network sync operations...")
+        try {
+            // Use deduplication helper for full sync
+            val conversations = fetchConversationsWithDeduplication(forceFullSync = true)
+            _conversations.value = conversations
+            Log.d(TAG, "forceFullRefresh: completed conversations sync, got ${conversations.size} conversations")
+            
+            // Trigger messages refresh for any active chat flows
+            triggerMessagesRefresh()
+            Log.d(TAG, "forceFullRefresh: triggered messages refresh")
+            
+            Log.d(TAG, "forceFullRefresh: hard sync completed successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "forceFullRefresh: error during hard sync", e)
+            // Trigger normal refresh as fallback
+            triggerConversationsRefresh()
+            triggerMessagesRefresh()
+            throw e // Re-throw so the UI can show the error
+        }
     }
 
     // ================== INCREMENTAL SYNC SUPPORT ==================
