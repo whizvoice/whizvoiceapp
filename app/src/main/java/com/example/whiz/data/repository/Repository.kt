@@ -57,6 +57,9 @@ class WhizRepository @Inject constructor(
     init {
         // Initialize reactive data loading
         setupReactiveLoading()
+        
+        // Trigger initial conversations load so the UI shows existing chats on app startup
+        triggerConversationsRefresh()
     }
 
     private fun setupReactiveLoading() {
