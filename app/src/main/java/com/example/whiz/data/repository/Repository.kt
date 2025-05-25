@@ -50,9 +50,6 @@ class WhizRepository @Inject constructor(
 
     private val syncPrefs = context.getSharedPreferences("sync_metadata", Context.MODE_PRIVATE)
     
-    // Cache for message flows to prevent duplicate API calls for the same chat
-    private val messageFlowsCache = mutableMapOf<Long, Flow<List<MessageEntity>>>()
-    
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
@@ -173,26 +170,21 @@ class WhizRepository @Inject constructor(
 
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
-        // Return cached flow if it exists, otherwise create and cache a new one
-        return messageFlowsCache.getOrPut(chatId) {
-            _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-                flow {
-                    Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
-                    // Use deduplication helper to prevent multiple concurrent API calls
-                    val messageEntities = fetchMessagesWithDeduplication(chatId)
-                    emit(messageEntities)
-                }
-            }.catch { e ->
-                Log.e(TAG, "Error in getMessagesForChat flow", e)
-                emit(emptyList<MessageEntity>()) // Emit empty list on error
-            }.shareIn(
-                scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
-                started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
-                replay = 1 // Always replay the latest value to new subscribers
-            ).also {
-                Log.d(TAG, "Created and cached message flow for chat $chatId")
+        return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
+            flow {
+                Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
+                // Use deduplication helper to prevent multiple concurrent API calls
+                val messageEntities = fetchMessagesWithDeduplication(chatId)
+                emit(messageEntities)
             }
-        }
+        }.catch { e ->
+            Log.e(TAG, "Error in getMessagesForChat flow", e)
+            emit(emptyList<MessageEntity>()) // Emit empty list on error
+        }.shareIn(
+            scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+            started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
+            replay = 1 // Always replay the latest value to new subscribers
+        )
     }
 
     suspend fun getMessageCountForChat(chatId: Long): Int {
@@ -286,10 +278,6 @@ class WhizRepository @Inject constructor(
     }
 
     suspend fun refreshMessages() {
-        // Clear the cache to force fresh API calls
-        messageFlowsCache.clear()
-        Log.d(TAG, "refreshMessages: cleared message flows cache")
-        
         // Clear ongoing request tracking to allow fresh requests
         ongoingMessageRequests.clear()
         ongoingConversationRequests.clear()
@@ -298,18 +286,6 @@ class WhizRepository @Inject constructor(
         triggerMessagesRefresh()
     }
     
-    // Clear message flow cache for a specific chat (useful when switching chats)
-    fun clearMessageFlowCache(chatId: Long) {
-        messageFlowsCache.remove(chatId)
-        Log.d(TAG, "Cleared message flow cache for chat $chatId")
-    }
-    
-    // Clear all message flow caches
-    fun clearAllMessageFlowCaches() {
-        messageFlowsCache.clear()
-        Log.d(TAG, "Cleared all message flow caches")
-    }
-
     // Deduplicated message fetching - prevents multiple concurrent API calls for the same chat
     private suspend fun fetchMessagesWithDeduplication(chatId: Long): List<MessageEntity> {
         // Check if there's already an ongoing request for this chat
