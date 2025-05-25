@@ -107,6 +107,7 @@ fun ChatScreen(
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
+    val isContinuousListeningEnabled by viewModel.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
     // UI State
     val listState = rememberLazyListState()
@@ -239,14 +240,16 @@ fun ChatScreen(
         bottomBar = {
             // Disable text input when responding or speaking
             val isTextInputDisabled = isResponding || isSpeaking
-            // Disable mic when responding/speaking, but allow turning OFF if currently listening
-            val isMicDisabled = (isResponding || isSpeaking) && !isListening
+            // Only disable mic when TTS is speaking, NOT when responding (allow mic control during response)
+            val isMicDisabled = isSpeaking
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
                 isListening = isListening,
                 isInputDisabled = isTextInputDisabled,
                 isMicDisabled = isMicDisabled,
+                isResponding = isResponding,
+                isContinuousListeningEnabled = isContinuousListeningEnabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
                 onMicClick = { handleMicClick() },
@@ -452,6 +455,9 @@ fun EmptyChatPlaceholder() {
 
 @Composable
 fun TypingIndicator() {
+    // State for animation
+    var isAnimating by remember { mutableStateOf(true) }
+    
     // Using Card for consistency
     Card(
         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
@@ -471,28 +477,41 @@ fun TypingIndicator() {
             )
             Spacer(modifier = Modifier.width(8.dp)) // Space before dots
 
-            // Animated dots
+            // Animated dots with proper animation
             val dotCount = 3
-            val animationDelay = 1000 // Slightly longer cycle
             val dotSize = 6.dp
             val dotSpacing = 4.dp
 
             Row(horizontalArrangement = Arrangement.spacedBy(dotSpacing)) {
                 for (i in 0 until dotCount) {
-                    val delay = (i * animationDelay / dotCount).toLong()
+                    val delay = i * 200 // 200ms delay between each dot
+                    
+                    // Each dot has its own animation state
+                    var dotVisible by remember { mutableStateOf(false) }
                     val alpha by animateFloatAsState(
-                        targetValue = 1f, // Animate alpha from low to high and back
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(durationMillis = animationDelay / 2), // Faster fade in/out
-                            repeatMode = RepeatMode.Reverse,
-                            initialStartOffset = StartOffset(offsetMillis = delay.toInt())
-                        )
+                        targetValue = if (dotVisible) 1f else 0.3f,
+                        animationSpec = tween(durationMillis = 600),
+                        label = "dotAlpha$i"
                     )
+                    
+                    // LaunchedEffect to control the animation timing
+                    LaunchedEffect(isAnimating) {
+                        delay(delay.toLong()) // Initial delay for staggered effect
+                        while (isAnimating) {
+                            dotVisible = true
+                            delay(600) // Stay visible
+                            dotVisible = false  
+                            delay(600) // Stay dim
+                        }
+                    }
+                    
                     Box(
                         modifier = Modifier
                             .size(dotSize)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha.coerceIn(0.4f, 1f))) // Adjusted alpha range
+                            .background(
+                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha)
+                            )
                     )
                 }
             }
@@ -507,6 +526,8 @@ fun ChatInputBar(
     isListening: Boolean,
     isInputDisabled: Boolean, // Text input disabled state
     isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
+    isResponding: Boolean, // Bot is currently responding/thinking
+    isContinuousListeningEnabled: Boolean, // Add continuous listening state
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onMicClick: () -> Unit,
@@ -566,27 +587,46 @@ fun ChatInputBar(
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    val canSend = hasInputText && !isListening
+                    // 🔧 Smart button logic: show red MicOff when continuous listening is active
                     val icon = when {
-                        isListening -> Icons.Filled.MicOff
-                        canSend -> Icons.Filled.Send
-                        else -> Icons.Filled.Mic
+                        isListening -> Icons.Filled.MicOff // Always show mic off when actively listening
+                        isResponding && isContinuousListeningEnabled -> Icons.Filled.MicOff // Show red mic off when continuous listening is active during responses
+                        isResponding -> Icons.Filled.Mic // During responses without continuous listening, show regular mic
+                        hasInputText -> Icons.Filled.Send // Show send only when not responding and has text
+                        else -> Icons.Filled.Mic // Default to mic
                     }
                     val description = when {
                         isListening -> "Stop listening"
-                        canSend -> "Send message"
+                        isResponding && isContinuousListeningEnabled -> "Turn off continuous listening" // Clear description when continuous listening is active
+                        isResponding -> "Turn on continuous listening" // Description when continuous listening is off during responses
+                        hasInputText -> "Send message" 
                         else -> "Start listening"
                     }
                     val tint = when {
-                        isListening -> MaterialTheme.colorScheme.error // Red when listening/stoppable
-                        canSend -> MaterialTheme.colorScheme.primary // Primary color for send
+                        isListening -> MaterialTheme.colorScheme.error // Red when actively listening
+                        isResponding && isContinuousListeningEnabled -> MaterialTheme.colorScheme.error // Red when continuous listening is active during responses
+                        isResponding -> MaterialTheme.colorScheme.primary // Primary color for mic during responses without continuous listening
+                        hasInputText -> MaterialTheme.colorScheme.primary // Primary color for send
                         else -> MaterialTheme.colorScheme.primary // Primary color for mic start
                     }
 
-                    val isButtonEnabled = if (isListening || !canSend) !isMicDisabled else !isInputDisabled
+                    // 🔧 Button action prioritizes listening control during responses
+                    val buttonAction = when {
+                        isListening -> onMicClick // Always handle mic when actively listening
+                        isResponding -> onMicClick // During responses, mic click controls continuous listening
+                        hasInputText -> onSendClick // Send only when not responding and has text
+                        else -> onMicClick // Default to mic action
+                    }
+
+                    val isButtonEnabled = when {
+                        isListening -> !isMicDisabled // When listening, only disable for TTS speaking
+                        isResponding -> !isMicDisabled // During responses, allow mic control (disable continuous listening)
+                        hasInputText -> !isInputDisabled // When ready to send, disable during TTS speaking  
+                        else -> !isMicDisabled // When in mic mode (no text), only disable for TTS speaking
+                    }
                     IconButton(
-                        onClick = if (isListening) onMicClick else { if (canSend) onSendClick else onMicClick },
-                        enabled = isButtonEnabled // Use mic-specific disabled state for mic actions, input disabled for send
+                        onClick = buttonAction,
+                        enabled = isButtonEnabled
                     ) {
                         Icon(
                             imageVector = icon,

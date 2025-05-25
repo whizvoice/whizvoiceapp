@@ -145,7 +145,15 @@ class ChatViewModel @Inject constructor(
 
     private var isDisconnectingForAuthError = false
 
-    private var continuousListeningEnabled = false
+    // Continuous listening state - exposed to UI
+    private val _isContinuousListeningEnabled = MutableStateFlow(false)
+    val isContinuousListeningEnabled = _isContinuousListeningEnabled.asStateFlow()
+    
+    private var continuousListeningEnabled: Boolean
+        get() = _isContinuousListeningEnabled.value
+        set(value) {
+            _isContinuousListeningEnabled.value = value
+        }
 
     init {
         // Check if the app already has microphone permission
@@ -715,30 +723,44 @@ class ChatViewModel @Inject constructor(
     }
 
     fun toggleSpeechRecognition() {
-        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}")
+        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=$continuousListeningEnabled")
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Microphone permission not granted")
             _errorState.value = "Microphone permission required" 
             return
         }
+        
+        // Case 1: Microphone is actively listening - always allow stopping
         if (isListening.value) {
-            Log.d(TAG, "[LOG] Stopping speech recognition and continuous listening")
+            Log.d(TAG, "[LOG] Stopping active speech recognition and continuous listening")
             continuousListeningEnabled = false
             speechRecognitionService.continuousListeningEnabled = false
             speechRecognitionService.stopListening()
-        } else {
-            // Prevent starting new listening while speaking OR responding
-            if (_isSpeaking.value || _isResponding.value) {
-                Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
-                _errorState.value = "Cannot start listening while assistant is busy"
-                return
-            }
-            Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
-            _inputText.value = ""
-            continuousListeningEnabled = true
-            speechRecognitionService.continuousListeningEnabled = true
-            startContinuousListening()
+            return
         }
+        
+        // Case 2: Continuous listening is enabled but mic not actively listening (e.g., during responses)
+        // Allow user to disable continuous listening mode
+        if (continuousListeningEnabled) {
+            Log.d(TAG, "[LOG] Disabling continuous listening mode (was enabled but not actively listening)")
+            continuousListeningEnabled = false
+            speechRecognitionService.continuousListeningEnabled = false
+            return
+        }
+        
+        // Case 3: Want to enable continuous listening - prevent during speaking/responding
+        if (_isSpeaking.value || _isResponding.value) {
+            Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
+            _errorState.value = "Cannot start listening while assistant is busy"
+            return
+        }
+        
+        // Case 4: Enable continuous listening
+        Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
+        _inputText.value = ""
+        continuousListeningEnabled = true
+        speechRecognitionService.continuousListeningEnabled = true
+        startContinuousListening()
     }
 
     private fun startContinuousListening() {
@@ -861,9 +883,14 @@ class ChatViewModel @Inject constructor(
                         // Trigger UI refresh to show user message saved by WebSocket server
                         try {
                             viewModelScope.launch {
-                                delay(100) // Small delay to ensure server processes the message
+                                delay(300) // Increased delay to ensure server processes the message
                                 repository.refreshMessages()
                                 Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
+                                
+                                // Additional refresh after a bit more time to catch any delayed server processing
+                                delay(500)
+                                repository.refreshMessages()
+                                Log.d(TAG, "sendUserInput: Triggered secondary messages refresh")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
