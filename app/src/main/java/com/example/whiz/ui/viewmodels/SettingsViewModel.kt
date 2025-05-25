@@ -41,6 +41,10 @@ class SettingsViewModel @Inject constructor(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    // Hard sync state
+    private val _isHardSyncing = MutableStateFlow(false)
+    val isHardSyncing: StateFlow<Boolean> = _isHardSyncing.asStateFlow()
+
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
     val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
@@ -144,6 +148,27 @@ class SettingsViewModel @Inject constructor(
 
     fun clearErrorMessage() {
         _errorMessage.value = null
+    }
+
+    fun performHardSync() {
+        viewModelScope.launch {
+            _isHardSyncing.value = true
+            _errorMessage.value = null
+            try {
+                Log.d(TAG, "Starting hard sync...")
+                repository.forceFullRefresh()
+                _errorMessage.value = "Hard sync completed successfully!"
+                Log.d(TAG, "Hard sync completed successfully")
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during hard sync, navigating to login screen.", e)
+                _navigateToLogin.value = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during hard sync", e)
+                _errorMessage.value = "Hard sync failed: ${e.message}"
+            } finally {
+                _isHardSyncing.value = false
+            }
+        }
     }
 
     // Method to reset navigation trigger after navigation has occurred

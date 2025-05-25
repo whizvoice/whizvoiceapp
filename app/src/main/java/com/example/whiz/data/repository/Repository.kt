@@ -277,8 +277,26 @@ class WhizRepository @Inject constructor(
         Log.d(TAG, "forceFullRefresh: clearing all sync timestamps")
         syncPrefs.edit().clear().apply()
         _conversations.value = emptyList()
-        triggerConversationsRefresh()
-        triggerMessagesRefresh()
+        
+        Log.d(TAG, "forceFullRefresh: starting actual network sync operations...")
+        try {
+            // Actually perform the network calls and wait for them to complete
+            val conversations = getAllChatsIncremental(forceFullSync = true)
+            _conversations.value = conversations
+            Log.d(TAG, "forceFullRefresh: completed conversations sync, got ${conversations.size} conversations")
+            
+            // Trigger messages refresh for any active chat flows
+            triggerMessagesRefresh()
+            Log.d(TAG, "forceFullRefresh: triggered messages refresh")
+            
+            Log.d(TAG, "forceFullRefresh: hard sync completed successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "forceFullRefresh: error during hard sync", e)
+            // Trigger normal refresh as fallback
+            triggerConversationsRefresh()
+            triggerMessagesRefresh()
+            throw e // Re-throw so the UI can show the error
+        }
     }
 
     // ================== INCREMENTAL SYNC SUPPORT ==================
