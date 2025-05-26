@@ -105,9 +105,70 @@ class MainActivity : ComponentActivity() {
     private fun handleIntentNavigation(intent: Intent?) {
         Log.d(TAG, "handleIntentNavigation called with intent: $intent")
         Log.d(TAG, "navController initialized: ${::navController.isInitialized}")
-        val enableVoiceMode = intent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
+        
+        // Log all intent details for debugging
+        intent?.let { i ->
+            Log.d(TAG, "Intent action: ${i.action}")
+            Log.d(TAG, "Intent categories: ${i.categories}")
+            Log.d(TAG, "Intent data: ${i.data}")
+            Log.d(TAG, "Intent type: ${i.type}")
+            Log.d(TAG, "Intent flags: ${i.flags}")
+            Log.d(TAG, "Intent package: ${i.`package`}")
+            Log.d(TAG, "Intent component: ${i.component}")
+            
+            // Log all extras
+            val extras = i.extras
+            if (extras != null) {
+                Log.d(TAG, "Intent extras:")
+                for (key in extras.keySet()) {
+                    val value = extras.get(key)
+                    Log.d(TAG, "  $key = $value (${value?.javaClass?.simpleName})")
+                }
+            } else {
+                Log.d(TAG, "Intent has no extras")
+            }
+        }
+        
+        // Check if opened via Google Assistant App Actions
+        // Google Assistant launches have a tracing_intent_id extra and specific flags
+        val isFromGoogleAssistant = intent?.hasExtra("tracing_intent_id") == true &&
+                                   intent.action == "android.intent.action.MAIN" &&
+                                   intent.hasCategory("android.intent.category.LAUNCHER")
+        
+        val enableVoiceMode = intent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false || isFromGoogleAssistant
         val fromPowerButton = intent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
-        Log.d(TAG, "[LOG] ENABLE_VOICE_MODE: $enableVoiceMode, FROM_POWER_BUTTON: $fromPowerButton")
+        
+        Log.d(TAG, "[LOG] isFromGoogleAssistant: $isFromGoogleAssistant, ENABLE_VOICE_MODE: $enableVoiceMode, FROM_POWER_BUTTON: $fromPowerButton")
+        
+        // If opened via Google Assistant, create a new chat with voice mode
+        if (isFromGoogleAssistant && ::navController.isInitialized) {
+            Log.d(TAG, "Detected Google Assistant App Action, creating new chat with voice mode")
+            lifecycleScope.launch {
+                try {
+                    val newChatId = chatsListViewModel.createNewChat("Voice Chat")
+                    Log.d(TAG, "New chat created with ID: $newChatId for Google Assistant")
+                    if (newChatId > 0) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            Log.d(TAG, "Navigating to new chat/$newChatId from Google Assistant")
+                            navController.navigate("chat/$newChatId") {
+                                popUpTo(0) { inclusive = true } // Clear entire back stack
+                                launchSingleTop = true
+                            }
+                            // Enable voice mode for Google Assistant
+                            Log.d(TAG, "Setting ENABLE_VOICE_MODE to true for Google Assistant")
+                            navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                            // Clear the extras
+                            getIntent().removeExtra("feature")
+                        }, 500) // 500ms delay
+                    } else {
+                        Log.e(TAG, "Failed to create new chat from Google Assistant, staying on home screen")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error creating new chat from Google Assistant", e)
+                }
+            }
+            return // Exit early since we handled the Google Assistant case
+        }
         
         // Check if we need to create a new chat on start (fallback from AssistantActivity)
         val createNewChatOnStart = intent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false

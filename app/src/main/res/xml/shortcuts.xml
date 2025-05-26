@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.whiz"
+            android:targetClass="com.example.whiz.MainActivity">
+            <parameter android:name="feature" android:value="open_app"/>
+        </intent>
+        <app-widget android:targetClass="com.example.whiz.MainActivity">
+            <parameter android:name="appName" android:value="Whiz Voice"/>
+            <parameter android:name="appName" android:value="Voice Whiz"/>
+            <parameter android:name="appName" android:value="My Voice App"/>
+            <parameter android:name="appName" android:value="Whiz Voice App"/>
+        </app-widget>
+    </capability>
+</shortcuts> 
