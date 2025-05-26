@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    
+    <!-- Basic app opening with multiple name variations -->
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.whiz"
+            android:targetClass="com.example.whiz.MainActivity">
+            <parameter android:name="feature" android:key="feature"/>
+        </intent>
+        <!-- Add app name variations to help with recognition -->
+        <app-name>Whiz Voice</app-name>
+        <app-name>Whiz Voice App</app-name>
+        <app-name>My Voice App</app-name>
+        <app-name>Voice Whiz</app-name>
+        <app-name>Voice App</app-name>
+    </capability>
+
+    <!-- Create task capability -->
+    <capability android:name="actions.intent.CREATE_THING">
+        <intent
+            android:action="android.intent.action.CREATE_TASK"
+            android:targetPackage="com.example.whiz"
+            android:targetClass="com.example.whiz.MainActivity">
+            <parameter android:name="thing.name" android:key="task_name"/>
+        </intent>
+        <app-name>Whiz Voice</app-name>
+        <app-name>Voice Whiz</app-name>
+    </capability>
+
+    <!-- Search capability -->
+    <capability android:name="actions.intent.GET_THING">
+        <intent
+            android:action="android.intent.action.SEARCH"
+            android:targetPackage="com.example.whiz"
+            android:targetClass="com.example.whiz.MainActivity">
+            <parameter android:name="thing.name" android:key="search_query"/>
+        </intent>
+        <app-name>Whiz Voice</app-name>
+        <app-name>Voice Whiz</app-name>
+    </capability>
+
+</shortcuts> 

@@ -23,6 +23,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.findNavController
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.navigation.Screen
@@ -105,6 +106,15 @@ class MainActivity : ComponentActivity() {
     private fun handleIntentNavigation(intent: Intent?) {
         Log.d(TAG, "handleIntentNavigation called with intent: $intent")
         Log.d(TAG, "navController initialized: ${::navController.isInitialized}")
+        
+        // Handle App Actions first
+        Log.d(TAG, "About to call handleAppActions with intent: $intent")
+        if (intent != null && handleAppActions(intent)) {
+            Log.d(TAG, "handleAppActions returned true - App Action was handled")
+            return // App Action was handled, no need to continue
+        }
+        Log.d(TAG, "handleAppActions returned false - continuing with normal navigation")
+        
         val enableVoiceMode = intent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
         val fromPowerButton = intent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
         Log.d(TAG, "[LOG] ENABLE_VOICE_MODE: $enableVoiceMode, FROM_POWER_BUTTON: $fromPowerButton")
@@ -152,20 +162,43 @@ class MainActivity : ComponentActivity() {
             intent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
                 Log.d(TAG, "Intent to navigate to chat ID: $chatId")
                 if (::navController.isInitialized) {
-                val fromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
-                val forceNavigation = intent.getBooleanExtra("FORCE_NAVIGATION", false)
-                val delayNavigation = intent.getBooleanExtra("DELAY_NAVIGATION", false)
-                val initialTranscription = intent.getStringExtra("INITIAL_TRANSCRIPTION")
-                
-                Log.d(TAG, "Navigation params - fromAssistant: $fromAssistant, forceNavigation: $forceNavigation, enableVoiceMode: $enableVoiceMode, delayNavigation: $delayNavigation, initialTranscription: $initialTranscription")
-                
-                if (fromAssistant && forceNavigation) {
-                    // If coming from assistant with force navigation, clear everything and go to chat
-                    if (delayNavigation) {
-                        Log.d(TAG, "Using delayed navigation with 500ms delay")
-                        // Use a post delayed handler instead of coroutines
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            Log.d(TAG, "Executing delayed navigation to chat/$chatId")
+                    val fromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
+                    val forceNavigation = intent.getBooleanExtra("FORCE_NAVIGATION", false)
+                    val delayNavigation = intent.getBooleanExtra("DELAY_NAVIGATION", false)
+                    val initialTranscription = intent.getStringExtra("INITIAL_TRANSCRIPTION")
+                    
+                    Log.d(TAG, "Navigation params - fromAssistant: $fromAssistant, forceNavigation: $forceNavigation, enableVoiceMode: $enableVoiceMode, delayNavigation: $delayNavigation, initialTranscription: $initialTranscription")
+                    
+                    if (fromAssistant && forceNavigation) {
+                        // If coming from assistant with force navigation, clear everything and go to chat
+                        if (delayNavigation) {
+                            Log.d(TAG, "Using delayed navigation with 500ms delay")
+                            // Use a post delayed handler instead of coroutines
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                Log.d(TAG, "Executing delayed navigation to chat/$chatId")
+                                navController.navigate("chat/$chatId") {
+                                    popUpTo(0) { inclusive = true } // Clear entire back stack
+                                    launchSingleTop = true
+                                }
+                                // Pass the voice mode flag and initial transcription to the ChatScreen
+                                if (enableVoiceMode) {
+                                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
+                                    navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                                }
+                                initialTranscription?.let {
+                                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
+                                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                                }
+                                // Clear the extras after navigation
+                                getIntent().removeExtra("NAVIGATE_TO_CHAT_ID")
+                                getIntent().removeExtra("FROM_ASSISTANT")
+                                getIntent().removeExtra("FORCE_NAVIGATION")
+                                getIntent().removeExtra("ENABLE_VOICE_MODE")
+                                getIntent().removeExtra("DELAY_NAVIGATION")
+                                getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+                            }, 500) // 500ms delay
+                        } else {
+                            Log.d(TAG, "Executing immediate navigation to chat/$chatId")
                             navController.navigate("chat/$chatId") {
                                 popUpTo(0) { inclusive = true } // Clear entire back stack
                                 launchSingleTop = true
@@ -186,91 +219,143 @@ class MainActivity : ComponentActivity() {
                             getIntent().removeExtra("ENABLE_VOICE_MODE")
                             getIntent().removeExtra("DELAY_NAVIGATION")
                             getIntent().removeExtra("INITIAL_TRANSCRIPTION")
-                        }, 500) // 500ms delay
+                        }
                     } else {
-                        Log.d(TAG, "Executing immediate navigation to chat/$chatId")
+                        // Normal navigation
+                        Log.d(TAG, "Executing normal navigation to chat/$chatId")
                         navController.navigate("chat/$chatId") {
-                            popUpTo(0) { inclusive = true } // Clear entire back stack
+                            popUpTo(Screen.Home.route) { inclusive = false }
                             launchSingleTop = true
                         }
-                        // Pass the voice mode flag and initial transcription to the ChatScreen
-                        if (enableVoiceMode) {
-                            Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
-                            navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
-                        }
-                        initialTranscription?.let {
-                            Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
-                            navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
-                        }
-                        // Clear the extras after navigation
+                        // Clear the extras
                         getIntent().removeExtra("NAVIGATE_TO_CHAT_ID")
                         getIntent().removeExtra("FROM_ASSISTANT")
-                        getIntent().removeExtra("FORCE_NAVIGATION")
                         getIntent().removeExtra("ENABLE_VOICE_MODE")
                         getIntent().removeExtra("DELAY_NAVIGATION")
                         getIntent().removeExtra("INITIAL_TRANSCRIPTION")
                     }
                 } else {
-                    // Normal navigation
-                    Log.d(TAG, "Executing normal navigation to chat/$chatId")
-                    navController.navigate("chat/$chatId") {
-                        popUpTo(Screen.Home.route) { inclusive = false }
-                        launchSingleTop = true
-                    }
-                    // Clear the extras
-                    getIntent().removeExtra("NAVIGATE_TO_CHAT_ID")
-                    getIntent().removeExtra("FROM_ASSISTANT")
-                    getIntent().removeExtra("ENABLE_VOICE_MODE")
-                    getIntent().removeExtra("DELAY_NAVIGATION")
-                    getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+                    Log.e(TAG, "navController not initialized when trying to navigate to chat ID: $chatId")
                 }
-            } else {
-                Log.e(TAG, "navController not initialized when trying to navigate to chat ID: $chatId")
-            }
-        } ?: run {
-            // Handle power button transcription
-            val transcription = intent?.getStringExtra("TRANSCRIPTION")
-            
-            Log.d(TAG, "Power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, enableVoiceMode: $enableVoiceMode")
-            
-            if (fromPowerButton && transcription != null && ::navController.isInitialized) {
-                Log.d(TAG, "Handling power button transcription: $transcription")
-                // Create a new chat and navigate to it
-                lifecycleScope.launch {
-                    try {
-                        Log.d(TAG, "Creating new chat from power button transcription")
-                        val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
-                        Log.d(TAG, "New chat created with ID: $newChatId")
-                        if (newChatId > 0) {
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                Log.d(TAG, "Navigating to new chat/$newChatId")
-                                navController.navigate("chat/$newChatId") {
-                                    popUpTo(0) { inclusive = true } // Clear entire back stack
-                                    launchSingleTop = true
-                                }
-                                // Pass the voice mode flag and transcription to the ChatScreen
-                                if (enableVoiceMode) {
-                                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
-                                    navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
-                                }
-                                Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $transcription")
-                                navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", transcription)
-                                // Clear the extras
-                                getIntent().removeExtra("FROM_POWER_BUTTON")
-                                getIntent().removeExtra("TRANSCRIPTION")
-                                getIntent().removeExtra("ENABLE_VOICE_MODE")
-                            }, 500) // 500ms delay
-                        } else {
-                            Log.e(TAG, "Failed to create new chat from power button transcription")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error creating new chat from power button", e)
-                    }
-                }
+            } ?: run {
+                // Handle power button transcription
+                val transcription = intent?.getStringExtra("TRANSCRIPTION")
+                
+                Log.d(TAG, "Power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, enableVoiceMode: $enableVoiceMode")
+                
+                if (fromPowerButton && transcription != null && ::navController.isInitialized) {
+                    Log.d(TAG, "Handling power button transcription: $transcription")
+                    // Create a new chat and navigate to it
+                    lifecycleScope.launch {
+                        try {
+                            Log.d(TAG, "Creating new chat from power button transcription")
+                            val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
+                            Log.d(TAG, "New chat created with ID: $newChatId")
+                            if (newChatId > 0) {
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    Log.d(TAG, "Navigating to new chat/$newChatId")
+                                    navController.navigate("chat/$newChatId") {
+                                        popUpTo(0) { inclusive = true } // Clear entire back stack
+                                        launchSingleTop = true
+                                    }
+                                    // Pass the voice mode flag and transcription to the ChatScreen
+                                    if (enableVoiceMode) {
+                                        Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
+                                        navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                                    }
+                                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $transcription")
+                                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", transcription)
+                                    // Clear the extras
+                                    getIntent().removeExtra("FROM_POWER_BUTTON")
+                                    getIntent().removeExtra("TRANSCRIPTION")
+                                    getIntent().removeExtra("ENABLE_VOICE_MODE")
+                                }, 500) // 500ms delay
                             } else {
+                                Log.e(TAG, "Failed to create new chat from power button transcription")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error creating new chat from power button", e)
+                        }
+                    }
+                } else {
                     Log.d(TAG, "Skipping power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, navController initialized: ${::navController.isInitialized}")
                 }
             }
+        }
+    }
+    
+    private fun handleAppActions(intent: Intent): Boolean {
+        try {
+            Log.e(TAG, "=== HANDLEAPPACTIONS CALLED ===")
+            Log.e(TAG, "=== FUNCTION START ===")
+            Log.d(TAG, "handleAppActions called with action: ${intent.action}")
+            Log.d(TAG, "Intent extras: ${intent.extras?.keySet()?.joinToString()}")
+            Log.d(TAG, "Intent categories: ${intent.categories?.joinToString()}")
+            Log.d(TAG, "Intent data: ${intent.data}")
+            Log.d(TAG, "Intent flags: 0x${Integer.toHexString(intent.flags)}")
+            
+            // Check if launched by Google/Gemini
+            val callingPackage = callingActivity?.packageName
+            val referrer = getReferrer()?.toString()
+            Log.d(TAG, "Calling package: $callingPackage")
+            Log.d(TAG, "Referrer: $referrer")
+            
+            // Enhanced detection for Google Assistant/Gemini launches
+            val hasTracingIntentId = intent.hasExtra("tracing_intent_id")
+            val hasGoogleFlags = intent.flags == 0x10000000 // Flag pattern from voice commands
+            val isFromGooglePackage = callingPackage == "com.google.android.googlequicksearchbox"
+            val hasGoogleReferrer = referrer?.contains("google") == true
+            
+            Log.d(TAG, "hasTracingIntentId: $hasTracingIntentId")
+            Log.d(TAG, "hasGoogleFlags: $hasGoogleFlags")
+            Log.d(TAG, "isFromGooglePackage: $isFromGooglePackage")
+            Log.d(TAG, "hasGoogleReferrer: $hasGoogleReferrer")
+            
+            val isFromGoogleAssistant = isFromGooglePackage || hasGoogleReferrer || 
+                                      (hasTracingIntentId && hasGoogleFlags)
+            
+            Log.d(TAG, "isFromGoogleAssistant: $isFromGoogleAssistant")
+            
+            if (isFromGoogleAssistant) {
+                Log.d(TAG, "Detected Google Assistant/Gemini launch - creating new chat with voice mode")
+                
+                // Navigate to new chat with voice mode enabled
+                if (::navController.isInitialized) {
+                    try {
+                        // Navigate to assistant chat (new chat) with voice mode enabled
+                        navController.navigate(Screen.AssistantChat.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                        
+                        // Use a delayed approach to set voice mode parameters after navigation is complete
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                Log.d(TAG, "Setting voice mode parameters after navigation delay")
+                                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                                navController.currentBackStackEntry?.savedStateHandle?.set("FROM_GOOGLE_ASSISTANT", true)
+                                Log.d(TAG, "Voice mode parameters set successfully")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error setting voice mode parameters", e)
+                            }
+                        }, 300) // 300ms delay to ensure navigation is complete
+                        
+                        Log.d(TAG, "Successfully navigated to new chat with voice mode from Google Assistant")
+                        return true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error navigating to chat from Google Assistant", e)
+                    }
+                } else {
+                    Log.e(TAG, "NavController not initialized for Google Assistant launch")
+                }
+            } else {
+                Log.d(TAG, "Not from Google Assistant/Gemini - allowing normal app launch")
+            }
+            
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception in handleAppActions", e)
+            return false
         }
     }
     

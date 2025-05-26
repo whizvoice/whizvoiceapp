@@ -427,13 +427,14 @@ class ChatViewModel @Inject constructor(
                                     _isSpeaking.value = true // Indicate TTS is starting
                                     tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
                                     // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
+                                    // Continuous listening will restart in TTS onDone/onError callbacks
                                 } else {
-                                    // Always restart continuous listening after assistant reply if enabled and not speaking
-                                    if (continuousListeningEnabled && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
+                                    // No TTS - restart continuous listening immediately if enabled
+                                    if (continuousListeningEnabled) {
+                                        Log.d(TAG, "[LOG] No TTS - restarting continuous listening immediately after assistant reply.")
                                         startContinuousListening()
-                                    } else if (wasListeningBeforeTTS && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not speaking, wasListeningBeforeTTS=true, restarting ASR.")
+                                    } else if (wasListeningBeforeTTS) {
+                                        Log.d(TAG, "[LOG] No TTS - wasListeningBeforeTTS=true, restarting ASR.")
                                         speechRecognitionService.startListening { finalTranscription ->
                                             if (finalTranscription.isNotBlank()) {
                                                 sendUserInput(finalTranscription)
@@ -444,6 +445,15 @@ class ChatViewModel @Inject constructor(
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "$eventLogId Error in TTS/listening handling", e)
+                                // If there's an error, still try to restart continuous listening
+                                if (continuousListeningEnabled) {
+                                    Log.d(TAG, "[LOG] Error in TTS handling - attempting to restart continuous listening anyway")
+                                    try {
+                                        startContinuousListening()
+                                    } catch (restartError: Exception) {
+                                        Log.e(TAG, "[LOG] Error restarting continuous listening after TTS error", restartError)
+                                    }
+                                }
                             }
                             
                             // 🔧 Add logging to track input text state after response processing
