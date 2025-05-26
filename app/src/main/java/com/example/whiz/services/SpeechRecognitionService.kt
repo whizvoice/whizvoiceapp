@@ -145,16 +145,30 @@ class SpeechRecognitionService @Inject constructor(
 
         try {
             Log.d(TAG, "[DEBUG] Actually starting speech recognition")
+            
+            // Ensure we have a clean state before starting
+            if (speechRecognizer == null) {
+                Log.d(TAG, "[DEBUG] Creating new SpeechRecognizer instance")
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
+                if (speechRecognizer == null) {
+                    Log.e(TAG, "[DEBUG] Failed to create SpeechRecognizer instance")
+                    _errorState.value = "Failed to create speech recognizer"
+                    return
+                }
+                speechRecognizer?.setRecognitionListener(createRecognitionListener())
+            }
+
+            // Validate the recognizer is in a good state
+            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+                Log.e(TAG, "[DEBUG] Speech recognition not available")
+                _errorState.value = "Speech recognition not available"
+                return
+            }
+
             _isListening.value = true // Set listening state to true
             _errorState.value = null
             utteranceFinalized = false
             manualStopInProgress = false
-
-            if (speechRecognizer == null) {
-                Log.d(TAG, "[DEBUG] Creating new SpeechRecognizer instance")
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-                speechRecognizer?.setRecognitionListener(createRecognitionListener())
-            }
 
             setupRecognizerIntent()
             Log.d(TAG, "[DEBUG] Calling startListening on SpeechRecognizer")
@@ -165,10 +179,16 @@ class SpeechRecognitionService @Inject constructor(
             _errorState.value = "Error starting speech recognition: ${e.message}"
             _isListening.value = false // Reset listening state on error
             recognitionCallback = null
-            // Try to clean up
+            
+            // Force cleanup and reinitialize on error
             try {
+                speechRecognizer?.cancel()
                 speechRecognizer?.destroy()
                 speechRecognizer = null
+                Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
+                
+                // Try to reinitialize for next attempt
+                initialize()
             } catch (cleanupError: Exception) {
                 Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
             }
