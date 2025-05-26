@@ -520,19 +520,54 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "[LOG] TTS onDone for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
                         
-                        // Always restart continuous listening when TTS is done, if enabled
-                        if (continuousListeningEnabled) {
-                            Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR.")
-                            startContinuousListening()
-                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                            Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
+                        // Add delay and proper state management before restarting speech recognition
+                        viewModelScope.launch {
+                            try {
+                                // Wait for TTS to fully complete and release audio resources
+                                delay(300)
+                                
+                                // Always restart continuous listening when TTS is done, if enabled
+                                if (continuousListeningEnabled) {
+                                    Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR after delay.")
+                                    
+                                    // Ensure speech recognition is properly stopped before restarting
+                                    if (speechRecognitionService.isListening.value) {
+                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
+                                        speechRecognitionService.stopListening()
+                                        delay(200) // Wait for stop to complete
+                                    }
+                                    
+                                    // Double-check we're not responding before starting
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        startContinuousListening()
+                                    } else {
+                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                    }
+                                } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                                    Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR after delay.")
+                                    
+                                    // Ensure speech recognition is properly stopped before restarting
+                                    if (speechRecognitionService.isListening.value) {
+                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
+                                        speechRecognitionService.stopListening()
+                                        delay(200) // Wait for stop to complete
+                                    }
+                                    
+                                    // Double-check we're not responding before starting
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        speechRecognitionService.startListening { transcription ->
+                                            this@ChatViewModel.processAndSendTranscription(transcription)
+                                        }
+                                    } else {
+                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                    }
+                                }
+                                wasListeningBeforeTTS = false
+                            } catch (e: Exception) {
+                                Log.e(TAG, "[LOG] Error in TTS onDone callback", e)
+                                wasListeningBeforeTTS = false
                             }
-                        } else {
-                            Log.d(TAG, "[LOG] TTS done, not restarting ASR.")
                         }
-                        wasListeningBeforeTTS = false
                     }
 
                     @Deprecated("Deprecated in Java")
@@ -540,17 +575,54 @@ class ChatViewModel @Inject constructor(
                         Log.e(TAG, "[LOG] TTS onError for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
                         
-                        // Always restart continuous listening when TTS errors, if enabled
-                        if (continuousListeningEnabled) {
-                            Log.d(TAG, "[LOG] TTS error, continuous listening enabled, restarting ASR.")
-                            startContinuousListening()
-                        } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                            Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR.")
-                            speechRecognitionService.startListening { transcription ->
-                                this@ChatViewModel.processAndSendTranscription(transcription)
+                        // Add delay and proper state management before restarting speech recognition
+                        viewModelScope.launch {
+                            try {
+                                // Wait for TTS to fully complete and release audio resources
+                                delay(300)
+                                
+                                // Always restart continuous listening when TTS errors, if enabled
+                                if (continuousListeningEnabled) {
+                                    Log.d(TAG, "[LOG] TTS error, continuous listening enabled, restarting ASR after delay.")
+                                    
+                                    // Ensure speech recognition is properly stopped before restarting
+                                    if (speechRecognitionService.isListening.value) {
+                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
+                                        speechRecognitionService.stopListening()
+                                        delay(200) // Wait for stop to complete
+                                    }
+                                    
+                                    // Double-check we're not responding before starting
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        startContinuousListening()
+                                    } else {
+                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                    }
+                                } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
+                                    Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR after delay.")
+                                    
+                                    // Ensure speech recognition is properly stopped before restarting
+                                    if (speechRecognitionService.isListening.value) {
+                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
+                                        speechRecognitionService.stopListening()
+                                        delay(200) // Wait for stop to complete
+                                    }
+                                    
+                                    // Double-check we're not responding before starting
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        speechRecognitionService.startListening { transcription ->
+                                            this@ChatViewModel.processAndSendTranscription(transcription)
+                                        }
+                                    } else {
+                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                    }
+                                }
+                                wasListeningBeforeTTS = false
+                            } catch (e: Exception) {
+                                Log.e(TAG, "[LOG] Error in TTS onError callback", e)
+                                wasListeningBeforeTTS = false
                             }
                         }
-                        wasListeningBeforeTTS = false 
                     }
                 })
         } else {

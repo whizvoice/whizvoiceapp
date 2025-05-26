@@ -33,6 +33,25 @@ class ChatsListViewModel @Inject constructor(
             initialValue = emptyList()
         )
 
+    init {
+        // Ensure conversations are loaded when the ViewModel is created
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "ChatsListViewModel init: Checking if conversations need to be loaded")
+                
+                // If we don't have any conversations cached, trigger a refresh
+                if (repository.conversations.value.isEmpty()) {
+                    Log.d(TAG, "ChatsListViewModel init: No conversations cached, triggering refresh")
+                    repository.refreshConversations()
+                } else {
+                    Log.d(TAG, "ChatsListViewModel init: ${repository.conversations.value.size} conversations already cached")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
+            }
+        }
+    }
+
     // Create a new chat
     suspend fun createNewChat(title: String = "New Chat"): Long {
         return repository.createChat(title)

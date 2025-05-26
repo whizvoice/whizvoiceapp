@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -59,7 +60,25 @@ class WhizRepository @Inject constructor(
         setupReactiveLoading()
         
         // Trigger initial conversations load so the UI shows existing chats on app startup
-        triggerConversationsRefresh()
+        // Use a small delay to ensure the app is fully initialized
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            try {
+                delay(100) // Small delay to ensure app initialization is complete
+                Log.d(TAG, "Repository init: Starting initial conversations load")
+                
+                // Force a full sync on app startup to ensure we get all conversations
+                val conversations = getAllChatsIncremental(forceFullSync = true)
+                _conversations.value = conversations
+                Log.d(TAG, "Repository init: Loaded ${conversations.size} conversations on startup")
+                
+                // Trigger refresh to notify any observers
+                triggerConversationsRefresh()
+            } catch (e: Exception) {
+                Log.e(TAG, "Repository init: Error during initial conversations load", e)
+                // Fallback to normal trigger if initial load fails
+                triggerConversationsRefresh()
+            }
+        }
     }
 
     private fun setupReactiveLoading() {
@@ -423,7 +442,16 @@ class WhizRepository @Inject constructor(
             val lastSync = if (forceFullSync) null else getLastSyncTimestamp("conversations")
             Log.d("Repository", "getAllChatsIncremental: lastSync = $lastSync, forceFullSync = $forceFullSync")
             
-            val response = if (lastSync != null) {
+            // If cache is empty and we're not forcing full sync, force it anyway to ensure we get all conversations
+            val existingConversations = _conversations.value
+            val shouldForceFullSync = forceFullSync || existingConversations.isEmpty()
+            
+            if (shouldForceFullSync && !forceFullSync) {
+                Log.d("Repository", "Cache is empty after app restart - forcing full sync to get all conversations")
+                return getAllChatsIncremental(forceFullSync = true)
+            }
+            
+            val response = if (lastSync != null && !shouldForceFullSync) {
                 apiService.getConversationsIncremental(since = lastSync)
             } else {
                 apiService.getConversationsIncremental(since = null)
@@ -437,31 +465,25 @@ class WhizRepository @Inject constructor(
             val newConversations = response.conversations.map { it.toChatEntity() }
             
             // If this is incremental sync, merge with existing conversations
-            if (response.is_incremental && lastSync != null) {
-                val existingConversations = _conversations.value.toMutableList()
-                
-                // If we have no cached conversations and incremental sync returns 0, force full sync
-                if (existingConversations.isEmpty() && newConversations.isEmpty()) {
-                    Log.d("Repository", "Empty cache + 0 incremental results = forcing full sync")
-                    return getAllChatsIncremental(forceFullSync = true)
-                }
+            if (response.is_incremental && lastSync != null && !shouldForceFullSync) {
+                val existingConversationsList = existingConversations.toMutableList()
                 
                 // Update or add new conversations
                 newConversations.forEach { newConversation ->
-                    val existingIndex = existingConversations.indexOfFirst { it.id == newConversation.id }
+                    val existingIndex = existingConversationsList.indexOfFirst { it.id == newConversation.id }
                     if (existingIndex >= 0) {
                         // Update existing conversation
-                        existingConversations[existingIndex] = newConversation
+                        existingConversationsList[existingIndex] = newConversation
                         Log.d("Repository", "Updated existing conversation ${newConversation.id}")
                     } else {
                         // Add new conversation at the beginning (most recent first)
-                        existingConversations.add(0, newConversation)
+                        existingConversationsList.add(0, newConversation)
                         Log.d("Repository", "Added new conversation ${newConversation.id}")
                     }
                 }
                 
                 // Sort by last message time (most recent first)
-                val mergedConversations = existingConversations.sortedByDescending { it.lastMessageTime }
+                val mergedConversations = existingConversationsList.sortedByDescending { it.lastMessageTime }
                 Log.d("Repository", "Merged result: ${mergedConversations.size} total conversations")
                 return mergedConversations
             } else {
