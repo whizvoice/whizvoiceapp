@@ -61,12 +61,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 userPreferences.initializeTokenStatus() // This might throw AuthenticationRequiredException
+                // Explicitly load voice settings to ensure they're up to date
+                userPreferences.loadVoiceSettings()
             } catch (e: AuthenticationRequiredException) {
                 Log.w(TAG, "Authentication required, navigating to login screen.", e)
                 _navigateToLogin.value = true
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing token status in ViewModel", e)
-                _errorMessage.value = "Error loading initial token status."
+                _errorMessage.value = "Error loading initial settings."
             }
         }
     }

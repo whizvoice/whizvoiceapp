@@ -118,31 +118,40 @@ class UserPreferences @Inject constructor(
             Log.d(TAG, "Loading voice settings from server")
             
             val response = apiService.getUserPreference("voice_settings")
+            Log.d(TAG, "Voice settings response: $response")
+            
             response?.let { settingsJson ->
                 // Parse the JSON response to VoiceSettings
-                // For now, we'll use a simple approach - in a real app you might use Gson/Moshi
                 try {
-                    val useSystemDefaults = settingsJson.contains("\"useSystemDefaults\":true")
-                    val speechRateMatch = Regex("\"speechRate\":(\\d+\\.?\\d*)").find(settingsJson)
-                    val pitchMatch = Regex("\"pitch\":(\\d+\\.?\\d*)").find(settingsJson)
+                    // More robust JSON parsing
+                    val useSystemDefaults = settingsJson.contains("\"useSystemDefaults\"\\s*:\\s*true".toRegex())
+                    val speechRateMatch = Regex("\"speechRate\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
+                    val pitchMatch = Regex("\"pitch\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
                     
                     val speechRate = speechRateMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.8f
                     val pitch = pitchMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.9f
                     
-                    _voiceSettings.value = VoiceSettings(
+                    val loadedSettings = VoiceSettings(
                         useSystemDefaults = useSystemDefaults,
                         speechRate = speechRate,
                         pitch = pitch
                     )
-                    Log.d(TAG, "Loaded voice settings: ${_voiceSettings.value}")
+                    
+                    _voiceSettings.value = loadedSettings
+                    Log.d(TAG, "Loaded voice settings: $loadedSettings")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing voice settings JSON", e)
+                    Log.e(TAG, "Error parsing voice settings JSON: $settingsJson", e)
                     // Keep default settings
                 }
+            } ?: run {
+                Log.d(TAG, "No voice settings found on server, using defaults")
+                // No settings found, use defaults
+                _voiceSettings.value = VoiceSettings()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error loading voice settings", e)
             // Keep default settings
+            _voiceSettings.value = VoiceSettings()
             if (e is HttpException && e.code() == 401) {
                 throw AuthenticationRequiredException(cause = e)
             }
