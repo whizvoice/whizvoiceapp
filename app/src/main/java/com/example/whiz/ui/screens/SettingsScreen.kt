@@ -56,8 +56,16 @@ fun SettingsScreen(
     // Voice settings local state
     var localVoiceSettings by remember(voiceSettings) { mutableStateOf(voiceSettings) }
     
-    // Track if there are unsaved changes
-    val hasUnsavedChanges = localVoiceSettings != voiceSettings
+    // Auto-save voice settings when they change, but with debouncing for slider interactions
+    LaunchedEffect(localVoiceSettings) {
+        // Only save if the settings have actually changed from the server state
+        // The sliders will handle their own saving via onValueChangeFinished
+        if (localVoiceSettings != voiceSettings && localVoiceSettings.useSystemDefaults != voiceSettings.useSystemDefaults) {
+            // Only auto-save for the toggle switch, not sliders
+            Log.d("SettingsScreen", "Auto-saving voice settings (toggle change): $localVoiceSettings")
+            viewModel.saveVoiceSettings(localVoiceSettings)
+        }
+    }
     
     // Debug logging and sync local state with ViewModel state
     LaunchedEffect(voiceSettings) {
@@ -157,10 +165,9 @@ fun SettingsScreen(
             VoiceSettingsSection(
                 settings = localVoiceSettings,
                 onSettingsChange = { localVoiceSettings = it },
-                onSaveClick = { viewModel.saveVoiceSettings(localVoiceSettings) },
                 onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
                 isSaving = isSavingVoiceSettings,
-                hasUnsavedChanges = hasUnsavedChanges
+                onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
             )
 
             // Data Management Section
@@ -417,10 +424,9 @@ fun TokenInputSection(
 fun VoiceSettingsSection(
     settings: VoiceSettings,
     onSettingsChange: (VoiceSettings) -> Unit,
-    onSaveClick: () -> Unit,
     onTestPlayback: () -> Unit,
     isSaving: Boolean,
-    hasUnsavedChanges: Boolean
+    onSaveSettings: (VoiceSettings) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -478,8 +484,13 @@ fun VoiceSettingsSection(
                     onValueChange = { rate ->
                         onSettingsChange(settings.copy(speechRate = rate))
                     },
-                    valueRange = 0.5f..2.0f,
-                    steps = 29, // 0.5 to 2.0 in 0.05 increments
+                    onValueChangeFinished = {
+                        // Auto-save when user finishes adjusting the slider
+                        Log.d("VoiceSettingsSection", "Speech rate slider interaction finished, auto-saving")
+                        onSaveSettings(settings)
+                    },
+                    valueRange = 0.5f..3.0f,
+                    steps = 49, // 0.5 to 3.0 in 0.05 increments
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -514,6 +525,11 @@ fun VoiceSettingsSection(
                     value = settings.pitch,
                     onValueChange = { pitch ->
                         onSettingsChange(settings.copy(pitch = pitch))
+                    },
+                    onValueChangeFinished = {
+                        // Auto-save when user finishes adjusting the slider
+                        Log.d("VoiceSettingsSection", "Pitch slider interaction finished, auto-saving")
+                        onSaveSettings(settings)
                     },
                     valueRange = 0.5f..2.0f,
                     steps = 29, // 0.5 to 2.0 in 0.05 increments
@@ -555,51 +571,28 @@ fun VoiceSettingsSection(
                 Text("Test Playback")
             }
         }
-
-        // Save Button
-        Button(
-            onClick = onSaveClick,
-            enabled = !isSaving && hasUnsavedChanges, // Only enable when there are changes to save
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            colors = if (hasUnsavedChanges) {
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            } else {
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        ) {
-            if (isSaving) {
+        
+        // Subtle saving indicator
+        if (isSaving) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Saving...")
-            } else {
-                if (hasUnsavedChanges) {
-                    Text("Save Changes *")
-                } else {
-                    Text("No Changes to Save")
-                }
+                Text(
+                    text = "Saving settings...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-        }
-        
-        // Show unsaved changes indicator
-        if (hasUnsavedChanges && !isSaving) {
-            Text(
-                text = "* You have unsaved changes",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 4.dp)
-            )
         }
     }
 }
