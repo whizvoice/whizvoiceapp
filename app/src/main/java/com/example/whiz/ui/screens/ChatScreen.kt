@@ -201,6 +201,12 @@ fun ChatScreen(
                 kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
                 Log.d("ChatScreen", "[LOG] Checking if continuous listening is already enabled before toggling")
                 
+                // Enable voice responses since user opened app via voice
+                Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch")
+                if (!isVoiceResponseEnabled) {
+                    viewModel.toggleVoiceResponse()
+                }
+                
                 // Check if continuous listening is already enabled to avoid accidentally disabling it
                 if (!isContinuousListeningEnabled) {
                     Log.d("ChatScreen", "[LOG] Continuous listening not enabled, calling toggleSpeechRecognition")
