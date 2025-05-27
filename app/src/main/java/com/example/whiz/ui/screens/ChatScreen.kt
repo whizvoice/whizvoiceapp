@@ -74,25 +74,6 @@ fun ChatScreen(
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
     Log.d("ChatScreen", "Composed with enableVoiceMode=$enableVoiceMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
     
-    // Enable voice mode if flag is set
-    LaunchedEffect(enableVoiceMode) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission")
-        if (enableVoiceMode) {
-            if (hasPermission) {
-                Log.d("ChatScreen", "[LOG] Delaying toggleSpeechRecognition to ensure UI is ready")
-                kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
-                Log.d("ChatScreen", "[LOG] Calling toggleSpeechRecognition after delay")
-                viewModel.onMicrophonePermissionGranted()
-                viewModel.toggleSpeechRecognition()
-                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
-            } else {
-                Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")
-                showPermissionDialog = true
-                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
-            }
-        }
-    }
-
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
@@ -208,6 +189,38 @@ fun ChatScreen(
                 popUpTo(Screen.Home.route) { inclusive = true } // Or your preferred popUpTo logic
             }
             viewModel.onLoginNavigationComplete() // Reset the state
+        }
+    }
+
+    // Enable voice mode if flag is set
+    LaunchedEffect(enableVoiceMode, isContinuousListeningEnabled) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+        if (enableVoiceMode) {
+            if (hasPermission) {
+                Log.d("ChatScreen", "[LOG] Delaying toggleSpeechRecognition to ensure UI is ready")
+                kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
+                Log.d("ChatScreen", "[LOG] Checking if continuous listening is already enabled before toggling")
+                
+                // Enable voice responses since user opened app via voice
+                Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch")
+                if (!isVoiceResponseEnabled) {
+                    viewModel.toggleVoiceResponse()
+                }
+                
+                // Check if continuous listening is already enabled to avoid accidentally disabling it
+                if (!isContinuousListeningEnabled) {
+                    Log.d("ChatScreen", "[LOG] Continuous listening not enabled, calling toggleSpeechRecognition")
+                    viewModel.onMicrophonePermissionGranted()
+                    viewModel.toggleSpeechRecognition()
+                } else {
+                    Log.d("ChatScreen", "[LOG] Continuous listening already enabled, skipping toggleSpeechRecognition")
+                }
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
+            } else {
+                Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")
+                showPermissionDialog = true
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
+            }
         }
     }
 
