@@ -197,9 +197,8 @@ fun ChatScreen(
         Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
         if (enableVoiceMode) {
             if (hasPermission) {
-                Log.d("ChatScreen", "[LOG] Delaying toggleSpeechRecognition to ensure UI is ready")
+                Log.d("ChatScreen", "[LOG] Delaying voice mode setup to ensure UI is ready")
                 kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
-                Log.d("ChatScreen", "[LOG] Checking if continuous listening is already enabled before toggling")
                 
                 // Enable voice responses since user opened app via voice
                 Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch")
@@ -207,14 +206,11 @@ fun ChatScreen(
                     viewModel.toggleVoiceResponse()
                 }
                 
-                // Check if continuous listening is already enabled to avoid accidentally disabling it
-                if (!isContinuousListeningEnabled) {
-                    Log.d("ChatScreen", "[LOG] Continuous listening not enabled, calling toggleSpeechRecognition")
-                    viewModel.onMicrophonePermissionGranted()
-                    viewModel.toggleSpeechRecognition()
-                } else {
-                    Log.d("ChatScreen", "[LOG] Continuous listening already enabled, skipping toggleSpeechRecognition")
-                }
+                // Ensure continuous listening is enabled (don't use toggle to avoid accidentally disabling it)
+                Log.d("ChatScreen", "[LOG] Ensuring continuous listening is enabled for voice mode")
+                viewModel.onMicrophonePermissionGranted()
+                viewModel.ensureContinuousListeningEnabled()
+                
                 navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
             } else {
                 Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")

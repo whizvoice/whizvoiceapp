@@ -873,6 +873,37 @@ class ChatViewModel @Inject constructor(
         startContinuousListening()
     }
 
+    // Method specifically for ensuring continuous listening is enabled (for voice mode activation)
+    fun ensureContinuousListeningEnabled() {
+        Log.d(TAG, "[LOG] ensureContinuousListeningEnabled called. micPermissionGranted=${_micPermissionGranted.value}, continuousListeningEnabled=$continuousListeningEnabled, isListening=${isListening.value}, isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}")
+        
+        if (!_micPermissionGranted.value) {
+            Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission")
+            return
+        }
+        
+        // If continuous listening is already enabled, don't disable it
+        if (continuousListeningEnabled) {
+            Log.d(TAG, "[LOG] Continuous listening already enabled, ensuring it's active")
+            // If not currently listening and not busy, start listening
+            if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
+                startContinuousListening()
+            }
+            return
+        }
+        
+        // Enable continuous listening if not already enabled
+        Log.d(TAG, "[LOG] Enabling continuous listening for voice mode")
+        _inputText.value = ""
+        continuousListeningEnabled = true
+        speechRecognitionService.continuousListeningEnabled = true
+        
+        // Start listening if not busy
+        if (!_isSpeaking.value && !_isResponding.value) {
+            startContinuousListening()
+        }
+    }
+
     private fun startContinuousListening() {
         Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=$continuousListeningEnabled, isResponding=${_isResponding.value}")
         
