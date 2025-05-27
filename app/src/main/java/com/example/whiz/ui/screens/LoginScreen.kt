@@ -74,7 +74,7 @@ fun LoginScreen(
                 val account = task.getResult(ApiException::class.java)
                 Log.d("LoginScreen", "Successfully got account: ${account.email}, calling ViewModel to process.")
                 scope.launch {
-                authViewModel.initiateSignInProcessing(account)
+                    authViewModel.initiateSignInProcessing(account)
                 }
             } catch (e: ApiException) {
                 Log.e("LoginScreen", "Google sign in failed with status code: ${e.statusCode}", e)

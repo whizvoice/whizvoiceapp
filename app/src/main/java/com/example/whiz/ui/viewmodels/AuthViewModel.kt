@@ -75,6 +75,8 @@ class AuthViewModel @Inject constructor(
 
     // New function for UI to call, launches process in viewModelScope
     fun initiateSignInProcessing(account: GoogleSignInAccount?) {
+        Log.d(TAG, "initiateSignInProcessing called with account: ${account?.email}")
+        
         if (account == null) {
             Log.e(TAG, "Sign in failed: Could not get account from UI trigger")
             _errorState.value = "Sign in failed: Could not get account"
@@ -88,13 +90,19 @@ class AuthViewModel @Inject constructor(
         
         viewModelScope.launch {
             try {
+                Log.d(TAG, "Starting authentication process...")
+                
                 // First save the basic account info locally
+                Log.d(TAG, "Saving account info locally...")
                 authRepository.processSignInAccount(account)
+                Log.d(TAG, "Account info saved locally")
                 
                 // Get ID token and authenticate with server
                 val idToken = account.idToken
                 if (idToken != null) {
                     Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
+                    Log.d(TAG, "Calling authApi.authenticateWithGoogle...")
+                    
                     val result = authApi.authenticateWithGoogle(idToken)
                     Log.d(TAG, "Server /auth/google result: $result")
                     
@@ -108,9 +116,11 @@ class AuthViewModel @Inject constructor(
                             accessToken = authResponse.accessToken,
                             refreshToken = authResponse.refreshToken ?: ""
                         )
+                        Log.d(TAG, "Server tokens saved successfully")
                     } else {
-                        Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
-                        _errorState.value = "No ID token available for server authentication"
+                        val exception = result.exceptionOrNull()
+                        Log.e(TAG, "Server authentication failed", exception)
+                        _errorState.value = "Server authentication failed: ${exception?.message}"
                     }
                 } else {
                     Log.w(TAG, "No ID token available for server auth - this suggests the client ID configuration is incorrect")
@@ -120,6 +130,7 @@ class AuthViewModel @Inject constructor(
                 Log.e(TAG, "Error processing sign in", e)
                 _errorState.value = "Error processing sign in: ${e.message}"
             } finally {
+                Log.d(TAG, "Authentication process completed, setting loading to false")
                 _isLoading.value = false
             }
         }

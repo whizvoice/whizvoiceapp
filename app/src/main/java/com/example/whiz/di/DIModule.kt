@@ -73,17 +73,24 @@ object AppModule {
             .authenticator(tokenAuthenticator)
             .addInterceptor(Interceptor { chain ->
                 val originalRequest = chain.request()
-                // Get AuthRepository instance via provider
-                val authRepository = authRepositoryProvider.get()
-                // Get token asynchronously and wait for it to be available
-                val token: String? = runBlocking { 
-                    authRepository.serverToken.first { token -> token != null } // Wait for non-null token
-                }
-
                 val requestBuilder = originalRequest.newBuilder()
-                if (token != null) {
-                    requestBuilder.header("Authorization", "Bearer $token")
+                
+                // Skip adding Authorization header for authentication endpoints
+                val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
+                
+                if (!isAuthRequest) {
+                    // Get AuthRepository instance via provider
+                    val authRepository = authRepositoryProvider.get()
+                    // Get token asynchronously but don't block if it's null
+                    val token: String? = runBlocking { 
+                        authRepository.serverToken.first() // Get current token, could be null
+                    }
+
+                    if (token != null) {
+                        requestBuilder.header("Authorization", "Bearer $token")
+                    }
                 }
+                
                 chain.proceed(requestBuilder.build())
             })
             .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
