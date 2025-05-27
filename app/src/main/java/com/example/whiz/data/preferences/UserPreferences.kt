@@ -124,8 +124,19 @@ class UserPreferences @Inject constructor(
             response?.let { settingsJson ->
                 // Parse the JSON response to VoiceSettings
                 try {
+                    // The server returns a JSON string, so we need to parse it properly
+                    // First, check if it's a quoted string and remove outer quotes if needed
+                    val cleanJson = if (settingsJson.startsWith("\"") && settingsJson.endsWith("\"")) {
+                        // Remove outer quotes and unescape the inner JSON
+                        settingsJson.substring(1, settingsJson.length - 1)
+                            .replace("\\\"", "\"")
+                            .replace("\\n", "\n")
+                    } else {
+                        settingsJson
+                    }
+                    
                     // Use proper JSON parsing instead of regex
-                    val jsonObject = JSONObject(settingsJson)
+                    val jsonObject = JSONObject(cleanJson)
                     
                     val useSystemDefaults = jsonObject.optBoolean("useSystemDefaults", false)
                     val speechRate = jsonObject.optDouble("speechRate", 1.25).toFloat()

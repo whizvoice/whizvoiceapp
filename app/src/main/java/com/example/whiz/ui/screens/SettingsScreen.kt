@@ -56,6 +56,9 @@ fun SettingsScreen(
     // Voice settings local state
     var localVoiceSettings by remember(voiceSettings) { mutableStateOf(voiceSettings) }
     
+    // Track if there are unsaved changes
+    val hasUnsavedChanges = localVoiceSettings != voiceSettings
+    
     // Debug logging and sync local state with ViewModel state
     LaunchedEffect(voiceSettings) {
         Log.d("SettingsScreen", "Voice settings from ViewModel changed: $voiceSettings")
@@ -156,7 +159,8 @@ fun SettingsScreen(
                 onSettingsChange = { localVoiceSettings = it },
                 onSaveClick = { viewModel.saveVoiceSettings(localVoiceSettings) },
                 onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
-                isSaving = isSavingVoiceSettings
+                isSaving = isSavingVoiceSettings,
+                hasUnsavedChanges = hasUnsavedChanges
             )
 
             // Data Management Section
@@ -415,7 +419,8 @@ fun VoiceSettingsSection(
     onSettingsChange: (VoiceSettings) -> Unit,
     onSaveClick: () -> Unit,
     onTestPlayback: () -> Unit,
-    isSaving: Boolean
+    isSaving: Boolean,
+    hasUnsavedChanges: Boolean
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -554,10 +559,21 @@ fun VoiceSettingsSection(
         // Save Button
         Button(
             onClick = onSaveClick,
-            enabled = !isSaving,
+            enabled = !isSaving && hasUnsavedChanges, // Only enable when there are changes to save
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp)
+                .padding(vertical = 4.dp),
+            colors = if (hasUnsavedChanges) {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         ) {
             if (isSaving) {
                 CircularProgressIndicator(
@@ -568,8 +584,22 @@ fun VoiceSettingsSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Saving...")
             } else {
-                Text("Save Voice Settings")
+                if (hasUnsavedChanges) {
+                    Text("Save Changes *")
+                } else {
+                    Text("No Changes to Save")
+                }
             }
+        }
+        
+        // Show unsaved changes indicator
+        if (hasUnsavedChanges && !isSaving) {
+            Text(
+                text = "* You have unsaved changes",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }
