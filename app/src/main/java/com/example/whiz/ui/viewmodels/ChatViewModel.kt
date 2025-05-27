@@ -151,6 +151,9 @@ class ChatViewModel @Inject constructor(
             _isContinuousListeningEnabled.value = value
         }
 
+    // Track the current voice settings state to know when we need to reset
+    private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
+
     init {
         // Check if the app already has microphone permission
         _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
@@ -1293,15 +1296,30 @@ class ChatViewModel @Inject constructor(
 
     private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
         try {
+            val previousSettings = currentVoiceSettings
+            currentVoiceSettings = voiceSettings
+            
             if (!voiceSettings.useSystemDefaults) {
                 Log.d(TAG, "Applying custom voice settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
                 tts?.setSpeechRate(voiceSettings.speechRate)
                 tts?.setPitch(voiceSettings.pitch)
             } else {
-                Log.d(TAG, "Using system default TTS settings")
-                // Reset to system defaults (1.0f is the default for both)
-                tts?.setSpeechRate(1.0f)
-                tts?.setPitch(1.0f)
+                // Check if we're switching from custom to system defaults
+                if (previousSettings != null && !previousSettings.useSystemDefaults) {
+                    Log.d(TAG, "Switching from custom to system TTS settings - reinitializing TTS engine")
+                    // We need to reinitialize the TTS engine to clear custom settings
+                    viewModelScope.launch {
+                        try {
+                            tts?.stop()
+                            tts?.shutdown()
+                            tts = TextToSpeech(context, this@ChatViewModel)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error reinitializing TTS for system defaults", e)
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "Using system default TTS settings - not overriding speech rate or pitch")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error applying voice settings", e)
