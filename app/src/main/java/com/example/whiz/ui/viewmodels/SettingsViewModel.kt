@@ -63,6 +63,7 @@ class SettingsViewModel @Inject constructor(
                 userPreferences.initializeTokenStatus() // This might throw AuthenticationRequiredException
                 // Explicitly load voice settings to ensure they're up to date
                 userPreferences.loadVoiceSettings()
+                Log.d(TAG, "Voice settings after init: ${userPreferences.voiceSettings.value}")
             } catch (e: AuthenticationRequiredException) {
                 Log.w(TAG, "Authentication required, navigating to login screen.", e)
                 _navigateToLogin.value = true
@@ -212,5 +213,17 @@ class SettingsViewModel @Inject constructor(
     // Method to reset navigation trigger after navigation has occurred
     fun onLoginNavigationComplete() {
         _navigateToLogin.value = false
+    }
+
+    fun refreshVoiceSettings() {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "Refreshing voice settings...")
+                userPreferences.loadVoiceSettings()
+                Log.d(TAG, "Voice settings refreshed: ${userPreferences.voiceSettings.value}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error refreshing voice settings", e)
+            }
+        }
     }
 }

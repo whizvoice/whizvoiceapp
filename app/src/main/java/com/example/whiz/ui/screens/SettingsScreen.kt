@@ -1,6 +1,8 @@
 package com.example.whiz.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -53,6 +55,21 @@ fun SettingsScreen(
     
     // Voice settings local state
     var localVoiceSettings by remember(voiceSettings) { mutableStateOf(voiceSettings) }
+    
+    // Debug logging and sync local state with ViewModel state
+    LaunchedEffect(voiceSettings) {
+        Log.d("SettingsScreen", "Voice settings from ViewModel changed: $voiceSettings")
+        localVoiceSettings = voiceSettings
+    }
+    
+    // Debug log current local state
+    Log.d("SettingsScreen", "Current localVoiceSettings: $localVoiceSettings, ViewModel voiceSettings: $voiceSettings")
+
+    // Refresh voice settings when screen opens
+    LaunchedEffect(Unit) {
+        Log.d("SettingsScreen", "SettingsScreen opened, refreshing voice settings")
+        viewModel.refreshVoiceSettings()
+    }
 
     // Navigate to Login if required
     LaunchedEffect(navigateToLogin) {
@@ -97,7 +114,8 @@ fun SettingsScreen(
             modifier = Modifier
                 .padding(paddingValues)
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -183,9 +201,8 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f)) // Push logout to bottom
-
             // Logout Section
+            Spacer(modifier = Modifier.height(32.dp))
             HorizontalDivider(thickness = Dp.Hairline)
             Button(
                 onClick = { viewModel.logout() },
@@ -551,7 +568,7 @@ fun VoiceSettingsSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Saving...")
             } else {
-                Text("Save Settings")
+                Text("Save Voice Settings")
             }
         }
     }

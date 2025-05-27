@@ -10,6 +10,7 @@ import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.auth.AuthenticationRequiredException
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
+import org.json.JSONObject
 
 // Data class for voice settings
 data class VoiceSettings(
@@ -123,13 +124,12 @@ class UserPreferences @Inject constructor(
             response?.let { settingsJson ->
                 // Parse the JSON response to VoiceSettings
                 try {
-                    // More robust JSON parsing
-                    val useSystemDefaults = settingsJson.contains("\"useSystemDefaults\"\\s*:\\s*true".toRegex())
-                    val speechRateMatch = Regex("\"speechRate\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
-                    val pitchMatch = Regex("\"pitch\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
+                    // Use proper JSON parsing instead of regex
+                    val jsonObject = JSONObject(settingsJson)
                     
-                    val speechRate = speechRateMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 1.25f
-                    val pitch = pitchMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.7f
+                    val useSystemDefaults = jsonObject.optBoolean("useSystemDefaults", false)
+                    val speechRate = jsonObject.optDouble("speechRate", 1.25).toFloat()
+                    val pitch = jsonObject.optDouble("pitch", 0.7).toFloat()
                     
                     val loadedSettings = VoiceSettings(
                         useSystemDefaults = useSystemDefaults,
