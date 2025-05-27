@@ -14,8 +14,8 @@ import retrofit2.HttpException
 // Data class for voice settings
 data class VoiceSettings(
     val useSystemDefaults: Boolean = false,
-    val speechRate: Float = 0.8f, // Slightly slower than default (1.0)
-    val pitch: Float = 0.9f // Slightly lower than default (1.0)
+    val speechRate: Float = 1.25f, // 125% - faster than default (1.0)
+    val pitch: Float = 0.7f // 70% - lower than default (1.0)
 )
 
 @Singleton
@@ -128,8 +128,8 @@ class UserPreferences @Inject constructor(
                     val speechRateMatch = Regex("\"speechRate\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
                     val pitchMatch = Regex("\"pitch\"\\s*:\\s*(\\d+\\.?\\d*)").find(settingsJson)
                     
-                    val speechRate = speechRateMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.8f
-                    val pitch = pitchMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.9f
+                    val speechRate = speechRateMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 1.25f
+                    val pitch = pitchMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.7f
                     
                     val loadedSettings = VoiceSettings(
                         useSystemDefaults = useSystemDefaults,

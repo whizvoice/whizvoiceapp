@@ -538,7 +538,9 @@ fun VoiceSettingsSection(
         Button(
             onClick = onSaveClick,
             enabled = !isSaving,
-            modifier = Modifier.align(Alignment.End)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
         ) {
             if (isSaving) {
                 CircularProgressIndicator(
@@ -549,7 +551,7 @@ fun VoiceSettingsSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Saving...")
             } else {
-                Text("Save Voice Settings")
+                Text("Save Settings")
             }
         }
     }
