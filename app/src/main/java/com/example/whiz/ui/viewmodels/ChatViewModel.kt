@@ -24,17 +24,12 @@ import com.example.whiz.data.remote.WebSocketEvent
 import com.example.whiz.permissions.PermissionHandler
 import kotlinx.coroutines.flow.catch
 import com.example.whiz.data.auth.AuthRepository
-
-// Add necessary imports at the top of ChatViewModel.kt
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map // Ensure map is imported
-import kotlinx.coroutines.flow.stateIn
 import com.example.whiz.data.local.MessageEntity // Ensure MessageEntity is imported
 import com.example.whiz.data.local.MessageType // Ensure MessageType is imported
 import kotlinx.coroutines.ExperimentalCoroutinesApi // Import for OptIn
 import org.json.JSONObject // For basic JSON parsing
 import org.json.JSONException
+import com.example.whiz.data.preferences.UserPreferences
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // Added OptIn annotation
 @HiltViewModel
@@ -43,7 +38,8 @@ class ChatViewModel @Inject constructor(
     private val repository: WhizRepository,
     private val speechRecognitionService: SpeechRecognitionService,
     private val whizServerRepository: WhizServerRepository,
-    private val authRepository: AuthRepository // Add this
+    private val authRepository: AuthRepository, // Add this
+    private val userPreferences: UserPreferences,
 ) : ViewModel(), TextToSpeech.OnInitListener { // Implement OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -166,6 +162,15 @@ class ChatViewModel @Inject constructor(
 
         if (configUseRemoteAgent) {
             observeServerMessages()
+        }
+        
+        // Observe voice settings changes and apply them to TTS
+        viewModelScope.launch {
+            userPreferences.voiceSettings.collect { voiceSettings ->
+                if (_isTTSInitialized.value) {
+                    applyVoiceSettings(voiceSettings)
+                }
+            }
         }
     }
 
@@ -500,6 +505,18 @@ class ChatViewModel @Inject constructor(
                 _isTTSInitialized.value = false
             } else {
                 Log.d(TAG, "TTS Initialized successfully.")
+                
+                // Apply voice settings
+                viewModelScope.launch {
+                    try {
+                        val voiceSettings = userPreferences.voiceSettings.value
+                        applyVoiceSettings(voiceSettings)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error applying voice settings", e)
+                        // Continue with default settings if there's an error
+                    }
+                }
+                
                 _isTTSInitialized.value = true
             }
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -1272,5 +1289,22 @@ class ChatViewModel @Inject constructor(
 
     fun onAuthErrorDialogDismissed() {
         _showAuthErrorDialog.value = null
+    }
+
+    private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
+        try {
+            if (!voiceSettings.useSystemDefaults) {
+                Log.d(TAG, "Applying custom voice settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
+                tts?.setSpeechRate(voiceSettings.speechRate)
+                tts?.setPitch(voiceSettings.pitch)
+            } else {
+                Log.d(TAG, "Using system default TTS settings")
+                // Reset to system defaults (1.0f is the default for both)
+                tts?.setSpeechRate(1.0f)
+                tts?.setPitch(1.0f)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying voice settings", e)
+        }
     }
 }

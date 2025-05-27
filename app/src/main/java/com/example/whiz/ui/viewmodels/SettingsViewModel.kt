@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.data.preferences.VoiceSettings
 import com.example.whiz.data.repository.WhizRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,12 +15,14 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.util.Log
 import com.example.whiz.data.auth.AuthenticationRequiredException
+import com.example.whiz.services.TTSManager
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: WhizRepository,
     private val authRepository: AuthRepository,
-    private val userPreferences: UserPreferences
+    private val userPreferences: UserPreferences,
+    private val ttsManager: TTSManager
 ) : ViewModel() {
     private val TAG = "SettingsViewModel"
 
@@ -31,12 +34,16 @@ class SettingsViewModel @Inject constructor(
 
     val hasClaudeToken: StateFlow<Boolean?> = userPreferences.hasClaudeToken
     val hasAsanaToken: StateFlow<Boolean?> = userPreferences.hasAsanaToken
+    val voiceSettings: StateFlow<VoiceSettings> = userPreferences.voiceSettings
 
     private val _isSavingClaude = MutableStateFlow(false)
     val isSavingClaude: StateFlow<Boolean> = _isSavingClaude.asStateFlow()
 
     private val _isSavingAsana = MutableStateFlow(false)
     val isSavingAsana: StateFlow<Boolean> = _isSavingAsana.asStateFlow()
+    
+    private val _isSavingVoiceSettings = MutableStateFlow(false)
+    val isSavingVoiceSettings: StateFlow<Boolean> = _isSavingVoiceSettings.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -143,6 +150,35 @@ class SettingsViewModel @Inject constructor(
             } finally {
                 _isSavingAsana.value = false
             }
+        }
+    }
+
+    fun saveVoiceSettings(settings: VoiceSettings) {
+        viewModelScope.launch {
+            _isSavingVoiceSettings.value = true
+            _errorMessage.value = null
+            try {
+                userPreferences.saveVoiceSettings(settings)
+                _errorMessage.value = "Voice settings saved successfully!"
+            } catch (e: AuthenticationRequiredException) {
+                Log.w(TAG, "Authentication required during save voice settings, navigating to login screen.", e)
+                _navigateToLogin.value = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving voice settings", e)
+                _errorMessage.value = "Failed to save voice settings: ${e.message}"
+            } finally {
+                _isSavingVoiceSettings.value = false
+            }
+        }
+    }
+
+    fun testVoiceSettings(settings: VoiceSettings) {
+        try {
+            ttsManager.testVoiceSettings(settings)
+            Log.d(TAG, "Testing voice settings: $settings")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error testing voice settings", e)
+            _errorMessage.value = "Error testing voice settings: ${e.message}"
         }
     }
 

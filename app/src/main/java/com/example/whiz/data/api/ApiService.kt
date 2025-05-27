@@ -131,4 +131,11 @@ interface ApiService {
 
     @GET("/api/conversations/{id}/messages/count")
     suspend fun getMessageCount(@Path("id") conversationId: Long): MessageCountResponse
+
+    // ========== USER PREFERENCE ENDPOINTS ==========
+    @GET("/api/user/preference")
+    suspend fun getUserPreference(@Query("key") key: String): String?
+    
+    @POST("/api/user/preference")
+    suspend fun setUserPreference(@Query("key") key: String, @Body value: String): Map<String, String>
 } 

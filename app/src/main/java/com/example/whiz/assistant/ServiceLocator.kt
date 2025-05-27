@@ -6,6 +6,7 @@ import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.data.local.ChatDao
 import com.example.whiz.data.local.MessageDao
 import com.example.whiz.data.local.WhizDatabase
@@ -23,6 +24,7 @@ object ServiceLocator {
     private var whizRepository: WhizRepository? = null
     private var whizServerRepository: WhizServerRepository? = null
     private var authRepository: AuthRepository? = null
+    private var userPreferences: UserPreferences? = null
     private var database: WhizDatabase? = null
     private var okHttpClient: OkHttpClient? = null
     private var authApi: AuthApi? = null
@@ -34,7 +36,8 @@ object ServiceLocator {
             val repo = getWhizRepository(context)
             val serverRepo = getWhizServerRepository(context)
             val authRepo = getAuthRepository(context)
-            chatViewModel = ChatViewModel(context.applicationContext, repo, speechService, serverRepo, authRepo)
+            val userPrefs = getUserPreferences(context)
+            chatViewModel = ChatViewModel(context.applicationContext, repo, speechService, serverRepo, authRepo, userPrefs)
         }
         return chatViewModel!!
     }
@@ -110,5 +113,14 @@ object ServiceLocator {
                 .create(ApiService::class.java)
         }
         return apiService!!
+    }
+
+    private fun getUserPreferences(context: Context): UserPreferences {
+        if (userPreferences == null) {
+            val api = getApiService()
+            val authRepo = getAuthRepository(context)
+            userPreferences = UserPreferences(api, authRepo)
+        }
+        return userPreferences!!
     }
 } 

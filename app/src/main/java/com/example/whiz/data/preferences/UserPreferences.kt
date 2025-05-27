@@ -11,6 +11,13 @@ import com.example.whiz.data.auth.AuthenticationRequiredException
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
 
+// Data class for voice settings
+data class VoiceSettings(
+    val useSystemDefaults: Boolean = false,
+    val speechRate: Float = 0.8f, // Slightly slower than default (1.0)
+    val pitch: Float = 0.9f // Slightly lower than default (1.0)
+)
+
 @Singleton
 class UserPreferences @Inject constructor(
     private val apiService: ApiService,
@@ -21,10 +28,14 @@ class UserPreferences @Inject constructor(
     // Internal MutableStateFlow
     private val _hasClaudeToken = MutableStateFlow<Boolean?>(null) // Use null for initial unknown state
     private val _hasAsanaToken = MutableStateFlow<Boolean?>(null)
+    
+    // Voice settings state
+    private val _voiceSettings = MutableStateFlow(VoiceSettings())
 
     // Publicly exposed StateFlow
     val hasClaudeToken: StateFlow<Boolean?> = _hasClaudeToken
     val hasAsanaToken: StateFlow<Boolean?> = _hasAsanaToken
+    val voiceSettings: StateFlow<VoiceSettings> = _voiceSettings
 
     suspend fun initializeTokenStatus() {
         // Call this when the app starts or user logs in
@@ -34,6 +45,7 @@ class UserPreferences @Inject constructor(
         // Always attempt to refresh if there's a chance data is stale or uninitialized.
         // ViewModel will call this, and it can be called again if needed (e.g. after login)
         refreshApiTokenStatus()
+        loadVoiceSettings()
     }
 
     suspend fun refreshApiTokenStatus() {
@@ -94,6 +106,70 @@ class UserPreferences @Inject constructor(
             refreshApiTokenStatus()
         } catch (e: Exception) {
             Log.e(TAG, "Error updating Asana token on server via /user/api_key", e)
+            throw e
+        }
+    }
+    
+    // Voice settings methods
+    suspend fun loadVoiceSettings() {
+        try {
+            // Wait for a valid server token
+            val serverToken = authRepository.serverToken.first { it != null }
+            Log.d(TAG, "Loading voice settings from server")
+            
+            val response = apiService.getUserPreference("voice_settings")
+            response?.let { settingsJson ->
+                // Parse the JSON response to VoiceSettings
+                // For now, we'll use a simple approach - in a real app you might use Gson/Moshi
+                try {
+                    val useSystemDefaults = settingsJson.contains("\"useSystemDefaults\":true")
+                    val speechRateMatch = Regex("\"speechRate\":(\\d+\\.?\\d*)").find(settingsJson)
+                    val pitchMatch = Regex("\"pitch\":(\\d+\\.?\\d*)").find(settingsJson)
+                    
+                    val speechRate = speechRateMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.8f
+                    val pitch = pitchMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0.9f
+                    
+                    _voiceSettings.value = VoiceSettings(
+                        useSystemDefaults = useSystemDefaults,
+                        speechRate = speechRate,
+                        pitch = pitch
+                    )
+                    Log.d(TAG, "Loaded voice settings: ${_voiceSettings.value}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing voice settings JSON", e)
+                    // Keep default settings
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading voice settings", e)
+            // Keep default settings
+            if (e is HttpException && e.code() == 401) {
+                throw AuthenticationRequiredException(cause = e)
+            }
+        }
+    }
+    
+    suspend fun saveVoiceSettings(settings: VoiceSettings) {
+        try {
+            Log.d(TAG, "Saving voice settings: $settings")
+            
+            // Convert to JSON string (simple approach)
+            val settingsJson = """
+                {
+                    "useSystemDefaults": ${settings.useSystemDefaults},
+                    "speechRate": ${settings.speechRate},
+                    "pitch": ${settings.pitch}
+                }
+            """.trimIndent()
+            
+            apiService.setUserPreference("voice_settings", settingsJson)
+            _voiceSettings.value = settings
+            Log.d(TAG, "Voice settings saved successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving voice settings", e)
+            if (e is HttpException && e.code() == 401) {
+                throw AuthenticationRequiredException(cause = e)
+            }
             throw e
         }
     }

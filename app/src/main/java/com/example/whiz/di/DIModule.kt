@@ -6,6 +6,8 @@ import com.example.whiz.data.local.ChatDao
 import com.example.whiz.data.local.MessageDao
 import com.example.whiz.data.local.WhizDatabase
 import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.services.SpeechRecognitionService
+import com.example.whiz.services.TTSManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -95,6 +97,7 @@ object AppModule {
             })
             .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
             .connectTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 
@@ -142,5 +145,17 @@ object AppModule {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(SupabaseApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideSpeechRecognitionService(@ApplicationContext context: Context): SpeechRecognitionService {
+        return SpeechRecognitionService(context)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
+        return TTSManager(context)
     }
 }
