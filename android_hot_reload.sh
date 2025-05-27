@@ -116,6 +116,10 @@ if [ $ADB_LAUNCH_EXIT_CODE -ne 0 ]; then
 fi
 echo "[SUCCESS] App launched successfully!"
 
+# Play chime sound to notify that hot reload is complete
+echo "[INFO] Playing chime sound to notify completion..."
+afplay /System/Library/Sounds/Glass.aiff
+
 echo "[INFO] Listing connected devices/emulators..."
 $ADB_CMD devices -l
 
