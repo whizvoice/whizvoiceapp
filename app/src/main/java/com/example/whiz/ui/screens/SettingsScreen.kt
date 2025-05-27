@@ -1,6 +1,8 @@
 package com.example.whiz.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -21,8 +23,10 @@ import androidx.navigation.NavController
 import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
 import com.example.whiz.ui.navigation.Screen
+import com.example.whiz.data.preferences.VoiceSettings
 import kotlinx.coroutines.launch
 import android.util.Log
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,13 +43,44 @@ fun SettingsScreen(
     // States from ViewModel
     val hasClaudeToken by viewModel.hasClaudeToken.collectAsState()
     val hasAsanaToken by viewModel.hasAsanaToken.collectAsState()
+    val voiceSettings by viewModel.voiceSettings.collectAsState()
     val isSavingClaude by viewModel.isSavingClaude.collectAsState()
     val isSavingAsana by viewModel.isSavingAsana.collectAsState()
+    val isSavingVoiceSettings by viewModel.isSavingVoiceSettings.collectAsState()
     val isHardSyncing by viewModel.isHardSyncing.collectAsState()
 
     // Input states
     var claudeTokenInput by rememberSaveable { mutableStateOf("") }
     var asanaTokenInput by rememberSaveable { mutableStateOf("") }
+    
+    // Voice settings local state
+    var localVoiceSettings by remember(voiceSettings) { mutableStateOf(voiceSettings) }
+    
+    // Auto-save voice settings when they change, but with debouncing for slider interactions
+    LaunchedEffect(localVoiceSettings) {
+        // Only save if the settings have actually changed from the server state
+        // The sliders will handle their own saving via onValueChangeFinished
+        if (localVoiceSettings != voiceSettings && localVoiceSettings.useSystemDefaults != voiceSettings.useSystemDefaults) {
+            // Only auto-save for the toggle switch, not sliders
+            Log.d("SettingsScreen", "Auto-saving voice settings (toggle change): $localVoiceSettings")
+            viewModel.saveVoiceSettings(localVoiceSettings)
+        }
+    }
+    
+    // Debug logging and sync local state with ViewModel state
+    LaunchedEffect(voiceSettings) {
+        Log.d("SettingsScreen", "Voice settings from ViewModel changed: $voiceSettings")
+        localVoiceSettings = voiceSettings
+    }
+    
+    // Debug log current local state
+    Log.d("SettingsScreen", "Current localVoiceSettings: $localVoiceSettings, ViewModel voiceSettings: $voiceSettings")
+
+    // Refresh voice settings when screen opens
+    LaunchedEffect(Unit) {
+        Log.d("SettingsScreen", "SettingsScreen opened, refreshing voice settings")
+        viewModel.refreshVoiceSettings()
+    }
 
     // Navigate to Login if required
     LaunchedEffect(navigateToLogin) {
@@ -90,7 +125,8 @@ fun SettingsScreen(
             modifier = Modifier
                 .padding(paddingValues)
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
@@ -119,6 +155,19 @@ fun SettingsScreen(
                 onSaveClick = { viewModel.saveAsanaToken(asanaTokenInput) },
                 onClearClick = { viewModel.saveAsanaToken("") },
                 startInEditMode = focusSection == "asana"
+            )
+
+            // Voice Settings Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Voice Settings", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(thickness = Dp.Hairline)
+            
+            VoiceSettingsSection(
+                settings = localVoiceSettings,
+                onSettingsChange = { localVoiceSettings = it },
+                onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
+                isSaving = isSavingVoiceSettings,
+                onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
             )
 
             // Data Management Section
@@ -163,9 +212,8 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f)) // Push logout to bottom
-
             // Logout Section
+            Spacer(modifier = Modifier.height(32.dp))
             HorizontalDivider(thickness = Dp.Hairline)
             Button(
                 onClick = { viewModel.logout() },
@@ -367,6 +415,183 @@ fun TokenInputSection(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun VoiceSettingsSection(
+    settings: VoiceSettings,
+    onSettingsChange: (VoiceSettings) -> Unit,
+    onTestPlayback: () -> Unit,
+    isSaving: Boolean,
+    onSaveSettings: (VoiceSettings) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Use System Defaults Switch
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Use System TTS Settings",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = "Use your device's default text-to-speech settings instead of custom app settings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = settings.useSystemDefaults,
+                onCheckedChange = { useSystem ->
+                    onSettingsChange(settings.copy(useSystemDefaults = useSystem))
+                },
+                enabled = !isSaving
+            )
+        }
+
+        // Custom Settings (only shown when not using system defaults)
+        if (!settings.useSystemDefaults) {
+            HorizontalDivider(thickness = Dp.Hairline)
+            
+            // Speech Rate Slider
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Speech Rate",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "${(settings.speechRate * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = settings.speechRate,
+                    onValueChange = { rate ->
+                        onSettingsChange(settings.copy(speechRate = rate))
+                    },
+                    onValueChangeFinished = {
+                        // Auto-save when user finishes adjusting the slider
+                        Log.d("VoiceSettingsSection", "Speech rate slider interaction finished, auto-saving")
+                        onSaveSettings(settings)
+                    },
+                    valueRange = 0.5f..3.0f,
+                    steps = 49, // 0.5 to 3.0 in 0.05 increments
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Slower ← → Faster",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Pitch Slider
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Voice Pitch",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "${(settings.pitch * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = settings.pitch,
+                    onValueChange = { pitch ->
+                        onSettingsChange(settings.copy(pitch = pitch))
+                    },
+                    onValueChangeFinished = {
+                        // Auto-save when user finishes adjusting the slider
+                        Log.d("VoiceSettingsSection", "Pitch slider interaction finished, auto-saving")
+                        onSaveSettings(settings)
+                    },
+                    valueRange = 0.5f..2.0f,
+                    steps = 29, // 0.5 to 2.0 in 0.05 increments
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Lower ← → Higher",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        // Test Playback Button (always visible)
+        HorizontalDivider(thickness = Dp.Hairline)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Test Voice Settings",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = "Play a sample to hear how your current settings sound",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(
+                onClick = onTestPlayback,
+                enabled = !isSaving,
+                colors = ButtonDefaults.outlinedButtonColors()
+            ) {
+                Text("Test Playback")
+            }
+        }
+        
+        // Subtle saving indicator
+        if (isSaving) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Saving settings...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

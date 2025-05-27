@@ -3,6 +3,7 @@ Please don't downgrade packages for no reason.
 Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./android_hot_reload.sh` to kick off the build in Android Studio so we can test the change right away.
 Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. 
 If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation.
+Don't try to restart the server yourself - just ask me to do it. It's on a different machine.
 
 We use supabase for the database. There's a users table, a user_preferences table, a conversations table, and a messages table.
 
