@@ -509,19 +509,21 @@ class ChatViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "TTS Initialized successfully.")
                 
-                // Apply voice settings
+                // Apply voice settings after ensuring they're loaded
                 viewModelScope.launch {
                     try {
+                        // Ensure voice settings are loaded from server before applying them
+                        userPreferences.loadVoiceSettings()
                         val voiceSettings = userPreferences.voiceSettings.value
+                        Log.d(TAG, "Applying voice settings after TTS init: $voiceSettings")
                         applyVoiceSettings(voiceSettings)
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error applying voice settings", e)
+                        Log.e(TAG, "Error loading and applying voice settings", e)
                         // Continue with default settings if there's an error
                     }
                 }
                 
                 _isTTSInitialized.value = true
-            }
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                     Log.d(TAG, "TTS onStart for $utteranceId")
@@ -645,6 +647,7 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                 })
+            }
         } else {
             Log.e(TAG, "TTS Initialization Failed! Status: $status")
             _isTTSInitialized.value = false
