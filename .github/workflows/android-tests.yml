@@ -14,10 +14,19 @@ on:
       - "!README.md"
       - "!.github/workflows/android-tests.yml"
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Checkout code
