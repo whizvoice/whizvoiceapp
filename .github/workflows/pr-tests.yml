@@ -13,8 +13,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
-    name: Run Unit Tests
+  quick-checks:
+    name: Quick Lint & Test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,6 +40,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            ~/.android/build-cache
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
@@ -47,8 +48,8 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Run unit tests
-        run: ./gradlew test --stacktrace
+      - name: Run lint and tests
+        run: ./gradlew lint test --stacktrace --parallel --build-cache --configuration-cache
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
