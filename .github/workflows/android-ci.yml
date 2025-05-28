@@ -14,6 +14,11 @@ on:
       - "!README.md"
       - "!.github/workflows/android-ci.yml"
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   lint:
     name: Lint Check
@@ -101,6 +106,10 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     needs: lint
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Checkout code
