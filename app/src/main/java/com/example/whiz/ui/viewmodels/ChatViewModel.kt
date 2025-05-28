@@ -61,8 +61,21 @@ class ChatViewModel @Inject constructor(
         try {
             val currentChatId = _chatId.value
             val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
+            val wasResponding = _isResponding.value
             _isResponding.value = hasPendingRequests
-            Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests")
+            Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
+            
+            // 🔧 If we just finished responding and continuous listening is enabled, restart microphone immediately
+            if (wasResponding && !hasPendingRequests && continuousListeningEnabled && !_isSpeaking.value) {
+                Log.d(TAG, "[LOG] Just finished computing - restarting continuous listening immediately")
+                viewModelScope.launch {
+                    // Small delay to ensure state propagation
+                    delay(50)
+                    if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
+                        startContinuousListening()
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in updateRespondingStateForCurrentChat", e)
             _errorState.value = "Error updating chat state: ${e.message}"
@@ -426,16 +439,30 @@ class ChatViewModel @Inject constructor(
                             updateRespondingStateForCurrentChat()
                             
                             try {
-                                if (_isVoiceResponseEnabled.value && _isTTSInitialized.value && speakThisMessage && messageContentForChat.isNotBlank()) {
+                                // 🔧 Additional validation: Only speak if this is truly for the current visible chat
+                                // and the message is actually being displayed to the user
+                                val shouldSpeak = _isVoiceResponseEnabled.value && 
+                                                _isTTSInitialized.value && 
+                                                speakThisMessage && 
+                                                messageContentForChat.isNotBlank() &&
+                                                isResponseForCurrentChat && 
+                                                targetChatId > 0 && // Only speak for real chats, not new chat creation
+                                                targetChatId == _chatId.value // Double-check current chat
+                                
+                                Log.d(TAG, "$eventLogId TTS Decision: shouldSpeak=$shouldSpeak, voiceEnabled=${_isVoiceResponseEnabled.value}, ttsInit=${_isTTSInitialized.value}, speakFlag=$speakThisMessage, isForCurrentChat=$isResponseForCurrentChat, targetChat=$targetChatId, currentChat=${_chatId.value}")
+                                
+                                if (shouldSpeak) {
                                     if (isListening.value) {
                                         wasListeningBeforeTTS = true
                                         speechRecognitionService.stopListening() // Stop STT before TTS speaks
                                     }
                                     val utteranceId = UUID.randomUUID().toString()
                                     _isSpeaking.value = true // Indicate TTS is starting
+                                    Log.d(TAG, "$eventLogId Starting TTS for message: '${messageContentForChat.take(50)}...'")
                                     tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
                                     // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
                                 } else {
+                                    Log.d(TAG, "$eventLogId Skipping TTS - conditions not met")
                                     // Always restart continuous listening after assistant reply if enabled and not speaking
                                     if (continuousListeningEnabled && !_isSpeaking.value) {
                                         Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
@@ -542,46 +569,35 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "[LOG] TTS onDone for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
                         
-                        // Add delay and proper state management before restarting speech recognition
+                        // Add minimal delay for audio resource cleanup, then restart immediately if not computing
                         viewModelScope.launch {
                             try {
-                                // Wait for TTS to fully complete and release audio resources
-                                delay(300)
+                                // Minimal delay for TTS to release audio resources
+                                delay(150) // Reduced from 300ms to 150ms for faster response
                                 
-                                // Always restart continuous listening when TTS is done, if enabled
+                                // Always restart continuous listening when TTS is done, if enabled (regardless of wasListeningBeforeTTS)
                                 if (continuousListeningEnabled) {
-                                    Log.d(TAG, "[LOG] TTS done, continuous listening enabled, restarting ASR after delay.")
+                                    Log.d(TAG, "[LOG] TTS done, continuous listening enabled, checking if we can restart immediately.")
                                     
-                                    // Ensure speech recognition is properly stopped before restarting
-                                    if (speechRecognitionService.isListening.value) {
-                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
-                                        speechRecognitionService.stopListening()
-                                        delay(200) // Wait for stop to complete
-                                    }
-                                    
-                                    // Double-check we're not responding before starting
+                                    // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
                                         startContinuousListening()
                                     } else {
-                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
-                                } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                                    Log.d(TAG, "[LOG] TTS done, wasListeningBeforeTTS=true and voice response enabled, restarting ASR after delay.")
+                                } else if (wasListeningBeforeTTS) {
+                                    // Only use wasListeningBeforeTTS as fallback when continuous listening is disabled
+                                    Log.d(TAG, "[LOG] TTS done, continuous listening disabled but wasListeningBeforeTTS=true, checking if we can restart immediately.")
                                     
-                                    // Ensure speech recognition is properly stopped before restarting
-                                    if (speechRecognitionService.isListening.value) {
-                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
-                                        speechRecognitionService.stopListening()
-                                        delay(200) // Wait for stop to complete
-                                    }
-                                    
-                                    // Double-check we're not responding before starting
+                                    // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting speech recognition immediately")
                                         speechRecognitionService.startListening { transcription ->
                                             this@ChatViewModel.processAndSendTranscription(transcription)
                                         }
                                     } else {
-                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
                                 }
                                 wasListeningBeforeTTS = false
@@ -597,46 +613,35 @@ class ChatViewModel @Inject constructor(
                         Log.e(TAG, "[LOG] TTS onError for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
                         _isSpeaking.value = false
                         
-                        // Add delay and proper state management before restarting speech recognition
+                        // Add minimal delay for audio resource cleanup, then restart immediately if not computing
                         viewModelScope.launch {
                             try {
-                                // Wait for TTS to fully complete and release audio resources
-                                delay(300)
+                                // Minimal delay for TTS to release audio resources
+                                delay(150) // Reduced from 300ms to 150ms for faster response
                                 
-                                // Always restart continuous listening when TTS errors, if enabled
+                                // Always restart continuous listening when TTS errors, if enabled (regardless of wasListeningBeforeTTS)
                                 if (continuousListeningEnabled) {
-                                    Log.d(TAG, "[LOG] TTS error, continuous listening enabled, restarting ASR after delay.")
+                                    Log.d(TAG, "[LOG] TTS error, continuous listening enabled, checking if we can restart immediately.")
                                     
-                                    // Ensure speech recognition is properly stopped before restarting
-                                    if (speechRecognitionService.isListening.value) {
-                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
-                                        speechRecognitionService.stopListening()
-                                        delay(200) // Wait for stop to complete
-                                    }
-                                    
-                                    // Double-check we're not responding before starting
+                                    // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
                                         startContinuousListening()
                                     } else {
-                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
-                                } else if (wasListeningBeforeTTS && _isVoiceResponseEnabled.value) {
-                                    Log.d(TAG, "[LOG] TTS error, wasListeningBeforeTTS=true and voice response enabled, restarting ASR after delay.")
+                                } else if (wasListeningBeforeTTS) {
+                                    // Only use wasListeningBeforeTTS as fallback when continuous listening is disabled
+                                    Log.d(TAG, "[LOG] TTS error, continuous listening disabled but wasListeningBeforeTTS=true, checking if we can restart immediately.")
                                     
-                                    // Ensure speech recognition is properly stopped before restarting
-                                    if (speechRecognitionService.isListening.value) {
-                                        Log.d(TAG, "[LOG] Stopping existing speech recognition before restart")
-                                        speechRecognitionService.stopListening()
-                                        delay(200) // Wait for stop to complete
-                                    }
-                                    
-                                    // Double-check we're not responding before starting
+                                    // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting speech recognition immediately")
                                         speechRecognitionService.startListening { transcription ->
                                             this@ChatViewModel.processAndSendTranscription(transcription)
                                         }
                                     } else {
-                                        Log.d(TAG, "[LOG] Skipping speech restart - still responding or speaking")
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
                                 }
                                 wasListeningBeforeTTS = false
@@ -657,7 +662,11 @@ class ChatViewModel @Inject constructor(
     // --- Public Functions ---
 
     fun loadChat(chatId: Long) {
-        Log.d(TAG, "🔥 loadChat STARTED for chatId: $chatId")
+        loadChatWithVoiceMode(chatId, false)
+    }
+    
+    fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
+        Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
@@ -730,6 +739,20 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
                 _connectionError.value = null // 🔧 Clear connection errors too
+                
+                // 🔧 Reset voice responses to default (off) when loading a chat, UNLESS voice mode is being activated
+                // This prevents voice responses from staying on from previous sessions
+                // Voice mode will explicitly re-enable it if needed
+                if (!isVoiceModeActivation) {
+                    if (_isVoiceResponseEnabled.value) {
+                        Log.d(TAG, "[LOG] loadChat: Resetting voice responses to OFF (was ON)")
+                        _isVoiceResponseEnabled.value = false
+                    } else {
+                        Log.d(TAG, "[LOG] loadChat: Voice responses already OFF")
+                    }
+                } else {
+                    Log.d(TAG, "[LOG] loadChat: Voice mode activation - preserving voice response state (current: ${_isVoiceResponseEnabled.value})")
+                }
                 
                 try {
                     Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
@@ -814,7 +837,7 @@ class ChatViewModel @Inject constructor(
                     Log.e(TAG, "Error during loadChat recovery", recoveryError)
                 }
             }
-            Log.d(TAG, "🔥 loadChat COMPLETED for chatId: $chatId, final _chatId.value: ${_chatId.value}")
+            Log.d(TAG, "🔥 loadChatWithVoiceMode COMPLETED for chatId: $chatId, final _chatId.value: ${_chatId.value}")
         }
     }
 
@@ -1064,6 +1087,17 @@ class ChatViewModel @Inject constructor(
         if (!_isVoiceResponseEnabled.value) {
             tts?.stop() // Stop speaking if toggled off
             _isSpeaking.value = false
+            
+            // If continuous listening is enabled, restart it immediately when TTS is stopped
+            if (continuousListeningEnabled && !_isResponding.value) {
+                Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
+                viewModelScope.launch {
+                    delay(50) // Very short delay to ensure TTS stop is processed
+                    if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
+                        startContinuousListening()
+                    }
+                }
+            }
         }
         Log.d(TAG, "Voice Response Enabled: ${_isVoiceResponseEnabled.value}")
     }

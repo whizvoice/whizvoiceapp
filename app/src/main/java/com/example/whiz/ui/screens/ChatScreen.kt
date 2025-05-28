@@ -146,7 +146,13 @@ fun ChatScreen(
 
     // Load chat data when chatId changes
     LaunchedEffect(chatId) {
-        viewModel.loadChat(chatId)
+        // Use voice-mode-aware loading if voice mode is enabled
+        if (enableVoiceMode) {
+            Log.d("ChatScreen", "[LOG] Loading chat with voice mode awareness")
+            viewModel.loadChatWithVoiceMode(chatId, true)
+        } else {
+            viewModel.loadChat(chatId)
+        }
     }
 
     // Scroll to bottom when new messages arrive
@@ -195,15 +201,21 @@ fun ChatScreen(
     // Enable voice mode if flag is set
     LaunchedEffect(enableVoiceMode, isContinuousListeningEnabled) {
         Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
-        if (enableVoiceMode) {
+        
+        // Only proceed if enableVoiceMode is explicitly true (not just any truthy value)
+        if (enableVoiceMode == true) {
+            Log.d("ChatScreen", "[LOG] Voice mode explicitly enabled - proceeding with voice setup")
             if (hasPermission) {
                 Log.d("ChatScreen", "[LOG] Delaying voice mode setup to ensure UI is ready")
                 kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
                 
                 // Enable voice responses since user opened app via voice
-                Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch")
+                Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch (current state: $isVoiceResponseEnabled)")
                 if (!isVoiceResponseEnabled) {
+                    Log.d("ChatScreen", "[LOG] Toggling voice response from OFF to ON")
                     viewModel.toggleVoiceResponse()
+                } else {
+                    Log.d("ChatScreen", "[LOG] Voice response already enabled, skipping toggle")
                 }
                 
                 // Ensure continuous listening is enabled (don't use toggle to avoid accidentally disabling it)
@@ -211,12 +223,17 @@ fun ChatScreen(
                 viewModel.onMicrophonePermissionGranted()
                 viewModel.ensureContinuousListeningEnabled()
                 
+                // Clear the voice mode flag after setup is complete to prevent persistence
+                Log.d("ChatScreen", "[LOG] Voice mode setup complete - clearing ENABLE_VOICE_MODE flag")
                 navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
             } else {
                 Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")
                 showPermissionDialog = true
+                // Clear flag even if permission not granted to prevent persistence
                 navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
             }
+        } else {
+            Log.d("ChatScreen", "[LOG] Voice mode not enabled or false - skipping voice setup")
         }
     }
 
