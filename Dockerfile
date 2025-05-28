@@ -42,13 +42,8 @@ RUN chmod +x gradlew
 
 # Pre-download Gradle dependencies (this layer will be cached)
 COPY build.gradle.kts settings.gradle.kts ./
-RUN ./gradlew --version
-
-# Copy app-level build files
 COPY app/build.gradle.kts app/
-
-# Download dependencies (this will be cached unless dependencies change)
-RUN ./gradlew dependencies --configuration testRuntimeClasspath
+RUN ./gradlew --version
 
 # Copy source code
 COPY . .

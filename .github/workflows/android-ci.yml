@@ -44,6 +44,7 @@ jobs:
           tags: whizvoice-android-ci:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
       - name: Run lint, tests, and build in Docker
         run: |
@@ -56,19 +57,6 @@ jobs:
             -e JAVA_OPTS="-Xmx4g" \
             whizvoice-android-ci:latest \
             ./gradlew clean lintDebug test assembleDebug --stacktrace --parallel --build-cache --configuration-cache
-
-      - name: Extract test results from Docker
-        run: |
-          # Create a temporary container to copy files from
-          docker create --name temp-container whizvoice-android-ci:latest
-
-          # Copy test results and reports
-          docker cp temp-container:/app/app/build/reports ./app/build/ || true
-          docker cp temp-container:/app/app/build/test-results ./app/build/ || true
-          docker cp temp-container:/app/app/build/outputs ./app/build/ || true
-
-          # Clean up
-          docker rm temp-container
 
       - name: Generate test report
         uses: dorny/test-reporter@v1
