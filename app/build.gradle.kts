@@ -57,9 +57,19 @@ android {
         compose = true
         buildConfig = true
     }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.8"
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+    
+    // Add test options to handle Android framework mocking
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
         }
     }
 }
@@ -112,6 +122,29 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // Enhanced Testing Dependencies
+    // Unit Testing
+    testImplementation("org.mockito:mockito-core:5.8.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("com.google.truth:truth:1.1.4")
+    
+    // Hilt Testing
+    testImplementation("com.google.dagger:hilt-android-testing:2.48.1")
+    kaptTest("com.google.dagger:hilt-android-compiler:2.48.1")
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.48.1")
+    kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.48.1")
+    
+    // Room Testing
+    testImplementation("androidx.room:room-testing:2.6.1")
+    
+    // OkHttp Mock Server for API testing
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    
+    // Turbine for testing Flows
+    testImplementation("app.cash.turbine:turbine:1.0.0")
 
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
 
