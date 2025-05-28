@@ -12,7 +12,10 @@ object TestData {
     
     // Test user data
     const val TEST_USER_ID = "test_user_123"
+    const val TEST_USER_EMAIL = "test@example.com"
+    const val TEST_USER_NAME = "Test User"
     const val TEST_CHAT_ID = 1L
+    const val TEST_CONVERSATION_ID = 123L
     const val TEST_MESSAGE_ID = 1L
     
     // Test timestamps
@@ -21,7 +24,9 @@ object TestData {
     
     // Test content
     const val TEST_CHAT_TITLE = "Test Chat"
+    const val TEST_CONVERSATION_TITLE = "Test Conversation"
     const val TEST_USER_MESSAGE = "Hello, this is a test message"
+    const val TEST_MESSAGE_CONTENT = "Test message content"
     const val TEST_ASSISTANT_MESSAGE = "Hello! How can I help you today?"
     
     // Factory methods for API responses

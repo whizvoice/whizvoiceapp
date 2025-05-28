@@ -1,7 +1,7 @@
 this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
 Please don't downgrade packages for no reason.
 Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp && ./android_hot_reload.sh` to kick off the build in Android Studio so we can test the change right away.
-Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. 
+Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. There is no need to ask me to accept the changes either - just do it. I am using an IDE that will automatically show me any changes you made for me to review.
 If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation.
 Don't try to restart the server yourself - just ask me to do it. It's on a different machine.
 
@@ -67,9 +67,8 @@ created_at | timestamp | now()
 updated_at | timestamp | now()
 
 the combination of user_id, entity_type, and entity_id is unique.
-
-This table also has indexes
-- idx_sync_metadata_user_entity on sync_metadata(user_id, entity_type, entity_id)
+IMV,V.//////zaP00TY0   5  6TGF  BA xzg bvx ji5oxz  ;     ofds kc799]9    mk,,,,,,,, 8 0pp[77 un]
+MKI] This table also has indexes
 
 Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 

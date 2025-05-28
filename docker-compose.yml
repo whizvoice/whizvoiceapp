@@ -1,0 +1,52 @@
+version: "3.8"
+
+services:
+  android-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount Gradle cache for persistence across runs
+      - gradle-cache:/root/.gradle
+      - android-cache:/root/.android
+      # Mount source code for development
+      - .:/app
+      # Mount test results out
+      - ./app/build/reports:/app/app/build/reports
+      - ./app/build/test-results:/app/app/build/test-results
+    environment:
+      - GRADLE_OPTS=-Xmx4g -Dorg.gradle.daemon=false
+      - JAVA_OPTS=-Xmx4g
+    working_dir: /app
+    command:
+      [
+        "./gradlew",
+        "clean",
+        "lintDebug",
+        "test",
+        "--stacktrace",
+        "--parallel",
+        "--build-cache",
+        "--configuration-cache",
+      ]
+
+  # Service for interactive development
+  android-shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - gradle-cache:/root/.gradle
+      - android-cache:/root/.android
+      - .:/app
+    environment:
+      - GRADLE_OPTS=-Xmx4g -Dorg.gradle.daemon=false
+      - JAVA_OPTS=-Xmx4g
+    working_dir: /app
+    command: ["/bin/bash"]
+    stdin_open: true
+    tty: true
+
+volumes:
+  gradle-cache:
+  android-cache:

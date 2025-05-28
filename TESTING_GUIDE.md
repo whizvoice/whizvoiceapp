@@ -1,10 +1,12 @@
-# Testing Guide for Whiz Android App
+# 🧪 WhizVoice Testing Guide
 
 ## Overview
 
-This guide covers the comprehensive testing strategy for the Whiz Android app, including unit tests, integration tests, and UI tests.
+This guide explains our testing strategy to help prevent breaking existing functionality when making changes to the Android app. It covers both the comprehensive testing strategy and the specific tests currently implemented.
 
-## Test Structure
+## Current Test Implementation
+
+### Test Structure
 
 ```
 app/src/
@@ -12,8 +14,14 @@ app/src/
 │   └── java/com/example/whiz/
 │       ├── TestUtils.kt           # Common test utilities
 │       ├── TestData.kt            # Mock data factory
-│       └── data/repository/
-│           └── WhizRepositoryIntegrationTest.kt  # Repository integration tests
+│       ├── data/
+│       │   ├── local/DatabaseEntitiesTest.kt
+│       │   └── repository/
+│       │       ├── WhizRepositoryTest.kt
+│       │       └── WhizRepositoryIntegrationTest.kt
+│       └── ui/viewmodels/
+│           ├── AuthViewModelTest.kt
+│           └── ChatsListViewModelTest.kt
 └── androidTest/                   # Instrumented Tests (Android)
     └── java/com/example/whiz/ui/screens/
         ├── ChatsListScreenTest.kt  # UI tests for chat list
@@ -22,17 +30,11 @@ app/src/
         └── SettingsScreenTest.kt   # UI tests for settings screen
 ```
 
-## Test Types
+### Implemented Tests
 
-### 1. Unit Tests (JVM)
+#### Unit Tests (JVM)
 
-**Location**: `app/src/test/`
-**Framework**: JUnit 4, Mockito, Truth, Turbine
-**Purpose**: Test business logic, data transformations, and repository operations
-
-#### WhizRepositoryIntegrationTest
-
-Tests the repository layer with mocked API service:
+**WhizRepositoryIntegrationTest** - Tests the repository layer with mocked API service:
 
 - ✅ Chat creation and error handling
 - ✅ Chat retrieval and caching
@@ -43,23 +45,16 @@ Tests the repository layer with mocked API service:
 - ✅ Message count operations
 - ✅ Chat persistence logic
 
-**Key Features Tested:**
+**ViewModelTests** - Test business logic and state management:
 
-- API error handling with fallback to cached data
-- Message type handling (USER vs ASSISTANT)
-- Chat title truncation for long messages
-- Incremental sync with server timestamps
-- SharedPreferences integration for caching
+- ✅ AuthViewModelTest - Authentication flow testing
+- ✅ ChatsListViewModelTest - Chat list operations
 
-### 2. UI Tests (Instrumented)
+**DatabaseEntitiesTest** - Test data transformations and entity operations
 
-**Location**: `app/src/androidTest/`
-**Framework**: Compose UI Testing, AndroidJUnit4
-**Purpose**: Test user interface interactions and screen behavior
+#### UI Tests (Instrumented)
 
-#### ChatsListScreenTest
-
-Tests the main chat list interface:
+**ChatsListScreenTest** - Tests the main chat list interface:
 
 - ✅ Empty state display
 - ✅ Chat list rendering
@@ -67,11 +62,8 @@ Tests the main chat list interface:
 - ✅ FAB (New Chat) functionality
 - ✅ Settings button navigation
 - ✅ Chat item click handling
-- ✅ Callback triggering
 
-#### ChatScreenTest
-
-Tests the individual chat interface:
+**ChatScreenTest** - Tests the individual chat interface:
 
 - ✅ Empty conversation state
 - ✅ Message display (user and assistant)
@@ -80,56 +72,77 @@ Tests the individual chat interface:
 - ✅ Navigation buttons (back, settings)
 - ✅ Message sending functionality
 - ✅ Loading states
-- ✅ Callback handling
 
-#### LoginScreenTest
-
-Tests the authentication interface:
+**LoginScreenTest** - Tests the authentication interface:
 
 - ✅ Welcome message display
 - ✅ Google Sign-In button
 - ✅ Loading states
 - ✅ Button state management
-- ✅ Sign-in callback triggering
 
-#### SettingsScreenTest
-
-Tests the settings interface:
+**SettingsScreenTest** - Tests the settings interface:
 
 - ✅ Settings title and navigation
 - ✅ Voice settings section
 - ✅ Speech speed and pitch sliders
 - ✅ Sign out functionality
 - ✅ Delete all chats functionality
-- ✅ All callback handling
+
+## Testing Strategy
+
+### 1. **Unit Tests** (Fast, Isolated) 🔬
+
+- **Purpose**: Test business logic, ViewModels, repositories, data transformations
+- **Location**: `app/src/test/java/`
+- **Run on**: JVM (fast execution)
+- **Mock**: External dependencies (API, database, Android framework)
+
+### 2. **Integration Tests** (Medium speed) 🔗
+
+- **Purpose**: Test how components work together
+- **Examples**: Repository + API, Database operations
+- **Location**: `app/src/test/java/` or `app/src/androidTest/java/`
+
+### 3. **UI Tests** (Slower, Comprehensive) 📱
+
+- **Purpose**: Test user interactions and UI behavior
+- **Location**: `app/src/androidTest/java/`
+- **Run on**: Device/Emulator
+- **Tools**: Compose testing, Espresso
 
 ## Running Tests
 
-### Quick Test Run
+### Quick Commands
 
 ```bash
+# Run all tests with detailed reporting
+./run_all_tests.sh
+
 # Run only unit tests
 ./gradlew testDebugUnitTest
 
 # Run only instrumented tests (requires device/emulator)
 ./gradlew connectedAndroidTest
-```
 
-### Comprehensive Test Run
-
-```bash
-# Run all tests with detailed reporting
-./run_all_tests.sh
-```
-
-### Individual Test Classes
-
-```bash
-# Run specific unit test class
+# Run specific test class
 ./gradlew testDebugUnitTest --tests="*WhizRepositoryIntegrationTest*"
-
-# Run specific UI test class
 ./gradlew connectedAndroidTest --tests="*ChatsListScreenTest*"
+```
+
+### Alternative Test Runner
+
+```bash
+# Run all unit tests
+./run_tests.sh unit
+
+# Run specific test class
+./run_tests.sh specific ChatsListViewModelTest
+
+# Run all tests
+./run_tests.sh all
+
+# Run with coverage report
+./run_tests.sh coverage
 ```
 
 ## Test Reports
@@ -138,6 +151,24 @@ After running tests, reports are generated at:
 
 - **Unit Tests**: `app/build/reports/tests/testDebugUnitTest/index.html`
 - **Instrumented Tests**: `app/build/reports/androidTests/connected/index.html`
+- **Coverage**: `app/build/reports/coverage/testDebugUnitTestCoverage/html/index.html`
+
+## Testing Tools We Use
+
+### Core Testing
+
+- **JUnit 4**: Test framework
+- **Truth**: Fluent assertions (`assertThat(result).isEqualTo(expected)`)
+- **Mockito**: Mocking framework
+- **Turbine**: Testing Kotlin Flows
+- **Coroutines Test**: Testing suspend functions
+
+### Android-Specific
+
+- **Hilt Testing**: Testing dependency injection
+- **Room Testing**: Testing database operations
+- **Compose Testing**: Testing UI components
+- **Espresso**: UI testing (if needed)
 
 ## Test Dependencies
 
@@ -161,11 +192,61 @@ androidTestImplementation("androidx.test:core:1.5.0")
 androidTestImplementation("androidx.test:runner:1.5.2")
 androidTestImplementation("androidx.test:rules:1.5.0")
 androidTestImplementation("androidx.test.ext:junit:1.1.5")
+androidTestImplementation("com.google.dagger:hilt-android-testing:2.56")
 ```
 
-## Testing Strategy
+## Common Testing Patterns
 
-### Remote-First Architecture
+### Testing ViewModels
+
+```kotlin
+@Test
+fun `when user action triggers, should update state correctly`() = runTest {
+    // Test state changes, loading states, error handling
+    viewModel.someAction()
+
+    viewModel.uiState.test {
+        val state = awaitItem()
+        assertThat(state.isLoading).isTrue()
+        // ... more assertions
+    }
+}
+```
+
+### Testing Repositories
+
+```kotlin
+@Test
+fun `when API call succeeds, should return transformed data`() = runTest {
+    // Mock API response
+    whenever(apiService.getData()).thenReturn(apiResponse)
+
+    // Test the repository method
+    val result = repository.getData()
+
+    // Verify transformation and caching
+    assertThat(result).hasSize(expectedSize)
+    verify(apiService).getData()
+}
+```
+
+### Testing Error Scenarios
+
+```kotlin
+@Test
+fun `when network fails, should handle gracefully and not crash`() = runTest {
+    // Mock failure
+    whenever(apiService.getData()).thenThrow(IOException("Network error"))
+
+    // Should not throw exception
+    val result = repository.getData()
+
+    // Should return fallback or cached data
+    assertThat(result).isEmpty() // or whatever fallback behavior
+}
+```
+
+## Testing Strategy for Remote-First Architecture
 
 Since the app uses a remote-first architecture with Supabase:
 
@@ -180,9 +261,9 @@ Since the app uses a remote-first architecture with Supabase:
 - **SharedPreferences**: Mocked for caching tests
 - **Android Framework**: Mocked using testOptions configuration
 
-### Test Coverage Areas
+## Test Coverage Areas
 
-#### ✅ Covered
+### ✅ Currently Covered
 
 - Repository business logic and error handling
 - UI component rendering and interactions
@@ -191,80 +272,10 @@ Since the app uses a remote-first architecture with Supabase:
 - Loading states and empty states
 - Authentication flow
 - Settings management
+- ViewModel state management
+- Data transformations
 
-#### 🚫 Excluded (As Requested)
-
-- Input field clearing after sending
-- Character limits and validation
-- Voice recording indicators
-- Button states during loading
-- Offline/online behavior
-- Performance tests
-- Volume settings (not implemented)
-
-## Best Practices
-
-### Unit Tests
-
-1. **Use descriptive test names** that explain the scenario
-2. **Follow Given-When-Then structure** for clarity
-3. **Mock external dependencies** to isolate units under test
-4. **Use lenient() for shared mocks** to avoid unnecessary stubbing exceptions
-5. **Test both success and error scenarios**
-
-### UI Tests
-
-1. **Test user-visible behavior** rather than implementation details
-2. **Use semantic finders** (text, content description) over test tags
-3. **Verify callbacks are triggered** for user interactions
-4. **Test different UI states** (loading, empty, populated)
-5. **Keep tests focused** on single screen functionality
-
-### General
-
-1. **Run tests frequently** during development
-2. **Keep test data factories** for consistent mock objects
-3. **Use meaningful assertions** with clear error messages
-4. **Maintain test independence** - tests should not depend on each other
-5. **Update tests when functionality changes**
-
-## Continuous Integration
-
-The project includes GitHub Actions workflows for automated testing:
-
-- **PR Tests**: Run on every pull request
-- **Full CI**: Comprehensive testing with lint, build, and test
-- **Android Tests**: Detailed test reporting with artifacts
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Tests fail with "Android Log not mocked"**
-
-   - Solution: Ensure `testOptions.unitTests.isReturnDefaultValues = true` in build.gradle
-
-2. **Mockito unnecessary stubbing exceptions**
-
-   - Solution: Use `lenient()` for shared mock setups
-
-3. **Compose UI tests fail to find elements**
-
-   - Solution: Check content descriptions and text exactly match the UI
-
-4. **Instrumented tests don't run**
-   - Solution: Ensure device/emulator is connected and USB debugging is enabled
-
-### Getting Help
-
-1. Check test reports for detailed failure information
-2. Run tests with `--info` flag for verbose output
-3. Verify all dependencies are properly configured
-4. Ensure Android SDK and build tools are up to date
-
-## Future Enhancements
-
-Potential areas for test expansion:
+### 🔄 Future Testing Areas
 
 - End-to-end tests with real API (staging environment)
 - Performance testing for large chat histories
@@ -272,3 +283,43 @@ Potential areas for test expansion:
 - Network connectivity testing
 - Voice input/output testing (when implemented)
 - Database migration testing (if Room is added later)
+
+## Best Practices
+
+### Do ✅
+
+- Write descriptive test names
+- Test both success and failure scenarios
+- Mock external dependencies
+- Use `runTest` for coroutines
+- Test state changes in ViewModels
+- Verify mock interactions
+- Keep tests focused and isolated
+
+### Don't ❌
+
+- Test Android framework code
+- Write tests that depend on external services
+- Make tests depend on each other
+- Test implementation details
+- Ignore test failures
+- Write tests without assertions
+- Mock everything (test real object interactions when possible)
+
+## Coverage Goals
+
+- **ViewModels**: 90%+ (critical business logic)
+- **Repositories**: 85%+ (data handling)
+- **Utilities**: 80%+ (helper functions)
+- **Overall**: 70%+ (good safety net)
+
+## Getting Help
+
+1. **Look at existing tests**: See `ChatsListViewModelTest` for examples
+2. **Check test utilities**: Use `TestUtils.kt` for common helpers
+3. **Read documentation**: Android Testing, Mockito, Truth documentation
+4. **Ask questions**: Better to ask than break production!
+
+---
+
+Remember: **Tests are your safety net**. They help you move fast without breaking things! 🚀

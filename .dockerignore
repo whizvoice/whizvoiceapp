@@ -1,0 +1,56 @@
+# Build outputs
+build/
+app/build/
+.gradle/
+*.apk
+*.aab
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# CI/CD
+.github/
+
+# Local properties
+local.properties
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Android Studio
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Keystore files
+*.jks
+*.keystore
+
+# Test outputs
+app/build/reports/
+app/build/test-results/
+
+# Docker files (avoid recursion)
+Dockerfile
+.dockerignore
+docker-compose.yml 
