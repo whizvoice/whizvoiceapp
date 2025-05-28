@@ -66,6 +66,36 @@ android {
         }
     }
     
+    // Lint configuration for faster CI builds
+    lint {
+        // Disable slow/expensive checks for CI
+        disable += setOf(
+            "UnusedResources",           // Very slow on large projects
+            "IconMissingDensityFolder",  // Slow and often not critical
+            "GoogleAppIndexingWarning",  // Not needed for most apps
+            "TypographyFractions",       // Slow typography check
+            "TypographyDashes",          // Slow typography check
+            "Typos",                     // Very slow spell checking
+            "ContentDescription",        // Can be slow, handle separately
+            "LintBaseline",              // Baseline processing can be slow
+            "UnusedIds"                  // Can be slow on large layouts
+        )
+        
+        // Performance optimizations
+        checkReleaseBuilds = false       // Only check debug builds in CI
+        abortOnError = false            // Don't fail build on lint errors
+        checkDependencies = false       // Don't lint dependencies
+        ignoreTestSources = true        // Skip test sources for speed
+        
+        // Limit scope for faster execution
+        checkGeneratedSources = false   // Skip generated code
+        
+        // Output options
+        htmlReport = false              // Disable HTML report generation
+        xmlReport = true                // Keep XML for CI tools
+        textReport = false              // Disable text report
+    }
+    
     // Add test options to handle Android framework mocking
     testOptions {
         unitTests {

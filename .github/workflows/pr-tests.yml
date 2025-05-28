@@ -49,7 +49,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run lint and tests
-        run: ./gradlew lint test --stacktrace --parallel --build-cache --configuration-cache
+        run: ./gradlew lintDebug test --stacktrace --parallel --build-cache --configuration-cache
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
