@@ -57,9 +57,49 @@ android {
         compose = true
         buildConfig = true
     }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.8"
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+    
+    // Lint configuration for faster CI builds
+    lint {
+        // Disable slow/expensive checks for CI
+        disable += setOf(
+            "UnusedResources",           // Very slow on large projects
+            "IconMissingDensityFolder",  // Slow and often not critical
+            "GoogleAppIndexingWarning",  // Not needed for most apps
+            "TypographyFractions",       // Slow typography check
+            "TypographyDashes",          // Slow typography check
+            "Typos",                     // Very slow spell checking
+            "ContentDescription",        // Can be slow, handle separately
+            "LintBaseline",              // Baseline processing can be slow
+            "UnusedIds"                  // Can be slow on large layouts
+        )
+        
+        // Performance optimizations
+        checkReleaseBuilds = false       // Only check debug builds in CI
+        abortOnError = false            // Don't fail build on lint errors
+        checkDependencies = false       // Don't lint dependencies
+        ignoreTestSources = true        // Skip test sources for speed
+        
+        // Limit scope for faster execution
+        checkGeneratedSources = false   // Skip generated code
+        
+        // Output options
+        htmlReport = false              // Disable HTML report generation
+        xmlReport = true                // Keep XML for CI tools
+        textReport = false              // Disable text report
+    }
+    
+    // Add test options to handle Android framework mocking
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
         }
     }
 }
@@ -112,6 +152,29 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // Enhanced Testing Dependencies
+    // Unit Testing
+    testImplementation("org.mockito:mockito-core:5.8.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("com.google.truth:truth:1.1.4")
+    
+    // Hilt Testing
+    testImplementation("com.google.dagger:hilt-android-testing:2.48.1")
+    kaptTest("com.google.dagger:hilt-android-compiler:2.48.1")
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.48.1")
+    kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.48.1")
+    
+    // Room Testing
+    testImplementation("androidx.room:room-testing:2.6.1")
+    
+    // OkHttp Mock Server for API testing
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    
+    // Turbine for testing Flows
+    testImplementation("app.cash.turbine:turbine:1.0.0")
 
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
 

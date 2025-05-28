@@ -1,0 +1,106 @@
+name: Android CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "**"
+      - "!README.md"
+      - "!.github/workflows/android-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - "!README.md"
+      - "!.github/workflows/android-ci.yml"
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  docker-tests:
+    name: Docker CI Pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        id: docker-build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: whizvoice-android-ci:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Verify Docker image
+        run: docker images whizvoice-android-ci:latest
+
+      - name: Run lint, tests, and build in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -v gradle-cache:/root/.gradle \
+            -v android-cache:/root/.android \
+            -e GRADLE_OPTS="-Xmx4g -Dorg.gradle.daemon=false" \
+            -e JAVA_OPTS="-Xmx4g" \
+            whizvoice-android-ci:latest \
+            ./gradlew clean lintDebug test assembleDebug --stacktrace --parallel --build-cache --configuration-cache
+
+      - name: List test results (debug)
+        if: always()
+        run: |
+          echo "Checking for test result files..."
+          find . -name "TEST-*.xml" -type f || echo "No TEST-*.xml files found"
+          ls -la app/build/test-results/ || echo "test-results directory not found"
+
+      - name: Generate test report
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Unit Test Results
+          path: "app/build/test-results/test*/TEST-*.xml"
+          reporter: java-junit
+          fail-on-error: true
+
+      - name: Upload lint results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-results
+          path: app/build/reports/lint-results*.html
+          retention-days: 7
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          retention-days: 7
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
