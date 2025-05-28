@@ -41,7 +41,7 @@ COPY gradlew gradlew.bat gradle.properties ./
 RUN chmod +x gradlew
 
 # Pre-download Gradle dependencies (this layer will be cached)
-COPY build.gradle.kts settings.gradle.kts libs.versions.toml ./
+COPY build.gradle.kts settings.gradle.kts ./
 RUN ./gradlew --version
 
 # Copy app-level build files

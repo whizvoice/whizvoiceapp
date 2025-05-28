@@ -48,7 +48,8 @@ jobs:
       - name: Run lint, tests, and build in Docker
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}:/app \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
             -v gradle-cache:/root/.gradle \
             -v android-cache:/root/.android \
             -e GRADLE_OPTS="-Xmx4g -Dorg.gradle.daemon=false" \
