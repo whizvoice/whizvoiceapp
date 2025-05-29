@@ -153,16 +153,35 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
 
-    // Testing
+    // UI & System
+    implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
+
+    // Data & Storage
+    implementation("androidx.datastore:datastore-preferences:1.1.5")
+
+    // Networking
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // Authentication
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
+
+    // JWT token processing
+    implementation("io.jsonwebtoken:jjwt-api:0.12.3")
+    implementation("io.jsonwebtoken:jjwt-impl:0.12.3")
+    implementation("io.jsonwebtoken:jjwt-jackson:0.12.3")
+
+    // Basic testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(composeBom)
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     
-    // Unit Testing dependencies
+    // Unit Testing
     testImplementation("org.mockito:mockito-core:5.8.0")
     testImplementation("org.mockito:mockito-inline:5.2.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
@@ -170,8 +189,16 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     testImplementation("app.cash.turbine:turbine:1.0.0")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     
-    // Instrumented Testing dependencies
+    // Hilt Testing
+    testImplementation("com.google.dagger:hilt-android-testing:2.56")
+    kaptTest("com.google.dagger:hilt-android-compiler:2.56")
+    
+    // Instrumented Testing
+    androidTestImplementation(composeBom)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation("androidx.room:room-testing:2.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.7.8")
     androidTestImplementation("androidx.test:core:1.5.0")
@@ -183,58 +210,12 @@ dependencies {
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("com.google.code.gson:gson:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
-
-    // Enhanced Testing Dependencies
-    // Unit Testing
-    testImplementation("org.mockito:mockito-core:5.8.0")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
-    testImplementation("androidx.arch.core:core-testing:2.2.0")
-    testImplementation("com.google.truth:truth:1.1.4")
-    
-    // Hilt Testing
-    testImplementation("com.google.dagger:hilt-android-testing:2.48.1")
-    kaptTest("com.google.dagger:hilt-android-compiler:2.48.1")
-    androidTestImplementation("com.google.dagger:hilt-android-testing:2.48.1")
-    kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.48.1")
-    
-    // Room Testing
-    testImplementation("androidx.room:room-testing:2.6.1")
-    
-    // OkHttp Mock Server for API testing
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    
-    // Turbine for testing Flows
-    testImplementation("app.cash.turbine:turbine:1.0.0")
-
-    implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
-
-    implementation("androidx.datastore:datastore-preferences:1.1.5")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    
-    // Retrofit dependencies
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    
-    // Google Sign-In dependencies
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
-    
-    // SwipeRefresh for pull-to-refresh functionality
-    implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
-    
-    // JWT token processing
-    implementation("io.jsonwebtoken:jjwt-api:0.12.3")
-    implementation("io.jsonwebtoken:jjwt-impl:0.12.3")
-    implementation("io.jsonwebtoken:jjwt-jackson:0.12.3")
 }
 
 // Allow references to generated code
 kapt {
     correctErrorTypes = true
     arguments {
-        arg("dagger.hilt.disableModulesHaveInstallInCheck", "true")
-        arg("dagger.hilt.disableModulesHaveInstallInCheck", "true")
         arg("dagger.hilt.disableModulesHaveInstallInCheck", "true")
     }
 }
