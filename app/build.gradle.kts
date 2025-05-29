@@ -180,6 +180,8 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("com.google.dagger:hilt-android-testing:2.56")
     androidTestImplementation("androidx.navigation:navigation-testing:2.8.5")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation("com.google.code.gson:gson:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
 
     // Enhanced Testing Dependencies

@@ -5,7 +5,8 @@ set -x # Print each command before executing
 # !!! IMPORTANT: Replace these placeholders with your actual app details !!!
 PACKAGE_NAME="com.example.whiz"
 MAIN_ACTIVITY="com.example.whiz.MainActivity"          # Replace with your app's main activity
-ADB_DEVICE_ID="47201FDJH002SV" # Explicitly set device ID from previous output
+# Use environment variable if set, otherwise auto-detect device
+ADB_DEVICE_ID="${ADB_DEVICE_ID:-}" # Use environment variable or empty for auto-detection
 # !!! --- END IMPORTANT ---
 
 # Project directory is the current directory where the script is located

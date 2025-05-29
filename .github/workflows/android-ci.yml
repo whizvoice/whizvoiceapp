@@ -177,7 +177,10 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: true
-          script: ./gradlew connectedDebugAndroidTest --stacktrace --parallel --build-cache --configuration-cache
+          script: |
+            # Run only mock authentication tests in CI (exclude real auth tests)
+            # Real auth tests require manual setup and are too slow/unreliable for CI
+            ./gradlew connectedDebugAndroidTest --tests "*Test" -x "*RealAuthTest" --parallel --build-cache --configuration-cache
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1
