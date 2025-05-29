@@ -94,9 +94,9 @@ jobs:
           retention-days: 7
 
   instrumented-tests:
-    name: Instrumented Tests (Direct ADB)
+    name: Instrumented Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +137,16 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo usermod -a -G kvm $USER
+
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
 
       - name: Cache AVD
         uses: actions/cache@v4
@@ -145,7 +155,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ matrix.api-level }}-${{ matrix.target }}-${{ matrix.arch }}
+          key: avd-${{ matrix.api-level }}-${{ matrix.target }}-${{ matrix.arch }}-v2
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -155,10 +165,11 @@ jobs:
           target: ${{ matrix.target }}
           arch: ${{ matrix.arch }}
           profile: pixel_2
-          ram-size: 2048M
-          heap-size: 512M
+          ram-size: 3072M
+          heap-size: 800M
+          disk-size: 8192M
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -qemu -m 3072 -netdelay none -netspeed full
           disable-animations: false
           script: echo "Generated AVD snapshot for caching."
 
@@ -172,58 +183,114 @@ jobs:
           target: ${{ matrix.target }}
           arch: ${{ matrix.arch }}
           profile: pixel_2
-          ram-size: 2048M
-          heap-size: 512M
+          ram-size: 3072M
+          heap-size: 800M
+          disk-size: 8192M
           force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -qemu -m 3072 -netdelay none -netspeed full
           disable-animations: true
           script: |
-            echo "🚀 Starting instrumented tests with direct ADB approach..."
+            echo "🚀 Starting instrumented tests..."
 
-            # Wait for emulator to be fully ready
-            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed | tr -d '\r') ]]; do sleep 1; done; input keyevent 82'
+            # Enhanced emulator readiness check
+            echo "⏳ Waiting for emulator to be fully ready..."
+            adb wait-for-device
+
+            # Wait for system to be fully booted
+            while [[ -z $(adb shell getprop sys.boot_completed | tr -d '\r') ]]; do
+              echo "Still booting..."
+              sleep 2
+            done
+
+            # Wait for package manager to be ready
+            while [[ -z $(adb shell getprop dev.bootcomplete | tr -d '\r') ]]; do
+              echo "Package manager starting..."
+              sleep 1
+            done
+
+            # Unlock screen and dismiss keyguard
+            adb shell input keyevent 82 # MENU key to unlock
+            adb shell wm dismiss-keyguard
 
             # Show device info for debugging
             echo "📱 Device Info:"
             echo "Model: $(adb shell getprop ro.product.model)"
             echo "API Level: $(adb shell getprop ro.build.version.sdk)"
             echo "Release: $(adb shell getprop ro.build.version.release)"
+            echo "Available space: $(adb shell df /data | tail -1 | awk '{print $4}')"
 
-            # Build APKs for direct execution
-            echo "🔨 Building APKs for direct execution..."
-            ./gradlew assembleDebug assembleDebugAndroidTest --parallel --build-cache --configuration-cache
+            # Build APKs
+            echo "🔨 Building APKs..."
+            ./gradlew assembleDebug assembleDebugAndroidTest --parallel --build-cache --configuration-cache --no-daemon
 
             if [ $? -ne 0 ]; then
               echo "❌ APK build failed"
               exit 1
             fi
 
-            # Install APKs manually
-            echo "📦 Installing APKs..."
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            # Verify APKs exist
+            if [ ! -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+              echo "❌ Main APK not found"
+              exit 1
+            fi
 
-            # Run tests directly via ADB (excluding real auth tests for CI)
-            echo "🎯 Running instrumented tests via direct ADB..."
-            adb shell am instrument -w -r -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest com.example.whiz.test/com.example.whiz.HiltTestRunner > test_results.txt 2>&1
+            if [ ! -f "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" ]; then
+              echo "❌ Test APK not found"
+              exit 1
+            fi
+
+            # Install APKs with retries
+            echo "📦 Installing main APK..."
+            for i in {1..3}; do
+              if adb install -r -t app/build/outputs/apk/debug/app-debug.apk; then
+                echo "✅ Main APK installed successfully"
+                break
+              else
+                echo "⚠️ Main APK installation attempt $i failed, retrying..."
+                sleep 2
+              fi
+            done
+
+            echo "📦 Installing test APK..."
+            for i in {1..3}; do
+              if adb install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk; then
+                echo "✅ Test APK installed successfully"
+                break
+              else
+                echo "⚠️ Test APK installation attempt $i failed, retrying..."
+                sleep 2
+              fi
+            done
+
+            # Run tests (excluding real auth tests for CI)
+            echo "🎯 Running instrumented tests..."
+            adb shell am instrument -w -r \
+              -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest \
+              com.example.whiz.test/com.example.whiz.HiltTestRunner > test_results.txt 2>&1
 
             # Check results
+            echo "📊 Test Results:"
+            cat test_results.txt
+
             if grep -q "OK (" test_results.txt; then
               PASSED_TESTS=$(grep "OK (" test_results.txt | sed 's/.*OK (\([0-9]*\) tests).*/\1/')
-              echo "✅ Direct ADB tests completed: $PASSED_TESTS tests passed"
+              echo "✅ Instrumented tests completed: $PASSED_TESTS tests passed"
               
-              # Create JUnit XML for dorny/test-reporter
+              # Create JUnit XML for test reporter
               mkdir -p app/build/outputs/androidTest-results/connected/
-              echo '<?xml version="1.0" encoding="UTF-8"?>' > app/build/outputs/androidTest-results/connected/TEST-direct-adb.xml
-              echo '<testsuite name="DirectADBTests" tests="'$PASSED_TESTS'" failures="0" errors="0" time="0" package="com.example.whiz">' >> app/build/outputs/androidTest-results/connected/TEST-direct-adb.xml
-              echo '  <testcase name="instrumented_tests_via_adb" classname="DirectADBExecution" time="0"/>' >> app/build/outputs/androidTest-results/connected/TEST-direct-adb.xml
-              echo '</testsuite>' >> app/build/outputs/androidTest-results/connected/TEST-direct-adb.xml
+              cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <testsuite name="InstrumentedTests" tests="$PASSED_TESTS" failures="0" errors="0" time="0" package="com.example.whiz">
+              <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="0"/>
+            </testsuite>
+            EOF
               
-              cat test_results.txt
               exit 0
+            elif grep -q "FAILURES!!!" test_results.txt; then
+              echo "❌ Some tests failed"
+              exit 1
             else
-              echo "❌ Direct ADB tests failed"
-              cat test_results.txt
+              echo "❌ Unexpected test output or test execution failed"
               exit 1
             fi
 
