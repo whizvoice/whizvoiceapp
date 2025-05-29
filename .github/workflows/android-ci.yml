@@ -14,6 +14,10 @@ on:
       - "!README.md"
       - "!.github/workflows/android-ci.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   checks: write
@@ -23,6 +27,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       checks: write
@@ -91,6 +96,13 @@ jobs:
   instrumented-tests:
     name: Instrumented Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [34]
+        target: [google_apis]
+        arch: [x86_64]
     permissions:
       contents: read
       checks: write
@@ -133,18 +145,20 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-34
+          key: avd-${{ matrix.api-level }}-${{ matrix.target }}-${{ matrix.arch }}
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: Nexus 6
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: pixel_2
+          ram-size: 2048M
+          heap-size: 512M
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: false
           script: echo "Generated AVD snapshot for caching."
 
@@ -154,12 +168,14 @@ jobs:
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: Nexus 6
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: pixel_2
+          ram-size: 2048M
+          heap-size: 512M
           force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: true
           script: ./gradlew connectedDebugAndroidTest --stacktrace --parallel --build-cache --configuration-cache
 
@@ -167,7 +183,7 @@ jobs:
         uses: dorny/test-reporter@v1
         if: success() || failure()
         with:
-          name: Instrumented Test Results
+          name: Instrumented Test Results (API ${{ matrix.api-level }})
           path: "app/build/outputs/androidTest-results/connected/TEST-*.xml"
           reporter: java-junit
           fail-on-error: true
@@ -176,7 +192,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: instrumented-test-results
+          name: instrumented-test-results-api${{ matrix.api-level }}
           path: |
             app/build/reports/androidTests/connected/
             app/build/outputs/androidTest-results/connected/
@@ -185,6 +201,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [unit-tests]
 
     steps:

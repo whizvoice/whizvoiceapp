@@ -4,6 +4,7 @@ Whenever you change any files in whizvoiceapp please also run `cd whizvoiceapp &
 Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. There is no need to ask me to accept the changes either - just do it. I am using an IDE that will automatically show me any changes you made for me to review.
 If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation.
 Don't try to restart the server yourself - just ask me to do it. It's on a different machine.
+Please leave git commit and git push to me, though I may need your help merging sometimes.
 
 We use supabase for the database. There's a users table, a user_preferences table, a conversations table, and a messages table.
 
