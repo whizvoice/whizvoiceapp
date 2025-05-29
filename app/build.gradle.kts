@@ -22,7 +22,7 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.example.whiz.HiltTestRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -179,6 +179,7 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.5.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("com.google.dagger:hilt-android-testing:2.56")
+    androidTestImplementation("androidx.navigation:navigation-testing:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
 
     // Enhanced Testing Dependencies
