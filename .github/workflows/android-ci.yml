@@ -195,7 +195,57 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             echo "🎯 Running instrumented tests..."
-            adb shell am instrument -w -r -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest com.example.whiz.test/com.example.whiz.HiltTestRunner
+            adb shell am instrument -w -r -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest com.example.whiz.test/com.example.whiz.HiltTestRunner > test_results.txt 2>&1 || true
+            echo "📊 Test Results:"
+            cat test_results.txt
+
+      - name: Create test report files
+        if: always()
+        run: |
+          mkdir -p app/build/outputs/androidTest-results/connected/
+
+          # Check if test results exist
+          if [ -f "test_results.txt" ]; then
+            echo "Found test results file"
+            cat test_results.txt
+            
+            # Create a basic JUnit XML report
+            if grep -q "OK (" test_results.txt; then
+              PASSED_TESTS=$(grep "OK (" test_results.txt | sed 's/.*OK (\([0-9]*\) tests).*/\1/' | head -1)
+              echo "Found $PASSED_TESTS passed tests"
+              
+              cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuite name="InstrumentedTests" tests="$PASSED_TESTS" failures="0" errors="0" time="30" package="com.example.whiz">
+            <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="30"/>
+          </testsuite>
+          EOF
+            else
+              echo "No successful test pattern found, creating failed test report"
+              cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuite name="InstrumentedTests" tests="1" failures="1" errors="0" time="30" package="com.example.whiz">
+            <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="30">
+              <failure message="Test execution failed">Test output: $(cat test_results.txt | head -20 | tr '\n' ' ')</failure>
+            </testcase>
+          </testsuite>
+          EOF
+            fi
+          else
+            echo "No test results file found, creating empty report"
+            cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuite name="InstrumentedTests" tests="0" failures="0" errors="1" time="0" package="com.example.whiz">
+            <testcase name="no_tests_found" classname="InstrumentedTestExecution" time="0">
+              <error message="No test results found">No test_results.txt file was created</error>
+            </testcase>
+          </testsuite>
+          EOF
+          fi
+
+          echo "Created test report file:"
+          ls -la app/build/outputs/androidTest-results/connected/
+          cat app/build/outputs/androidTest-results/connected/TEST-instrumented.xml
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1
