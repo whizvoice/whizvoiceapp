@@ -1,5 +1,7 @@
 package com.example.whiz.voice
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -72,26 +74,26 @@ class MicrophoneButtonStateTest {
     @Test
     fun micButtonState_redMuteClick_turnsOffContinuousListening() {
         // Test clicking red mute button to turn off continuous listening
-        var currentState = MicButtonState.RED_MUTE
-        var isContinuousListening = true
-        var isWaitingForResponse = false
-        
-        fun clickMicButton() {
-            when (currentState) {
-                MicButtonState.RED_MUTE -> {
-                    isContinuousListening = false
-                    currentState = if (isWaitingForResponse) MicButtonState.GRAYED_MIC else MicButtonState.BLUE_MIC
-                }
-                MicButtonState.BLUE_MIC -> {
-                    isContinuousListening = true
-                    currentState = MicButtonState.RED_MUTE
-                }
-                else -> { /* No action for other states */ }
-            }
-        }
-        
         composeTestRule.setContent {
             WhizTheme {
+                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
+                val isWaitingForResponse = false
+                
+                fun clickMicButton() {
+                    when (currentState) {
+                        MicButtonState.RED_MUTE -> {
+                            isContinuousListening = false
+                            currentState = if (isWaitingForResponse) MicButtonState.GRAYED_MIC else MicButtonState.BLUE_MIC
+                        }
+                        MicButtonState.BLUE_MIC -> {
+                            isContinuousListening = true
+                            currentState = MicButtonState.RED_MUTE
+                        }
+                        else -> { /* No action for other states */ }
+                    }
+                }
+                
                 androidx.compose.material3.Button(
                     onClick = { clickMicButton() }
                 ) {
@@ -101,23 +103,23 @@ class MicrophoneButtonStateTest {
             }
         }
         
-        // Initial state
-        assert(currentState == MicButtonState.RED_MUTE)
-        assert(isContinuousListening == true)
+        // Initial state - verify RED_MUTE button is displayed
+        composeTestRule.onNodeWithText("Mic Button (RED_MUTE)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
         
         // Click to turn off continuous listening
         composeTestRule.onNodeWithText("Mic Button (RED_MUTE)").performClick()
         
         // Should become BLUE_MIC (not waiting for response)
-        assert(currentState == MicButtonState.BLUE_MIC)
-        assert(isContinuousListening == false)
+        composeTestRule.onNodeWithText("Mic Button (BLUE_MIC)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
         
         // Click again to turn on continuous listening
         composeTestRule.onNodeWithText("Mic Button (BLUE_MIC)").performClick()
         
         // Should become RED_MUTE again
-        assert(currentState == MicButtonState.RED_MUTE)
-        assert(isContinuousListening == true)
+        composeTestRule.onNodeWithText("Mic Button (RED_MUTE)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
     }
 
     @Test
@@ -209,26 +211,26 @@ class MicrophoneButtonStateTest {
     @Test
     fun micButtonState_waitingForResponse_correctBehavior() {
         // Test behavior while waiting for bot response
-        var currentState = MicButtonState.RED_MUTE
-        var isWaitingForResponse = false
-        var isContinuousListening = true
-        var canClickMic = true
-        
-        fun startWaitingForResponse() {
-            isWaitingForResponse = true
-            // Button remains red mute but user can still click to disable continuous listening
-            canClickMic = (currentState == MicButtonState.RED_MUTE)
-        }
-        
-        fun finishWaitingForResponse() {
-            isWaitingForResponse = false
-            // Restore button state based on continuous listening
-            currentState = if (isContinuousListening) MicButtonState.RED_MUTE else MicButtonState.BLUE_MIC
-            canClickMic = true
-        }
-        
         composeTestRule.setContent {
             WhizTheme {
+                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
+                var isWaitingForResponse by androidx.compose.runtime.mutableStateOf(false)
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
+                var canClickMic by androidx.compose.runtime.mutableStateOf(true)
+                
+                fun startWaitingForResponse() {
+                    isWaitingForResponse = true
+                    // Button remains red mute but user can still click to disable continuous listening
+                    canClickMic = (currentState == MicButtonState.RED_MUTE)
+                }
+                
+                fun finishWaitingForResponse() {
+                    isWaitingForResponse = false
+                    // Restore button state based on continuous listening
+                    currentState = if (isContinuousListening) MicButtonState.RED_MUTE else MicButtonState.BLUE_MIC
+                    canClickMic = true
+                }
+                
                 androidx.compose.material3.Button(
                     onClick = { startWaitingForResponse() }
                 ) {
@@ -246,49 +248,49 @@ class MicrophoneButtonStateTest {
         }
         
         // Initial state
-        assert(currentState == MicButtonState.RED_MUTE)
-        assert(isWaitingForResponse == false)
-        assert(canClickMic == true)
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can click mic: true").assertIsDisplayed()
         
         // Start waiting
         composeTestRule.onNodeWithText("Start waiting for response").performClick()
         
         // Should still be red mute but with waiting state
-        assert(currentState == MicButtonState.RED_MUTE)
-        assert(isWaitingForResponse == true)
-        assert(canClickMic == true) // Can still click to disable continuous listening
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can click mic: true").assertIsDisplayed()
         
         // Finish waiting
         composeTestRule.onNodeWithText("Finish waiting for response").performClick()
         
         // Should restore to appropriate state
-        assert(currentState == MicButtonState.RED_MUTE) // Continuous listening still on
-        assert(isWaitingForResponse == false)
-        assert(canClickMic == true)
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can click mic: true").assertIsDisplayed()
     }
 
     @Test
     fun micButtonState_ttsReadingTransitions_correctBehavior() {
         // Test button behavior during TTS reading
-        var currentState = MicButtonState.RED_MUTE
-        var isTTSReading = false
-        var isContinuousListening = true
-        var canAcceptNewInput = true
-        
-        fun startTTSReading() {
-            isTTSReading = true
-            canAcceptNewInput = false
-            // Mic behaves like waiting for response
-        }
-        
-        fun stopTTSReading() {
-            isTTSReading = false
-            canAcceptNewInput = true
-            // Mic immediately becomes available
-        }
-        
         composeTestRule.setContent {
             WhizTheme {
+                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
+                var isTTSReading by androidx.compose.runtime.mutableStateOf(false)
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
+                var canAcceptNewInput by androidx.compose.runtime.mutableStateOf(true)
+                
+                fun startTTSReading() {
+                    isTTSReading = true
+                    canAcceptNewInput = false
+                    // Mic behaves like waiting for response
+                }
+                
+                fun stopTTSReading() {
+                    isTTSReading = false
+                    canAcceptNewInput = true
+                    // Mic immediately becomes available
+                }
+                
                 androidx.compose.material3.Button(
                     onClick = { startTTSReading() }
                 ) {
@@ -306,25 +308,25 @@ class MicrophoneButtonStateTest {
         }
         
         // Initial state
-        assert(currentState == MicButtonState.RED_MUTE)
-        assert(isTTSReading == false)
-        assert(canAcceptNewInput == true)
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TTS reading: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can accept input: true").assertIsDisplayed()
         
         // Start TTS
         composeTestRule.onNodeWithText("Start TTS").performClick()
         
         // During TTS reading
-        assert(currentState == MicButtonState.RED_MUTE) // Still red mute
-        assert(isTTSReading == true)
-        assert(canAcceptNewInput == false) // Can't accept new input
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed() // Still red mute
+        composeTestRule.onNodeWithText("TTS reading: true").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can accept input: false").assertIsDisplayed() // Can't accept new input
         
         // Stop TTS
         composeTestRule.onNodeWithText("Stop TTS").performClick()
         
         // After stopping TTS
-        assert(currentState == MicButtonState.RED_MUTE) // Continuous listening preserved
-        assert(isTTSReading == false)
-        assert(canAcceptNewInput == true) // Immediately available
+        composeTestRule.onNodeWithText("Button state: RED_MUTE").assertIsDisplayed() // Continuous listening preserved
+        composeTestRule.onNodeWithText("TTS reading: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can accept input: true").assertIsDisplayed() // Immediately available
     }
 
     @Test

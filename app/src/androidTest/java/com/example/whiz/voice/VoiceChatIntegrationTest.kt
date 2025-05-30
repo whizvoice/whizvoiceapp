@@ -1,5 +1,7 @@
 package com.example.whiz.voice
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasContentDescription
@@ -48,6 +50,7 @@ class VoiceChatIntegrationTest {
                     transcription = transcription,
                     isListening = isListening,
                     isInputDisabled = false,
+                    isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = isContinuousListening,
                     onInputChange = { inputText = it },
@@ -78,6 +81,7 @@ class VoiceChatIntegrationTest {
                     transcription = transcription,
                     isListening = isListening,
                     isInputDisabled = false,
+                    isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = isContinuousListening,
                     onInputChange = {},
@@ -108,6 +112,7 @@ class VoiceChatIntegrationTest {
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true,  // Disabled while responding
+                    isMicDisabled = false,   // Mic can still be used to turn off continuous listening
                     isResponding = isResponding,
                     isContinuousListeningEnabled = isContinuousListening,
                     onInputChange = {},
@@ -143,6 +148,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
+                        isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = {},
@@ -187,6 +193,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
+                        isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = {},
@@ -214,18 +221,18 @@ class VoiceChatIntegrationTest {
     @Test
     fun chatInputBar_textInput_disablesContinuousListening() {
         // Test typing text should change mic button to send button
-        var inputText = ""
-        var isContinuousListening = true
-        var hasTypedText = false
-        
-        fun handleTextInput(text: String) {
-            inputText = text
-            hasTypedText = text.isNotBlank()
-            // In real implementation, typing would change button state
-        }
-        
         composeTestRule.setContent {
             WhizTheme {
+                var inputText by androidx.compose.runtime.mutableStateOf("")
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
+                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
+                
+                fun handleTextInput(text: String) {
+                    inputText = text
+                    hasTypedText = text.isNotBlank()
+                    // In real implementation, typing would change button state
+                }
+                
                 androidx.compose.foundation.layout.Column {
                     androidx.compose.material3.Text("Input: '$inputText'")
                     androidx.compose.material3.Text("Has typed text: $hasTypedText")
@@ -235,6 +242,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
+                        isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = { handleTextInput(it) },
@@ -242,20 +250,25 @@ class VoiceChatIntegrationTest {
                         onMicClick = {},
                         surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                     )
+                    
+                    // Test button to simulate typing
+                    androidx.compose.material3.Button(
+                        onClick = { handleTextInput("Hello world") }
+                    ) {
+                        androidx.compose.material3.Text("Simulate Typing")
+                    }
                 }
             }
         }
         
         // Initial state
-        assert(inputText.isEmpty())
-        assert(hasTypedText == false)
+        composeTestRule.onNodeWithText("Input: ''").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Has typed text: false").assertIsDisplayed()
         
         // Simulate typing
-        handleTextInput("Hello world")
+        composeTestRule.onNodeWithText("Simulate Typing").performClick()
         
         // Verify text input state
-        assert(inputText == "Hello world")
-        assert(hasTypedText == true)
         composeTestRule.onNodeWithText("Input: 'Hello world'").assertIsDisplayed()
         composeTestRule.onNodeWithText("Has typed text: true").assertIsDisplayed()
     }
@@ -278,6 +291,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = !canAcceptInput, // Disabled when TTS reading
+                        isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = {},
@@ -299,19 +313,19 @@ class VoiceChatIntegrationTest {
     @Test
     fun chatInputBar_complexStateFlow_normalToVoiceActivated() {
         // Test transition from normal chat to voice-activated behavior
-        var chatMode = "NORMAL"  // NORMAL, VOICE_ACTIVATED
-        var isContinuousListening = true
-        var isTTSEnabled = false
-        var currentPhase = "INITIAL"  // INITIAL, SPEAKING, WAITING, REPLIED
-        
-        fun simulateVoiceActivation() {
-            chatMode = "VOICE_ACTIVATED"
-            isTTSEnabled = true  // Voice activation enables TTS
-            isContinuousListening = true
-        }
-        
         composeTestRule.setContent {
             WhizTheme {
+                var chatMode by androidx.compose.runtime.mutableStateOf("NORMAL")  // NORMAL, VOICE_ACTIVATED
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
+                var isTTSEnabled by androidx.compose.runtime.mutableStateOf(false)
+                var currentPhase by androidx.compose.runtime.mutableStateOf("INITIAL")  // INITIAL, SPEAKING, WAITING, REPLIED
+                
+                fun simulateVoiceActivation() {
+                    chatMode = "VOICE_ACTIVATED"
+                    isTTSEnabled = true  // Voice activation enables TTS
+                    isContinuousListening = true
+                }
+                
                 androidx.compose.foundation.layout.Column {
                     androidx.compose.material3.Text("Chat mode: $chatMode")
                     androidx.compose.material3.Text("TTS enabled: $isTTSEnabled")
@@ -328,6 +342,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
+                        isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = {},
@@ -340,17 +355,13 @@ class VoiceChatIntegrationTest {
         }
         
         // Initial normal state
-        assert(chatMode == "NORMAL")
-        assert(isTTSEnabled == false)
-        assert(isContinuousListening == true)
+        composeTestRule.onNodeWithText("Chat mode: NORMAL").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TTS enabled: false").assertIsDisplayed()
         
         // Simulate voice activation
         composeTestRule.onNodeWithText("Activate via OK Google").performClick()
         
         // Verify voice-activated state
-        assert(chatMode == "VOICE_ACTIVATED")
-        assert(isTTSEnabled == true)  // Should enable TTS
-        assert(isContinuousListening == true)  // Should remain on
         composeTestRule.onNodeWithText("Chat mode: VOICE_ACTIVATED").assertIsDisplayed()
         composeTestRule.onNodeWithText("TTS enabled: true").assertIsDisplayed()
     }
@@ -399,6 +410,7 @@ class VoiceChatIntegrationTest {
                         transcription = "",
                         isListening = false,
                         isInputDisabled = isWaitingForResponse,
+                        isMicDisabled = false,
                         isResponding = isWaitingForResponse,
                         isContinuousListeningEnabled = isContinuousListening,
                         onInputChange = { inputText = it },
