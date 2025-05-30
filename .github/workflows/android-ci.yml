@@ -200,9 +200,24 @@ jobs:
         if: success() || failure()
         with:
           name: Instrumented Test Results (API ${{ matrix.api-level }})
-          path: "app/build/outputs/androidTest-results/connected/TEST-*.xml"
+          path: |
+            app/build/outputs/androidTest-results/connected/TEST-*.xml
+            app/build/outputs/androidTest-results/connected/debug/TEST-*.xml
+            app/build/test-results/connectedDebugAndroidTest/TEST-*.xml
           reporter: java-junit
           fail-on-error: false
+
+      - name: Debug - List test result files
+        if: always()
+        run: |
+          echo "Searching for test result files..."
+          find . -name "TEST-*.xml" -type f 2>/dev/null || echo "No TEST-*.xml files found"
+          echo "Checking androidTest-results directory..."
+          ls -la app/build/outputs/androidTest-results/ 2>/dev/null || echo "androidTest-results directory not found"
+          echo "Checking if connected subdirectory exists..."
+          ls -la app/build/outputs/androidTest-results/connected/ 2>/dev/null || echo "connected subdirectory not found"
+          echo "Checking test-results directory..."
+          ls -la app/build/test-results/ 2>/dev/null || echo "test-results directory not found"
 
       - name: Upload instrumented test results
         uses: actions/upload-artifact@v4
