@@ -179,42 +179,32 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
+            #!/bin/bash
+            set -e
+
             echo "🚀 Starting instrumented tests..."
 
             # Wait for emulator to be ready
             echo "⏳ Waiting for emulator..."
             adb wait-for-device
 
-            # Simple boot check with timeout
+            # Wait for system to boot (bash syntax)
             echo "Waiting for system boot..."
-            timeout=30
-            while [ $timeout -gt 0 ]; do
-              if adb shell getprop sys.boot_completed | grep -q "1"; then
-                echo "System booted!"
-                break
-              fi
-              echo "Still booting... ($timeout seconds left)"
-              sleep 2
-              timeout=$((timeout - 1))
+            while [[ -z $(adb shell getprop sys.boot_completed | tr -d '\r') ]]; do
+              echo "Still booting..."
+              sleep 3
             done
 
-            # Give it a few extra seconds to be sure
-            sleep 5
             echo "Emulator ready!"
 
             # Show device info
             echo "📱 Device Info:"
-            adb shell getprop ro.product.model
-            adb shell getprop ro.build.version.sdk
+            echo "Model: $(adb shell getprop ro.product.model)"
+            echo "API Level: $(adb shell getprop ro.build.version.sdk)"
 
             # Build APKs
             echo "🔨 Building APKs..."
             ./gradlew assembleDebug assembleDebugAndroidTest --parallel --build-cache
-
-            if [ $? -ne 0 ]; then
-              echo "❌ APK build failed"
-              exit 1
-            fi
 
             # Install APKs
             echo "📦 Installing APKs..."
@@ -230,15 +220,17 @@ jobs:
             cat test_results.txt
 
             if grep -q "OK (" test_results.txt; then
-              PASSED_TESTS=$(echo "$(grep 'OK (' test_results.txt)" | sed 's/.*OK (\([0-9]*\) tests).*/\1/')
+              PASSED_TESTS=$(grep "OK (" test_results.txt | sed 's/.*OK (\([0-9]*\) tests).*/\1/')
               echo "✅ Instrumented tests completed: $PASSED_TESTS tests passed"
               
               # Create JUnit XML for test reporter
               mkdir -p app/build/outputs/androidTest-results/connected/
-              echo '<?xml version="1.0" encoding="UTF-8"?>' > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml
-              echo "<testsuite name=\"InstrumentedTests\" tests=\"$PASSED_TESTS\" failures=\"0\" errors=\"0\" time=\"0\" package=\"com.example.whiz\">" >> app/build/outputs/androidTest-results/connected/TEST-instrumented.xml
-              echo '  <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="0"/>' >> app/build/outputs/androidTest-results/connected/TEST-instrumented.xml
-              echo '</testsuite>' >> app/build/outputs/androidTest-results/connected/TEST-instrumented.xml
+              cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <testsuite name="InstrumentedTests" tests="$PASSED_TESTS" failures="0" errors="0" time="0" package="com.example.whiz">
+              <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="0"/>
+            </testsuite>
+            EOF
               
               exit 0
             elif grep -q "FAILURES!!!" test_results.txt; then
