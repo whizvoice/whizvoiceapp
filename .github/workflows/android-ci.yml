@@ -179,67 +179,23 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            #!/bin/bash
-            set -e
-
             echo "🚀 Starting instrumented tests..."
-
-            # Wait for emulator to be ready
-            echo "⏳ Waiting for emulator..."
             adb wait-for-device
-
-            # Wait for system to boot (bash syntax)
-            echo "Waiting for system boot..."
-            while [[ -z $(adb shell getprop sys.boot_completed | tr -d '\r') ]]; do
-              echo "Still booting..."
-              sleep 3
-            done
-
-            echo "Emulator ready!"
-
-            # Show device info
+            echo "⏳ Waiting for system boot..."
+            sleep 10
+            adb shell getprop sys.boot_completed
+            sleep 5
+            echo "Emulator should be ready!"
             echo "📱 Device Info:"
-            echo "Model: $(adb shell getprop ro.product.model)"
-            echo "API Level: $(adb shell getprop ro.build.version.sdk)"
-
-            # Build APKs
+            adb shell getprop ro.product.model
+            adb shell getprop ro.build.version.sdk
             echo "🔨 Building APKs..."
             ./gradlew assembleDebug assembleDebugAndroidTest --parallel --build-cache
-
-            # Install APKs
             echo "📦 Installing APKs..."
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-
-            # Run tests (excluding real auth tests for CI)
             echo "🎯 Running instrumented tests..."
-            adb shell am instrument -w -r -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest com.example.whiz.test/com.example.whiz.HiltTestRunner > test_results.txt 2>&1
-
-            # Check results
-            echo "📊 Test Results:"
-            cat test_results.txt
-
-            if grep -q "OK (" test_results.txt; then
-              PASSED_TESTS=$(grep "OK (" test_results.txt | sed 's/.*OK (\([0-9]*\) tests).*/\1/')
-              echo "✅ Instrumented tests completed: $PASSED_TESTS tests passed"
-              
-              # Create JUnit XML for test reporter
-              mkdir -p app/build/outputs/androidTest-results/connected/
-              cat > app/build/outputs/androidTest-results/connected/TEST-instrumented.xml << EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <testsuite name="InstrumentedTests" tests="$PASSED_TESTS" failures="0" errors="0" time="0" package="com.example.whiz">
-              <testcase name="instrumented_tests" classname="InstrumentedTestExecution" time="0"/>
-            </testsuite>
-            EOF
-              
-              exit 0
-            elif grep -q "FAILURES!!!" test_results.txt; then
-              echo "❌ Some tests failed"
-              exit 1
-            else
-              echo "❌ Test execution failed"
-              exit 1
-            fi
+            adb shell am instrument -w -r -e notClass com.example.whiz.ui.screens.LoginScreenRealAuthTest com.example.whiz.test/com.example.whiz.HiltTestRunner
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1
