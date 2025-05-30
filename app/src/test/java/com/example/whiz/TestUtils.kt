@@ -66,4 +66,4 @@ object TestUtils {
 /**
  * Extension functions for testing
  */
-fun String.toTestUserId(): String = "test_$this" 
+fun String.toTestUserId(): String = "test_$this"

@@ -2,7 +2,91 @@
 
 ## Overview
 
-This guide explains our testing strategy to help prevent breaking existing functionality when making changes to the Android app.
+This guide explains our testing strategy to help prevent breaking existing functionality when making changes to the Android app. It covers both the comprehensive testing strategy and the specific tests currently implemented.
+
+## Current Test Implementation
+
+### Test Structure
+
+```
+app/src/
+├── test/                           # Unit Tests (JVM)
+│   └── java/com/example/whiz/
+│       ├── TestUtils.kt           # Common test utilities
+│       ├── TestData.kt            # Mock data factory
+│       ├── data/
+│       │   ├── local/DatabaseEntitiesTest.kt
+│       │   └── repository/
+│       │       ├── WhizRepositoryTest.kt
+│       │       └── WhizRepositoryIntegrationTest.kt
+│       └── ui/viewmodels/
+│           ├── AuthViewModelTest.kt
+│           └── ChatsListViewModelTest.kt
+└── androidTest/                   # Instrumented Tests (Android)
+    └── java/com/example/whiz/ui/screens/
+        ├── ChatsListScreenTest.kt  # UI tests for chat list
+        ├── ChatScreenTest.kt       # UI tests for chat screen
+        ├── LoginScreenTest.kt      # UI tests for login screen
+        └── SettingsScreenTest.kt   # UI tests for settings screen
+```
+
+### Implemented Tests
+
+#### Unit Tests (JVM)
+
+**WhizRepositoryIntegrationTest** - Tests the repository layer with mocked API service:
+
+- ✅ Chat creation and error handling
+- ✅ Chat retrieval and caching
+- ✅ Message operations (add user/assistant messages)
+- ✅ Chat title derivation and truncation
+- ✅ Incremental sync operations
+- ✅ Error handling and fallback behavior
+- ✅ Message count operations
+- ✅ Chat persistence logic
+
+**ViewModelTests** - Test business logic and state management:
+
+- ✅ AuthViewModelTest - Authentication flow testing
+- ✅ ChatsListViewModelTest - Chat list operations
+
+**DatabaseEntitiesTest** - Test data transformations and entity operations
+
+#### UI Tests (Instrumented)
+
+**ChatsListScreenTest** - Tests the main chat list interface:
+
+- ✅ Empty state display
+- ✅ Chat list rendering
+- ✅ Loading indicator
+- ✅ FAB (New Chat) functionality
+- ✅ Settings button navigation
+- ✅ Chat item click handling
+
+**ChatScreenTest** - Tests the individual chat interface:
+
+- ✅ Empty conversation state
+- ✅ Message display (user and assistant)
+- ✅ Input field presence
+- ✅ Microphone button display
+- ✅ Navigation buttons (back, settings)
+- ✅ Message sending functionality
+- ✅ Loading states
+
+**LoginScreenTest** - Tests the authentication interface:
+
+- ✅ Welcome message display
+- ✅ Google Sign-In button
+- ✅ Loading states
+- ✅ Button state management
+
+**SettingsScreenTest** - Tests the settings interface:
+
+- ✅ Settings title and navigation
+- ✅ Voice settings section
+- ✅ Speech speed and pitch sliders
+- ✅ Sign out functionality
+- ✅ Delete all chats functionality
 
 ## Testing Strategy
 
@@ -26,58 +110,26 @@ This guide explains our testing strategy to help prevent breaking existing funct
 - **Run on**: Device/Emulator
 - **Tools**: Compose testing, Espresso
 
-## What Should Be Tested
-
-### High Priority ⚡
-
-#### ViewModels
-
-- **Why**: Contains business logic, most likely to break
-- **Test**: State changes, error handling, loading states, user actions
-- **Example**: `ChatsListViewModelTest`, `AuthViewModelTest`
-
-#### Repository Layer
-
-- **Why**: Handles data operations and caching
-- **Test**: API calls, error handling, data transformation, caching logic
-- **Example**: `WhizRepositoryTest`
-
-#### Data Transformations
-
-- **Why**: Data mapping errors can cause crashes
-- **Test**: Entity conversions, API response parsing
-- **Example**: `DatabaseEntitiesTest`
-
-### Medium Priority 🔄
-
-#### Authentication Logic
-
-- **Why**: Critical for app functionality
-- **Test**: Sign-in flow, token management, error states
-
-#### Network Layer
-
-- **Why**: API changes can break the app
-- **Test**: Request/response handling, error scenarios
-
-#### Database Operations
-
-- **Why**: Data corruption can cause crashes
-- **Test**: CRUD operations, migrations, constraints
-
-### Lower Priority (but still important) 📝
-
-#### Utility Functions
-
-- **Test**: Date formatting, string manipulation, calculations
-
-#### UI Components
-
-- **Test**: User interactions, navigation, state display
-
 ## Running Tests
 
 ### Quick Commands
+
+```bash
+# Run all tests with detailed reporting
+./run_all_tests.sh
+
+# Run only unit tests
+./gradlew testDebugUnitTest
+
+# Run only instrumented tests (requires device/emulator)
+./gradlew connectedAndroidTest
+
+# Run specific test class
+./gradlew testDebugUnitTest --tests="*WhizRepositoryIntegrationTest*"
+./gradlew connectedAndroidTest --tests="*ChatsListScreenTest*"
+```
+
+### Alternative Test Runner
 
 ```bash
 # Run all unit tests
@@ -93,58 +145,13 @@ This guide explains our testing strategy to help prevent breaking existing funct
 ./run_tests.sh coverage
 ```
 
-### Manual Gradle Commands
+## Test Reports
 
-```bash
-# Unit tests only
-./gradlew test
+After running tests, reports are generated at:
 
-# Specific test class
-./gradlew test --tests "com.example.whiz.ui.viewmodels.ChatsListViewModelTest"
-
-# Specific test method
-./gradlew test --tests "ChatsListViewModelTest.createNewChat should return chat ID from repository"
-
-# Integration tests (requires device/emulator)
-./gradlew connectedAndroidTest
-
-# Generate coverage report
-./gradlew testDebugUnitTestCoverage
-```
-
-## Test Structure
-
-### Good Test Anatomy
-
-```kotlin
-@Test
-fun `descriptive test name explaining what should happen`() = runTest {
-    // Given - Setup test data and mocks
-    val expectedResult = "expected value"
-    whenever(mockDependency.method()).thenReturn(expectedResult)
-
-    // When - Execute the action being tested
-    val result = systemUnderTest.performAction()
-
-    // Then - Verify the outcome
-    assertThat(result).isEqualTo(expectedResult)
-    verify(mockDependency).method()
-}
-```
-
-### Test Naming Convention
-
-Use descriptive names that explain:
-
-- **What** is being tested
-- **When** (under what conditions)
-- **Should** (expected outcome)
-
-Examples:
-
-- `when user creates new chat, should return chat ID from repository`
-- `when API fails, should return cached data and not crash`
-- `when sign in succeeds, should save tokens and update auth state`
+- **Unit Tests**: `app/build/reports/tests/testDebugUnitTest/index.html`
+- **Instrumented Tests**: `app/build/reports/androidTests/connected/index.html`
+- **Coverage**: `app/build/reports/coverage/testDebugUnitTestCoverage/html/index.html`
 
 ## Testing Tools We Use
 
@@ -162,6 +169,31 @@ Examples:
 - **Room Testing**: Testing database operations
 - **Compose Testing**: Testing UI components
 - **Espresso**: UI testing (if needed)
+
+## Test Dependencies
+
+### Unit Testing
+
+```kotlin
+testImplementation("org.mockito:mockito-core:5.8.0")
+testImplementation("org.mockito:mockito-inline:5.2.0")
+testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+testImplementation("com.google.truth:truth:1.1.4")
+testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
+testImplementation("androidx.arch.core:core-testing:2.2.0")
+testImplementation("app.cash.turbine:turbine:1.0.0")
+```
+
+### Instrumented Testing
+
+```kotlin
+androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.7.8")
+androidTestImplementation("androidx.test:core:1.5.0")
+androidTestImplementation("androidx.test:runner:1.5.2")
+androidTestImplementation("androidx.test:rules:1.5.0")
+androidTestImplementation("androidx.test.ext:junit:1.1.5")
+androidTestImplementation("com.google.dagger:hilt-android-testing:2.56")
+```
 
 ## Common Testing Patterns
 
@@ -214,48 +246,43 @@ fun `when network fails, should handle gracefully and not crash`() = runTest {
 }
 ```
 
-## When to Write Tests
+## Testing Strategy for Remote-First Architecture
 
-### Before Making Changes
+Since the app uses a remote-first architecture with Supabase:
 
-1. **Identify affected components**: What ViewModels, repositories, or data classes will change?
-2. **Write tests for current behavior**: Ensure existing functionality is captured
-3. **Make your changes**: Implement the new feature or fix
-4. **Update tests**: Modify tests to reflect new expected behavior
-5. **Run all tests**: Ensure nothing else broke
+- **Unit tests** mock the API service to test business logic
+- **Integration tests** verify repository behavior with mocked dependencies
+- **UI tests** focus on user interactions and screen states
+- **No Room database tests** (since local storage is minimal)
 
-### Red-Green-Refactor (TDD)
+### Mocking Strategy
 
-1. **Red**: Write a failing test for new functionality
-2. **Green**: Write minimal code to make the test pass
-3. **Refactor**: Improve the code while keeping tests green
+- **API Service**: Fully mocked for predictable test behavior
+- **SharedPreferences**: Mocked for caching tests
+- **Android Framework**: Mocked using testOptions configuration
 
-## Debugging Test Failures
+## Test Coverage Areas
 
-### Common Issues
+### ✅ Currently Covered
 
-1. **Async/Coroutine Issues**
+- Repository business logic and error handling
+- UI component rendering and interactions
+- User input handling and validation
+- Navigation and callback triggering
+- Loading states and empty states
+- Authentication flow
+- Settings management
+- ViewModel state management
+- Data transformations
 
-   - Use `runTest` for suspend functions
-   - Use `MainDispatcherRule` for ViewModels
-   - Use `Turbine` for testing Flows
+### 🔄 Future Testing Areas
 
-2. **Mock Setup Issues**
-
-   - Ensure all dependencies are mocked
-   - Use `whenever()` to set up mock behavior
-   - Verify mock interactions with `verify()`
-
-3. **Hilt/DI Issues**
-   - Use `@HiltAndroidTest` for integration tests
-   - Create test modules for mocked dependencies
-
-### Test Reports
-
-After running tests, check reports at:
-
-- `app/build/reports/tests/testDebugUnitTest/index.html`
-- `app/build/reports/coverage/testDebugUnitTestCoverage/html/index.html`
+- End-to-end tests with real API (staging environment)
+- Performance testing for large chat histories
+- Accessibility testing
+- Network connectivity testing
+- Voice input/output testing (when implemented)
+- Database migration testing (if Room is added later)
 
 ## Best Practices
 

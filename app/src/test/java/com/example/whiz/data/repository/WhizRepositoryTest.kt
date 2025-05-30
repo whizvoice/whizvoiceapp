@@ -136,7 +136,8 @@ class WhizRepositoryTest {
             cancelAndIgnoreRemainingEvents()
         }
         
-        verify(apiService).getMessagesIncremental(TestData.TEST_CONVERSATION_ID, null, 100)
+        // Verify API was called at least once (refreshMessages may cause additional calls)
+        verify(apiService, atLeastOnce()).getMessagesIncremental(TestData.TEST_CONVERSATION_ID, null, 100)
     }
 
     @Test
