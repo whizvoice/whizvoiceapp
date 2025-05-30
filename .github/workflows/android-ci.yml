@@ -186,7 +186,7 @@ jobs:
             adb wait-for-device
 
             # Wait for system to boot
-            while [[ -z $(adb shell getprop sys.boot_completed | tr -d '\r') ]]; do
+            while [ -z "$(adb shell getprop sys.boot_completed | tr -d '\r')" ]; do
               echo "Still booting..."
               sleep 3
             done
