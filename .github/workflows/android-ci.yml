@@ -152,7 +152,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ matrix.api-level }}-${{ matrix.target }}-${{ matrix.arch }}-v3
+          key: avd-ui-${{ matrix.api-level }}-${{ matrix.target }}-${{ matrix.arch }}-v1
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -189,8 +189,11 @@ jobs:
             echo "📱 Device Info:"
             adb shell getprop ro.product.model
             adb shell getprop ro.build.version.sdk
+            echo "🧹 Cleaning up any existing app installations..."
+            adb uninstall com.example.whiz || echo "No existing app to uninstall"
+            adb uninstall com.example.whiz.test || echo "No existing test app to uninstall"
             echo "🧪 Running core UI tests for GitHub Actions..."
-            ./gradlew connectedDebugAndroidTest --stacktrace --continue -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.ui.screens.ChatScreenTest
+            ./gradlew connectedDebugAndroidTest --stacktrace --continue -Pandroid.testInstrumentationRunnerArguments.notClass=com.example.whiz.ui.screens.LoginScreenRealAuthTest,com.example.whiz.voice.VoiceInteractionFlowTest,com.example.whiz.voice.MicrophoneButtonStateTest,com.example.whiz.voice.VoiceChatIntegrationTest
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1
@@ -307,8 +310,11 @@ jobs:
             echo "📱 Device Info:"
             adb shell getprop ro.product.model
             adb shell getprop ro.build.version.sdk
+            echo "🧹 Cleaning up any existing app installations..."
+            adb uninstall com.example.whiz || echo "No existing app to uninstall"
+            adb uninstall com.example.whiz.test || echo "No existing test app to uninstall"
             echo "🧪 Running microphone-specific tests..."
-            ./gradlew connectedDebugAndroidTest --stacktrace --continue -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.voice.MicrophoneButtonStateTest#micButtonState_debugTest_simpleText
+            ./gradlew connectedDebugAndroidTest --stacktrace --continue -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.voice.MicrophoneButtonStateTest#micButtonState_initialState_isCorrect
 
       - name: Generate microphone test report
         uses: dorny/test-reporter@v1
