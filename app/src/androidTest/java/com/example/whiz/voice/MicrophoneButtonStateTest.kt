@@ -326,12 +326,12 @@ class MicrophoneButtonStateTest {
     @Test
     fun micButtonState_basicStateTransitions_work() {
         // Test basic state transitions work correctly
-        var currentState = MicButtonState.BLUE_MIC
-        var isContinuousListening = false
-        var hasTypedText = false
-        
         composeTestRule.setContent {
             WhizTheme {
+                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.BLUE_MIC)
+                var isContinuousListening by androidx.compose.runtime.mutableStateOf(false)
+                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
+                
                 androidx.compose.foundation.layout.Column {
                     androidx.compose.material3.Text("State: $currentState")
                     androidx.compose.material3.Text("Listening: $isContinuousListening")
