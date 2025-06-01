@@ -109,13 +109,7 @@ class MicrophoneButtonStateTest {
             }
         }
         
-        // Debug: Print the UI tree to see what's actually there
-        composeTestRule.onRoot().printToLog("ACTIVE_LISTENING_TEST")
-        
-        // Should show listening placeholder
-        composeTestRule.onNodeWithText("Listening...").assertIsDisplayed()
-        
-        // Should display transcription
+        // Should display transcription (not placeholder since transcription has content)
         composeTestRule.onNodeWithText("I'm speaking right now...").assertIsDisplayed()
         
         // Active listening should show "Stop listening"
@@ -182,6 +176,8 @@ class MicrophoneButtonStateTest {
     fun chatInputBar_respondingWithoutContinuousListening_showsBlueMicClickable() {
         // Test: During response without continuous listening, shows blue mic that's clickable
         // The app design allows users to enable continuous listening even while bot is responding
+        var micClickCount = 0
+        
         composeTestRule.setContent {
             WhizTheme {
                 ChatInputBar(
@@ -194,7 +190,7 @@ class MicrophoneButtonStateTest {
                     isContinuousListeningEnabled = false, // Continuous listening is off
                     onInputChange = {},
                     onSendClick = {},
-                    onMicClick = {},
+                    onMicClick = { micClickCount++ }, // Count clicks to verify button works
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -205,26 +201,6 @@ class MicrophoneButtonStateTest {
         
         // During response without continuous listening, should show option to turn it on
         composeTestRule.onNodeWithContentDescription("Turn on continuous listening").assertIsDisplayed()
-        
-        // Test that the button is enabled and clickable
-        var micClickCount = 0
-        composeTestRule.setContent {
-            WhizTheme {
-                ChatInputBar(
-                    inputText = "My previous message",
-                    transcription = "",
-                    isListening = false,
-                    isInputDisabled = true,
-                    isMicDisabled = false, // This makes the button enabled
-                    isResponding = true,
-                    isContinuousListeningEnabled = false,
-                    onInputChange = {},
-                    onSendClick = {},
-                    onMicClick = { micClickCount++ }, // Count clicks to verify button works
-                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
-                )
-            }
-        }
         
         // Click the button
         composeTestRule.onNodeWithContentDescription("Turn on continuous listening").performClick()
