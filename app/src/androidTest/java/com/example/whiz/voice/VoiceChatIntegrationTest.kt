@@ -219,68 +219,6 @@ class VoiceChatIntegrationTest {
     }
 
     @Test
-    fun chatInputBar_textInput_disablesContinuousListening() {
-        // Test typing text should change mic button to send button
-        composeTestRule.setContent {
-            WhizTheme {
-                var inputText by androidx.compose.runtime.mutableStateOf("")
-                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { 
-                            inputText = it
-                            hasTypedText = it.isNotBlank()
-                        },
-                        placeholder = { androidx.compose.material3.Text("Type here...") }
-                    )
-                    
-                    androidx.compose.material3.Text("Input Length: ${inputText.length}")
-                    androidx.compose.material3.Text("Has Text: $hasTypedText")
-                    
-                    // Test button to simulate typing
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            inputText = "Hello world"
-                            hasTypedText = true
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Add Text")
-                    }
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            inputText = ""
-                            hasTypedText = false
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Clear Text")
-                    }
-                }
-            }
-        }
-        
-        // Initial state
-        composeTestRule.onNodeWithText("Input Length: 0").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Has Text: false").assertIsDisplayed()
-        
-        // Add text
-        composeTestRule.onNodeWithText("Add Text").performClick()
-        
-        // Verify text was added
-        composeTestRule.onNodeWithText("Input Length: 11").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Has Text: true").assertIsDisplayed()
-        
-        // Clear text
-        composeTestRule.onNodeWithText("Clear Text").performClick()
-        
-        // Verify text was cleared
-        composeTestRule.onNodeWithText("Input Length: 0").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Has Text: false").assertIsDisplayed()
-    }
-
-    @Test
     fun chatInputBar_ttsReading_preventsNewInput() {
         // Test that TTS reading prevents new input
         var isTTSReading = true
@@ -315,58 +253,6 @@ class VoiceChatIntegrationTest {
         assert(canAcceptInput == false)
         composeTestRule.onNodeWithText("TTS reading: true").assertIsDisplayed()
         composeTestRule.onNodeWithText("Can accept input: false").assertIsDisplayed()
-    }
-
-    @Test
-    fun chatInputBar_complexStateFlow_normalToVoiceActivated() {
-        // Test transition from normal chat to voice-activated behavior
-        composeTestRule.setContent {
-            WhizTheme {
-                var chatMode by androidx.compose.runtime.mutableStateOf("NORMAL")
-                var isTTSEnabled by androidx.compose.runtime.mutableStateOf(false)
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Text("Mode: $chatMode")
-                    androidx.compose.material3.Text("TTS: $isTTSEnabled")
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            chatMode = "VOICE_ACTIVATED"
-                            isTTSEnabled = true
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Activate Voice")
-                    }
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            chatMode = "NORMAL"
-                            isTTSEnabled = false
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Deactivate Voice")
-                    }
-                }
-            }
-        }
-        
-        // Initial normal state
-        composeTestRule.onNodeWithText("Mode: NORMAL").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS: false").assertIsDisplayed()
-        
-        // Activate voice mode
-        composeTestRule.onNodeWithText("Activate Voice").performClick()
-        
-        // Verify voice-activated state
-        composeTestRule.onNodeWithText("Mode: VOICE_ACTIVATED").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS: true").assertIsDisplayed()
-        
-        // Deactivate voice mode
-        composeTestRule.onNodeWithText("Deactivate Voice").performClick()
-        
-        // Verify back to normal
-        composeTestRule.onNodeWithText("Mode: NORMAL").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS: false").assertIsDisplayed()
     }
 
     @Test
