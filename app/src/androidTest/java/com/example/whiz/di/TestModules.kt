@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import dagger.hilt.InstallIn
+import javax.inject.Named
 
 /**
  * Test module that provides all dependencies like production but with mock services for testing
@@ -295,6 +296,7 @@ object TestAppModule {
     ): UserPreferences {
         Log.d(TAG, "🔧 Creating UserPreferences...")
         return try {
+            Log.d(TAG, "🔧 UserPreferences: apiService=${apiService::class.simpleName}, authRepository=${authRepository::class.simpleName}")
             val preferences = UserPreferences(apiService, authRepository)
             Log.d(TAG, "✅ UserPreferences created successfully")
             preferences
@@ -302,6 +304,31 @@ object TestAppModule {
             Log.e(TAG, "❌ Failed to create UserPreferences", e)
             throw e
         }
+    }
+
+    // Add a provider to verify all ViewModel dependencies are available
+    @Provides
+    @Singleton
+    @Named("DEPENDENCY_STATUS")
+    fun provideViewModelDependencyStatus(
+        @ApplicationContext context: Context,
+        repository: WhizRepository,
+        speechRecognitionService: SpeechRecognitionService,
+        whizServerRepository: WhizServerRepository,
+        authRepository: AuthRepository,
+        userPreferences: UserPreferences,
+        authApi: AuthApi
+    ): String {
+        Log.w(TAG, "🔍 DEPENDENCY CHECK: All ViewModel dependencies verified:")
+        Log.w(TAG, "  ✅ Context: ${context::class.simpleName}")
+        Log.w(TAG, "  ✅ WhizRepository: ${repository::class.simpleName}")
+        Log.w(TAG, "  ✅ SpeechRecognitionService: ${speechRecognitionService::class.simpleName}")
+        Log.w(TAG, "  ✅ WhizServerRepository: ${whizServerRepository::class.simpleName}")
+        Log.w(TAG, "  ✅ AuthRepository: ${authRepository::class.simpleName}")
+        Log.w(TAG, "  ✅ UserPreferences: ${userPreferences::class.simpleName}")
+        Log.w(TAG, "  ✅ AuthApi: ${authApi::class.simpleName}")
+        Log.w(TAG, "🎯 ALL VIEWMODEL DEPENDENCIES AVAILABLE!")
+        return "ALL VIEWMODEL DEPENDENCIES AVAILABLE!"
     }
 }
 
