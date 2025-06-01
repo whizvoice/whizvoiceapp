@@ -1,14 +1,12 @@
 package com.example.whiz.voice
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.whiz.ui.screens.ChatInputBar
 import com.example.whiz.ui.theme.WhizTheme
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -27,392 +25,281 @@ class MicrophoneButtonStateTest {
     @get:Rule(order = 1)
     val composeTestRule = createComposeRule()
 
-    // Microphone button states
-    enum class MicButtonState {
-        RED_MUTE,      // Continuous listening active (red mute button)
-        GRAYED_MIC,    // Disabled during bot response (grayed mic)
-        BLUE_MIC,      // Available for activation (blue mic)
-        SEND_BUTTON    // When user types text (send button)
-    }
-
     @Before
     fun setup() {
         hiltRule.inject()
     }
 
     @Test
-    fun micButtonState_normalChatFlow_correctTransitions() {
-        // Test complete normal chat flow state transitions
+    fun chatInputBar_continuousListening_showsRedMuteButton() {
+        // Test: Continuous listening enabled shows red mute button (mic off icon)
         composeTestRule.setContent {
             WhizTheme {
-                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
-                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
-                var isWaitingForResponse by androidx.compose.runtime.mutableStateOf(false)
-                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
-                
-                val stateString = when(currentState) {
-                    MicButtonState.RED_MUTE -> "RED_MUTE"
-                    MicButtonState.GRAYED_MIC -> "GRAYED_MIC"
-                    MicButtonState.BLUE_MIC -> "BLUE_MIC"
-                    MicButtonState.SEND_BUTTON -> "SEND_BUTTON"
-                }
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Text("State: $stateString")
-                    androidx.compose.material3.Text("Listening: $isContinuousListening")
-                    androidx.compose.material3.Text("Waiting: $isWaitingForResponse")
-                    androidx.compose.material3.Text("Typed: $hasTypedText")
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { isWaitingForResponse = !isWaitingForResponse }
-                    ) {
-                        androidx.compose.material3.Text("Toggle Waiting")
-                    }
-                }
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = true, // This should show red mute
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
         
-        // Print what's actually in the UI for debugging
-        composeTestRule.onRoot().printToLog("STATE_TEST")
+        // Verify the input bar is displayed
+        composeTestRule.onNodeWithText("Type or tap mic...").assertIsDisplayed()
         
-        // Initial state verification
-        composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Typed: false").assertIsDisplayed()
-        
-        // Toggle waiting
-        composeTestRule.onNodeWithText("Toggle Waiting").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
+        // When continuous listening is enabled during response, should show "Turn off continuous listening"
+        composeTestRule.onNodeWithContentDescription("Turn off continuous listening").assertIsDisplayed()
     }
 
     @Test
-    fun micButtonState_redMuteClick_turnsOffContinuousListening() {
-        // Test clicking red mute button to turn off continuous listening
+    fun chatInputBar_normalState_showsBlueMicButton() {
+        // Test: Normal state shows blue mic button
         composeTestRule.setContent {
             WhizTheme {
-                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
-                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
-                val isWaitingForResponse = false
-                
-                fun clickMicButton() {
-                    when (currentState) {
-                        MicButtonState.RED_MUTE -> {
-                            isContinuousListening = false
-                            currentState = if (isWaitingForResponse) MicButtonState.GRAYED_MIC else MicButtonState.BLUE_MIC
-                        }
-                        MicButtonState.BLUE_MIC -> {
-                            isContinuousListening = true
-                            currentState = MicButtonState.RED_MUTE
-                        }
-                        else -> { /* No action for other states */ }
-                    }
-                }
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Button(
-                        onClick = { clickMicButton() }
-                    ) {
-                        androidx.compose.material3.Text("Click Me")
-                    }
-                    androidx.compose.material3.Text("State: $currentState")
-                    androidx.compose.material3.Text("Listening: $isContinuousListening")
-                }
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false, // Normal state
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
         
-        // Initial state - verify components are displayed
-        composeTestRule.onNodeWithText("Click Me").assertIsDisplayed()
-        composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
+        // Verify the input bar is displayed
+        composeTestRule.onNodeWithText("Type or tap mic...").assertIsDisplayed()
         
-        // Click to change state
-        composeTestRule.onNodeWithText("Click Me").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        
-        // Verify state changed
-        composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: false").assertIsDisplayed()
-        
-        // Click again to revert
-        composeTestRule.onNodeWithText("Click Me").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        
-        // Verify back to original state
-        composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
+        // Normal state should show "Start listening"
+        composeTestRule.onNodeWithContentDescription("Start listening").assertIsDisplayed()
     }
 
     @Test
-    fun micButtonState_redMuteClickWhileWaiting_becomesGrayedMic() {
-        // Test clicking red mute while waiting for response
+    fun chatInputBar_activeListening_showsRedStopButton() {
+        // Test: Active listening shows red stop button
         composeTestRule.setContent {
             WhizTheme {
-                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.RED_MUTE)
-                var isContinuousListening by androidx.compose.runtime.mutableStateOf(true)
-                var isWaitingForResponse by androidx.compose.runtime.mutableStateOf(true)
-                
-                fun clickMicButton() {
-                    if (currentState == MicButtonState.RED_MUTE) {
-                        isContinuousListening = false
-                        currentState = if (isWaitingForResponse) MicButtonState.GRAYED_MIC else MicButtonState.BLUE_MIC
-                    }
-                }
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Button(
-                        onClick = { clickMicButton() },
-                        enabled = currentState != MicButtonState.GRAYED_MIC
-                    ) {
-                        androidx.compose.material3.Text("Mic Button")
-                    }
-                    androidx.compose.material3.Text("State: $currentState")
-                    androidx.compose.material3.Text("Waiting: $isWaitingForResponse")
-                    androidx.compose.material3.Text("Listening: $isContinuousListening")
-                }
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "I'm speaking right now...",
+                    isListening = true, // Currently listening
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
         
-        // Initial state: waiting for response with continuous listening on
-        composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
+        // Should show listening placeholder
+        composeTestRule.onNodeWithText("Listening...").assertIsDisplayed()
         
-        // Click red mute while waiting
-        composeTestRule.onNodeWithText("Mic Button").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
+        // Active listening should show "Stop listening"
+        composeTestRule.onNodeWithContentDescription("Stop listening").assertIsDisplayed()
         
-        // Should become grayed mic (disabled because still waiting)
-        composeTestRule.onNodeWithText("State: GRAYED_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
+        // Should display transcription
+        composeTestRule.onNodeWithText("I'm speaking right now...").assertIsDisplayed()
     }
 
     @Test
-    fun micButtonState_typingText_becomesSeñdButton() {
-        // Test typing text changes button to send button
+    fun chatInputBar_hasText_showsSendButton() {
+        // Test: When user has typed text, shows send button
         composeTestRule.setContent {
             WhizTheme {
-                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.BLUE_MIC)
-                var inputText by androidx.compose.runtime.mutableStateOf("")
-                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
-                
-                fun onTextChange(text: String) {
-                    inputText = text
-                    hasTypedText = text.isNotBlank()
-                    currentState = if (hasTypedText) MicButtonState.SEND_BUTTON else MicButtonState.BLUE_MIC
-                }
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { onTextChange(it) },
-                        placeholder = { androidx.compose.material3.Text("Type message...") }
-                    )
-                    androidx.compose.material3.Text("State: $currentState")
-                    androidx.compose.material3.Text("Typed: $hasTypedText")
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { onTextChange("Hello") }
-                    ) {
-                        androidx.compose.material3.Text("Add Text")
-                    }
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { onTextChange("") }
-                    ) {
-                        androidx.compose.material3.Text("Clear Text")
-                    }
-                }
+                ChatInputBar(
+                    inputText = "Hello Whiz",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Should display the typed text
+        composeTestRule.onNodeWithText("Hello Whiz").assertIsDisplayed()
+        
+        // Should show send button when text is present
+        composeTestRule.onNodeWithContentDescription("Send message").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatInputBar_respondingWithContinuousListening_showsRedMute() {
+        // Test: During response with continuous listening enabled, shows red mute
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "My previous message",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = true, // Text input disabled during response
+                    isMicDisabled = false, // Mic still works to control continuous listening
+                    isResponding = true, // Bot is responding
+                    isContinuousListeningEnabled = true, // Continuous listening is on
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Should show the previous message (grayed out)
+        composeTestRule.onNodeWithText("My previous message").assertIsDisplayed()
+        
+        // During response with continuous listening, should show option to turn it off
+        composeTestRule.onNodeWithContentDescription("Turn off continuous listening").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatInputBar_respondingWithoutContinuousListening_showsBlueMic() {
+        // Test: During response without continuous listening, shows blue mic
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "My previous message",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = true, // Text input disabled during response
+                    isMicDisabled = false,
+                    isResponding = true, // Bot is responding
+                    isContinuousListeningEnabled = false, // Continuous listening is off
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Should show the previous message
+        composeTestRule.onNodeWithText("My previous message").assertIsDisplayed()
+        
+        // During response without continuous listening, should show option to turn it on
+        composeTestRule.onNodeWithContentDescription("Turn on continuous listening").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatInputBar_micButtonClick_triggersCallback() {
+        // Test: Microphone button click triggers the callback
+        var micClickCount = 0
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    onInputChange = {},
+                    onSendClick = {},
+                    onMicClick = { micClickCount++ },
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
         
         // Initial state
-        composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Typed: false").assertIsDisplayed()
+        assert(micClickCount == 0)
         
-        // Add text
-        composeTestRule.onNodeWithText("Add Text").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("State: SEND_BUTTON").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Typed: true").assertIsDisplayed()
+        // Click the microphone button
+        composeTestRule.onNodeWithContentDescription("Start listening").performClick()
         
-        // Clear text
-        composeTestRule.onNodeWithText("Clear Text").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Typed: false").assertIsDisplayed()
+        // Verify callback was triggered
+        assert(micClickCount == 1)
     }
 
     @Test
-    fun micButtonState_waitingForResponse_correctBehavior() {
-        // Test behavior while waiting for bot response
+    fun chatInputBar_sendButtonClick_triggersCallback() {
+        // Test: Send button click triggers the callback
+        var sendClickCount = 0
+        
         composeTestRule.setContent {
             WhizTheme {
-                var isWaiting by androidx.compose.runtime.mutableStateOf(false)
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Button(
-                        onClick = { isWaiting = !isWaiting }
-                    ) {
-                        androidx.compose.material3.Text("Toggle Waiting")
-                    }
-                    androidx.compose.material3.Text("Waiting: $isWaiting")
-                    androidx.compose.material3.Text(if (isWaiting) "Bot is thinking..." else "Ready for input")
-                }
+                ChatInputBar(
+                    inputText = "Test message",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    onInputChange = {},
+                    onSendClick = { sendClickCount++ },
+                    onMicClick = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
         
         // Initial state
-        composeTestRule.onNodeWithText("Toggle Waiting").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Ready for input").assertIsDisplayed()
+        assert(sendClickCount == 0)
         
-        // Start waiting
-        composeTestRule.onNodeWithText("Toggle Waiting").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
+        // Click the send button
+        composeTestRule.onNodeWithContentDescription("Send message").performClick()
         
-        // Verify waiting state
-        composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Bot is thinking...").assertIsDisplayed()
-        
-        // Stop waiting
-        composeTestRule.onNodeWithText("Toggle Waiting").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        
-        // Verify back to ready state
-        composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Ready for input").assertIsDisplayed()
+        // Verify callback was triggered
+        assert(sendClickCount == 1)
     }
 
     @Test
-    fun micButtonState_ttsReadingTransitions_correctBehavior() {
-        // Test button behavior during TTS reading
+    fun chatInputBar_disabledState_buttonsNotClickable() {
+        // Test: When disabled, buttons should not be clickable
+        var clickCount = 0
+        
         composeTestRule.setContent {
             WhizTheme {
-                var isTTSReading by androidx.compose.runtime.mutableStateOf(false)
-                var canAcceptInput by androidx.compose.runtime.mutableStateOf(true)
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            isTTSReading = !isTTSReading
-                            canAcceptInput = !isTTSReading
-                        }
-                    ) {
-                        androidx.compose.material3.Text(if (isTTSReading) "Stop TTS" else "Start TTS")
-                    }
-                    androidx.compose.material3.Text("TTS Reading: $isTTSReading")
-                    androidx.compose.material3.Text("Can Accept Input: $canAcceptInput")
-                }
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = true, // Mic is disabled (e.g., during TTS)
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    onInputChange = {},
+                    onSendClick = { clickCount++ },
+                    onMicClick = { clickCount++ },
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
             }
         }
+        
+        // The button should be displayed but not enabled
+        composeTestRule.onNodeWithContentDescription("Start listening").assertIsDisplayed()
         
         // Initial state
-        composeTestRule.onNodeWithText("Start TTS").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS Reading: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Can Accept Input: true").assertIsDisplayed()
+        assert(clickCount == 0)
         
-        // Start TTS
-        composeTestRule.onNodeWithText("Start TTS").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
+        // Try to click the disabled button
+        composeTestRule.onNodeWithContentDescription("Start listening").performClick()
         
-        // Verify TTS reading state
-        composeTestRule.onNodeWithText("Stop TTS").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS Reading: true").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Can Accept Input: false").assertIsDisplayed()
-        
-        // Stop TTS
-        composeTestRule.onNodeWithText("Stop TTS").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        
-        // Verify back to normal state
-        composeTestRule.onNodeWithText("Start TTS").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TTS Reading: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Can Accept Input: true").assertIsDisplayed()
-    }
-
-    @Test
-    fun micButtonState_basicStateTransitions_work() {
-        // Test basic state transitions work correctly
-        composeTestRule.setContent {
-            WhizTheme {
-                var currentState by androidx.compose.runtime.mutableStateOf(MicButtonState.BLUE_MIC)
-                var isContinuousListening by androidx.compose.runtime.mutableStateOf(false)
-                var hasTypedText by androidx.compose.runtime.mutableStateOf(false)
-                
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Text("State: $currentState")
-                    androidx.compose.material3.Text("Listening: $isContinuousListening")
-                    androidx.compose.material3.Text("Text: $hasTypedText")
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            isContinuousListening = !isContinuousListening
-                            currentState = if (isContinuousListening) MicButtonState.RED_MUTE else MicButtonState.BLUE_MIC
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Toggle Listening")
-                    }
-                    
-                    androidx.compose.material3.Button(
-                        onClick = { 
-                            hasTypedText = !hasTypedText
-                            currentState = if (hasTypedText) MicButtonState.SEND_BUTTON else MicButtonState.BLUE_MIC
-                        }
-                    ) {
-                        androidx.compose.material3.Text("Toggle Text")
-                    }
-                }
-            }
-        }
-        
-        // Initial state
-        composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: false").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Text: false").assertIsDisplayed()
-        
-        // Turn on listening
-        composeTestRule.onNodeWithText("Toggle Listening").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
-        
-        // Turn on text input
-        composeTestRule.onNodeWithText("Toggle Text").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("State: SEND_BUTTON").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Text: true").assertIsDisplayed()
-        
-        // Turn off text input
-        composeTestRule.onNodeWithText("Toggle Text").performClick()
-        composeTestRule.waitForIdle()  // Wait for recomposition
-        composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Text: false").assertIsDisplayed()
-    }
-
-    @Test
-    fun micButtonState_debugTest_simpleText() {
-        // Debug test to see what's actually being rendered
-        composeTestRule.setContent {
-            WhizTheme {
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Text("Hello World")
-                    androidx.compose.material3.Text("Test Text")
-                    androidx.compose.material3.Button(
-                        onClick = {}
-                    ) {
-                        androidx.compose.material3.Text("Button Text")
-                    }
-                }
-            }
-        }
-        
-        // Print what's actually in the UI
-        composeTestRule.onRoot().printToLog("DEBUG_UI")
-        
-        // Just try to find basic text
-        composeTestRule.onNodeWithText("Hello World").assertIsDisplayed()
+        // Callback should not be triggered because button is disabled
+        assert(clickCount == 0)
     }
 } 
