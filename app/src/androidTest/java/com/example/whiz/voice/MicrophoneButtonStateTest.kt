@@ -83,6 +83,7 @@ class MicrophoneButtonStateTest {
         
         // Toggle waiting
         composeTestRule.onNodeWithText("Toggle Waiting").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
     }
 
@@ -128,6 +129,7 @@ class MicrophoneButtonStateTest {
         
         // Click to change state
         composeTestRule.onNodeWithText("Click Me").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify state changed
         composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
@@ -135,6 +137,7 @@ class MicrophoneButtonStateTest {
         
         // Click again to revert
         composeTestRule.onNodeWithText("Click Me").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify back to original state
         composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
@@ -178,6 +181,7 @@ class MicrophoneButtonStateTest {
         
         // Click red mute while waiting
         composeTestRule.onNodeWithText("Mic Button").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Should become grayed mic (disabled because still waiting)
         composeTestRule.onNodeWithText("State: GRAYED_MIC").assertIsDisplayed()
@@ -230,11 +234,13 @@ class MicrophoneButtonStateTest {
         
         // Add text
         composeTestRule.onNodeWithText("Add Text").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("State: SEND_BUTTON").assertIsDisplayed()
         composeTestRule.onNodeWithText("Typed: true").assertIsDisplayed()
         
         // Clear text
         composeTestRule.onNodeWithText("Clear Text").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
         composeTestRule.onNodeWithText("Typed: false").assertIsDisplayed()
     }
@@ -265,6 +271,7 @@ class MicrophoneButtonStateTest {
         
         // Start waiting
         composeTestRule.onNodeWithText("Toggle Waiting").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify waiting state
         composeTestRule.onNodeWithText("Waiting: true").assertIsDisplayed()
@@ -272,6 +279,7 @@ class MicrophoneButtonStateTest {
         
         // Stop waiting
         composeTestRule.onNodeWithText("Toggle Waiting").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify back to ready state
         composeTestRule.onNodeWithText("Waiting: false").assertIsDisplayed()
@@ -308,6 +316,7 @@ class MicrophoneButtonStateTest {
         
         // Start TTS
         composeTestRule.onNodeWithText("Start TTS").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify TTS reading state
         composeTestRule.onNodeWithText("Stop TTS").assertIsDisplayed()
@@ -316,6 +325,7 @@ class MicrophoneButtonStateTest {
         
         // Stop TTS
         composeTestRule.onNodeWithText("Stop TTS").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         
         // Verify back to normal state
         composeTestRule.onNodeWithText("Start TTS").assertIsDisplayed()
@@ -365,16 +375,19 @@ class MicrophoneButtonStateTest {
         
         // Turn on listening
         composeTestRule.onNodeWithText("Toggle Listening").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("State: RED_MUTE").assertIsDisplayed()
         composeTestRule.onNodeWithText("Listening: true").assertIsDisplayed()
         
         // Turn on text input
         composeTestRule.onNodeWithText("Toggle Text").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("State: SEND_BUTTON").assertIsDisplayed()
         composeTestRule.onNodeWithText("Text: true").assertIsDisplayed()
         
         // Turn off text input
         composeTestRule.onNodeWithText("Toggle Text").performClick()
+        composeTestRule.waitForIdle()  // Wait for recomposition
         composeTestRule.onNodeWithText("State: BLUE_MIC").assertIsDisplayed()
         composeTestRule.onNodeWithText("Text: false").assertIsDisplayed()
     }
