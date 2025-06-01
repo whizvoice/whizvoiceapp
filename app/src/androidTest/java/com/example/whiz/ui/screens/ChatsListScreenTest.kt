@@ -9,161 +9,207 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.Instant
 
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class ChatsListScreenTest {
 
-    @get:Rule(order = 0)
-    val hiltRule = HiltAndroidRule(this)
+    @get:Rule
+    var hiltRule = HiltAndroidRule(this)
 
-    @get:Rule(order = 1)
+    @get:Rule
     val composeTestRule = createComposeRule()
 
     @Before
-    fun setup() {
+    fun init() {
         hiltRule.inject()
     }
 
     @Test
-    fun chatsListScreen_displaysTitle() {
+    fun chatsListScreen_displaysCorrectly() {
         composeTestRule.setContent {
             WhizTheme {
-                // Mock the screen title
-                androidx.compose.material3.Text("Your Conversations")
-            }
-        }
-        
-        // Verify screen title is displayed
-        composeTestRule.onNodeWithText("Your Conversations").assertIsDisplayed()
-    }
-
-    @Test
-    fun chatsListScreen_displaysEmptyState() {
-        composeTestRule.setContent {
-            WhizTheme {
-                // Mock empty state message
-                androidx.compose.material3.Text("No conversations yet. Start a new chat!")
-            }
-        }
-        
-        // Verify empty state message is displayed
-        composeTestRule.onNodeWithText("No conversations yet. Start a new chat!").assertIsDisplayed()
-    }
-
-    @Test
-    fun chatsListScreen_newChatButton_isDisplayed() {
-        var buttonClicked = false
-        
-        composeTestRule.setContent {
-            WhizTheme {
-                androidx.compose.material3.FloatingActionButton(
-                    onClick = { buttonClicked = true }
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Start New Chat"
-                    )
-                }
-            }
-        }
-        
-        // Verify new chat button is displayed
-        composeTestRule.onNodeWithContentDescription("Start New Chat").assertIsDisplayed()
-        
-        // Test button click
-        composeTestRule.onNodeWithContentDescription("Start New Chat").performClick()
-        assert(buttonClicked == true)
-    }
-
-    @Test
-    fun chatsListScreen_chatItem_displaysCorrectly() {
-        composeTestRule.setContent {
-            WhizTheme {
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.material3.Text("Chat with Whiz")
-                    androidx.compose.material3.Text("Last message preview...")
-                    androidx.compose.material3.Text("2 hours ago")
-                }
-            }
-        }
-        
-        // Verify chat item components are displayed
-        composeTestRule.onNodeWithText("Chat with Whiz").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Last message preview...").assertIsDisplayed()
-        composeTestRule.onNodeWithText("2 hours ago").assertIsDisplayed()
-    }
-
-    @Test
-    fun chatsListScreen_searchFunctionality() {
-        composeTestRule.setContent {
-            WhizTheme {
-                androidx.compose.material3.OutlinedTextField(
-                    value = "",
-                    onValueChange = {},
-                    placeholder = { androidx.compose.material3.Text("Search conversations...") }
+                val viewModel: ChatsListViewModel = viewModel() // Hilt will provide this
+                ChatsListScreen(
+                    onChatSelected = {},
+                    onNewChatClick = {},
+                    onSettingsClick = {},
+                    hasPermission = true,
+                    onRequestPermission = {},
+                    viewModel = viewModel
                 )
             }
         }
-        
-        // Verify search field is displayed
-        composeTestRule.onNodeWithText("Search conversations...").assertIsDisplayed()
+
+        // The screen should display some basic elements even if loading or empty
+        // This tests the UI structure and that Hilt injection works
+        composeTestRule.waitForIdle()
     }
 
     @Test
-    fun chatsListScreen_chatItem_isClickable() {
+    fun chatsListScreen_newChatFab_isDisplayed() {
+        composeTestRule.setContent {
+            WhizTheme {
+                val viewModel: ChatsListViewModel = viewModel() // Hilt will provide this
+                ChatsListScreen(
+                    onChatSelected = {},
+                    onNewChatClick = {},
+                    onSettingsClick = {},
+                    hasPermission = true,
+                    onRequestPermission = {},
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Verify FAB is displayed
+        composeTestRule.onNodeWithContentDescription("New Chat").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatItem_displaysCorrectData() {
+        val testChat = ChatEntity(
+            id = 1L,
+            title = "Chat with Whiz",
+            lastMessageTime = Instant.now().toEpochMilli()
+        )
         var chatClicked = false
         
         composeTestRule.setContent {
             WhizTheme {
-                androidx.compose.material3.Card(
+                ChatItem(
+                    chat = testChat,
                     onClick = { chatClicked = true }
-                ) {
-                    androidx.compose.material3.Text("Chat with Whiz")
-                }
+                )
             }
         }
         
-        // Test chat item click
+        // Verify chat data is displayed
+        composeTestRule.onNodeWithText("Chat with Whiz").assertIsDisplayed()
+        
+        // Verify click functionality
         composeTestRule.onNodeWithText("Chat with Whiz").performClick()
         assert(chatClicked == true)
     }
 
     @Test
-    fun chatsListScreen_multipleChats_displayCorrectly() {
+    fun chatsList_displaysMultipleItems() {
+        val testChats = listOf(
+            ChatEntity(id = 1L, title = "Chat 1", lastMessageTime = Instant.now().toEpochMilli()),
+            ChatEntity(id = 2L, title = "Chat 2", lastMessageTime = Instant.now().toEpochMilli()),
+            ChatEntity(id = 3L, title = "Chat 3", lastMessageTime = Instant.now().toEpochMilli())
+        )
+        var selectedChatId: Long? = null
+        
         composeTestRule.setContent {
             WhizTheme {
-                androidx.compose.foundation.lazy.LazyColumn {
-                    items(3) { index ->
-                        androidx.compose.material3.Text("Chat ${index + 1}")
-                    }
-                }
+                ChatsList(
+                    chats = testChats,
+                    onChatClick = { chatId -> selectedChatId = chatId }
+                )
             }
         }
         
-        // Verify multiple chat items are displayed
+        // Verify all chat items are displayed
         composeTestRule.onNodeWithText("Chat 1").assertIsDisplayed()
         composeTestRule.onNodeWithText("Chat 2").assertIsDisplayed()
         composeTestRule.onNodeWithText("Chat 3").assertIsDisplayed()
+        
+        // Test clicking one of the chats
+        composeTestRule.onNodeWithText("Chat 2").performClick()
+        assert(selectedChatId == 2L)
     }
 
     @Test
-    fun chatsListScreen_validation_chatData() {
-        // Test chat data validation
-        val chatTitle = "Chat with Whiz"
-        val lastMessage = "Hello, how can I help you?"
-        val timestamp = "2 hours ago"
+    fun chatItem_handlesLongTitle() {
+        val testChat = ChatEntity(
+            id = 1L,
+            title = "This is a very long chat title that should be truncated with ellipsis when displayed",
+            lastMessageTime = Instant.now().toEpochMilli()
+        )
         
-        assert(chatTitle.isNotBlank())
-        assert(lastMessage.isNotBlank())
-        assert(timestamp.isNotBlank())
-        assert(chatTitle.contains("Whiz"))
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatItem(
+                    chat = testChat,
+                    onClick = {}
+                )
+            }
+        }
+        
+        // Verify the long title is displayed (truncation is handled by maxLines and overflow)
+        composeTestRule.onNodeWithText("This is a very long chat title that should be truncated with ellipsis when displayed").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatItem_callbackTriggersCorrectly() {
+        val testChat = ChatEntity(
+            id = 42L,
+            title = "Test Chat",
+            lastMessageTime = Instant.now().toEpochMilli()
+        )
+        var clickedChatId: Long? = null
+        var clickCount = 0
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatItem(
+                    chat = testChat,
+                    onClick = { 
+                        clickedChatId = testChat.id
+                        clickCount++
+                    }
+                )
+            }
+        }
+        
+        // Initial state
+        assert(clickedChatId == null)
+        assert(clickCount == 0)
+        
+        // Click the chat item
+        composeTestRule.onNodeWithText("Test Chat").performClick()
+        
+        // Verify callback was triggered correctly
+        assert(clickedChatId == 42L)
+        assert(clickCount == 1)
+    }
+
+    @Test
+    fun chatsList_multipleClicks_differentCallbacks() {
+        val testChats = listOf(
+            ChatEntity(id = 10L, title = "First Chat", lastMessageTime = Instant.now().toEpochMilli()),
+            ChatEntity(id = 20L, title = "Second Chat", lastMessageTime = Instant.now().toEpochMilli())
+        )
+        val clickedIds = mutableListOf<Long>()
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatsList(
+                    chats = testChats,
+                    onChatClick = { chatId -> clickedIds.add(chatId) }
+                )
+            }
+        }
+        
+        // Click both chats
+        composeTestRule.onNodeWithText("First Chat").performClick()
+        composeTestRule.onNodeWithText("Second Chat").performClick()
+        
+        // Verify both callbacks were triggered with correct IDs
+        assert(clickedIds.size == 2)
+        assert(clickedIds.contains(10L))
+        assert(clickedIds.contains(20L))
     }
 } 
