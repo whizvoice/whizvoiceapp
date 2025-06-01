@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
@@ -43,7 +44,7 @@ class ChatsListScreenTest {
     fun chatsListScreen_displaysCorrectly() {
         composeTestRule.setContent {
             WhizTheme {
-                val viewModel: ChatsListViewModel = viewModel() // Hilt will provide this
+                val viewModel: ChatsListViewModel = hiltViewModel()
                 ChatsListScreen(
                     onChatSelected = {},
                     onNewChatClick = {},
@@ -64,7 +65,7 @@ class ChatsListScreenTest {
     fun chatsListScreen_newChatFab_isDisplayed() {
         composeTestRule.setContent {
             WhizTheme {
-                val viewModel: ChatsListViewModel = viewModel() // Hilt will provide this
+                val viewModel: ChatsListViewModel = hiltViewModel()
                 ChatsListScreen(
                     onChatSelected = {},
                     onNewChatClick = {},

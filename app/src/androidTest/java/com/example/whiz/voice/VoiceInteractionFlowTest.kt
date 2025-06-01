@@ -18,8 +18,9 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import javax.inject.Inject
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.*
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.testing.TestNavHostController
 import androidx.compose.ui.platform.LocalContext
 
@@ -197,7 +198,7 @@ class VoiceInteractionFlowTest {
                 WhizTheme {
                     android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to create ChatViewModel...")
                     // Use real ChatScreen with proper state management
-                    val chatViewModel: ChatViewModel = viewModel()
+                    val chatViewModel: ChatViewModel = hiltViewModel()
                     android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatViewModel created successfully!")
                     
                     ChatScreen(
@@ -272,7 +273,7 @@ class VoiceInteractionFlowTest {
                 WhizTheme {
                     android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to create ChatViewModel...")
                     // Test with real ChatScreen that properly manages TTS state
-                    val chatViewModel: ChatViewModel = viewModel()
+                    val chatViewModel: ChatViewModel = hiltViewModel()
                     android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatViewModel created successfully!")
                     
                     ChatScreen(

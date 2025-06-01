@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.rememberNavController
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.AuthViewModel
@@ -41,7 +42,7 @@ class LoginScreenTest {
         composeTestRule.setContent {
             WhizTheme {
                 val navController = rememberNavController()
-                val authViewModel: AuthViewModel = viewModel() // Hilt will provide this
+                val authViewModel: AuthViewModel = hiltViewModel()
                 LoginScreen(
                     navController = navController,
                     authViewModel = authViewModel
@@ -59,7 +60,7 @@ class LoginScreenTest {
         composeTestRule.setContent {
             WhizTheme {
                 val navController = rememberNavController()
-                val authViewModel: AuthViewModel = viewModel() // Hilt will provide this
+                val authViewModel: AuthViewModel = hiltViewModel()
                 LoginScreen(
                     navController = navController,
                     authViewModel = authViewModel
@@ -76,7 +77,7 @@ class LoginScreenTest {
         composeTestRule.setContent {
             WhizTheme {
                 val navController = rememberNavController()
-                val authViewModel: AuthViewModel = viewModel() // Hilt will provide this
+                val authViewModel: AuthViewModel = hiltViewModel()
                 LoginScreen(
                     navController = navController,
                     authViewModel = authViewModel
