@@ -201,9 +201,7 @@ jobs:
         with:
           name: Instrumented Test Results (API ${{ matrix.api-level }})
           path: |
-            app/build/outputs/androidTest-results/connected/TEST-*.xml
             app/build/outputs/androidTest-results/connected/debug/TEST-*.xml
-            app/build/test-results/connectedDebugAndroidTest/TEST-*.xml
           reporter: java-junit
           fail-on-error: false
 
