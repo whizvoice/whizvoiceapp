@@ -5,13 +5,16 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import com.example.whiz.data.preferences.VoiceSettings
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.di.AppModule
 
+@UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class SettingsScreenTest {

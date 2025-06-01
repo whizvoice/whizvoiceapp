@@ -1,6 +1,7 @@
 package com.example.whiz.di
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Room
 import com.example.whiz.data.local.WhizDatabase
 import com.example.whiz.data.local.ChatDao
@@ -15,6 +16,7 @@ import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.api.SupabaseApi
 import com.example.whiz.data.auth.TokenAuthenticator
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.di.AppModule
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,38 +29,73 @@ import okhttp3.Interceptor
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
+import dagger.hilt.InstallIn
 
 /**
  * Test module that provides all dependencies like production but with mock services for testing
  */
 
 @Module
-@TestInstallIn(
-    components = [SingletonComponent::class],
-    replaces = [AppModule::class]
-)
+@InstallIn(SingletonComponent::class)
 object TestAppModule {
+
+    private const val TAG = "TestAppModule"
+
+    init {
+        Log.w(TAG, "🚀 TestAppModule object is being initialized! This means Hilt is using our test module.")
+    }
+
+    @Provides
+    @Singleton
+    fun provideDebugString(): String {
+        Log.w(TAG, "🚀 provideDebugString called - TestAppModule is definitely being used!")
+        return "TEST_MODULE_ACTIVE"
+    }
 
     @Provides
     @Singleton
     fun provideTestDatabase(@ApplicationContext context: Context): WhizDatabase {
-        return Room.inMemoryDatabaseBuilder(
-            context,
-            WhizDatabase::class.java
-        ).allowMainThreadQueries() // Allow main thread queries for testing
-            .build()
+        Log.d(TAG, "🔧 Creating test database...")
+        return try {
+            val database = Room.inMemoryDatabaseBuilder(
+                context,
+                WhizDatabase::class.java
+            ).allowMainThreadQueries() // Allow main thread queries for testing
+                .build()
+            Log.d(TAG, "✅ Test database created successfully")
+            database
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create test database", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideChatDao(database: WhizDatabase): ChatDao {
-        return database.chatDao()
+        Log.d(TAG, "🔧 Creating ChatDao...")
+        return try {
+            val dao = database.chatDao()
+            Log.d(TAG, "✅ ChatDao created successfully")
+            dao
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create ChatDao", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideMessageDao(database: WhizDatabase): MessageDao {
-        return database.messageDao()
+        Log.d(TAG, "🔧 Creating MessageDao...")
+        return try {
+            val dao = database.messageDao()
+            Log.d(TAG, "✅ MessageDao created successfully")
+            dao
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create MessageDao", e)
+            throw e
+        }
     }
 
     @Provides
@@ -67,7 +104,15 @@ object TestAppModule {
         apiService: ApiService,
         @ApplicationContext context: Context
     ): WhizRepository {
-        return WhizRepository(apiService, context)
+        Log.d(TAG, "🔧 Creating WhizRepository with apiService=${apiService::class.simpleName}, context=$context")
+        return try {
+            val repository = WhizRepository(apiService, context)
+            Log.d(TAG, "✅ WhizRepository created successfully")
+            repository
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create WhizRepository", e)
+            throw e
+        }
     }
 
     @Provides
@@ -76,34 +121,49 @@ object TestAppModule {
         authRepositoryProvider: Provider<AuthRepository>,
         tokenAuthenticator: TokenAuthenticator
     ): OkHttpClient {
-        return OkHttpClient.Builder()
-            .authenticator(tokenAuthenticator)
-            .addInterceptor(Interceptor { chain ->
-                val originalRequest = chain.request()
-                val requestBuilder = originalRequest.newBuilder()
-                
-                // Skip adding Authorization header for authentication endpoints
-                val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
-                
-                if (!isAuthRequest) {
-                    // Get AuthRepository instance via provider
-                    val authRepository = authRepositoryProvider.get()
-                    // Get token asynchronously but don't block if it's null
-                    val token: String? = runBlocking { 
-                        authRepository.serverToken.first() // Get current token, could be null
-                    }
+        Log.d(TAG, "🔧 Creating OkHttpClient...")
+        return try {
+            val client = OkHttpClient.Builder()
+                .authenticator(tokenAuthenticator)
+                .addInterceptor(Interceptor { chain ->
+                    Log.d(TAG, "🔗 OkHttpClient interceptor called")
+                    val originalRequest = chain.request()
+                    val requestBuilder = originalRequest.newBuilder()
+                    
+                    // Skip adding Authorization header for authentication endpoints
+                    val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
+                    
+                    if (!isAuthRequest) {
+                        try {
+                            // Get AuthRepository instance via provider
+                            val authRepository = authRepositoryProvider.get()
+                            Log.d(TAG, "🔗 Got AuthRepository from provider")
+                            // Get token asynchronously but don't block if it's null
+                            val token: String? = runBlocking { 
+                                authRepository.serverToken.first() // Get current token, could be null
+                            }
+                            Log.d(TAG, "🔗 Got server token: ${if (token != null) "present" else "null"}")
 
-                    if (token != null) {
-                        requestBuilder.header("Authorization", "Bearer $token")
+                            if (token != null) {
+                                requestBuilder.header("Authorization", "Bearer $token")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "🔗 Failed to get auth token in interceptor", e)
+                        }
                     }
-                }
-                
-                chain.proceed(requestBuilder.build())
-            })
-            .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+                    
+                    chain.proceed(requestBuilder.build())
+                })
+                .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build()
+            Log.d(TAG, "✅ OkHttpClient created successfully")
+            client
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create OkHttpClient", e)
+            throw e
+        }
     }
 
     @Provides
@@ -112,7 +172,15 @@ object TestAppModule {
         okHttpClient: OkHttpClient,
         authRepository: AuthRepository
     ): WhizServerRepository {
-        return WhizServerRepository(okHttpClient, authRepository)
+        Log.d(TAG, "🔧 Creating WhizServerRepository...")
+        return try {
+            val repository = WhizServerRepository(okHttpClient, authRepository)
+            Log.d(TAG, "✅ WhizServerRepository created successfully")
+            repository
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create WhizServerRepository", e)
+            throw e
+        }
     }
     
     @Provides
@@ -121,37 +189,85 @@ object TestAppModule {
         @ApplicationContext context: Context,
         authApi: AuthApi
     ): AuthRepository {
-        return AuthRepository(context, authApi)
+        Log.d(TAG, "🔧 Creating AuthRepository with context=$context, authApi=${authApi::class.simpleName}")
+        return try {
+            val repository = AuthRepository(context, authApi)
+            Log.d(TAG, "✅ AuthRepository created successfully")
+            repository
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create AuthRepository", e)
+            throw e
+        }
     }
     
     @Provides
     @Singleton
     fun provideAuthApi(okHttpClient: OkHttpClient): AuthApi {
-        return AuthApi(okHttpClient)
+        Log.d(TAG, "🔧 Creating AuthApi...")
+        return try {
+            val api = AuthApi(okHttpClient)
+            Log.d(TAG, "✅ AuthApi created successfully")
+            api
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create AuthApi", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideApiService(): ApiService {
-        return TestApiService()
+        Log.d(TAG, "🔧 Creating TestApiService...")
+        return try {
+            val service = TestApiService()
+            Log.d(TAG, "✅ TestApiService created successfully")
+            service
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create TestApiService", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideSupabaseApi(): SupabaseApi {
-        return TestSupabaseApi()
+        Log.d(TAG, "🔧 Creating TestSupabaseApi...")
+        return try {
+            val api = TestSupabaseApi()
+            Log.d(TAG, "✅ TestSupabaseApi created successfully")
+            api
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create TestSupabaseApi", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideSpeechRecognitionService(@ApplicationContext context: Context): SpeechRecognitionService {
-        return SpeechRecognitionService(context)
+        Log.d(TAG, "🔧 Creating SpeechRecognitionService...")
+        return try {
+            val service = SpeechRecognitionService(context)
+            Log.d(TAG, "✅ SpeechRecognitionService created successfully")
+            service
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create SpeechRecognitionService", e)
+            throw e
+        }
     }
 
     @Provides
     @Singleton
     fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
-        return TTSManager(context)
+        Log.d(TAG, "🔧 Creating TTSManager...")
+        return try {
+            val manager = TTSManager(context)
+            Log.d(TAG, "✅ TTSManager created successfully")
+            manager
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create TTSManager", e)
+            throw e
+        }
     }
 
     @Provides
@@ -160,7 +276,15 @@ object TestAppModule {
         authRepositoryProvider: Provider<AuthRepository>,
         authApiProvider: Provider<AuthApi>
     ): TokenAuthenticator {
-        return TokenAuthenticator(authRepositoryProvider, authApiProvider)
+        Log.d(TAG, "🔧 Creating TokenAuthenticator...")
+        return try {
+            val authenticator = TokenAuthenticator(authRepositoryProvider, authApiProvider)
+            Log.d(TAG, "✅ TokenAuthenticator created successfully")
+            authenticator
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create TokenAuthenticator", e)
+            throw e
+        }
     }
 
     @Provides
@@ -169,7 +293,15 @@ object TestAppModule {
         apiService: ApiService,
         authRepository: AuthRepository
     ): UserPreferences {
-        return UserPreferences(apiService, authRepository)
+        Log.d(TAG, "🔧 Creating UserPreferences...")
+        return try {
+            val preferences = UserPreferences(apiService, authRepository)
+            Log.d(TAG, "✅ UserPreferences created successfully")
+            preferences
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to create UserPreferences", e)
+            throw e
+        }
     }
 }
 

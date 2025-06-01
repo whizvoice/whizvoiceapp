@@ -13,14 +13,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
+import com.example.whiz.di.AppModule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.Instant
 
+@UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class ChatsListScreenTest {

@@ -10,8 +10,10 @@ import com.example.whiz.ui.screens.ChatInputBar
 import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.di.AppModule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -21,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.navigation.testing.TestNavHostController
 import androidx.compose.ui.platform.LocalContext
 
+@UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class VoiceInteractionFlowTest {
@@ -185,21 +188,35 @@ class VoiceInteractionFlowTest {
     @Test
     fun whizResponds_inputBarClears_statePreserved() {
         // Test: After bot responds, input clears but state is preserved - using real ChatScreen
-        composeTestRule.setContent {
-            WhizTheme {
-                // Use real ChatScreen with proper state management
-                val chatViewModel: ChatViewModel = viewModel()
-                ChatScreen(
-                    chatId = 1L,
-                    onChatsListClick = {},
-                    hasPermission = true,
-                    onRequestPermission = {},
-                    viewModel = chatViewModel,
-                    navController = androidx.navigation.testing.TestNavHostController(
-                        androidx.compose.ui.platform.LocalContext.current
+        android.util.Log.d("VoiceInteractionFlowTest", "🔬 Starting whizResponds_inputBarClears_statePreserved test")
+        
+        try {
+            android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to call setContent...")
+            composeTestRule.setContent {
+                android.util.Log.d("VoiceInteractionFlowTest", "🔬 Inside compose content block")
+                WhizTheme {
+                    android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to create ChatViewModel...")
+                    // Use real ChatScreen with proper state management
+                    val chatViewModel: ChatViewModel = viewModel()
+                    android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatViewModel created successfully!")
+                    
+                    ChatScreen(
+                        chatId = 1L,
+                        onChatsListClick = {},
+                        hasPermission = true,
+                        onRequestPermission = {},
+                        viewModel = chatViewModel,
+                        navController = androidx.navigation.testing.TestNavHostController(
+                            androidx.compose.ui.platform.LocalContext.current
+                        )
                     )
-                )
+                    android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatScreen created successfully!")
+                }
             }
+            android.util.Log.d("VoiceInteractionFlowTest", "✅ setContent completed successfully!")
+        } catch (e: Exception) {
+            android.util.Log.e("VoiceInteractionFlowTest", "❌ Error in setContent", e)
+            throw e
         }
 
         composeTestRule.waitForIdle()
@@ -246,21 +263,35 @@ class VoiceInteractionFlowTest {
     @Test
     fun ttsReading_disablesMicInput() {
         // Test: During TTS reading, mic input is disabled - using real ChatScreen
-        composeTestRule.setContent {
-            WhizTheme {
-                // Test with real ChatScreen that properly manages TTS state
-                val chatViewModel: ChatViewModel = viewModel()
-                ChatScreen(
-                    chatId = 1L,
-                    onChatsListClick = {},
-                    hasPermission = true,
-                    onRequestPermission = {},
-                    viewModel = chatViewModel,
-                    navController = androidx.navigation.testing.TestNavHostController(
-                        androidx.compose.ui.platform.LocalContext.current
+        android.util.Log.d("VoiceInteractionFlowTest", "🔬 Starting ttsReading_disablesMicInput test")
+        
+        try {
+            android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to call setContent...")
+            composeTestRule.setContent {
+                android.util.Log.d("VoiceInteractionFlowTest", "🔬 Inside compose content block")
+                WhizTheme {
+                    android.util.Log.d("VoiceInteractionFlowTest", "🔬 About to create ChatViewModel...")
+                    // Test with real ChatScreen that properly manages TTS state
+                    val chatViewModel: ChatViewModel = viewModel()
+                    android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatViewModel created successfully!")
+                    
+                    ChatScreen(
+                        chatId = 1L,
+                        onChatsListClick = {},
+                        hasPermission = true,
+                        onRequestPermission = {},
+                        viewModel = chatViewModel,
+                        navController = androidx.navigation.testing.TestNavHostController(
+                            androidx.compose.ui.platform.LocalContext.current
+                        )
                     )
-                )
+                    android.util.Log.d("VoiceInteractionFlowTest", "✅ ChatScreen created successfully!")
+                }
             }
+            android.util.Log.d("VoiceInteractionFlowTest", "✅ setContent completed successfully!")
+        } catch (e: Exception) {
+            android.util.Log.e("VoiceInteractionFlowTest", "❌ Error in setContent", e)
+            throw e
         }
 
         // In a real app, TTS state would be managed by the ViewModel
