@@ -21,27 +21,27 @@ echo "📁 Current directory: $(pwd)"
 # Function to run tests natively
 run_native() {
     echo "🏃 Running tests natively..."
-    
-    # Make gradlew executable (like GitHub Actions does)
-    echo "🔧 Making gradlew executable..."
-    chmod +x gradlew
 
-    # Run the same commands that GitHub Actions runs
-    echo ""
-    echo "🧹 Cleaning previous builds..."
-    ./gradlew clean
+# Make gradlew executable (like GitHub Actions does)
+echo "🔧 Making gradlew executable..."
+chmod +x gradlew
 
-    echo ""
-    echo "🔍 Running lint checks..."
+# Run the same commands that GitHub Actions runs
+echo ""
+echo "🧹 Cleaning previous builds..."
+./gradlew clean
+
+echo ""
+echo "🔍 Running lint checks..."
     ./gradlew lintDebug
 
-    echo ""
-    echo "🧪 Running unit tests..."
+echo ""
+echo "🧪 Running unit tests..."
     ./gradlew test --stacktrace --parallel --build-cache --configuration-cache
 
-    echo ""
-    echo "🏗️  Building debug APK..."
-    ./gradlew assembleDebug
+echo ""
+echo "🏗️  Building debug APK..."
+./gradlew assembleDebug
 }
 
 # Function to run tests with Docker
