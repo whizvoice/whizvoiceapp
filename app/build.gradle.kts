@@ -38,6 +38,11 @@ android {
     buildToolsVersion = "35.0.0"
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

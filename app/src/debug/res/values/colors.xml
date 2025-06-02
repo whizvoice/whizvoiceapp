@@ -1,0 +1,12 @@
+<resources>
+    <!-- Debug-specific colors to make debug app visually distinct -->
+    <color name="debug_primary">#FF9800</color>       <!-- Orange -->
+    <color name="debug_primary_dark">#F57C00</color>  <!-- Dark Orange -->
+    <color name="debug_accent">#FF5722</color>        <!-- Deep Orange -->
+    <color name="debug_background">#FFF3E0</color>    <!-- Light Orange Background -->
+    
+    <!-- Override any existing primary colors for debug builds -->
+    <color name="primary">#FF9800</color>
+    <color name="primary_dark">#F57C00</color>
+    <color name="accent">#FF5722</color>
+</resources> 
