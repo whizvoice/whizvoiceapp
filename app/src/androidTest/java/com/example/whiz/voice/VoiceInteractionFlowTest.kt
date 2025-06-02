@@ -11,7 +11,7 @@ import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.di.AppModule
-import com.example.whiz.HiltTestActivity
+import com.example.whiz.MainActivity
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -34,7 +34,7 @@ class VoiceInteractionFlowTest {
     val hiltRule = HiltAndroidRule(this)
 
     @get:Rule(order = 1)
-    val composeTestRule = createAndroidComposeRule<HiltTestActivity>()
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Before
     fun setup() {
