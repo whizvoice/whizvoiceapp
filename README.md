@@ -16,13 +16,18 @@ and then open cursor with whiz as the project folder so that it has access to up
 
 ## testing
 
-### install precommit
+### run tests on device
 
-### unit tests
+plug in your google pixel 8
 
+```
 cd whizvoiceapp
-./run_tests.sh unit
+./run_tests_on_debug.sh
+```
 
-# Run a specific test
+### run tests on emulator
 
-./run_tests.sh specific ChatsListViewModelTest
+```
+cd whizvoiceapp
+./run_tests_on_emulator.sh
+```
