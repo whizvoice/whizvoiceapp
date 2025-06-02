@@ -1,7 +1,7 @@
 package com.example.whiz.voice
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -11,6 +11,7 @@ import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.di.AppModule
+import com.example.whiz.HiltTestActivity
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -33,7 +34,7 @@ class VoiceInteractionFlowTest {
     val hiltRule = HiltAndroidRule(this)
 
     @get:Rule(order = 1)
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<HiltTestActivity>()
 
     @Before
     fun setup() {

@@ -4,7 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,6 +15,7 @@ import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import com.example.whiz.di.AppModule
+import com.example.whiz.HiltTestActivity
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -29,11 +30,11 @@ import java.time.Instant
 @RunWith(AndroidJUnit4::class)
 class ChatsListScreenTest {
 
-    @get:Rule
+    @get:Rule(order = 0)
     var hiltRule = HiltAndroidRule(this)
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule(order = 1)
+    val composeTestRule = createAndroidComposeRule<HiltTestActivity>()
 
     @Before
     fun init() {

@@ -1,12 +1,13 @@
 package com.example.whiz.di
 
 import android.util.Log
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.material3.Text
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.theme.WhizTheme
+import com.example.whiz.HiltTestActivity
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -26,7 +27,7 @@ class TestModulesTest {
     var hiltRule = HiltAndroidRule(this)
 
     @get:Rule(order = 1)
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<HiltTestActivity>()
 
     @Inject
     lateinit var debugString: String
