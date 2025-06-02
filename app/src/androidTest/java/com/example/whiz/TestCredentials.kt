@@ -44,25 +44,41 @@ object TestCredentialsManager {
     private fun loadCredentials(): TestCredentials {
         return try {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val credentialsFile = File(context.filesDir.parent, "test_credentials.json")
             
-            if (!credentialsFile.exists()) {
-                // Try alternative locations
-                val alternativeFile = File("/data/local/tmp/test_credentials.json")
-                if (alternativeFile.exists()) {
-                    return parseCredentialsFile(alternativeFile)
+            // Try multiple locations for test credentials
+            val locations = listOf(
+                File(context.filesDir.parent, "test_credentials.json"),
+                File("/data/local/tmp/test_credentials.json"),
+                // Check if file exists in project root via external storage
+                File("/data/local/tmp/test_credentials.json")
+            )
+            
+            for (file in locations) {
+                if (file.exists()) {
+                    android.util.Log.d("TestCredentials", "Found credentials at: ${file.absolutePath}")
+                    return parseCredentialsFile(file)
                 }
-                
-                // Fallback to default test credentials
-                return getDefaultTestCredentials()
             }
             
-            parseCredentialsFile(credentialsFile)
+            // Try to read from assets if available
+            try {
+                val inputStream = context.assets.open("test_credentials.json")
+                val json = inputStream.bufferedReader().use { it.readText() }
+                android.util.Log.d("TestCredentials", "Found credentials in assets")
+                return Gson().fromJson(json, TestCredentials::class.java)
+            } catch (e: Exception) {
+                android.util.Log.d("TestCredentials", "No credentials in assets: ${e.message}")
+            }
+            
+            android.util.Log.w("TestCredentials", "No test_credentials.json found in any location. Using defaults.")
+            // Fallback to default test credentials
+            getDefaultTestCredentials()
         } catch (e: Exception) {
             android.util.Log.w("TestCredentials", "Failed to load test credentials: ${e.message}")
             getDefaultTestCredentials()
         }.also {
             _credentials = it
+            android.util.Log.d("TestCredentials", "Loaded credentials - useRealAuth: ${it.testEnvironment.useRealAuth}, email: ${it.googleTestAccount.email}")
         }
     }
     
@@ -91,9 +107,12 @@ object TestCredentialsManager {
     fun hasRealCredentials(): Boolean {
         return try {
             val creds = credentials
-            creds.googleTestAccount.email != "test@example.com" &&
-            creds.googleTestAccount.password != "test_password"
+            val hasReal = creds.googleTestAccount.email != "test@example.com" &&
+                         creds.googleTestAccount.password != "test_password"
+            android.util.Log.d("TestCredentials", "hasRealCredentials: $hasReal (email: ${creds.googleTestAccount.email})")
+            hasReal
         } catch (e: Exception) {
+            android.util.Log.e("TestCredentials", "Error checking real credentials", e)
             false
         }
     }
