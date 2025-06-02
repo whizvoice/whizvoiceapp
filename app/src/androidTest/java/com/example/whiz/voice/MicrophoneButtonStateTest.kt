@@ -134,6 +134,7 @@ class MicrophoneButtonStateTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )

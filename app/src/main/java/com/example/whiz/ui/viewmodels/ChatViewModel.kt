@@ -56,6 +56,9 @@ class ChatViewModel @Inject constructor(
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
+    // Track which request we should cancel if user sends an interrupt
+    private var currentActiveRequestId: String? = null
+
     // Helper function to update responding state based on current chat's pending requests
     private fun updateRespondingStateForCurrentChat() {
         try {
@@ -176,8 +179,11 @@ class ChatViewModel @Inject constructor(
         tts = TextToSpeech(context, this)
         Log.d(TAG, "TTS Initialization requested.")
 
+        // Start observing messages immediately
         if (configUseRemoteAgent) {
-            observeServerMessages()
+            Log.d(TAG, "Init: Using remote agent. Attempting WebSocket connection.")
+            whizServerRepository.connect()
+            // Enhanced server message collection with interrupt handling - moved inline above
         }
         
         // Observe voice settings changes and apply them to TTS
@@ -188,11 +194,8 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
-    }
 
-    // Observe messages from the WebSocket
-    private fun observeServerMessages() {
-        serverMessageCollectorJob?.cancel()
+        // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
             whizServerRepository.webSocketEvents.collect { event ->
                 when (event) {
@@ -228,6 +231,7 @@ class ChatViewModel @Inject constructor(
                             }
                             Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable. Current connectionError: ${_connectionError.value}")
                         }
+                        currentActiveRequestId = null // Clear active request on disconnect
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
@@ -243,6 +247,7 @@ class ChatViewModel @Inject constructor(
                             )
                         }
                         _isResponding.value = false
+                        currentActiveRequestId = null // Clear active request on error
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -278,6 +283,26 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         _isResponding.value = false
+                        currentActiveRequestId = null // Clear active request on auth error
+                    }
+                    is WebSocketEvent.Cancelled -> {
+                        Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
+                        // Remove the cancelled request from pending requests
+                        pendingRequests.remove(event.cancelledRequestId)
+                        if (currentActiveRequestId == event.cancelledRequestId) {
+                            currentActiveRequestId = null
+                        }
+                        updateRespondingStateForCurrentChat()
+                    }
+                    is WebSocketEvent.Interrupted -> {
+                        Log.d(TAG, "Previous request was interrupted: ${event.message}")
+                        // The backend has cancelled previous requests automatically
+                        // Clear all pending requests since they were cancelled
+                        val interruptedRequests = pendingRequests.keys.toList()
+                        pendingRequests.clear()
+                        currentActiveRequestId = null
+                        updateRespondingStateForCurrentChat()
+                        Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
                     }
                     is WebSocketEvent.Message -> {
                         Log.d(TAG, "[LOG] WebSocketEvent.Message received. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
@@ -483,6 +508,11 @@ class ChatViewModel @Inject constructor(
                             
                             // 🔧 Add logging to track input text state after response processing
                             Log.d(TAG, "$eventLogId After response processing: _inputText.value = '${_inputText.value}', _isResponding = ${_isResponding.value}")
+
+                            // Clear the active request ID when we receive a response
+                            if (event.requestId != null && event.requestId == currentActiveRequestId) {
+                                currentActiveRequestId = null
+                            }
                         } catch (e: Exception) {
                             Log.e(TAG, "$eventLogId Unexpected error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
@@ -960,7 +990,12 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun sendUserInput(text: String = _inputText.value) {
+    fun sendUserInput(text: String = _inputText.value, isInterrupt: Boolean = false) {
+        if (isInterrupt && canInterrupt()) {
+            sendInterruptMessage(text)
+            return
+        }
+        
         val trimmedText = text.trim()
         if (trimmedText.isBlank() || _isResponding.value) return
 
@@ -1012,11 +1047,13 @@ class ChatViewModel @Inject constructor(
                     _isResponding.value = true // Show thinking indicator
                     // 🔧 Generate unique request ID and track which chat this request belongs to
                     val requestId = java.util.UUID.randomUUID().toString()
+                    currentActiveRequestId = requestId // Track the active request
                     pendingRequests[requestId] = currentChatId
                     Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
                     val success = whizServerRepository.sendMessage(trimmedText, requestId)
                     if (!success) {
                         pendingRequests.remove(requestId) // Clear tracking on failure
+                        currentActiveRequestId = null
                         updateRespondingStateForCurrentChat() // Update based on remaining requests
                         _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
@@ -1237,10 +1274,12 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 // Generate request ID and track this request
                 val requestId = java.util.UUID.randomUUID().toString()
+                currentActiveRequestId = requestId // Track the active request
                 pendingRequests[requestId] = _chatId.value
                 val success = whizServerRepository.sendMessage(textToSend, requestId)
                 if (!success) {
                     pendingRequests.remove(requestId) // Clear tracking on failure
+                    currentActiveRequestId = null
                     updateRespondingStateForCurrentChat() // Update based on remaining requests
                     _connectionError.value = "Failed to send message. Please try again."
                     Log.e(TAG, "Failed to send message via WebSocket")
@@ -1392,5 +1431,80 @@ class ChatViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error applying voice settings", e)
         }
+    }
+
+    /**
+     * Send an interrupt message while there's an active request
+     */
+    fun sendInterruptMessage(message: String) {
+        val trimmedText = message.trim()
+        if (trimmedText.isBlank()) {
+            Log.w(TAG, "sendInterruptMessage: Attempted to send blank interrupt message")
+            return
+        }
+
+        if (!configUseRemoteAgent) {
+            Log.w(TAG, "sendInterruptMessage: Interrupts only supported with remote agent")
+            return
+        }
+
+        if (!_isConnectedToServer.value) {
+            Log.w(TAG, "sendInterruptMessage: Cannot send interrupt - not connected to server")
+            _connectionError.value = "Not connected to server"
+            return
+        }
+
+        Log.d(TAG, "sendInterruptMessage: Sending interrupt message: '$trimmedText'")
+        
+        // Generate new request ID for the interrupt
+        val requestId = java.util.UUID.randomUUID().toString()
+        currentActiveRequestId = requestId
+        
+        // Send the interrupt message (backend will automatically cancel active requests)
+        val success = whizServerRepository.sendInterruptMessage(trimmedText, requestId)
+        
+        if (success) {
+            // Track this new request
+            pendingRequests[requestId] = _chatId.value
+            Log.d(TAG, "sendInterruptMessage: Interrupt sent successfully with requestId: $requestId")
+            
+            // Update UI state
+            _isResponding.value = true
+            _inputText.value = trimmedText // Keep the input text visible until response
+            
+        } else {
+            currentActiveRequestId = null
+            _connectionError.value = "Failed to send interrupt message"
+            Log.e(TAG, "sendInterruptMessage: Failed to send interrupt via WebSocket")
+        }
+    }
+
+    /**
+     * Check if there are any active requests that can be interrupted
+     */
+    fun canInterrupt(): Boolean {
+        return configUseRemoteAgent && 
+               _isConnectedToServer.value && 
+               _isResponding.value && 
+               pendingRequests.isNotEmpty()
+    }
+
+    /**
+     * Interrupt the current response with the current input text
+     */
+    fun interruptResponse() {
+        val currentInput = _inputText.value
+        if (currentInput.isBlank()) {
+            Log.w(TAG, "interruptResponse: No input text to send as interrupt")
+            return
+        }
+        
+        if (!canInterrupt()) {
+            Log.w(TAG, "interruptResponse: Cannot interrupt - conditions not met")
+            return
+        }
+        
+        Log.d(TAG, "interruptResponse: Interrupting with message: '$currentInput'")
+        sendUserInput(currentInput, isInterrupt = true)
     }
 }

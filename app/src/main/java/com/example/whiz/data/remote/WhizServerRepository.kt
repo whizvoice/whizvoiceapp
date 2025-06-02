@@ -26,6 +26,8 @@ sealed class WebSocketEvent {
     data class Message(val text: String, val requestId: String? = null) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
+    data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
+    data class Interrupted(val message: String, val requestId: String? = null) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
     object Reconnecting : WebSocketEvent()
@@ -142,8 +144,34 @@ class WhizServerRepository @Inject constructor(
                                 jsonObject.getString("request_id")
                             } else null
                             
-                            // Check if this is a regular response with message content
-                            if (jsonObject.has("response") && jsonObject.has("request_id")) {
+                            // Check if this is a cancellation confirmation
+                            if (jsonObject.has("type")) {
+                                val messageType = jsonObject.getString("type")
+                                when (messageType) {
+                                    "cancelled" -> {
+                                        val cancelledRequestId = jsonObject.optString("cancelled_request_id")
+                                        Log.d(TAG, "Received cancellation confirmation for request: $cancelledRequestId")
+                                        scope.launch { 
+                                            _webSocketEvents.emit(WebSocketEvent.Cancelled(cancelledRequestId, requestId)) 
+                                        }
+                                        messageHandled = true
+                                    }
+                                    "interrupted" -> {
+                                        val interruptMessage = jsonObject.optString("message", "Request was interrupted")
+                                        Log.d(TAG, "Received interrupt notification: $interruptMessage")
+                                        scope.launch { 
+                                            _webSocketEvents.emit(WebSocketEvent.Interrupted(interruptMessage, requestId)) 
+                                        }
+                                        messageHandled = true
+                                    }
+                                    else -> {
+                                        // Handle other message types as before
+                                    }
+                                }
+                            }
+                            
+                            // Check if this is a regular response with message content (existing logic)
+                            if (!messageHandled && jsonObject.has("response") && jsonObject.has("request_id")) {
                                 val responseText = jsonObject.getString("response")
                                 Log.d(TAG, "Received structured response with request_id: $requestId")
                                 scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId)) }
@@ -288,6 +316,7 @@ class WhizServerRepository @Inject constructor(
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
                     put("request_id", requestId)
+                    put("type", "message")
                 }
                 val jsonMessage = messageJson.toString()
                 Log.d(TAG, "Sending structured message: $jsonMessage")
@@ -301,6 +330,35 @@ class WhizServerRepository @Inject constructor(
             Log.e(TAG, "Error sending message", e)
             false
         }
+    }
+
+    fun cancelRequest(requestId: String): Boolean {
+        return try {
+            if (webSocket != null) {
+                val cancelRequestId = java.util.UUID.randomUUID().toString()
+                val cancelJson = org.json.JSONObject().apply {
+                    put("type", "cancel")
+                    put("cancel_request_id", requestId)
+                    put("request_id", cancelRequestId)
+                }
+                val jsonMessage = cancelJson.toString()
+                Log.d(TAG, "Sending cancel request: $jsonMessage")
+                webSocket!!.send(jsonMessage)
+                true
+            } else {
+                Log.w(TAG, "Cannot send cancel request, WebSocket is not connected.")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending cancel request", e)
+            false
+        }
+    }
+
+    fun sendInterruptMessage(message: String, requestId: String): Boolean {
+        // This is the same as sendMessage since the backend automatically handles interrupts
+        // when a new message arrives while there are active requests
+        return sendMessage(message, requestId)
     }
 
     fun disconnect() {

@@ -78,6 +78,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -103,6 +104,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -128,6 +130,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -155,6 +158,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -182,6 +186,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = { micClicked = true },
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -216,6 +221,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -246,6 +252,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = { sendClicked = true },
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -281,6 +288,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -307,6 +315,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -334,6 +343,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -368,6 +378,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = true, // Continuous listening enabled
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -401,6 +412,7 @@ class ChatScreenTest {
                         lastInputValue = newText
                     },
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
@@ -434,6 +446,7 @@ class ChatScreenTest {
                     isContinuousListeningEnabled = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )

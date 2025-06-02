@@ -278,6 +278,7 @@ fun ChatScreen(
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
+                onInterruptClick = { viewModel.interruptResponse() }, // Pass new callback for interrupts
                 onMicClick = { handleMicClick() },
                 surfaceColor = inputSurfaceColor
             )
@@ -556,11 +557,15 @@ fun ChatInputBar(
     isContinuousListeningEnabled: Boolean, // Add continuous listening state
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
+    onInterruptClick: () -> Unit = {}, // New callback for interrupts
     onMicClick: () -> Unit,
     surfaceColor: Color,
     shape: Shape = RectangleShape
 ) {
     val hasInputText = inputText.isNotBlank()
+    
+    // Check if we can interrupt (bot is responding and user has new input)
+    val canInterrupt = isResponding && hasInputText
     
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
@@ -586,78 +591,101 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = {
-                    // Only allow input change if not listening
+                    // Allow input change even during responses for interrupt functionality
                     if (!isListening) onInputChange(it)
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
                 readOnly = isListening, // Cannot edit via keyboard when listening
-                enabled = !isInputDisabled, // Disable field if responding or speaking
+                enabled = true, // Always enable input field to allow interrupts
                 singleLine = false,
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp), // Rounded corners
                 colors = OutlinedTextFieldDefaults.colors(
-                    // Define colors for different states
+                    // Define colors for different states - no special interrupt colors
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                     disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     cursorColor = MaterialTheme.colorScheme.primary,
                     focusedTextColor = MaterialTheme.colorScheme.onSurface,
                     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), // Dim text when disabled
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     focusedContainerColor = surfaceColor,
                     unfocusedContainerColor = surfaceColor,
-                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f), // Dim container when disabled
+                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f),
                     focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // 🔧 Smart button logic: show red MicOff when continuous listening is active
-                    val icon = when {
-                        isListening -> Icons.Filled.MicOff // Always show mic off when actively listening
-                        isResponding && isContinuousListeningEnabled -> Icons.Filled.MicOff // Show red mic off when continuous listening is active during responses
-                        isResponding -> Icons.Filled.Mic // During responses without continuous listening, show regular mic
-                        hasInputText -> Icons.Filled.Send // Show send only when not responding and has text
-                        else -> Icons.Filled.Mic // Default to mic
-                    }
-                    val description = when {
-                        isListening -> "Stop listening"
-                        isResponding && isContinuousListeningEnabled -> "Turn off continuous listening" // Clear description when continuous listening is active
-                        isResponding -> "Turn on continuous listening" // Description when continuous listening is off during responses
-                        hasInputText -> "Send message" 
-                        else -> "Start listening"
-                    }
-                    val tint = when {
-                        isListening -> MaterialTheme.colorScheme.error // Red when actively listening
-                        isResponding && isContinuousListeningEnabled -> MaterialTheme.colorScheme.error // Red when continuous listening is active during responses
-                        isResponding -> MaterialTheme.colorScheme.primary // Primary color for mic during responses without continuous listening
-                        hasInputText -> MaterialTheme.colorScheme.primary // Primary color for send
-                        else -> MaterialTheme.colorScheme.primary // Primary color for mic start
-                    }
-
-                    // 🔧 Button action prioritizes listening control during responses
-                    val buttonAction = when {
-                        isListening -> onMicClick // Always handle mic when actively listening
-                        isResponding -> onMicClick // During responses, mic click controls continuous listening
-                        hasInputText -> onSendClick // Send only when not responding and has text
-                        else -> onMicClick // Default to mic action
+                    // Button logic with seamless interrupt support
+                    val (icon, description, action, tint) = when {
+                        canInterrupt -> {
+                            // When bot is responding and user has input, handle as interrupt but look like normal send
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message", // Same description as normal send
+                                onInterruptClick,
+                                MaterialTheme.colorScheme.primary // Same color as normal send
+                            )
+                        }
+                        isListening -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Stop listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        isResponding && isContinuousListeningEnabled -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        isResponding -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Turn on continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        hasInputText -> {
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        else -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
 
                     val isButtonEnabled = when {
-                        isListening -> !isMicDisabled // When listening, only disable for TTS speaking
-                        isResponding -> !isMicDisabled // During responses, allow mic control (disable continuous listening)
-                        hasInputText -> !isInputDisabled // When ready to send, disable during TTS speaking  
-                        else -> !isMicDisabled // When in mic mode (no text), only disable for TTS speaking
+                        canInterrupt -> true // Always allow interrupts
+                        isListening -> !isMicDisabled
+                        isResponding -> !isMicDisabled
+                        hasInputText -> !isInputDisabled
+                        else -> !isMicDisabled
                     }
+                    
                     IconButton(
-                        onClick = buttonAction,
+                        onClick = action,
                         enabled = isButtonEnabled
                     ) {
                         Icon(
                             imageVector = icon,
                             contentDescription = description,
-                            // Apply tint based on state, dim if disabled
                             tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                     }
@@ -666,3 +694,6 @@ fun ChatInputBar(
         }
     }
 }
+
+// Helper data class for the tuple
+private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
