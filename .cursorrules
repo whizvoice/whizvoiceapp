@@ -1,7 +1,9 @@
 this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
 Please don't downgrade packages for no reason.
-Whenever you change any production files in whizvoiceapp please also run `cd whizvoiceapp && ./android_hot_reload.sh` to kick off the build in Android Studio so we can test the change right away.
-Do not run the hot reload script if you are just changing test files. But you should run the tests to see if they work.
+Whenever you change any production files in whizvoiceapp please also run `cd whizvoiceapp && ./install_debug_for_testing.sh` to kick off the build in Android Studio so we can test the change right away.
+For running tests, you can `cd whizvoiceapp && ./run_tests_on_debug.sh`
+Please run tests if you change tests or if you change functionality covered by tests.
+Please write tests if you add new functionality.
 Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation. There is no need to ask me to accept the changes either - just do it. I am using an IDE that will automatically show me any changes you made for me to review.
 If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation.
 Don't try to restart the server yourself - just ask me to do it. It's on a different machine.
