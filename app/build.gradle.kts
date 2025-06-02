@@ -49,6 +49,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use debug signing for local development
+            // This allows you to install the production version locally
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     
