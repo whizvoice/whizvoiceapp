@@ -201,9 +201,11 @@ class ChatViewModel @Inject constructor(
                 when (event) {
                     is WebSocketEvent.Connected -> {
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
-                        _isConnectedToServer.value = true
-                        _connectionError.value = null
                         viewModelScope.launch {
+                            // Small delay to ensure WebSocket is fully ready for message sending
+                            delay(100)
+                            _isConnectedToServer.value = true
+                            _connectionError.value = null
                             delay(200) 
                             if (_isConnectedToServer.value) { 
                                 Log.d(TAG, "WebSocketEvent.Connected: DELAYED - Resetting isDisconnectingForAuthError to false.")
@@ -406,12 +408,6 @@ class ChatViewModel @Inject constructor(
                             Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
                             
                             if (targetChatId > 0) {
-                                // 🔧 Clear input text IMMEDIATELY and synchronously before async operations
-                                if (isResponseForCurrentChat) {
-                                    Log.d(TAG, "$eventLogId 🔥 CLEARING input text SYNCHRONOUSLY after bot response (was: '${_inputText.value}')")
-                                    _inputText.value = ""
-                                }
-                                
                                 // Only save assistant message to local DB if NOT using remote agent
                                 // Remote agent (WebSocket server) handles message persistence
                                 if (!configUseRemoteAgent) {
@@ -960,9 +956,10 @@ class ChatViewModel @Inject constructor(
     private fun startContinuousListening() {
         Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=$continuousListeningEnabled, isResponding=${_isResponding.value}")
         
-        // 🔧 Don't start listening while assistant is responding - better UX
-        if (_isResponding.value) {
-            Log.d(TAG, "[LOG] startContinuousListening: Skipping start while assistant is responding (will restart when response complete)")
+        // Allow listening during responses to enable interrupt functionality
+        // Only prevent listening if TTS is currently speaking (to avoid audio interference)
+        if (_isSpeaking.value) {
+            Log.d(TAG, "[LOG] startContinuousListening: Skipping start while TTS is speaking (will restart when TTS completes)")
             return
         }
         
@@ -981,7 +978,7 @@ class ChatViewModel @Inject constructor(
                     // Small delay to ensure the previous listening session is fully stopped
                     delay(100)
                     if (continuousListeningEnabled && !_isSpeaking.value) {
-                        startContinuousListening() // This will check isResponding again
+                        startContinuousListening() // This will check isSpeaking again
                     }
                 }
             } else {
@@ -999,9 +996,9 @@ class ChatViewModel @Inject constructor(
         val trimmedText = text.trim()
         if (trimmedText.isBlank() || _isResponding.value) return
 
-        // 🔧 DON'T clear input when sending - keep it grayed out for UX feedback
-        // Input will be cleared when bot response is received
-        Log.d(TAG, "[LOG] 🔥 sendUserInput: NOT clearing input (good UX - shows what's being processed)")
+        // 🔧 Clear input text immediately when sending message
+        Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
+        _inputText.value = ""
 
         viewModelScope.launch {
             var currentChatId = _chatId.value
@@ -1036,9 +1033,6 @@ class ChatViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "sendUserInput: Skipping local user message save - remote agent will handle persistence")
             }
-
-            // 🔧 Input will be cleared when bot responds (better UX)
-            Log.d(TAG, "[LOG] sendUserInput: Input kept for UX feedback (current input: '${_inputText.value}')")
 
             // --- Server Interaction ---
             if (configUseRemoteAgent) {

@@ -630,7 +630,7 @@ fun ChatInputBar(
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // Button logic with seamless interrupt support
+                    // Button logic with seamless interrupt support - prioritize continuous listening
                     val (icon, description, action, tint) = when {
                         canInterrupt -> {
                             // When bot is responding and user has input, handle as interrupt but look like normal send
@@ -665,7 +665,17 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
+                        isContinuousListeningEnabled -> {
+                            // Prioritize continuous listening mode - show mic off button even with text
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
                         hasInputText -> {
+                            // Only show send button if continuous listening is disabled
                             Tuple4(
                                 Icons.Filled.Send,
                                 "Send message",
