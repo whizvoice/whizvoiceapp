@@ -60,6 +60,9 @@ class ChatViewModel @Inject constructor(
     // Track which request we should cancel if user sends an interrupt
     private var currentActiveRequestId: String? = null
 
+    // Track locally-saved interrupt messages to prevent server duplication
+    private val locallyStoredInterruptMessages = mutableSetOf<String>()
+
     // Helper function to update responding state based on current chat's pending requests
     private fun updateRespondingStateForCurrentChat() {
         try {
@@ -1054,13 +1057,28 @@ class ChatViewModel @Inject constructor(
     }
 
     fun sendUserInput(text: String = _inputText.value, isInterrupt: Boolean = false) {
+        val trimmedText = text.trim()
+        if (trimmedText.isBlank()) return
+        
+        // Check if this should be treated as an interrupt (bot is responding and we have new input)
+        val shouldInterrupt = !isInterrupt && _isResponding.value && canInterrupt()
+        
+        if (shouldInterrupt) {
+            Log.d(TAG, "sendUserInput: Auto-detecting interrupt condition, routing to sendInterruptMessage")
+            sendInterruptMessage(trimmedText)
+            return
+        }
+        
         if (isInterrupt && canInterrupt()) {
             sendInterruptMessage(text)
             return
         }
         
-        val trimmedText = text.trim()
-        if (trimmedText.isBlank() || _isResponding.value) return
+        // Only block sending if responding AND this is not an interrupt scenario
+        if (_isResponding.value && !shouldInterrupt) {
+            Log.d(TAG, "sendUserInput: Blocked - bot is responding and this is not an interrupt")
+            return
+        }
 
         // 🔧 Clear input text immediately when sending message
         Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
@@ -1115,7 +1133,8 @@ class ChatViewModel @Inject constructor(
                         pendingRequests.remove(requestId) // Clear tracking on failure
                         currentActiveRequestId = null
                         updateRespondingStateForCurrentChat() // Update based on remaining requests
-                        _connectionError.value = "Failed to send message. Please try again."
+                        // Don't show error to user for brief disconnections - handle silently
+                        // _connectionError.value = "Failed to send message. Please try again."
                         Log.e(TAG, "Failed to send message via WebSocket")
                     } else {
                         Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
@@ -1155,14 +1174,19 @@ class ChatViewModel @Inject constructor(
                     // Response handling is done in observeServerMessages
                 } else {
                     Log.w(TAG, "Cannot send message: Not connected to server. Attempting to connect...")
-                    _connectionError.value = "Not connected to server. Connecting..."
-                    // Try to connect with current conversation ID
+                    // Don't show error to user for brief disconnections - handle silently
+                    // _connectionError.value = "Not connected to server. Connecting..."
+                    
+                    // Clear input text even on connection failure to prevent stuck state
+                    Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text due to connection failure (was: '${_inputText.value}')")
+                    _inputText.value = ""
+                    
+                    // Try to connect with current conversation ID (automatic reconnection)
                     val conversationId = if (_chatId.value > 0) _chatId.value else null
                     whizServerRepository.connect(conversationId)
-                    // Use local fallback for now
-                    if (currentChatId > 0) {
-                        generateAssistantResponse(currentChatId)
-                    }
+                    
+                    // For voice-first UX: Don't use local fallback, just let user speak again after reconnection
+                    Log.d(TAG, "sendUserInput: WebSocket reconnecting in background. User can speak again when ready.")
                 }
             } else {
                 // --- Local Fallback ---
@@ -1341,7 +1365,8 @@ class ChatViewModel @Inject constructor(
                     pendingRequests.remove(requestId) // Clear tracking on failure
                     currentActiveRequestId = null
                     updateRespondingStateForCurrentChat() // Update based on remaining requests
-                    _connectionError.value = "Failed to send message. Please try again."
+                    // Don't show error to user for brief disconnections - handle silently
+                    // _connectionError.value = "Failed to send message. Please try again."
                     Log.e(TAG, "Failed to send message via WebSocket")
                 } else {
                     // For new chats, refresh conversations after server creates it
@@ -1510,7 +1535,8 @@ class ChatViewModel @Inject constructor(
 
         if (!_isConnectedToServer.value) {
             Log.w(TAG, "sendInterruptMessage: Cannot send interrupt - not connected to server")
-            _connectionError.value = "Not connected to server"
+            // Don't show error to user for brief disconnections - handle silently
+            // _connectionError.value = "Not connected to server"
             return
         }
 
@@ -1528,13 +1554,35 @@ class ChatViewModel @Inject constructor(
             pendingRequests[requestId] = _chatId.value
             Log.d(TAG, "sendInterruptMessage: Interrupt sent successfully with requestId: $requestId")
             
+            // Clear input text immediately after sending interrupt (like normal sendUserInput)
+            Log.d(TAG, "[LOG] 🔥 sendInterruptMessage: Clearing input text immediately after sending (was: '${_inputText.value}')")
+            _inputText.value = ""
+            
+            // Immediately save interrupt message to local chat UI for instant feedback
+            // Track it to prevent duplication when server response arrives
+            val messageKey = "${_chatId.value}_${trimmedText}_interrupt"
+            locallyStoredInterruptMessages.add(messageKey)
+            
+            if (_chatId.value > 0) {
+                viewModelScope.launch {
+                    try {
+                        repository.addUserMessage(_chatId.value, trimmedText)
+                        Log.d(TAG, "sendInterruptMessage: Added interrupt message to local chat UI: '$trimmedText'")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendInterruptMessage: Error saving interrupt message to local UI", e)
+                        // Remove from tracking set if save failed
+                        locallyStoredInterruptMessages.remove(messageKey)
+                    }
+                }
+            }
+            
             // Update UI state
             _isResponding.value = true
-            _inputText.value = trimmedText // Keep the input text visible until response
             
         } else {
             currentActiveRequestId = null
-            _connectionError.value = "Failed to send interrupt message"
+            // Don't show error to user for brief disconnections - handle silently
+            // _connectionError.value = "Failed to send interrupt message"
             Log.e(TAG, "sendInterruptMessage: Failed to send interrupt via WebSocket")
         }
     }
