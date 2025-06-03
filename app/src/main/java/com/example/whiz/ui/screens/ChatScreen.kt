@@ -278,8 +278,8 @@ fun ChatScreen(
         bottomBar = {
             // Disable text input when responding or speaking
             val isTextInputDisabled = isResponding || isSpeaking
-            // Only disable mic when TTS is speaking, NOT when responding (allow mic control during response)
-            val isMicDisabled = isSpeaking
+            // FIXED: Don't disable mic during TTS - allow interruption
+            val isMicDisabled = false // Mic should always be available for user interaction
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,

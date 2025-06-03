@@ -188,19 +188,22 @@ class ChatViewModel @Inject constructor(
 
     // Helper method to determine if mic button should be shown during TTS
     fun shouldShowMicButtonDuringTTS(): Boolean {
-        return _isSpeaking.value && !areHeadphonesConnected() && !continuousListeningEnabled
+        // Show mic button during TTS without headphones to allow interruption
+        // Remove the !continuousListeningEnabled condition to allow interruption always
+        return _isSpeaking.value && !areHeadphonesConnected()
     }
     
     // Handle mic button click during TTS - pause TTS and start listening
     fun handleMicClickDuringTTS() {
-        if (_isSpeaking.value && !areHeadphonesConnected() && !continuousListeningEnabled) {
-            Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening")
+        if (_isSpeaking.value && !areHeadphonesConnected()) {
+            Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening. continuousListening before: $continuousListeningEnabled")
             
-            // Pause/stop TTS
+            // Pause/stop TTS (but keep voice response enabled for future messages)
             tts?.stop()
             _isSpeaking.value = false
             
             // Enable continuous listening and start immediately
+            // This allows the user to speak and interrupt TTS
             continuousListeningEnabled = true
             speechRecognitionService.continuousListeningEnabled = true
             
@@ -212,7 +215,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         } else {
-            Log.w(TAG, "handleMicClickDuringTTS: Called but conditions not met - isSpeaking: ${_isSpeaking.value}, headphones: ${areHeadphonesConnected()}, continuousListening: $continuousListeningEnabled")
+            Log.w(TAG, "handleMicClickDuringTTS: Called but conditions not met - isSpeaking: ${_isSpeaking.value}, headphones: ${areHeadphonesConnected()}")
         }
     }
 

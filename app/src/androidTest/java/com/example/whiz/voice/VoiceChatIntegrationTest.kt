@@ -56,9 +56,13 @@ class VoiceChatIntegrationTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = isContinuousListening,
+                    isSpeaking = false,
+                    shouldShowMicDuringTTS = false,
                     onInputChange = { inputText = it },
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = { micClickCount++ },
+                    onMicClickDuringTTS = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -87,9 +91,13 @@ class VoiceChatIntegrationTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = isContinuousListening,
+                    isSpeaking = false,
+                    shouldShowMicDuringTTS = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
+                    onMicClickDuringTTS = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -118,9 +126,13 @@ class VoiceChatIntegrationTest {
                     isMicDisabled = false,   // Mic can still be used to turn off continuous listening
                     isResponding = isResponding,
                     isContinuousListeningEnabled = isContinuousListening,
+                    isSpeaking = false,
+                    shouldShowMicDuringTTS = false,
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {},
                     onMicClick = {},
+                    onMicClickDuringTTS = {},
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -154,9 +166,13 @@ class VoiceChatIntegrationTest {
                         isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
+                        isSpeaking = false,
+                        shouldShowMicDuringTTS = false,
                         onInputChange = {},
                         onSendClick = {},
+                        onInterruptClick = {},
                         onMicClick = {},
+                        onMicClickDuringTTS = {},
                         surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                     )
                 }
@@ -199,9 +215,13 @@ class VoiceChatIntegrationTest {
                         isMicDisabled = false,
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
+                        isSpeaking = false,
+                        shouldShowMicDuringTTS = false,
                         onInputChange = {},
                         onSendClick = {},
+                        onInterruptClick = {},
                         onMicClick = { handleMicClick() },
+                        onMicClickDuringTTS = {},
                         surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                     )
                 }
@@ -222,29 +242,38 @@ class VoiceChatIntegrationTest {
     }
 
     @Test
-    fun chatInputBar_ttsReading_preventsNewInput() {
-        // Test that TTS reading prevents new input
+    fun chatInputBar_ttsReading_allowsMicInterruption() {
+        // Test: TTS reading allows mic interruption (UPDATED: was chatInputBar_ttsReading_preventsNewInput)
         var isTTSReading = true
-        var canAcceptInput = false
-        var isContinuousListening = true
+        var canAcceptTextInput = false  // Text input still disabled during TTS
+        var isContinuousListening = false  // Continuous listening disabled during TTS without headphones
+        var micClickCount = 0
         
         composeTestRule.setContent {
             WhizTheme {
                 androidx.compose.foundation.layout.Column {
                     androidx.compose.material3.Text("TTS reading: $isTTSReading")
-                    androidx.compose.material3.Text("Can accept input: $canAcceptInput")
+                    androidx.compose.material3.Text("Can accept text input: $canAcceptTextInput")
+                    androidx.compose.material3.Text("Mic clicks: $micClickCount")
                     
                     ChatInputBar(
                         inputText = "",
                         transcription = "",
                         isListening = false,
-                        isInputDisabled = !canAcceptInput, // Disabled when TTS reading
-                        isMicDisabled = false,
+                        isInputDisabled = !canAcceptTextInput, // Text input disabled when TTS reading
+                        isMicDisabled = false, // FIXED: Mic should be active during TTS for interruption
                         isResponding = false,
                         isContinuousListeningEnabled = isContinuousListening,
+                        isSpeaking = isTTSReading, // NEW: TTS speaking state
+                        shouldShowMicDuringTTS = isTTSReading && !isContinuousListening, // NEW: Show mic during TTS without continuous listening
                         onInputChange = {},
                         onSendClick = {},
-                        onMicClick = {},
+                        onInterruptClick = {}, // NEW: Response interruption callback
+                        onMicClick = { micClickCount++ }, // Count clicks to verify button works
+                        onMicClickDuringTTS = { // NEW: TTS interruption callback
+                            micClickCount++
+                            isTTSReading = false // Simulate TTS stopping
+                        },
                         surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                     )
                 }
@@ -253,9 +282,22 @@ class VoiceChatIntegrationTest {
         
         // Verify TTS reading state
         assert(isTTSReading == true)
-        assert(canAcceptInput == false)
+        assert(canAcceptTextInput == false) // Text input still disabled
+        assert(micClickCount == 0)
         composeTestRule.onNodeWithText("TTS reading: true").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Can accept input: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Can accept text input: false").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Mic clicks: 0").assertIsDisplayed()
+        
+        // UPDATED: Mic button should be active and clickable during TTS
+        // During TTS without continuous listening, should show mic button for interruption
+        composeTestRule.onNodeWithContentDescription("Start listening during response").assertIsDisplayed()
+        
+        // Click the mic button to interrupt TTS
+        composeTestRule.onNodeWithContentDescription("Start listening during response").performClick()
+        
+        // Verify TTS interruption worked
+        assert(micClickCount == 1) // Button click should register
+        assert(isTTSReading == false) // TTS should be stopped
     }
 
     @Test
@@ -305,9 +347,13 @@ class VoiceChatIntegrationTest {
                         isMicDisabled = false,
                         isResponding = isWaitingForResponse,
                         isContinuousListeningEnabled = isContinuousListening,
+                        isSpeaking = false,
+                        shouldShowMicDuringTTS = false,
                         onInputChange = { inputText = it },
                         onSendClick = {},
+                        onInterruptClick = {},
                         onMicClick = {},
+                        onMicClickDuringTTS = {},
                         surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                     )
                 }
