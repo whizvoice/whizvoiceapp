@@ -288,10 +288,13 @@ fun ChatScreen(
                 isMicDisabled = isMicDisabled,
                 isResponding = isResponding,
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
+                isSpeaking = isSpeaking,
+                shouldShowMicDuringTTS = viewModel.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
                 onInterruptClick = { viewModel.interruptResponse() }, // Pass new callback for interrupts
                 onMicClick = { handleMicClick() },
+                onMicClickDuringTTS = { viewModel.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
         }
@@ -567,10 +570,13 @@ fun ChatInputBar(
     isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
     isResponding: Boolean, // Bot is currently responding/thinking
     isContinuousListeningEnabled: Boolean, // Add continuous listening state
+    isSpeaking: Boolean = false, // Add TTS speaking state
+    shouldShowMicDuringTTS: Boolean, // New parameter for headphone-aware behavior
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onInterruptClick: () -> Unit = {}, // New callback for interrupts
     onMicClick: () -> Unit,
+    onMicClickDuringTTS: () -> Unit = {}, // New callback for TTS mic click
     surfaceColor: Color,
     shape: Shape = RectangleShape
 ) {
@@ -630,7 +636,7 @@ fun ChatInputBar(
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // Button logic with seamless interrupt support - prioritize continuous listening
+                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
                     val (icon, description, action, tint) = when {
                         canInterrupt -> {
                             // When bot is responding and user has input, handle as interrupt but look like normal send
@@ -647,6 +653,15 @@ fun ChatInputBar(
                                 "Stop listening",
                                 onMicClick,
                                 MaterialTheme.colorScheme.error
+                            )
+                        }
+                        shouldShowMicDuringTTS -> {
+                            // Show mic button during TTS when headphones not connected (allows manual override)
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening during response",
+                                onMicClickDuringTTS,
+                                MaterialTheme.colorScheme.primary
                             )
                         }
                         isResponding && isContinuousListeningEnabled -> {
@@ -696,6 +711,7 @@ fun ChatInputBar(
                     val isButtonEnabled = when {
                         canInterrupt -> true // Always allow interrupts
                         isListening -> !isMicDisabled
+                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled
                         hasInputText -> !isInputDisabled
                         else -> !isMicDisabled

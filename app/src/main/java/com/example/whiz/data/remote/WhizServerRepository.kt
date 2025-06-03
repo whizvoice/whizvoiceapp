@@ -311,7 +311,8 @@ class WhizServerRepository @Inject constructor(
 
     fun sendMessage(message: String, requestId: String): Boolean {
         return try {
-            if (webSocket != null) {
+            val currentSocket = webSocket
+            if (currentSocket != null) {
                 // Send structured JSON with request ID
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
@@ -320,8 +321,16 @@ class WhizServerRepository @Inject constructor(
                 }
                 val jsonMessage = messageJson.toString()
                 Log.d(TAG, "Sending structured message: $jsonMessage")
-                webSocket!!.send(jsonMessage)
-                true
+                
+                // Try to send the message
+                val success = currentSocket.send(jsonMessage)
+                if (success) {
+                    Log.d(TAG, "Message sent successfully to WebSocket")
+                    true
+                } else {
+                    Log.w(TAG, "WebSocket.send() returned false - message may not have been sent")
+                    false
+                }
             } else {
                 Log.w(TAG, "Cannot send message, WebSocket is not connected.")
                 false

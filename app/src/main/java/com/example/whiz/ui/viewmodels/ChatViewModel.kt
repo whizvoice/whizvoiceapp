@@ -1,6 +1,7 @@
 package com.example.whiz.ui.viewmodels
 
 import android.content.Context
+import android.media.AudioManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -170,6 +171,48 @@ class ChatViewModel @Inject constructor(
     // Track the current voice settings state to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
 
+    // Helper method to detect if headphones are connected
+    private fun areHeadphonesConnected(): Boolean {
+        return try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            // Check for wired headphones or Bluetooth audio
+            audioManager.isWiredHeadsetOn || audioManager.isBluetoothA2dpOn
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking headphone status", e)
+            false // Default to false (safer - assume speakers)
+        }
+    }
+
+    // Helper method to determine if mic button should be shown during TTS
+    fun shouldShowMicButtonDuringTTS(): Boolean {
+        return _isSpeaking.value && !areHeadphonesConnected() && !continuousListeningEnabled
+    }
+    
+    // Handle mic button click during TTS - pause TTS and start listening
+    fun handleMicClickDuringTTS() {
+        if (_isSpeaking.value && !areHeadphonesConnected() && !continuousListeningEnabled) {
+            Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening")
+            
+            // Pause/stop TTS
+            tts?.stop()
+            _isSpeaking.value = false
+            
+            // Enable continuous listening and start immediately
+            continuousListeningEnabled = true
+            speechRecognitionService.continuousListeningEnabled = true
+            
+            viewModelScope.launch {
+                // Small delay to ensure TTS stop is processed
+                delay(100)
+                if (!_isResponding.value && !_isSpeaking.value) {
+                    startContinuousListening()
+                }
+            }
+        } else {
+            Log.w(TAG, "handleMicClickDuringTTS: Called but conditions not met - isSpeaking: ${_isSpeaking.value}, headphones: ${areHeadphonesConnected()}, continuousListening: $continuousListeningEnabled")
+        }
+    }
+
     init {
         // Check if the app already has microphone permission
         _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
@@ -202,8 +245,8 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.Connected -> {
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
                         viewModelScope.launch {
-                            // Small delay to ensure WebSocket is fully ready for message sending
-                            delay(100)
+                            // Increased delay to ensure WebSocket is fully ready during server instability
+                            delay(300)
                             _isConnectedToServer.value = true
                             _connectionError.value = null
                             delay(200) 
@@ -579,16 +622,29 @@ class ChatViewModel @Inject constructor(
                 _isTTSInitialized.value = true
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                    Log.d(TAG, "TTS onStart for $utteranceId")
+                        Log.d(TAG, "TTS onStart for $utteranceId")
                         _isSpeaking.value = true
-                    if (speechRecognitionService.isListening.value) {
-                        wasListeningBeforeTTS = true
-                        speechRecognitionService.stopListening() 
-                        Log.d(TAG, "TTS starting, stopping ASR. wasListeningBeforeTTS = true")
-                    } else {
-                        wasListeningBeforeTTS = false
-                        Log.d(TAG, "TTS starting, ASR was not active. wasListeningBeforeTTS = false")
-                    }
+                        
+                        val headphonesConnected = areHeadphonesConnected()
+                        Log.d(TAG, "TTS starting. Headphones connected: $headphonesConnected")
+                        
+                        if (headphonesConnected) {
+                            // With headphones: Keep continuous listening on (no feedback risk)
+                            Log.d(TAG, "TTS with headphones - keeping continuous listening active")
+                            wasListeningBeforeTTS = false // Don't need to track since we're not stopping
+                        } else {
+                            // Without headphones: Turn OFF continuous listening completely (cleaner UX)
+                            if (continuousListeningEnabled) {
+                                Log.d(TAG, "TTS with speakers - disabling continuous listening for cleaner UX")
+                                wasListeningBeforeTTS = true // Remember it was enabled
+                                continuousListeningEnabled = false
+                                speechRecognitionService.continuousListeningEnabled = false
+                                speechRecognitionService.stopListening()
+                            } else {
+                                wasListeningBeforeTTS = false
+                                Log.d(TAG, "TTS with speakers - continuous listening was already off")
+                            }
+                        }
                     }
 
                     override fun onDone(utteranceId: String?) {
@@ -601,9 +657,23 @@ class ChatViewModel @Inject constructor(
                                 // Minimal delay for TTS to release audio resources
                                 delay(150) // Reduced from 300ms to 150ms for faster response
                                 
-                                // Always restart continuous listening when TTS is done, if enabled (regardless of wasListeningBeforeTTS)
-                                if (continuousListeningEnabled) {
-                                    Log.d(TAG, "[LOG] TTS done, continuous listening enabled, checking if we can restart immediately.")
+                                // Restore continuous listening if it was disabled during TTS
+                                if (wasListeningBeforeTTS) {
+                                    Log.d(TAG, "[LOG] TTS done, restoring continuous listening (was disabled during TTS)")
+                                    continuousListeningEnabled = true
+                                    speechRecognitionService.continuousListeningEnabled = true
+                                    wasListeningBeforeTTS = false
+                                    
+                                    // Start listening if not computing
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
+                                        startContinuousListening()
+                                    } else {
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
+                                    }
+                                } else if (continuousListeningEnabled) {
+                                    // Continuous listening was already enabled (e.g., with headphones)
+                                    Log.d(TAG, "[LOG] TTS done, continuous listening was already enabled, checking if we can restart immediately.")
                                     
                                     // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
@@ -612,21 +682,9 @@ class ChatViewModel @Inject constructor(
                                     } else {
                                         Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
-                                } else if (wasListeningBeforeTTS) {
-                                    // Only use wasListeningBeforeTTS as fallback when continuous listening is disabled
-                                    Log.d(TAG, "[LOG] TTS done, continuous listening disabled but wasListeningBeforeTTS=true, checking if we can restart immediately.")
-                                    
-                                    // Check immediately if we can restart (not computing)
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting speech recognition immediately")
-                                        speechRecognitionService.startListening { transcription ->
-                                            this@ChatViewModel.processAndSendTranscription(transcription)
-                                        }
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
+                                } else {
+                                    Log.d(TAG, "[LOG] TTS done, continuous listening remains disabled")
                                 }
-                                wasListeningBeforeTTS = false
                             } catch (e: Exception) {
                                 Log.e(TAG, "[LOG] Error in TTS onDone callback", e)
                                 wasListeningBeforeTTS = false
@@ -645,9 +703,23 @@ class ChatViewModel @Inject constructor(
                                 // Minimal delay for TTS to release audio resources
                                 delay(150) // Reduced from 300ms to 150ms for faster response
                                 
-                                // Always restart continuous listening when TTS errors, if enabled (regardless of wasListeningBeforeTTS)
-                                if (continuousListeningEnabled) {
-                                    Log.d(TAG, "[LOG] TTS error, continuous listening enabled, checking if we can restart immediately.")
+                                // Restore continuous listening if it was disabled during TTS
+                                if (wasListeningBeforeTTS) {
+                                    Log.d(TAG, "[LOG] TTS error, restoring continuous listening (was disabled during TTS)")
+                                    continuousListeningEnabled = true
+                                    speechRecognitionService.continuousListeningEnabled = true
+                                    wasListeningBeforeTTS = false
+                                    
+                                    // Start listening if not computing
+                                    if (!_isResponding.value && !_isSpeaking.value) {
+                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
+                                        startContinuousListening()
+                                    } else {
+                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
+                                    }
+                                } else if (continuousListeningEnabled) {
+                                    // Continuous listening was already enabled (e.g., with headphones)
+                                    Log.d(TAG, "[LOG] TTS error, continuous listening was already enabled, checking if we can restart immediately.")
                                     
                                     // Check immediately if we can restart (not computing)
                                     if (!_isResponding.value && !_isSpeaking.value) {
@@ -656,21 +728,9 @@ class ChatViewModel @Inject constructor(
                                     } else {
                                         Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
                                     }
-                                } else if (wasListeningBeforeTTS) {
-                                    // Only use wasListeningBeforeTTS as fallback when continuous listening is disabled
-                                    Log.d(TAG, "[LOG] TTS error, continuous listening disabled but wasListeningBeforeTTS=true, checking if we can restart immediately.")
-                                    
-                                    // Check immediately if we can restart (not computing)
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting speech recognition immediately")
-                                        speechRecognitionService.startListening { transcription ->
-                                            this@ChatViewModel.processAndSendTranscription(transcription)
-                                        }
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
+                                } else {
+                                    Log.d(TAG, "[LOG] TTS error, continuous listening remains disabled")
                                 }
-                                wasListeningBeforeTTS = false
                             } catch (e: Exception) {
                                 Log.e(TAG, "[LOG] Error in TTS onError callback", e)
                                 wasListeningBeforeTTS = false
@@ -956,11 +1016,17 @@ class ChatViewModel @Inject constructor(
     private fun startContinuousListening() {
         Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=$continuousListeningEnabled, isResponding=${_isResponding.value}")
         
-        // Allow listening during responses to enable interrupt functionality
-        // Only prevent listening if TTS is currently speaking (to avoid audio interference)
+        // Headphone-aware listening behavior
         if (_isSpeaking.value) {
-            Log.d(TAG, "[LOG] startContinuousListening: Skipping start while TTS is speaking (will restart when TTS completes)")
-            return
+            val headphonesConnected = areHeadphonesConnected()
+            if (!headphonesConnected) {
+                // Without headphones: Don't listen during TTS to prevent feedback
+                Log.d(TAG, "[LOG] startContinuousListening: Skipping start while TTS is speaking without headphones (will restart when TTS completes)")
+                return
+            } else {
+                // With headphones: Continue listening even during TTS
+                Log.d(TAG, "[LOG] startContinuousListening: Allowing listening during TTS with headphones connected")
+            }
         }
         
         speechRecognitionService.startListening { finalText ->
