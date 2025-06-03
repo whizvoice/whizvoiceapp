@@ -50,6 +50,7 @@ import androidx.navigation.NavController
 import com.example.whiz.ui.navigation.Screen // Update this import
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import android.util.Log
+import androidx.navigation.NavHostController
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,6 +95,17 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     
+    // Auto-prompt for microphone permission when app opens (if not already granted)
+    LaunchedEffect(hasPermission) {
+        Log.d("ChatScreen", "Auto-permission check: hasPermission=$hasPermission")
+        if (!hasPermission) {
+            // Small delay to ensure UI is fully composed before showing dialog
+            kotlinx.coroutines.delay(500)
+            Log.d("ChatScreen", "Auto-showing permission dialog - no microphone permission granted")
+            showPermissionDialog = true
+        }
+    }
+    
     // Update viewModel with current permission state
     LaunchedEffect(hasPermission) {
         Log.d("ChatScreen", "Permission state changed: hasPermission=$hasPermission")
@@ -121,7 +133,7 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Microphone Permission Required") },
-            text = { Text("Whiz requires continuous microphone access to function as a voice assistant. Without this permission, voice features will not work. Would you like to grant this permission?") },
+            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
             confirmButton = {
                 Button(onClick = {
                     showPermissionDialog = false
@@ -132,7 +144,7 @@ fun ChatScreen(
             },
             dismissButton = {
                 Button(onClick = { showPermissionDialog = false }) {
-                    Text("Cancel")
+                    Text("Not Now")
                 }
             }
         )
@@ -697,3 +709,69 @@ fun ChatInputBar(
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+fun ChatScreenWithPermissionDialog(
+    chatId: Long,
+    onChatsListClick: () -> Unit,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    navController: NavHostController,
+    // Optional content parameter for testing
+    content: @Composable () -> Unit = {
+        // Default content - the real ChatScreen
+        ChatScreenContent(
+            chatId = chatId,
+            onChatsListClick = onChatsListClick,
+            navController = navController
+        )
+    }
+) {
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
+    // Automatic permission prompt logic
+    LaunchedEffect(hasPermission) {
+        if (!hasPermission) {
+            delay(500) // 500ms delay
+            showPermissionDialog = true
+        }
+    }
+
+    // Main content
+    content()
+    
+    // Microphone permission dialog
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("Microphone Permission Required") },
+            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
+            confirmButton = {
+                Button(onClick = {
+                    showPermissionDialog = false
+                    onRequestPermission()
+                }) {
+                    Text("Grant Permission")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showPermissionDialog = false }) {
+                    Text("Not Now")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ChatScreenContent(
+    chatId: Long,
+    onChatsListClick: () -> Unit,
+    navController: NavHostController
+) {
+    // This contains the original ChatScreen logic with ViewModels
+    val viewModel: ChatViewModel = hiltViewModel()
+    val authViewModel: AuthViewModel = hiltViewModel()
+    
+    // ... existing ChatScreen content ...
+}
