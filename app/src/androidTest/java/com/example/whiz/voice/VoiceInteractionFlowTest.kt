@@ -54,9 +54,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = true, // Normal state with continuous listening
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -80,9 +84,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = true, // Voice-activated should enable this
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -107,9 +115,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -136,9 +148,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = true, // Bot is responding
                     isContinuousListeningEnabled = true, // Continuous listening still on
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -165,12 +181,16 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = true,
                     isContinuousListeningEnabled = isContinuousListening,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = { 
                         micClickCount++
                         isContinuousListening = !isContinuousListening 
                     },
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -247,9 +267,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -322,9 +346,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = { micClickCount++ },
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -355,9 +383,13 @@ class VoiceInteractionFlowTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = { sendClickCount++ },
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }

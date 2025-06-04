@@ -133,8 +133,8 @@ fun AssistantOverlayUi(
 
             // --- Input Bar ---
             val isTextInputDisabled = isResponding || isSpeaking
-            // Disable mic when responding/speaking, but allow turning OFF if currently listening
-            val isMicDisabled = (isResponding || isSpeaking) && !isListening
+            val isMicDisabled = false // Mic should always be available for user interaction
+            
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
@@ -143,6 +143,8 @@ fun AssistantOverlayUi(
                 isMicDisabled = isMicDisabled,
                 isResponding = isResponding,
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
+                isSpeaking = isSpeaking,
+                shouldShowMicDuringTTS = viewModel.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {
@@ -152,6 +154,7 @@ fun AssistantOverlayUi(
                         Log.w(TAG,"Mic Tapped but no permission.")
                     }
                 },
+                onMicClickDuringTTS = { viewModel.handleMicClickDuringTTS() },
                 // Pass explicit color and shape as decided before
                 surfaceColor = MaterialTheme.colorScheme.surface, // Use the non-transparent color
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) // Use the desired overlay shape

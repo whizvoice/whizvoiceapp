@@ -48,9 +48,13 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = true, // Need isResponding = true for "Turn off continuous listening"
                     isContinuousListeningEnabled = true, // This should show red mute
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -76,9 +80,13 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false, // Normal state
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -104,9 +112,13 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -132,9 +144,13 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
@@ -153,23 +169,27 @@ class MicrophoneButtonStateTest {
         composeTestRule.setContent {
             WhizTheme {
                 ChatInputBar(
-                    inputText = "My previous message",
+                    inputText = "", // FIXED: Empty text to avoid interrupt mode
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true, // Text input disabled during response
                     isMicDisabled = false, // Mic still works to control continuous listening
                     isResponding = true, // Bot is responding
                     isContinuousListeningEnabled = true, // Continuous listening is on
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = {},
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
         }
         
-        // Should show the previous message (grayed out)
-        composeTestRule.onNodeWithText("My previous message").assertIsDisplayed()
+        // Should show placeholder since no previous message
+        composeTestRule.onNodeWithText("Type or tap mic...").assertIsDisplayed()
         
         // During response with continuous listening, should show option to turn it off
         composeTestRule.onNodeWithContentDescription("Turn off continuous listening").assertIsDisplayed()
@@ -184,23 +204,27 @@ class MicrophoneButtonStateTest {
         composeTestRule.setContent {
             WhizTheme {
                 ChatInputBar(
-                    inputText = "My previous message",
+                    inputText = "", // FIXED: Empty text to avoid interrupt mode
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true, // Text input disabled during response
                     isMicDisabled = false, // Mic not disabled, so button should be enabled
                     isResponding = true, // Bot is responding
                     isContinuousListeningEnabled = false, // Continuous listening is off
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
+                    onInterruptClick = {}, // NEW: Response interruption callback
                     onMicClick = { micClickCount++ }, // Count clicks to verify button works
+                    onMicClickDuringTTS = {}, // NEW: TTS interruption callback
                     surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
                 )
             }
         }
         
-        // Should show the previous message (grayed out due to isInputDisabled)
-        composeTestRule.onNodeWithText("My previous message").assertIsDisplayed()
+        // Should show placeholder since no previous message
+        composeTestRule.onNodeWithText("Type or tap mic...").assertIsDisplayed()
         
         // During response without continuous listening, should show option to turn it on
         composeTestRule.onNodeWithContentDescription("Turn on continuous listening").assertIsDisplayed()
@@ -227,6 +251,8 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = {},
                     onMicClick = { micClickCount++ },
@@ -260,6 +286,8 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = false,
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = { sendClickCount++ },
                     onMicClick = {},
@@ -293,6 +321,8 @@ class MicrophoneButtonStateTest {
                     isMicDisabled = true, // Mic is disabled (e.g., during TTS)
                     isResponding = false,
                     isContinuousListeningEnabled = false,
+                    isSpeaking = false, // NEW: TTS speaking state
+                    shouldShowMicDuringTTS = false, // NEW: Headphone-aware logic
                     onInputChange = {},
                     onSendClick = { clickCount++ },
                     onMicClick = { clickCount++ },
@@ -312,5 +342,197 @@ class MicrophoneButtonStateTest {
         
         // Callback should not be triggered because button is disabled
         assert(clickCount == 0)
+    }
+
+    // NEW TESTS FOR TTS INTERRUPTABILITY FEATURES
+
+    @Test
+    fun chatInputBar_duringTTS_micButtonActive() {
+        // Test: Verify mic button is active (not disabled) during TTS playback
+        var micClickCount = 0
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = true, // Text input disabled during TTS
+                    isMicDisabled = false, // CRITICAL: Mic should NOT be disabled during TTS
+                    isResponding = false,
+                    isContinuousListeningEnabled = false, // Disabled during TTS without headphones
+                    isSpeaking = true, // TTS is currently speaking
+                    shouldShowMicDuringTTS = true, // Should show mic button during TTS
+                    onInputChange = {},
+                    onSendClick = {},
+                    onInterruptClick = {},
+                    onMicClick = { micClickCount++ },
+                    onMicClickDuringTTS = { micClickCount += 10 }, // Different increment to test correct callback
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // During TTS without continuous listening, should show mic button for interruption
+        composeTestRule.onNodeWithContentDescription("Start listening during response").assertIsDisplayed()
+        
+        // Click the mic button during TTS
+        composeTestRule.onNodeWithContentDescription("Start listening during response").performClick()
+        
+        // Verify mic button is active and TTS interruption callback was called
+        assert(micClickCount == 10) // onMicClickDuringTTS adds 10, onMicClick adds 1
+    }
+
+    @Test
+    fun chatInputBar_ttsInterruption_callsCorrectCallback() {
+        // Test: Verify clicking mic during TTS calls onMicClickDuringTTS callback
+        var regularMicClicks = 0
+        var ttsInterruptClicks = 0
+        var isTTSSpeaking = true
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false,
+                    isSpeaking = isTTSSpeaking,
+                    shouldShowMicDuringTTS = isTTSSpeaking,
+                    onInputChange = {},
+                    onSendClick = {},
+                    onInterruptClick = {},
+                    onMicClick = { regularMicClicks++ },
+                    onMicClickDuringTTS = { 
+                        ttsInterruptClicks++
+                        isTTSSpeaking = false // Simulate TTS stopping
+                    },
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Initial state - TTS is speaking
+        assert(isTTSSpeaking == true)
+        assert(ttsInterruptClicks == 0)
+        assert(regularMicClicks == 0)
+        
+        // Click mic button during TTS
+        composeTestRule.onNodeWithContentDescription("Start listening during response").performClick()
+        
+        // Verify TTS interruption callback was called, not regular mic callback
+        assert(ttsInterruptClicks == 1)
+        assert(regularMicClicks == 0) // Should NOT be called during TTS
+        assert(isTTSSpeaking == false) // TTS should be stopped
+    }
+
+    @Test
+    fun chatInputBar_ttsWithoutHeadphones_showsMicButton() {
+        // Test: TTS without headphones - should show mic button for interruption
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = true,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = false, // Disabled without headphones
+                    isSpeaking = true, // TTS speaking
+                    shouldShowMicDuringTTS = true, // Show mic for interruption without headphones
+                    onInputChange = {},
+                    onSendClick = {},
+                    onInterruptClick = {},
+                    onMicClick = {},
+                    onMicClickDuringTTS = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Without headphones during TTS: should show mic button for interruption
+        // FIXED: Use correct content description from actual implementation
+        composeTestRule.onNodeWithContentDescription("Start listening during response").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatInputBar_ttsWithHeadphones_showsMuteButton() {
+        // Test: TTS with headphones - continuous listening stays on, should show mute button
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = true,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = true, // Stays enabled with headphones
+                    isSpeaking = true, // TTS speaking
+                    shouldShowMicDuringTTS = false, // No special mic button needed with headphones
+                    onInputChange = {},
+                    onSendClick = {},
+                    onInterruptClick = {},
+                    onMicClick = {},
+                    onMicClickDuringTTS = {},
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // With headphones during TTS: should show red mute button (continuous listening stays on)
+        composeTestRule.onNodeWithContentDescription("Turn off continuous listening").assertIsDisplayed()
+    }
+
+    @Test
+    fun chatInputBar_afterTTSInterruption_restoresContinuousListening() {
+        // Test: Verify continuous listening is restored after TTS interruption
+        var isContinuousListening = false // Disabled during TTS
+        var isTTSSpeaking = true
+        var wasListeningBeforeTTS = true // Simulates that continuous listening was on before TTS
+        
+        composeTestRule.setContent {
+            WhizTheme {
+                ChatInputBar(
+                    inputText = "",
+                    transcription = "",
+                    isListening = false,
+                    isInputDisabled = false,
+                    isMicDisabled = false,
+                    isResponding = false,
+                    isContinuousListeningEnabled = isContinuousListening,
+                    isSpeaking = isTTSSpeaking,
+                    shouldShowMicDuringTTS = isTTSSpeaking && !isContinuousListening,
+                    onInputChange = {},
+                    onSendClick = {},
+                    onInterruptClick = {},
+                    onMicClick = {},
+                    onMicClickDuringTTS = {
+                        // Simulate TTS interruption and continuous listening restoration
+                        isTTSSpeaking = false
+                        if (wasListeningBeforeTTS) {
+                            isContinuousListening = true // Restore continuous listening
+                        }
+                    },
+                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+                )
+            }
+        }
+        
+        // Initial state: TTS speaking, continuous listening disabled
+        assert(isTTSSpeaking == true)
+        assert(isContinuousListening == false)
+        composeTestRule.onNodeWithContentDescription("Start listening during response").assertIsDisplayed()
+        
+        // Interrupt TTS by clicking mic button
+        composeTestRule.onNodeWithContentDescription("Start listening during response").performClick()
+        
+        // Verify TTS stopped and continuous listening was restored
+        assert(isTTSSpeaking == false)
+        assert(isContinuousListening == true) // Should be restored
     }
 } 

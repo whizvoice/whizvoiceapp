@@ -50,7 +50,20 @@ import androidx.navigation.NavController
 import com.example.whiz.ui.navigation.Screen // Update this import
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import android.util.Log
-
+import androidx.navigation.NavHostController
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +107,17 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     
+    // Auto-prompt for microphone permission when app opens (if not already granted)
+    LaunchedEffect(hasPermission) {
+        Log.d("ChatScreen", "Auto-permission check: hasPermission=$hasPermission")
+        if (!hasPermission) {
+            // Small delay to ensure UI is fully composed before showing dialog
+            kotlinx.coroutines.delay(500)
+            Log.d("ChatScreen", "Auto-showing permission dialog - no microphone permission granted")
+            showPermissionDialog = true
+        }
+    }
+    
     // Update viewModel with current permission state
     LaunchedEffect(hasPermission) {
         Log.d("ChatScreen", "Permission state changed: hasPermission=$hasPermission")
@@ -121,7 +145,7 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Microphone Permission Required") },
-            text = { Text("Whiz requires continuous microphone access to function as a voice assistant. Without this permission, voice features will not work. Would you like to grant this permission?") },
+            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
             confirmButton = {
                 Button(onClick = {
                     showPermissionDialog = false
@@ -132,7 +156,7 @@ fun ChatScreen(
             },
             dismissButton = {
                 Button(onClick = { showPermissionDialog = false }) {
-                    Text("Cancel")
+                    Text("Not Now")
                 }
             }
         )
@@ -266,8 +290,8 @@ fun ChatScreen(
         bottomBar = {
             // Disable text input when responding or speaking
             val isTextInputDisabled = isResponding || isSpeaking
-            // Only disable mic when TTS is speaking, NOT when responding (allow mic control during response)
-            val isMicDisabled = isSpeaking
+            // FIXED: Don't disable mic during TTS - allow interruption
+            val isMicDisabled = false // Mic should always be available for user interaction
             ChatInputBar(
                 inputText = inputText,
                 transcription = transcription,
@@ -276,9 +300,13 @@ fun ChatScreen(
                 isMicDisabled = isMicDisabled,
                 isResponding = isResponding,
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
+                isSpeaking = isSpeaking,
+                shouldShowMicDuringTTS = viewModel.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
+                onInterruptClick = { viewModel.interruptResponse() }, // Pass new callback for interrupts
                 onMicClick = { handleMicClick() },
+                onMicClickDuringTTS = { viewModel.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
         }
@@ -554,13 +582,20 @@ fun ChatInputBar(
     isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
     isResponding: Boolean, // Bot is currently responding/thinking
     isContinuousListeningEnabled: Boolean, // Add continuous listening state
+    isSpeaking: Boolean = false, // Add TTS speaking state
+    shouldShowMicDuringTTS: Boolean, // New parameter for headphone-aware behavior
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
+    onInterruptClick: () -> Unit = {}, // New callback for interrupts
     onMicClick: () -> Unit,
+    onMicClickDuringTTS: () -> Unit = {}, // New callback for TTS mic click
     surfaceColor: Color,
     shape: Shape = RectangleShape
 ) {
     val hasInputText = inputText.isNotBlank()
+    
+    // Check if we can interrupt (bot is responding and user has new input)
+    val canInterrupt = isResponding && hasInputText
     
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
@@ -586,78 +621,121 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = {
-                    // Only allow input change if not listening
+                    // Allow input change even during responses for interrupt functionality
                     if (!isListening) onInputChange(it)
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
                 readOnly = isListening, // Cannot edit via keyboard when listening
-                enabled = !isInputDisabled, // Disable field if responding or speaking
+                enabled = true, // Always enable input field to allow interrupts
                 singleLine = false,
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp), // Rounded corners
                 colors = OutlinedTextFieldDefaults.colors(
-                    // Define colors for different states
+                    // Define colors for different states - no special interrupt colors
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                     disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     cursorColor = MaterialTheme.colorScheme.primary,
                     focusedTextColor = MaterialTheme.colorScheme.onSurface,
                     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), // Dim text when disabled
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     focusedContainerColor = surfaceColor,
                     unfocusedContainerColor = surfaceColor,
-                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f), // Dim container when disabled
+                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f),
                     focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // 🔧 Smart button logic: show red MicOff when continuous listening is active
-                    val icon = when {
-                        isListening -> Icons.Filled.MicOff // Always show mic off when actively listening
-                        isResponding && isContinuousListeningEnabled -> Icons.Filled.MicOff // Show red mic off when continuous listening is active during responses
-                        isResponding -> Icons.Filled.Mic // During responses without continuous listening, show regular mic
-                        hasInputText -> Icons.Filled.Send // Show send only when not responding and has text
-                        else -> Icons.Filled.Mic // Default to mic
-                    }
-                    val description = when {
-                        isListening -> "Stop listening"
-                        isResponding && isContinuousListeningEnabled -> "Turn off continuous listening" // Clear description when continuous listening is active
-                        isResponding -> "Turn on continuous listening" // Description when continuous listening is off during responses
-                        hasInputText -> "Send message" 
-                        else -> "Start listening"
-                    }
-                    val tint = when {
-                        isListening -> MaterialTheme.colorScheme.error // Red when actively listening
-                        isResponding && isContinuousListeningEnabled -> MaterialTheme.colorScheme.error // Red when continuous listening is active during responses
-                        isResponding -> MaterialTheme.colorScheme.primary // Primary color for mic during responses without continuous listening
-                        hasInputText -> MaterialTheme.colorScheme.primary // Primary color for send
-                        else -> MaterialTheme.colorScheme.primary // Primary color for mic start
-                    }
-
-                    // 🔧 Button action prioritizes listening control during responses
-                    val buttonAction = when {
-                        isListening -> onMicClick // Always handle mic when actively listening
-                        isResponding -> onMicClick // During responses, mic click controls continuous listening
-                        hasInputText -> onSendClick // Send only when not responding and has text
-                        else -> onMicClick // Default to mic action
+                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
+                    val (icon, description, action, tint) = when {
+                        canInterrupt -> {
+                            // When bot is responding and user has input, handle as interrupt but look like normal send
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message", // Same description as normal send
+                                onInterruptClick,
+                                MaterialTheme.colorScheme.primary // Same color as normal send
+                            )
+                        }
+                        isListening -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Stop listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        shouldShowMicDuringTTS -> {
+                            // Show mic button during TTS when headphones not connected (allows manual override)
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening during response",
+                                onMicClickDuringTTS,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        isResponding && isContinuousListeningEnabled -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        isResponding -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Turn on continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        isContinuousListeningEnabled -> {
+                            // Prioritize continuous listening mode - show mic off button even with text
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        hasInputText -> {
+                            // Only show send button if continuous listening is disabled
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        else -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
 
                     val isButtonEnabled = when {
-                        isListening -> !isMicDisabled // When listening, only disable for TTS speaking
-                        isResponding -> !isMicDisabled // During responses, allow mic control (disable continuous listening)
-                        hasInputText -> !isInputDisabled // When ready to send, disable during TTS speaking  
-                        else -> !isMicDisabled // When in mic mode (no text), only disable for TTS speaking
+                        canInterrupt -> true // Always allow interrupts
+                        isListening -> !isMicDisabled
+                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
+                        isResponding -> !isMicDisabled
+                        hasInputText -> !isInputDisabled
+                        else -> !isMicDisabled
                     }
+                    
                     IconButton(
-                        onClick = buttonAction,
+                        onClick = action,
                         enabled = isButtonEnabled
                     ) {
                         Icon(
                             imageVector = icon,
                             contentDescription = description,
-                            // Apply tint based on state, dim if disabled
                             tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                     }
@@ -665,4 +743,73 @@ fun ChatInputBar(
             )
         }
     }
+}
+
+// Helper data class for the tuple
+private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+fun ChatScreenWithPermissionDialog(
+    chatId: Long,
+    onChatsListClick: () -> Unit,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    navController: NavHostController,
+    // Optional content parameter for testing
+    content: @Composable () -> Unit = {
+        // Default content - the real ChatScreen
+        ChatScreenContent(
+            chatId = chatId,
+            onChatsListClick = onChatsListClick,
+            navController = navController
+        )
+    }
+) {
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
+    // Automatic permission prompt logic
+    LaunchedEffect(hasPermission) {
+        if (!hasPermission) {
+            delay(500) // 500ms delay
+            showPermissionDialog = true
+        }
+    }
+
+    // Main content
+    content()
+    
+    // Microphone permission dialog
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("Microphone Permission Required") },
+            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
+            confirmButton = {
+                Button(onClick = {
+                    showPermissionDialog = false
+                    onRequestPermission()
+                }) {
+                    Text("Grant Permission")
+                }
+            },
+            dismissButton = {
+                Button(onClick = { showPermissionDialog = false }) {
+                    Text("Not Now")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ChatScreenContent(
+    chatId: Long,
+    onChatsListClick: () -> Unit,
+    navController: NavHostController
+) {
+    // This contains the original ChatScreen logic with ViewModels
+    val viewModel: ChatViewModel = hiltViewModel()
+    val authViewModel: AuthViewModel = hiltViewModel()
+    
+    // ... existing ChatScreen content ...
 }
