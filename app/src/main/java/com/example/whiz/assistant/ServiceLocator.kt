@@ -3,6 +3,7 @@ package com.example.whiz.assistant
 import android.content.Context
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.services.SpeechRecognitionService
+import com.example.whiz.services.TTSManager
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.auth.AuthRepository
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit
 object ServiceLocator {
     private var chatViewModel: ChatViewModel? = null
     private var speechRecognitionService: SpeechRecognitionService? = null
+    private var ttsManager: TTSManager? = null
     private var whizRepository: WhizRepository? = null
     private var whizServerRepository: WhizServerRepository? = null
     private var authRepository: AuthRepository? = null
@@ -37,7 +39,8 @@ object ServiceLocator {
             val serverRepo = getWhizServerRepository(context)
             val authRepo = getAuthRepository(context)
             val userPrefs = getUserPreferences(context)
-            chatViewModel = ChatViewModel(context.applicationContext, repo, speechService, serverRepo, authRepo, userPrefs)
+            val ttsManager = getTTSManager()
+            chatViewModel = ChatViewModel(context.applicationContext, repo, speechService, serverRepo, authRepo, userPrefs, ttsManager)
         }
         return chatViewModel!!
     }
@@ -47,6 +50,13 @@ object ServiceLocator {
             speechRecognitionService = SpeechRecognitionService(context.applicationContext)
         }
         return speechRecognitionService!!
+    }
+
+    private fun getTTSManager(): TTSManager {
+        if (ttsManager == null) {
+            ttsManager = TTSManager()
+        }
+        return ttsManager!!
     }
 
     private fun getWhizRepository(context: Context): WhizRepository {

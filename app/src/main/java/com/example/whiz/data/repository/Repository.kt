@@ -55,7 +55,16 @@ class WhizRepository @Inject constructor(
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
+    private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var isInitialized = false
+    
     init {
+        repositoryScope.launch {
+            // Remove arbitrary delay - initialize immediately
+            Log.d(TAG, "Repository initialized")
+            isInitialized = true
+        }
+        
         // Initialize reactive data loading
         setupReactiveLoading()
         
@@ -232,10 +241,7 @@ class WhizRepository @Inject constructor(
             val message = apiService.createMessage(createRequest)
             Log.d(TAG, "addUserMessage: added user message ${message.id} to chat $chatId")
             
-            // Small delay to ensure the API call is fully processed
-            delay(50)
-            
-            // Trigger refresh so the UI updates immediately
+            // Remove arbitrary delay - trigger immediate refresh
             triggerMessagesRefresh()
             triggerConversationsRefresh() // Also refresh conversations for lastMessageTime
             
@@ -257,10 +263,7 @@ class WhizRepository @Inject constructor(
             val message = apiService.createMessage(createRequest)
             Log.d(TAG, "addAssistantMessage: added assistant message ${message.id} to chat $chatId")
             
-            // Small delay to ensure the API call is fully processed
-            delay(50)
-            
-            // Trigger refresh so the UI updates immediately
+            // Remove arbitrary delay - trigger immediate refresh
             triggerMessagesRefresh()
             triggerConversationsRefresh() // Also refresh conversations for lastMessageTime
             
