@@ -39,7 +39,7 @@ object ServiceLocator {
             val serverRepo = getWhizServerRepository(context)
             val authRepo = getAuthRepository(context)
             val userPrefs = getUserPreferences(context)
-            val ttsManager = getTTSManager()
+            val ttsManager = getTTSManager(context)
             chatViewModel = ChatViewModel(context.applicationContext, repo, speechService, serverRepo, authRepo, userPrefs, ttsManager)
         }
         return chatViewModel!!
@@ -52,9 +52,9 @@ object ServiceLocator {
         return speechRecognitionService!!
     }
 
-    private fun getTTSManager(): TTSManager {
+    private fun getTTSManager(context: Context): TTSManager {
         if (ttsManager == null) {
-            ttsManager = TTSManager()
+            ttsManager = TTSManager(context.applicationContext)
         }
         return ttsManager!!
     }

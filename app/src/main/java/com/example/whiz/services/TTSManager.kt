@@ -9,7 +9,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class TTSManager @Inject constructor() {
+class TTSManager @Inject constructor(
+    private val context: Context
+) {
     private val TAG = "TTSManager"
     private var tts: TextToSpeech? = null
     private var isInitialized = false
@@ -19,7 +21,7 @@ class TTSManager @Inject constructor() {
     private var onSpeechCompleted: (() -> Unit)? = null
     private var onSpeechError: (() -> Unit)? = null
     
-    fun initialize(context: Context, onInitialized: (Boolean) -> Unit) {
+    fun initialize(onInitialized: (Boolean) -> Unit) {
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 isInitialized = true
@@ -111,45 +113,21 @@ class TTSManager @Inject constructor() {
         }
     }
     
-    fun testVoiceSettings(voiceSettings: VoiceSettings, testText: String = "This is an example of how text-to-speech sounds with your current settings.") {
+    fun testVoiceSettings(settings: VoiceSettings) {
         if (!isInitialized) {
             Log.w(TAG, "TTS not initialized, cannot test voice settings")
             return
         }
         
-        try {
-            // Apply the voice settings temporarily
-            if (!voiceSettings.useSystemDefaults) {
-                // Use custom app settings
-                tts?.setSpeechRate(voiceSettings.speechRate)
-                tts?.setPitch(voiceSettings.pitch)
-                Log.d(TAG, "Applied custom TTS settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
-                
-                // Speak the test text immediately (for custom settings)
-                tts?.speak(testText, TextToSpeech.QUEUE_FLUSH, null, "voice_test")
-                Log.d(TAG, "Playing voice test with custom settings: $voiceSettings")
-            } else {
-                // Use system defaults - reset the TTS engine to clear any previous custom settings
-                resetToSystemDefaults()
-                // Use event-driven approach instead of arbitrary delay
-                setAudioEventCallbacks(onCompleted = {
-                    if (isInitialized) {
-                        tts?.speak(testText, TextToSpeech.QUEUE_FLUSH, null, "voice_test")
-                        Log.d(TAG, "Playing voice test with system TTS settings")
-                    }
-                    // Reset callbacks after use
-                    setAudioEventCallbacks()
-                })
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error testing voice settings", e)
+        // Apply the settings temporarily
+        if (!settings.useSystemDefaults) {
+            tts?.setSpeechRate(settings.speechRate)
+            tts?.setPitch(settings.pitch)
         }
-    }
-    
-    private fun resetToSystemDefaults() {
-        tts?.setSpeechRate(1.0f) // Default rate
-        tts?.setPitch(1.0f) // Default pitch
-        Log.d(TAG, "Reset TTS to system defaults")
+        
+        // Test with a sample phrase
+        val testText = "This is how your voice settings will sound."
+        speak(testText, "voice_test")
     }
     
     fun stop() {
@@ -166,9 +144,3 @@ class TTSManager @Inject constructor() {
         onSpeechError = null
     }
 } 
-
-data class VoiceSettings(
-    val useSystemDefaults: Boolean = true,
-    val speechRate: Float = 1.0f,
-    val pitch: Float = 1.0f
-) 

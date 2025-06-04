@@ -155,7 +155,7 @@ object AppModule {
     
     @Provides
     @Singleton
-    fun provideTTSManager(): TTSManager {
-        return TTSManager()
+    fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
+        return TTSManager(context)
     }
 }

@@ -259,10 +259,10 @@ object TestAppModule {
 
     @Provides
     @Singleton
-    fun provideTTSManager(): TTSManager {
+    fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
         Log.d(TAG, "🔧 Creating TTSManager...")
         return try {
-            val manager = TTSManager()
+            val manager = TTSManager(context)
             Log.d(TAG, "✅ TTSManager created successfully")
             manager
         } catch (e: Exception) {

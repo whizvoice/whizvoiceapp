@@ -1347,7 +1347,7 @@ class ChatViewModel @Inject constructor(
                         try {
                             ttsManager.stop()
                             ttsManager.shutdown()
-                            ttsManager.initialize(context) { success ->
+                            ttsManager.initialize { success ->
                                 if (success) {
                                     Log.d(TAG, "TTS reinitialized successfully")
                                     _isTTSInitialized.value = true
@@ -1469,75 +1469,39 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun initializeTTS() {
-        viewModelScope.launch {
-            delay(50)
-            try {
-                ttsManager.initialize(context) { success ->
-                    if (success) {
-                        Log.d(TAG, "TTS initialized successfully")
-                        _isTTSInitialized.value = true
-                        
-                        // Set up audio coordination callbacks
-                        ttsManager.setAudioEventCallbacks(
-                            onStarted = {
-                                Log.d(TAG, "[LOG] TTS started - disabling continuous listening")
-                                _isSpeaking.value = true
-                                // Disable continuous listening during TTS
-                                if (continuousListeningEnabled) {
-                                    wasListeningBeforeTTS = true
-                                    continuousListeningEnabled = false
-                                    speechRecognitionService.continuousListeningEnabled = false
-                                    speechRecognitionService.stopListening()
-                                }
-                            },
-                            onCompleted = {
-                                Log.d(TAG, "[LOG] TTS completed - re-enabling continuous listening if needed")
-                                _isSpeaking.value = false
-                                
-                                // Restore continuous listening if it was disabled during TTS
-                                if (wasListeningBeforeTTS) {
-                                    Log.d(TAG, "[LOG] TTS done, restoring continuous listening (was disabled during TTS)")
-                                    continuousListeningEnabled = true
-                                    speechRecognitionService.continuousListeningEnabled = true
-                                    wasListeningBeforeTTS = false
-                                    
-                                    // Start listening if not computing
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                }
-                            },
-                            onError = {
-                                Log.e(TAG, "[LOG] TTS error - re-enabling continuous listening")
-                                _isSpeaking.value = false
-                                
-                                // Restore continuous listening if it was disabled during TTS
-                                if (wasListeningBeforeTTS) {
-                                    Log.d(TAG, "[LOG] TTS error, restoring continuous listening (was disabled during TTS)")
-                                    continuousListeningEnabled = true
-                                    speechRecognitionService.continuousListeningEnabled = true
-                                    wasListeningBeforeTTS = false
-                                    
-                                    // Start listening if not computing
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                }
-                            }
-                        )
-                    } else {
-                        Log.e(TAG, "Failed to initialize TTS")
-                        _isTTSInitialized.value = false
-                    }
+        // Use event-driven approach without delays
+        ttsManager.initialize { success ->
+            if (success) {
+                Log.d(TAG, "TTS initialized successfully")
+                _isTTSInitialized.value = true
+                
+                // Apply current voice settings if available
+                currentVoiceSettings?.let { settings ->
+                    applyVoiceSettings(settings)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error initializing TTS", e)
+                
+                // Set up event callbacks for TTS coordination
+                ttsManager.setAudioEventCallbacks(
+                    onStarted = {
+                        Log.d(TAG, "TTS started - audio focus acquired")
+                        _isSpeaking.value = true
+                    },
+                    onCompleted = {
+                        Log.d(TAG, "TTS completed - audio focus released")
+                        _isSpeaking.value = false
+                        // Handle continuous listening if enabled and headphones are connected
+                        if (continuousListeningEnabled && areHeadphonesConnected()) {
+                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                            startContinuousListening()
+                        }
+                    },
+                    onError = {
+                        Log.e(TAG, "TTS error - audio focus released")
+                        _isSpeaking.value = false
+                    }
+                )
+            } else {
+                Log.e(TAG, "Failed to initialize TTS")
                 _isTTSInitialized.value = false
             }
         }
