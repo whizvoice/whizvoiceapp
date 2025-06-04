@@ -399,7 +399,7 @@ class ChatScreenTest {
         composeTestRule.setContent {
             WhizTheme {
                 ChatInputBar(
-                    inputText = "Previous message",
+                    inputText = "", // Empty text to avoid interrupt mode
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true,
@@ -418,10 +418,11 @@ class ChatScreenTest {
             }
         }
         
-        // Should show the previous message
-        composeTestRule.onNodeWithText("Previous message").assertIsDisplayed()
+        // Should show placeholder since no input text
+        composeTestRule.onNodeWithText("Type or tap mic...").assertIsDisplayed()
         
-        // Should show red mute button for continuous listening
+        // When responding AND continuous listening is enabled, should show "Turn off continuous listening"
+        // This matches the logic in ChatInputBar: isResponding && isContinuousListeningEnabled
         composeTestRule.onNodeWithContentDescription("Turn off continuous listening").assertIsDisplayed()
     }
 

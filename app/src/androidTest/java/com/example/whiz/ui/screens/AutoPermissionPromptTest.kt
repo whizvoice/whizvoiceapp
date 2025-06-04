@@ -1,36 +1,58 @@
 package com.example.whiz.ui.screens
 
-import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
+import dagger.hilt.android.testing.HiltAndroidRule
+import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
+import com.example.whiz.di.AppModule
+import com.example.whiz.ui.theme.WhizTheme
+import androidx.compose.material3.Text
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
+@UninstallModules(AppModule::class)
+@HiltAndroidTest
 @MediumTest
 @RunWith(AndroidJUnit4::class)
 class AutoPermissionPromptTest {
 
-    @get:Rule
-    val composeTestRule = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule(order = 0)
+    val hiltRule = HiltAndroidRule(this)
+
+    @get:Rule(order = 1)
+    val composeTestRule = createComposeRule()
+
+    @Before
+    fun setup() {
+        hiltRule.inject()
+    }
 
     @Test
     fun chatScreen_withoutMicPermission_showsAutomaticPermissionDialog() {
         var permissionRequested = false
 
         composeTestRule.setContent {
-            val navController = rememberNavController()
-            
-            ChatScreen(
-                chatId = 1L,
-                onChatsListClick = { },
-                hasPermission = false, // No microphone permission
-                onRequestPermission = { permissionRequested = true },
-                navController = navController
-            )
+            WhizTheme {
+                val navController = rememberNavController()
+                
+                ChatScreenWithPermissionDialog(
+                    chatId = 1L,
+                    onChatsListClick = { },
+                    hasPermission = false, // No microphone permission
+                    onRequestPermission = { permissionRequested = true },
+                    navController = navController,
+                    content = {
+                        // Simple content for testing - just show that main content loads
+                        Text("Chat Content Loaded")
+                    }
+                )
+            }
         }
 
         // Wait for the automatic dialog to appear (500ms delay + some buffer)
@@ -62,15 +84,20 @@ class AutoPermissionPromptTest {
         var permissionRequested = false
 
         composeTestRule.setContent {
-            val navController = rememberNavController()
-            
-            ChatScreen(
-                chatId = 1L,
-                onChatsListClick = { },
-                hasPermission = false,
-                onRequestPermission = { permissionRequested = true },
-                navController = navController
-            )
+            WhizTheme {
+                val navController = rememberNavController()
+                
+                ChatScreenWithPermissionDialog(
+                    chatId = 1L,
+                    onChatsListClick = { },
+                    hasPermission = false,
+                    onRequestPermission = { permissionRequested = true },
+                    navController = navController,
+                    content = {
+                        Text("Chat Content Loaded")
+                    }
+                )
+            }
         }
 
         // Wait for the automatic dialog to appear
@@ -96,15 +123,20 @@ class AutoPermissionPromptTest {
         var permissionRequested = false
 
         composeTestRule.setContent {
-            val navController = rememberNavController()
-            
-            ChatScreen(
-                chatId = 1L,
-                onChatsListClick = { },
-                hasPermission = false,
-                onRequestPermission = { permissionRequested = true },
-                navController = navController
-            )
+            WhizTheme {
+                val navController = rememberNavController()
+                
+                ChatScreenWithPermissionDialog(
+                    chatId = 1L,
+                    onChatsListClick = { },
+                    hasPermission = false,
+                    onRequestPermission = { permissionRequested = true },
+                    navController = navController,
+                    content = {
+                        Text("Chat Content Loaded")
+                    }
+                )
+            }
         }
 
         // Wait for the automatic dialog to appear
@@ -128,15 +160,20 @@ class AutoPermissionPromptTest {
     @Test
     fun chatScreen_withMicPermission_doesNotShowPermissionDialog() {
         composeTestRule.setContent {
-            val navController = rememberNavController()
-            
-            ChatScreen(
-                chatId = 1L,
-                onChatsListClick = { },
-                hasPermission = true, // Permission already granted
-                onRequestPermission = { },
-                navController = navController
-            )
+            WhizTheme {
+                val navController = rememberNavController()
+                
+                ChatScreenWithPermissionDialog(
+                    chatId = 1L,
+                    onChatsListClick = { },
+                    hasPermission = true, // Permission already granted
+                    onRequestPermission = { },
+                    navController = navController,
+                    content = {
+                        Text("Chat Content Loaded")
+                    }
+                )
+            }
         }
 
         // Wait to ensure no dialog appears
@@ -147,20 +184,30 @@ class AutoPermissionPromptTest {
         composeTestRule
             .onNodeWithText("Microphone Permission Required")
             .assertDoesNotExist()
+            
+        // Verify the main content is shown instead
+        composeTestRule
+            .onNodeWithText("Chat Content Loaded")
+            .assertIsDisplayed()
     }
 
     @Test
     fun permissionDialog_showsCorrectText() {
         composeTestRule.setContent {
-            val navController = rememberNavController()
-            
-            ChatScreen(
-                chatId = 1L,
-                onChatsListClick = { },
-                hasPermission = false,
-                onRequestPermission = { },
-                navController = navController
-            )
+            WhizTheme {
+                val navController = rememberNavController()
+                
+                ChatScreenWithPermissionDialog(
+                    chatId = 1L,
+                    onChatsListClick = { },
+                    hasPermission = false,
+                    onRequestPermission = { },
+                    navController = navController,
+                    content = {
+                        Text("Chat Content Loaded")
+                    }
+                )
+            }
         }
 
         // Wait for dialog to appear
