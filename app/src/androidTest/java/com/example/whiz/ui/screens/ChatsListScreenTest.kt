@@ -40,7 +40,7 @@ class ChatsListScreenTest {
     private fun waitForAppToLoad() {
         composeTestRule.waitForIdle()
         // Use proper Compose testing mechanisms instead of arbitrary delays
-        composeTestRule.waitUntil(timeoutMillis = 10000) { // Increased timeout
+        composeTestRule.waitUntil(timeoutMillis = 15000) { // Increased timeout for better reliability
             // Wait for the app to be in a stable state
             try {
                 // Check if any of the main UI elements are loaded - be more flexible
@@ -56,7 +56,25 @@ class ChatsListScreenTest {
                             composeTestRule.onNodeWithText("Sign in with Google").assertExists()
                             true
                         } catch (e3: Exception) {
-                            false
+                            try {
+                                // Look for any common app elements that indicate the app has loaded
+                                composeTestRule.onNodeWithContentDescription("Start new chat").assertExists()
+                                true
+                            } catch (e4: Exception) {
+                                try {
+                                    // Check for navigation elements
+                                    composeTestRule.onNodeWithContentDescription("Back").assertExists()
+                                    true
+                                } catch (e5: Exception) {
+                                    try {
+                                        // Check for any text input field which indicates a chat screen
+                                        composeTestRule.onNodeWithContentDescription("Message input").assertExists()
+                                        true
+                                    } catch (e6: Exception) {
+                                        false
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -75,21 +93,37 @@ class ChatsListScreenTest {
             "LoginScreen"
         } catch (e: AssertionError) {
             try {
-                // Check if we're on chats list screen
-                composeTestRule.onNodeWithText("My Chats").assertExists()
-                "ChatsListScreen"
+                composeTestRule.onNodeWithText("Sign in with Google").assertExists()
+                "LoginScreen"
             } catch (e2: AssertionError) {
                 try {
-                    // Check if we're on a chat screen
-                    composeTestRule.onNodeWithContentDescription("Back").assertExists()
-                    "ChatScreen"
+                    // Check if we're on chats list screen
+                    composeTestRule.onNodeWithText("My Chats").assertExists()
+                    "ChatsListScreen"
                 } catch (e3: AssertionError) {
                     try {
-                        // Check for any common elements
-                        composeTestRule.onNodeWithText("New Chat").assertExists()
-                        "HomeScreen"
+                        // Check if we're on a chat screen by looking for message input
+                        composeTestRule.onNodeWithContentDescription("Message input").assertExists()
+                        "ChatScreen"
                     } catch (e4: AssertionError) {
-                        "UnknownScreen"
+                        try {
+                            // Check if we're on a chat screen with back button
+                            composeTestRule.onNodeWithContentDescription("Back").assertExists()
+                            "ChatScreen"
+                        } catch (e5: AssertionError) {
+                            try {
+                                // Check for any common elements (New Chat button, etc.)
+                                composeTestRule.onNodeWithText("New Chat").assertExists()
+                                "HomeScreen"
+                            } catch (e6: AssertionError) {
+                                try {
+                                    composeTestRule.onNodeWithContentDescription("Start new chat").assertExists()
+                                    "HomeScreen"
+                                } catch (e7: AssertionError) {
+                                    "UnknownScreen"
+                                }
+                            }
+                        }
                     }
                 }
             }

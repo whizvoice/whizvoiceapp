@@ -249,14 +249,15 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
                         // Remove arbitrary delays and handle connection state immediately
                         _isConnectedToServer.value = true
-                        _connectionError.value = null
+                        _connectionError.value = null // Clear any connection errors when successfully connected
                         Log.d(TAG, "WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.")
                         isDisconnectingForAuthError = false
                     }
                     is WebSocketEvent.Reconnecting -> {
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Called.")
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection lost. Attempting to reconnect..."
+                        // Don't show "Connection lost" message to user - handle reconnection silently
+                        // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
                     }
                     is WebSocketEvent.Closed -> {
@@ -268,28 +269,45 @@ class ChatViewModel @Inject constructor(
                         } else if (_navigateToLogin.value) {
                             Log.d(TAG, "WebSocketEvent.Closed: Not attempting client-side reconnect as navigation to login is pending.")
                         } else {
-                            if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
-                                _connectionError.value = "Connection closed."
-                            }
-                            Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable. Current connectionError: ${_connectionError.value}")
+                            // Don't show "Connection closed" message to user - handle reconnection silently
+                            // if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
+                            //     _connectionError.value = "Connection closed."
+                            // }
+                            Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
                         }
                         currentActiveRequestId = null // Clear active request on disconnect
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection error: ${event.error.message ?: "Unknown connection failure"}"
+                        
+                        // Only show error to user if it's a persistent failure after retries
+                        val errorMessage = event.error.message ?: "Unknown connection failure"
+                        
+                        // Check if this is a final retry failure (contains "after X attempts")
+                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                            // This is a final failure after all retries - show to user
+                            _connectionError.value = "Failed to send message. Please check your connection and try again."
+                            if (_chatId.value > 0) { // Only add if a chat is active
+                                repository.addAssistantMessage(
+                                    chatId = _chatId.value,
+                                    content = "Error: Unable to send message. Please try again."
+                                )
+                            }
+                        } else {
+                            // This is likely a temporary connection issue - handle silently
+                            Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
+                            // Don't show error to user immediately, let retry mechanism handle it
+                        }
+                        
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
-                        pendingRequests.clear() // 🔧 Clear all pending requests on connection error
-                        if (_chatId.value > 0) { // Only add if a chat is active
-                            repository.addAssistantMessage(
-                                chatId = _chatId.value,
-                                content = "Error: ${event.error.message ?: "Connection error occurred"}"
-                                // Timestamp is handled by repository or MessageEntity default
-                            )
+                        
+                        // Only clear pending requests if this is a final failure
+                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                            pendingRequests.clear() // 🔧 Clear all pending requests on final connection error
+                            _isResponding.value = false
+                            currentActiveRequestId = null // Clear active request on error
                         }
-                        _isResponding.value = false
-                        currentActiveRequestId = null // Clear active request on error
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -965,73 +983,59 @@ class ChatViewModel @Inject constructor(
             // --- Server Interaction ---
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
-                if (_isConnectedToServer.value) {
-                    _isResponding.value = true // Show thinking indicator
-                    // 🔧 Generate unique request ID and track which chat this request belongs to
-                    val requestId = java.util.UUID.randomUUID().toString()
-                    currentActiveRequestId = requestId // Track the active request
-                    pendingRequests[requestId] = currentChatId
-                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
-                    val success = whizServerRepository.sendMessage(trimmedText, requestId)
-                    if (!success) {
-                        pendingRequests.remove(requestId) // Clear tracking on failure
-                        currentActiveRequestId = null
-                        updateRespondingStateForCurrentChat() // Update based on remaining requests
-                        // Don't show error to user for brief disconnections - handle silently
-                        // _connectionError.value = "Failed to send message. Please try again."
-                        Log.e(TAG, "Failed to send message via WebSocket")
-                    } else {
-                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
-                        // For new chats, we need to refresh conversations list after server creates it
-                        if (currentChatId <= 0) {
-                            try {
-                                viewModelScope.launch {
-                                    // Remove arbitrary delay - server should acknowledge immediately
-                                    repository.refreshConversations()
-                                    Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
-                                    
-                                    // Try to find the newly created conversation and switch to it
-                                    val conversations = repository.conversations.value
-                                    if (conversations.isNotEmpty()) {
-                                        val newestConversation = conversations.first() // Most recent
-                                        _chatId.value = newestConversation.id
-                                        _chatTitle.value = newestConversation.title
-                                        Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
-                            }
-                        }
-                        
-                        // Trigger UI refresh to show user message saved by WebSocket server
-                        try {
-                            viewModelScope.launch {
-                                // Remove arbitrary delay - refresh immediately after sending
-                                repository.refreshMessages()
-                                Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
-                        }
-                    }
-                    // Response handling is done in observeServerMessages
+                
+                // Always attempt to send the message regardless of connection status
+                // The WebSocket repository will handle queueing and retry automatically
+                _isResponding.value = true // Show thinking indicator
+                val requestId = java.util.UUID.randomUUID().toString()
+                currentActiveRequestId = requestId // Track the active request
+                pendingRequests[requestId] = currentChatId
+                
+                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
+                val success = whizServerRepository.sendMessage(trimmedText, requestId)
+                
+                if (!success) {
+                    // Message was queued for retry, don't clear the request tracking yet
+                    // The retry mechanism will handle this transparently
+                    Log.d(TAG, "sendUserInput: Message queued for retry - keeping request tracking")
                 } else {
-                    Log.w(TAG, "Cannot send message: Not connected to server. Attempting to connect...")
-                    // Don't show error to user for brief disconnections - handle silently
-                    // _connectionError.value = "Not connected to server. Connecting..."
-                    
-                    // Clear input text even on connection failure to prevent stuck state
-                    Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text due to connection failure (was: '${_inputText.value}')")
-                    _inputText.value = ""
-                    
-                    // Try to connect with current conversation ID (automatic reconnection)
-                    val conversationId = if (_chatId.value > 0) _chatId.value else null
-                    whizServerRepository.connect(conversationId)
-                    
-                    // For voice-first UX: Don't use local fallback, just let user speak again after reconnection
-                    Log.d(TAG, "sendUserInput: WebSocket reconnecting in background. User can speak again when ready.")
+                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
                 }
+                
+                // For new chats, we need to refresh conversations list after server creates it
+                if (currentChatId <= 0) {
+                    try {
+                        viewModelScope.launch {
+                            // Remove arbitrary delay - server should acknowledge immediately
+                            repository.refreshConversations()
+                            Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
+                            
+                            // Try to find the newly created conversation and switch to it
+                            val conversations = repository.conversations.value
+                            if (conversations.isNotEmpty()) {
+                                val newestConversation = conversations.first() // Most recent
+                                _chatId.value = newestConversation.id
+                                _chatTitle.value = newestConversation.title
+                                Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
+                    }
+                }
+                
+                // Trigger UI refresh to show user message saved by WebSocket server
+                try {
+                    viewModelScope.launch {
+                        // Remove arbitrary delay - refresh immediately after sending
+                        repository.refreshMessages()
+                        Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
+                }
+                
+                // Response handling is done in observeServerMessages
             } else {
                 // --- Local Fallback ---
                 Log.d(TAG, "sendUserInput: Using local fallback")
@@ -1205,33 +1209,32 @@ class ChatViewModel @Inject constructor(
                 pendingRequests[requestId] = _chatId.value
                 val success = whizServerRepository.sendMessage(textToSend, requestId)
                 if (!success) {
-                    pendingRequests.remove(requestId) // Clear tracking on failure
-                    currentActiveRequestId = null
-                    updateRespondingStateForCurrentChat() // Update based on remaining requests
-                    // Don't show error to user for brief disconnections - handle silently
-                    // _connectionError.value = "Failed to send message. Please try again."
-                    Log.e(TAG, "Failed to send message via WebSocket")
+                    // Message was queued for retry, don't clear the request tracking yet
+                    // The retry mechanism will handle this transparently
+                    Log.d(TAG, "sendInputText: Message queued for retry - keeping request tracking")
                 } else {
-                    // For new chats, refresh conversations after server creates it
-                    if (_chatId.value <= 0) {
-                        try {
-                            viewModelScope.launch {
-                                // Remove arbitrary delay - server should acknowledge immediately
-                                repository.refreshConversations()
-                                Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
-                                
-                                // Try to find the newly created conversation and switch to it
-                                val conversations = repository.conversations.value
-                                if (conversations.isNotEmpty()) {
-                                    val newestConversation = conversations.first() // Most recent
-                                    _chatId.value = newestConversation.id
-                                    _chatTitle.value = newestConversation.title
-                                    Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
-                                }
+                    Log.d(TAG, "sendInputText: Message sent successfully via WebSocket")
+                }
+                
+                // For new chats, refresh conversations after server creates it
+                if (_chatId.value <= 0) {
+                    try {
+                        viewModelScope.launch {
+                            // Remove arbitrary delay - server should acknowledge immediately
+                            repository.refreshConversations()
+                            Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
+                            
+                            // Try to find the newly created conversation and switch to it
+                            val conversations = repository.conversations.value
+                            if (conversations.isNotEmpty()) {
+                                val newestConversation = conversations.first() // Most recent
+                                _chatId.value = newestConversation.id
+                                _chatTitle.value = newestConversation.title
+                                Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
                     }
                 }
             } else {
