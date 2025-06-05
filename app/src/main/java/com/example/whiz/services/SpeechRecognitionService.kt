@@ -207,13 +207,12 @@ class SpeechRecognitionService @Inject constructor(
             manualStopInProgress = true
             speechRecognizer?.stopListening()
             _isListening.value = false // Set listening state to false
-            recognitionCallback = null
             Log.d(TAG, "[DEBUG] Speech recognition stopped successfully")
         } catch (e: Exception) {
             Log.e(TAG, "[DEBUG] Error stopping speech recognition", e)
             _errorState.value = "Error stopping speech recognition: ${e.message}"
             _isListening.value = false // Ensure listening state is false on error
-            recognitionCallback = null
+            recognitionCallback = null // Only clear on error
             // Try to clean up
             try {
                 speechRecognizer?.destroy()
@@ -349,8 +348,20 @@ class SpeechRecognitionService @Inject constructor(
                 val finalText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
-                recognitionCallback?.invoke(finalText)
+                
+                if (recognitionCallback != null) {
+                    if (finalText.isNotBlank()) {
+                        Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
+                        // Deliver final transcription even if manually stopped
+                        // This ensures the user gets their speech text in the input field
+                        recognitionCallback?.invoke(finalText)
+                    }
+                }
+                
                 _isListening.value = false
+                
+                // 🔧 Clear callback after results are delivered (safe to clear now)
+                recognitionCallback = null
                 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
                 _transcriptionState.value = ""

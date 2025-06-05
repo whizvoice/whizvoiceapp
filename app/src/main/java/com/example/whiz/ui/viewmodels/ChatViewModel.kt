@@ -293,21 +293,27 @@ class ChatViewModel @Inject constructor(
                                     content = "Error: Unable to send message. Please try again."
                                 )
                             }
+                            // Clear all pending requests on final connection error
+                            pendingRequests.clear()
+                            _isResponding.value = false
+                            currentActiveRequestId = null
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
-                            // Don't show error to user immediately, let retry mechanism handle it
+                            
+                            // Clear responding state for temporary connection errors too
+                            // When message retries have failed completely (~6-8 seconds of trying),
+                            // clear the responding state to allow user to interact with the microphone button
+                            if (_isResponding.value) {
+                                Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+                                _isResponding.value = false
+                                pendingRequests.clear()
+                                currentActiveRequestId = null
+                            }
                         }
                         
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
-                        
-                        // Only clear pending requests if this is a final failure
-                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
-                            pendingRequests.clear() // 🔧 Clear all pending requests on final connection error
-                            _isResponding.value = false
-                            currentActiveRequestId = null // Clear active request on error
-                        }
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -897,10 +903,20 @@ class ChatViewModel @Inject constructor(
         speechRecognitionService.startListening { finalText ->
             Log.d(TAG, "[LOG] startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText', isResponding=${_isResponding.value}")
             
-            // 🔧 Set transcribed text to input field and send immediately
-            Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field for UX: '$finalText'")
-            _inputText.value = finalText
-            sendUserInput(finalText) // Send the transcription
+            // Always set transcribed text to input field when we have valid text
+            // This ensures text is preserved even when user manually stops the microphone
+            if (finalText.isNotBlank()) {
+                Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field: '$finalText'")
+                _inputText.value = finalText
+                
+                // Only auto-send if continuous listening is still enabled
+                if (continuousListeningEnabled) {
+                    Log.d(TAG, "[LOG] startContinuousListening: Auto-sending transcription (continuous listening enabled)")
+                    sendUserInput(finalText) // Send the transcription
+                } else {
+                    Log.d(TAG, "[LOG] startContinuousListening: Preserving transcription in input field (continuous listening disabled, user can manually send)")
+                }
+            }
             
             // Always restart listening if continuous listening is enabled, regardless of responding state
             if (continuousListeningEnabled) {
