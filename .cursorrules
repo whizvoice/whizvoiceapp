@@ -1,7 +1,7 @@
 this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
 Please don't downgrade packages for no reason.
 Whenever you change any production files in whizvoiceapp please also run `cd whizvoiceapp && ./install_debug_for_testing.sh` to kick off the build in Android Studio so we can test the change right away.
-For running tests, you can `cd whizvoiceapp && ./run_tests_on_debug.sh`
+For running tests, you can `cd whizvoiceapp && ./run_tests_on_debug.sh`. Test output is also logged to test_output.log .
 Please run tests if you change tests or if you change functionality covered by tests.
 When you run integration tests, please also run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`
 Please write tests if you add new functionality.
