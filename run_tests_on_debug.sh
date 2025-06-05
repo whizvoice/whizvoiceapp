@@ -11,20 +11,22 @@ set -e
 
 # Function to log with timestamp
 log_with_time() {
-    echo "[$(date '+%H:%M:%S')] $1" | tee -a test_output.log
+    echo "[$(date '+%H:%M:%S.%3N')] $1" | tee -a test_output.log
 }
 
 # Function to run command with logging and timing
 run_with_log() {
     local description="$1"
     local command="$2"
-    local start_time=$(date +%s)
+    local start_time=$(date +%s.%3N)
     
     log_with_time "⏳ $description"
-    eval "$command" 2>&1 | tee -a test_output.log
+    eval "$command" 2>&1 | while IFS= read -r line; do
+        echo "[$(date '+%H:%M:%S.%3N')] $line" | tee -a test_output.log
+    done
     
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
+    local end_time=$(date +%s.%3N)
+    local duration=$(echo "$end_time - $start_time" | bc)
     log_with_time "✅ $description completed in ${duration}s"
     echo "" | tee -a test_output.log
 }
@@ -68,16 +70,23 @@ log_with_time "🧪 Starting instrumented tests..."
 # Start logcat monitoring in background to capture test logs
 log_with_time "📱 Starting logcat monitoring for test details..."
 adb logcat -c  # Clear logcat
-adb logcat "*:I" | grep -E "(TEST_|TestRunner|InstrumentationResultPrinter)" | while read line; do
-    echo "[$(date '+%H:%M:%S')] LOGCAT: $line" | tee -a test_output.log
+adb logcat "*:I" | grep -E "(TEST_EXECUTION|TestRunner|InstrumentationResultPrinter|started|finished)" | while read line; do
+    echo "[$(date '+%H:%M:%S.%3N')] LOGCAT: $line" | tee -a test_output.log
 done &
 LOGCAT_PID=$!
 
+# Also start a more comprehensive test monitoring that captures individual test starts/ends
+adb logcat "*:I" | grep -E "(class.*method.*started|class.*method.*finished)" | while read line; do
+    echo "[$(date '+%H:%M:%S.%3N')] TEST_TIMING: $line" | tee -a test_output.log
+done &
+TEST_TIMING_PID=$!
+
 monitor_tests "Instrumented tests" &
 MONITOR_PID=$!
-run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain"
+run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain --info"
 kill $MONITOR_PID 2>/dev/null || true
 kill $LOGCAT_PID 2>/dev/null || true
+kill $TEST_TIMING_PID 2>/dev/null || true
 
 log_with_time "📱 Stopped logcat monitoring"
 

@@ -52,13 +52,17 @@ class AppStartupAuthTest {
     }
 
     private fun waitForAppToLoad() {
+        // Use efficient waiting with reduced sleep time instead of risky waitUntil
         composeTestRule.waitForIdle()
-        Thread.sleep(3000) // Wait for activity to fully initialize and authentication state to be checked
+        Thread.sleep(1500) // Reduced from 3000ms - still allows initialization but much faster
         composeTestRule.waitForIdle()
     }
 
     @Test
     fun appStartup_whenNotAuthenticated_shouldShowLoginScreen() {
+        val testStartTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 STARTING TEST: appStartup_whenNotAuthenticated_shouldShowLoginScreen at $testStartTime")
+        
         Log.d("AppStartupAuthTest", "🚀 Testing app startup authentication flow")
         
         waitForAppToLoad()
@@ -95,15 +99,21 @@ class AppStartupAuthTest {
             
             throw AssertionError("Login screen should be displayed when user is not authenticated", e)
         }
+        
+        val testEndTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 COMPLETED TEST: appStartup_whenNotAuthenticated_shouldShowLoginScreen at $testEndTime (duration: ${testEndTime - testStartTime}ms)")
     }
 
     @Test
     fun appStartup_authenticationCheck_isPerformedImmediately() {
+        val testStartTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 STARTING TEST: appStartup_authenticationCheck_isPerformedImmediately at $testStartTime")
+        
         Log.d("AppStartupAuthTest", "🚀 Testing immediate authentication check on startup")
         
-        // Don't wait too long - we want to test that auth check happens quickly
+        // Use efficient waiting with shorter timeouts instead of risky waitUntil
         composeTestRule.waitForIdle()
-        Thread.sleep(1000) // Minimal wait to let auth state initialize
+        Thread.sleep(800) // Reduced from 1000ms - faster but still allows auth check
         composeTestRule.waitForIdle()
         
         // By this point, the app should have already determined authentication state
@@ -112,13 +122,13 @@ class AppStartupAuthTest {
         val currentAuthState = runBlocking { 
             authRepository.isSignedIn()
         }
-        Log.d("AppStartupAuthTest", "Current auth state after minimal wait: $currentAuthState")
+        Log.d("AppStartupAuthTest", "Current auth state after efficient wait: $currentAuthState")
         
         if (!currentAuthState) {
             // Should be on login screen
             try {
                 composeTestRule.onNodeWithText("Sign in with Google").assertIsDisplayed()
-                Log.d("AppStartupAuthTest", "✅ Login screen shown immediately for unauthenticated user")
+                Log.d("AppStartupAuthTest", "✅ Login screen shown efficiently for unauthenticated user")
             } catch (e: AssertionError) {
                 Log.e("AppStartupAuthTest", "❌ Authentication check may not have completed - login screen not shown", e)
                 throw AssertionError("App should show login screen immediately when user is not authenticated")
@@ -128,10 +138,16 @@ class AppStartupAuthTest {
             // This test scenario assumes user is not authenticated, so this is unexpected
             Log.w("AppStartupAuthTest", "⚠️ User appears to be authenticated despite signOut() call")
         }
+        
+        val testEndTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 COMPLETED TEST: appStartup_authenticationCheck_isPerformedImmediately at $testEndTime (duration: ${testEndTime - testStartTime}ms)")
     }
 
     @Test 
     fun appStartup_navigationFlow_worksCorrectly() {
+        val testStartTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 STARTING TEST: appStartup_navigationFlow_worksCorrectly at $testStartTime")
+        
         Log.d("AppStartupAuthTest", "🚀 Testing navigation flow on app startup")
         
         waitForAppToLoad()
@@ -149,7 +165,9 @@ class AppStartupAuthTest {
             
             // Click debug button to see current state
             composeTestRule.onNodeWithText("Check Google Sign-In Status").performClick()
-            Thread.sleep(1000) // Let debug info appear
+            
+            // Wait for debug info to appear efficiently
+            composeTestRule.waitForIdle()
             
             Log.d("AppStartupAuthTest", "✅ Debug button functional - can check auth status")
         } catch (e: AssertionError) {
@@ -157,5 +175,8 @@ class AppStartupAuthTest {
         }
         
         Log.d("AppStartupAuthTest", "✅ Navigation flow working correctly - login screen functional")
+        
+        val testEndTime = System.currentTimeMillis()
+        Log.d("TEST_EXECUTION", "🕐 COMPLETED TEST: appStartup_navigationFlow_worksCorrectly at $testEndTime (duration: ${testEndTime - testStartTime}ms)")
     }
 } 

@@ -907,12 +907,12 @@ class ChatViewModel @Inject constructor(
             // This ensures text is preserved even when user manually stops the microphone
             if (finalText.isNotBlank()) {
                 Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field: '$finalText'")
-                _inputText.value = finalText
+            _inputText.value = finalText
                 
                 // Only auto-send if continuous listening is still enabled
                 if (continuousListeningEnabled) {
                     Log.d(TAG, "[LOG] startContinuousListening: Auto-sending transcription (continuous listening enabled)")
-                    sendUserInput(finalText) // Send the transcription
+            sendUserInput(finalText) // Send the transcription
                 } else {
                     Log.d(TAG, "[LOG] startContinuousListening: Preserving transcription in input field (continuous listening disabled, user can manually send)")
                 }
