@@ -9,33 +9,80 @@ set -e
 # Clear previous log file
 > test_output.log
 
-echo "🧪 Running tests on WhizVoice Debug with latest changes..." | tee -a test_output.log
-echo "" | tee -a test_output.log
+# Function to log with timestamp
+log_with_time() {
+    echo "[$(date '+%H:%M:%S')] $1" | tee -a test_output.log
+}
 
-# Function to run command with logging
+# Function to run command with logging and timing
 run_with_log() {
-    echo "⏳ $1" | tee -a test_output.log
-    eval "$2" 2>&1 | tee -a test_output.log
+    local description="$1"
+    local command="$2"
+    local start_time=$(date +%s)
+    
+    log_with_time "⏳ $description"
+    eval "$command" 2>&1 | tee -a test_output.log
+    
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    log_with_time "✅ $description completed in ${duration}s"
     echo "" | tee -a test_output.log
 }
 
+# Function to monitor test progress in background
+monitor_tests() {
+    local test_type="$1"
+    sleep 5 # Wait for tests to start
+    
+    while true; do
+        # Check if gradlew process is still running
+        if ! pgrep -f "gradlew.*Test" > /dev/null; then
+            break
+        fi
+        
+        # Log current time to show tests are still running
+        log_with_time "📊 $test_type still running..."
+        sleep 30 # Check every 30 seconds
+    done
+}
+
+log_with_time "🧪 Running tests on WhizVoice Debug with latest changes..."
+echo "" | tee -a test_output.log
+
 # Build the latest debug APK
-run_with_log "Building latest debug version..." "./gradlew assembleDebug --console=plain"
+run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain"
 
 # Install the latest debug APK
-run_with_log "Installing latest debug APK..." "adb install -r app/build/outputs/apk/debug/app-debug.apk"
-
-echo "✅ Latest debug version installed" | tee -a test_output.log
-echo "" | tee -a test_output.log
+run_with_log "Installing latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
 
 # Run unit tests first (fast, always use latest code)
-run_with_log "Running unit tests with latest code..." "./gradlew testDebugUnitTest --console=plain"
+log_with_time "🧪 Starting unit tests..."
+monitor_tests "Unit tests" &
+MONITOR_PID=$!
+run_with_log "Running unit tests with latest code" "./gradlew testDebugUnitTest --console=plain"
+kill $MONITOR_PID 2>/dev/null || true
 
 # Run instrumented tests on debug build
-run_with_log "Running instrumented tests on latest debug build..." "./gradlew connectedDebugAndroidTest --console=plain"
+log_with_time "🧪 Starting instrumented tests..."
+
+# Start logcat monitoring in background to capture test logs
+log_with_time "📱 Starting logcat monitoring for test details..."
+adb logcat -c  # Clear logcat
+adb logcat "*:I" | grep -E "(TEST_|TestRunner|InstrumentationResultPrinter)" | while read line; do
+    echo "[$(date '+%H:%M:%S')] LOGCAT: $line" | tee -a test_output.log
+done &
+LOGCAT_PID=$!
+
+monitor_tests "Instrumented tests" &
+MONITOR_PID=$!
+run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain"
+kill $MONITOR_PID 2>/dev/null || true
+kill $LOGCAT_PID 2>/dev/null || true
+
+log_with_time "📱 Stopped logcat monitoring"
 
 echo "" | tee -a test_output.log
-echo "✅ All tests completed with latest changes!" | tee -a test_output.log
+log_with_time "✅ All tests completed with latest changes!"
 echo "" | tee -a test_output.log
 echo "📊 Test reports available at:" | tee -a test_output.log
 echo "   • Unit tests: app/build/reports/tests/testDebugUnitTest/index.html" | tee -a test_output.log
