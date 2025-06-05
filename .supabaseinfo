@@ -1,0 +1,304 @@
+We use supabase for the database. There's a users table, a user_preferences table, a conversations table, and a messages table.
+
+users table:
+
+id | int8
+created_at | timestamp | now()
+email | text
+user_id | text
+google_assistant_user_id | text
+
+the user ID is given by google auth, and is a unique identifier for the user.
+
+user_preferences table:
+
+id | int8
+created_at | timestamp | now()
+user_id | text | foreign key to users.user_id
+preferences | jsonb
+encrypted_preferences | bytea
+last_updated | timestamp | now()
+
+conversations table:
+
+id | int8
+user_id | text | foreign key to users.user_id
+title | text
+created_at | timestamp | now()
+last_message_time | timestamp | now()
+source | text | 'app', 'voice', or 'web'
+google_session_id | text
+updated_at | timestamp | now()
+
+This table also has indexes
+- idx_conversations_user_id on conversations(user_id)
+- idx_conversations_last_message on conversations(user_id, last_message_time DESC)
+- idx_conversations_user_updated on conversations(user_id, updated_at DESC)
+
+messages table:
+
+id | int8
+conversation_id | int8 | foreign key to conversations.id
+content | text
+message_type | text | 'USER' or 'ASSISTANT'
+timestamp | timestamp | now()
+updated_at | timestamp | now()
+
+This table also has indexes
+- idx_messages_conversation_id on messages(conversation_id)
+- idx_messages_timestamp on messages(conversation_id, timestamp ASC)
+- idx_messages_conversation_updated on messages(conversation_id, updated_at DESC)
+
+sync_metadata table:
+
+id | int8
+user_id | text | foreign key to users.user_id
+entity_type | text | 'conversations', 'messages'
+entity_id | int8 | foreign key to conversations.id or messages.id
+last_sync_timestamp | timestamp
+created_at | timestamp | now()
+updated_at | timestamp | now()
+
+the combination of user_id, entity_type, and entity_id is unique.
+IMV,V.//////zaP00TY0   5  6TGF  BA xzg bvx ji5oxz  ;     ofds kc799]9    mk,,,,,,,, 8 0pp[77 un]
+MKI] This table also has indexes
+
+Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
+
+function for getting a specific key's value from regular (not encrypted) preferences
+
+CREATE OR REPLACE FUNCTION get_preference_value(
+   p_user_id TEXT,
+   p_target_key TEXT
+)
+RETURNS TEXT AS $$
+BEGIN
+   RETURN (SELECT preferences ->> p_target_key FROM user_preferences WHERE user_id = p_user_id);
+END;
+$$ LANGUAGE plpgsql;
+
+function for setting a specific key's value in regular (not encrypted) preferences
+
+CREATE OR REPLACE FUNCTION set_preference_value(
+   p_user_id TEXT,
+   p_target_key TEXT,
+   p_value TEXT -- Value to set, will be treated as a JSON string value
+)
+RETURNS VOID AS $$
+BEGIN
+   UPDATE user_preferences
+   SET preferences = jsonb_set(
+         COALESCE(preferences, '{}'::jsonb), -- Ensure 'preferences' is not NULL
+         ARRAY[p_target_key], 
+         to_jsonb(p_value), -- Convert text to a JSON string value
+         true -- Create the key if it doesn't exist
+      ),
+      last_updated = CURRENT_TIMESTAMP
+   WHERE user_id = p_user_id;
+END;
+$$ LANGUAGE plpgsql;
+
+function for getting decrypted preferences
+
+CREATE OR REPLACE FUNCTION get_decrypted_preferences(
+   p_user_id TEXT,
+   p_encryption_key TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+   decrypted_prefs TEXT;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+   SELECT pgp_sym_decrypt(encrypted_preferences, p_encryption_key)
+   INTO decrypted_prefs
+   FROM user_preferences
+   WHERE user_id = p_user_id;
+
+
+   -- Returns the decrypted text (JSON string)
+   -- Returns NULL if no user row is found
+   -- Returns NULL or throws an error if decryption fails (e.g., wrong key, corrupted data)
+   RETURN decrypted_prefs;
+END;
+$$ LANGUAGE plpgsql;
+
+function for getting a specific key's value from decrypted preferences
+
+CREATE OR REPLACE FUNCTION get_decrypted_preference_key(
+   p_user_id TEXT,
+   p_encryption_key TEXT,
+   p_target_key TEXT  -- The key whose value you want to retrieve
+)
+RETURNS TEXT AS $$
+DECLARE
+   decrypted_json_text TEXT;
+   key_value TEXT;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+   -- Decrypt the entire preference object first
+   SELECT pgp_sym_decrypt(encrypted_preferences, p_encryption_key)
+   INTO decrypted_json_text
+   FROM user_preferences
+   WHERE user_id = p_user_id;
+
+
+   -- If decryption was successful and returned text...
+   IF decrypted_json_text IS NOT NULL THEN
+       BEGIN
+           -- Try to cast the decrypted text to jsonb
+           -- and then extract the specific key's value as text using ->>
+           SELECT (decrypted_json_text::jsonb) ->> p_target_key
+           INTO key_value;
+
+
+       EXCEPTION WHEN OTHERS THEN
+           -- Handle potential errors during casting (if not valid JSON)
+           -- or key extraction (if key doesn't exist).
+           -- Log warning is useful for debugging in Supabase logs.
+           RAISE WARNING 'Error processing decrypted JSON for user % key %: %', p_user_id, p_target_key, SQLERRM;
+           key_value := NULL; -- Return NULL if processing fails
+       END;
+   ELSE
+       -- No record found or initial decryption failed
+       key_value := NULL;
+   END IF;
+
+
+   RETURN key_value; -- Returns the value as TEXT, or NULL if not found/error
+END;
+$$ LANGUAGE plpgsql;
+
+function for setting a specific key's value in encrypted preferences
+
+    CREATE OR REPLACE FUNCTION set_encrypted_preference_key(
+       p_user_id TEXT,
+       p_target_key TEXT,
+       p_value TEXT, -- Value is passed as text, will be inserted into JSON
+       p_encryption_key TEXT
+    )
+    RETURNS VOID AS $$
+    DECLARE
+       current_encrypted_blob BYTEA;
+       decrypted_json_text TEXT;
+       updated_json_blob JSONB;
+       new_encrypted_blob BYTEA;
+    BEGIN
+       CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+       SELECT encrypted_preferences INTO current_encrypted_blob
+       FROM user_preferences WHERE user_id = p_user_id;
+
+       IF current_encrypted_blob IS NULL THEN
+           decrypted_json_text := '{}'; 
+       ELSE
+           BEGIN
+               decrypted_json_text := pgp_sym_decrypt(current_encrypted_blob, p_encryption_key);
+           EXCEPTION WHEN OTHERS THEN
+               -- Handle potential error if key is wrong or data is corrupt
+               RAISE WARNING 'Error decrypting preferences for user %: %. Assuming empty preferences.', p_user_id, SQLERRM;
+               decrypted_json_text := '{}';
+           END;
+       END IF;
+       
+       IF decrypted_json_text IS NULL OR decrypted_json_text = '' THEN
+          decrypted_json_text := '{}';
+       END IF;
+
+       -- Convert to JSONB, set the key. to_jsonb() ensures p_value is treated as a JSON string value.
+       -- If p_value itself could be a complex JSON structure, use p_value::jsonb instead of to_jsonb(p_value)
+       updated_json_blob := jsonb_set(decrypted_json_text::jsonb, ARRAY[p_target_key], to_jsonb(p_value), true);
+
+       new_encrypted_blob := pgp_sym_encrypt(updated_json_blob::TEXT, p_encryption_key);
+
+       UPDATE user_preferences
+       SET encrypted_preferences = new_encrypted_blob,
+           last_updated = CURRENT_TIMESTAMP
+       WHERE user_id = p_user_id;
+    END;
+    $$ LANGUAGE plpgsql;
+
+function for setting entire encrypted preferences
+
+CREATE OR REPLACE FUNCTION set_encrypted_preferences(
+   p_user_id TEXT,
+   p_preferences_payload JSONB, -- The entire JSON object to be encrypted and stored
+   p_encryption_key TEXT
+)
+RETURNS VOID AS $$
+DECLARE
+   new_encrypted_blob BYTEA;
+BEGIN
+   -- Ensure pgcrypto extension is available
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+   -- Encrypt the provided payload
+   new_encrypted_blob := pgp_sym_encrypt(p_preferences_payload::TEXT, p_encryption_key);
+
+   -- Update only the encrypted_preferences and last_updated columns
+   UPDATE user_preferences
+   SET 
+       encrypted_preferences = new_encrypted_blob,
+       last_updated = CURRENT_TIMESTAMP
+   WHERE user_id = p_user_id;
+
+   -- Optional: Check if the update actually found a row, if needed for robust error handling from calling code.
+   -- IF NOT FOUND THEN
+   --    RAISE WARNING 'User % not found in user_preferences. No encrypted preferences updated.', p_user_id;
+   -- END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+triggers to automatically update updated_at timestamp:
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+triggers to auto-update timestamps:
+
+CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+policies:
+
+CREATE POLICY "Users can view their own sync metadata" ON sync_metadata
+    FOR SELECT USING (user_id = current_setting('app.current_user_id', true));
+
+CREATE POLICY "Users can insert their own sync metadata" ON sync_metadata
+    FOR INSERT WITH CHECK (user_id = current_setting('app.current_user_id', true));
+
+CREATE POLICY "Users can update their own sync metadata" ON sync_metadata
+    FOR UPDATE USING (user_id = current_setting('app.current_user_id', true));
