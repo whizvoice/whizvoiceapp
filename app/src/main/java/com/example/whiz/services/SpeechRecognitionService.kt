@@ -287,25 +287,22 @@ class SpeechRecognitionService @Inject constructor(
                 }
                 // If still in voice mode, explicitly restart listening for the next phrase
                 Log.d(TAG, "[DEBUG] Natural end of speech detected, explicitly restarting listener.")
-                // Add a small delay to prevent immediate restart if results are coming
-                serviceScope.launch {
-                    delay(100) // Small delay (e.g., 100ms)
-                    if(_isListening.value) { // Re-check state after delay
-                        try {
-                            // 🔧 Rate limiting check before restart
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastStartTime >= RESTART_DELAY_MS) {
-                                speechRecognizer?.startListening(recognizerIntent)
-                                lastStartTime = currentTime // Update last start time
-                                Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
-                            } else {
-                                Log.d(TAG, "[DEBUG] Restart after end of speech skipped due to rate limiting")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
-                            _isListening.value = false
-                            _errorState.value = "Error restarting listening: ${e.message}"
+                // Use rate limiting instead of arbitrary delay - more intelligent timing
+                if(_isListening.value) { // Check state immediately
+                    try {
+                        // 🔧 Rate limiting check before restart - this provides the intelligent timing
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastStartTime >= RESTART_DELAY_MS) {
+                            speechRecognizer?.startListening(recognizerIntent)
+                            lastStartTime = currentTime // Update last start time
+                            Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                        } else {
+                            Log.d(TAG, "[DEBUG] Restart after end of speech skipped due to rate limiting")
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
+                        _isListening.value = false
+                        _errorState.value = "Error restarting listening: ${e.message}"
                     }
                 }
             }
@@ -337,15 +334,12 @@ class SpeechRecognitionService @Inject constructor(
                 // --- Continuous listening auto-restart logic ---
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled) {
                     Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
-                    serviceScope.launch {
-                        delay(500) // Increased delay to prevent rapid restarts
-                        // 🔧 Additional rate limiting check before auto-restart
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastStartTime >= RESTART_DELAY_MS && continuousListeningEnabled) {
-                            startListening(recognitionCallback ?: { })
-                        } else {
-                            Log.d(TAG, "[LOG] Auto-restart skipped due to rate limiting or disabled continuous listening")
-                        }
+                    // Use intelligent rate limiting instead of arbitrary delay
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastStartTime >= RESTART_DELAY_MS && continuousListeningEnabled) {
+                        startListening(recognitionCallback ?: { })
+                    } else {
+                        Log.d(TAG, "[LOG] Auto-restart skipped due to rate limiting or disabled continuous listening")
                     }
                 }
             }

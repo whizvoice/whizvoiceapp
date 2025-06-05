@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -94,16 +95,19 @@ class VoiceManager @Inject constructor(
                 _isSpeaking.value = false
                 
                 // Auto-restart continuous listening after TTS completes if it was enabled
+                // Use state observation instead of delay - the TTS callback guarantees TTS is done
                 if (continuousListeningEnabled) {
-                    viewModelScope.launch {
-                        delay(100) // Small delay to ensure TTS state is updated
-                        startContinuousListening()
-                    }
+                    startContinuousListening()
                 }
             },
             onError = {
                 Log.e(TAG, "TTS error occurred")
                 _isSpeaking.value = false
+                
+                // Also handle continuous listening restart on error if needed
+                if (continuousListeningEnabled) {
+                    startContinuousListening()
+                }
             }
         )
     }
@@ -227,9 +231,11 @@ class VoiceManager @Inject constructor(
             // Enable continuous listening and start immediately
             continuousListeningEnabled = true
             
+            // Use reactive state observation instead of delay
+            // Observe when TTS actually stops speaking, but only check once
             viewModelScope.launch {
-                delay(100) // Small delay to ensure TTS stop is processed
-                if (!_isSpeaking.value) {
+                isSpeaking.first { !it } // Wait for first emission where isSpeaking is false
+                if (continuousListeningEnabled) {
                     startContinuousListening()
                 }
             }
