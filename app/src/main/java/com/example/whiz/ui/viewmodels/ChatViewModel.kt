@@ -2,21 +2,18 @@ package com.example.whiz.ui.viewmodels
 
 import android.content.Context
 import android.media.AudioManager
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
+import com.example.whiz.services.TTSManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
-import okhttp3.WebSocket
-import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
 
@@ -41,7 +38,8 @@ class ChatViewModel @Inject constructor(
     private val whizServerRepository: WhizServerRepository,
     private val authRepository: AuthRepository, // Add this
     private val userPreferences: UserPreferences,
-) : ViewModel(), TextToSpeech.OnInitListener { // Implement OnInitListener
+    private val ttsManager: TTSManager,
+) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
     private val TAG = "ChatViewModel"
 
@@ -118,7 +116,6 @@ class ChatViewModel @Inject constructor(
     val isResponding = _isResponding.asStateFlow()
 
     // --- Text-to-Speech State ---
-    private var tts: TextToSpeech? = null
     private val _isTTSInitialized = MutableStateFlow(false)
     private val _isSpeaking = MutableStateFlow(false) // Track if TTS is currently speaking
     val isSpeaking = _isSpeaking.asStateFlow()
@@ -199,7 +196,7 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening. continuousListening before: $continuousListeningEnabled")
             
             // Pause/stop TTS (but keep voice response enabled for future messages)
-            tts?.stop()
+            ttsManager.stop()
             _isSpeaking.value = false
             
             // Enable continuous listening and start immediately
@@ -224,9 +221,9 @@ class ChatViewModel @Inject constructor(
         _micPermissionGranted.value = PermissionHandler.hasMicrophonePermission(context)
         
         speechRecognitionService.initialize()
-        // Initialize TTS
-        tts = TextToSpeech(context, this)
-        Log.d(TAG, "TTS Initialization requested.")
+        
+        // Initialize TTS using the new event-driven approach
+        initializeTTS()
 
         // Start observing messages immediately
         if (configUseRemoteAgent) {
@@ -250,22 +247,17 @@ class ChatViewModel @Inject constructor(
                 when (event) {
                     is WebSocketEvent.Connected -> {
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
-                        viewModelScope.launch {
-                            // Increased delay to ensure WebSocket is fully ready during server instability
-                            delay(300)
-                            _isConnectedToServer.value = true
-                            _connectionError.value = null
-                            delay(200) 
-                            if (_isConnectedToServer.value) { 
-                                Log.d(TAG, "WebSocketEvent.Connected: DELAYED - Resetting isDisconnectingForAuthError to false.")
-                                isDisconnectingForAuthError = false
-                            }
-                        }
+                        // Remove arbitrary delays and handle connection state immediately
+                        _isConnectedToServer.value = true
+                        _connectionError.value = null // Clear any connection errors when successfully connected
+                        Log.d(TAG, "WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.")
+                        isDisconnectingForAuthError = false
                     }
                     is WebSocketEvent.Reconnecting -> {
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Called.")
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection lost. Attempting to reconnect..."
+                        // Don't show "Connection lost" message to user - handle reconnection silently
+                        // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
                     }
                     is WebSocketEvent.Closed -> {
@@ -277,28 +269,45 @@ class ChatViewModel @Inject constructor(
                         } else if (_navigateToLogin.value) {
                             Log.d(TAG, "WebSocketEvent.Closed: Not attempting client-side reconnect as navigation to login is pending.")
                         } else {
-                            if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
-                                _connectionError.value = "Connection closed."
-                            }
-                            Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable. Current connectionError: ${_connectionError.value}")
+                            // Don't show "Connection closed" message to user - handle reconnection silently
+                            // if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
+                            //     _connectionError.value = "Connection closed."
+                            // }
+                            Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
                         }
                         currentActiveRequestId = null // Clear active request on disconnect
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
-                        _connectionError.value = "Connection error: ${event.error.message ?: "Unknown connection failure"}"
+                        
+                        // Only show error to user if it's a persistent failure after retries
+                        val errorMessage = event.error.message ?: "Unknown connection failure"
+                        
+                        // Check if this is a final retry failure (contains "after X attempts")
+                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                            // This is a final failure after all retries - show to user
+                            _connectionError.value = "Failed to send message. Please check your connection and try again."
+                            if (_chatId.value > 0) { // Only add if a chat is active
+                                repository.addAssistantMessage(
+                                    chatId = _chatId.value,
+                                    content = "Error: Unable to send message. Please try again."
+                                )
+                            }
+                        } else {
+                            // This is likely a temporary connection issue - handle silently
+                            Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
+                            // Don't show error to user immediately, let retry mechanism handle it
+                        }
+                        
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
-                        pendingRequests.clear() // 🔧 Clear all pending requests on connection error
-                        if (_chatId.value > 0) { // Only add if a chat is active
-                            repository.addAssistantMessage(
-                                chatId = _chatId.value,
-                                content = "Error: ${event.error.message ?: "Connection error occurred"}"
-                                // Timestamp is handled by repository or MessageEntity default
-                            )
+                        
+                        // Only clear pending requests if this is a final failure
+                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                            pendingRequests.clear() // 🔧 Clear all pending requests on final connection error
+                            _isResponding.value = false
+                            currentActiveRequestId = null // Clear active request on error
                         }
-                        _isResponding.value = false
-                        currentActiveRequestId = null // Clear active request on error
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -479,7 +488,7 @@ class ChatViewModel @Inject constructor(
                                     
                                     try {
                                         viewModelScope.launch {
-                                            delay(100) // Brief delay for server processing
+                                            // Remove arbitrary delay - refresh immediately when server responds
                                             repository.refreshMessages()
                                             Log.d(TAG, "$eventLogId Triggered messages refresh for remote agent response")
                                         }
@@ -491,7 +500,7 @@ class ChatViewModel @Inject constructor(
                                     if (targetChatId <= 0) {
                                         try {
                                             viewModelScope.launch {
-                                                delay(200) // Brief delay for server processing
+                                                // Remove arbitrary delay - refresh immediately when needed
                                                 repository.refreshConversations()
                                                 Log.d(TAG, "$eventLogId Refreshed conversations for potential new chat creation")
                                             }
@@ -529,7 +538,7 @@ class ChatViewModel @Inject constructor(
                                     val utteranceId = UUID.randomUUID().toString()
                                     _isSpeaking.value = true // Indicate TTS is starting
                                     Log.d(TAG, "$eventLogId Starting TTS for message: '${messageContentForChat.take(50)}...'")
-                                    tts?.speak(messageContentForChat, TextToSpeech.QUEUE_ADD, null, utteranceId)
+                                    ttsManager.speak(messageContentForChat, "chat_message")
                                     // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
                                 } else {
                                     Log.d(TAG, "$eventLogId Skipping TTS - conditions not met")
@@ -598,156 +607,6 @@ class ChatViewModel @Inject constructor(
         // Speak the response if enabled
         if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
             speakAgentResponse(responseText)
-        }
-    }
-
-    // --- TextToSpeech.OnInitListener Implementation ---
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.US) // Set desired language
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Log.e(TAG, "TTS language is not supported or missing data.")
-                _isTTSInitialized.value = false
-            } else {
-                Log.d(TAG, "TTS Initialized successfully.")
-                
-                // Apply voice settings after ensuring they're loaded
-                viewModelScope.launch {
-                    try {
-                        // Ensure voice settings are loaded from server before applying them
-                        userPreferences.loadVoiceSettings()
-                        val voiceSettings = userPreferences.voiceSettings.value
-                        Log.d(TAG, "Applying voice settings after TTS init: $voiceSettings")
-                        applyVoiceSettings(voiceSettings)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error loading and applying voice settings", e)
-                        // Continue with default settings if there's an error
-                    }
-                }
-                
-                _isTTSInitialized.value = true
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        Log.d(TAG, "TTS onStart for $utteranceId")
-                        _isSpeaking.value = true
-                        
-                        val headphonesConnected = areHeadphonesConnected()
-                        Log.d(TAG, "TTS starting. Headphones connected: $headphonesConnected")
-                        
-                        if (headphonesConnected) {
-                            // With headphones: Keep continuous listening on (no feedback risk)
-                            Log.d(TAG, "TTS with headphones - keeping continuous listening active")
-                            wasListeningBeforeTTS = false // Don't need to track since we're not stopping
-                        } else {
-                            // Without headphones: Turn OFF continuous listening completely (cleaner UX)
-                            if (continuousListeningEnabled) {
-                                Log.d(TAG, "TTS with speakers - disabling continuous listening for cleaner UX")
-                                wasListeningBeforeTTS = true // Remember it was enabled
-                                continuousListeningEnabled = false
-                                speechRecognitionService.continuousListeningEnabled = false
-                                speechRecognitionService.stopListening()
-                            } else {
-                                wasListeningBeforeTTS = false
-                                Log.d(TAG, "TTS with speakers - continuous listening was already off")
-                            }
-                        }
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        Log.d(TAG, "[LOG] TTS onDone for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
-                        _isSpeaking.value = false
-                        
-                        // Add minimal delay for audio resource cleanup, then restart immediately if not computing
-                        viewModelScope.launch {
-                            try {
-                                // Minimal delay for TTS to release audio resources
-                                delay(150) // Reduced from 300ms to 150ms for faster response
-                                
-                                // Restore continuous listening if it was disabled during TTS
-                                if (wasListeningBeforeTTS) {
-                                    Log.d(TAG, "[LOG] TTS done, restoring continuous listening (was disabled during TTS)")
-                                    continuousListeningEnabled = true
-                                    speechRecognitionService.continuousListeningEnabled = true
-                                    wasListeningBeforeTTS = false
-                                    
-                                    // Start listening if not computing
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                } else if (continuousListeningEnabled) {
-                                    // Continuous listening was already enabled (e.g., with headphones)
-                                    Log.d(TAG, "[LOG] TTS done, continuous listening was already enabled, checking if we can restart immediately.")
-                                    
-                                    // Check immediately if we can restart (not computing)
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                } else {
-                                    Log.d(TAG, "[LOG] TTS done, continuous listening remains disabled")
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "[LOG] Error in TTS onDone callback", e)
-                                wasListeningBeforeTTS = false
-                            }
-                        }
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        Log.e(TAG, "[LOG] TTS onError for $utteranceId. continuousListeningEnabled=$continuousListeningEnabled, wasListeningBeforeTTS=$wasListeningBeforeTTS, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}")
-                        _isSpeaking.value = false
-                        
-                        // Add minimal delay for audio resource cleanup, then restart immediately if not computing
-                        viewModelScope.launch {
-                            try {
-                                // Minimal delay for TTS to release audio resources
-                                delay(150) // Reduced from 300ms to 150ms for faster response
-                                
-                                // Restore continuous listening if it was disabled during TTS
-                                if (wasListeningBeforeTTS) {
-                                    Log.d(TAG, "[LOG] TTS error, restoring continuous listening (was disabled during TTS)")
-                                    continuousListeningEnabled = true
-                                    speechRecognitionService.continuousListeningEnabled = true
-                                    wasListeningBeforeTTS = false
-                                    
-                                    // Start listening if not computing
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                } else if (continuousListeningEnabled) {
-                                    // Continuous listening was already enabled (e.g., with headphones)
-                                    Log.d(TAG, "[LOG] TTS error, continuous listening was already enabled, checking if we can restart immediately.")
-                                    
-                                    // Check immediately if we can restart (not computing)
-                                    if (!_isResponding.value && !_isSpeaking.value) {
-                                        Log.d(TAG, "[LOG] Not computing - restarting continuous listening immediately")
-                                        startContinuousListening()
-                                    } else {
-                                        Log.d(TAG, "[LOG] Still computing (responding=${_isResponding.value}, speaking=${_isSpeaking.value}) - will restart when done")
-                                    }
-                                } else {
-                                    Log.d(TAG, "[LOG] TTS error, continuous listening remains disabled")
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "[LOG] Error in TTS onError callback", e)
-                                wasListeningBeforeTTS = false
-                            }
-                        }
-                    }
-                })
-            }
-        } else {
-            Log.e(TAG, "TTS Initialization Failed! Status: $status")
-            _isTTSInitialized.value = false
         }
     }
 
@@ -850,7 +709,7 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
                     speechRecognitionService.stopListening()
                     Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${_isSpeaking.value})")
-                    tts?.stop()
+                    ttsManager.stop()
                     _isSpeaking.value = false
                     Log.d(TAG, "loadChat: Speech services stopped successfully")
                 } catch (e: Exception) {
@@ -1124,73 +983,59 @@ class ChatViewModel @Inject constructor(
             // --- Server Interaction ---
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
-                if (_isConnectedToServer.value) {
-                    _isResponding.value = true // Show thinking indicator
-                    // 🔧 Generate unique request ID and track which chat this request belongs to
-                    val requestId = java.util.UUID.randomUUID().toString()
-                    currentActiveRequestId = requestId // Track the active request
-                    pendingRequests[requestId] = currentChatId
-                    Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
-                    val success = whizServerRepository.sendMessage(trimmedText, requestId)
-                    if (!success) {
-                        pendingRequests.remove(requestId) // Clear tracking on failure
-                        currentActiveRequestId = null
-                        updateRespondingStateForCurrentChat() // Update based on remaining requests
-                        // Don't show error to user for brief disconnections - handle silently
-                        // _connectionError.value = "Failed to send message. Please try again."
-                        Log.e(TAG, "Failed to send message via WebSocket")
-                    } else {
-                        Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
-                        // For new chats, we need to refresh conversations list after server creates it
-                        if (currentChatId <= 0) {
-                            try {
-                                viewModelScope.launch {
-                                    delay(500) // Delay to ensure server creates conversation
-                                    repository.refreshConversations()
-                                    Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
-                                    
-                                    // Try to find the newly created conversation and switch to it
-                                    val conversations = repository.conversations.value
-                                    if (conversations.isNotEmpty()) {
-                                        val newestConversation = conversations.first() // Most recent
-                                        _chatId.value = newestConversation.id
-                                        _chatTitle.value = newestConversation.title
-                                        Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
-                            }
-                        }
-                        
-                        // Trigger UI refresh to show user message saved by WebSocket server
-                        try {
-                            viewModelScope.launch {
-                                delay(500) // Single delay to ensure server processes the message
-                                repository.refreshMessages()
-                                Log.d(TAG, "sendUserInput: Triggered single messages refresh after sending user message")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
-                        }
-                    }
-                    // Response handling is done in observeServerMessages
+                
+                // Always attempt to send the message regardless of connection status
+                // The WebSocket repository will handle queueing and retry automatically
+                _isResponding.value = true // Show thinking indicator
+                val requestId = java.util.UUID.randomUUID().toString()
+                currentActiveRequestId = requestId // Track the active request
+                pendingRequests[requestId] = currentChatId
+                
+                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
+                val success = whizServerRepository.sendMessage(trimmedText, requestId)
+                
+                if (!success) {
+                    // Message was queued for retry, don't clear the request tracking yet
+                    // The retry mechanism will handle this transparently
+                    Log.d(TAG, "sendUserInput: Message queued for retry - keeping request tracking")
                 } else {
-                    Log.w(TAG, "Cannot send message: Not connected to server. Attempting to connect...")
-                    // Don't show error to user for brief disconnections - handle silently
-                    // _connectionError.value = "Not connected to server. Connecting..."
-                    
-                    // Clear input text even on connection failure to prevent stuck state
-                    Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text due to connection failure (was: '${_inputText.value}')")
-                    _inputText.value = ""
-                    
-                    // Try to connect with current conversation ID (automatic reconnection)
-                    val conversationId = if (_chatId.value > 0) _chatId.value else null
-                    whizServerRepository.connect(conversationId)
-                    
-                    // For voice-first UX: Don't use local fallback, just let user speak again after reconnection
-                    Log.d(TAG, "sendUserInput: WebSocket reconnecting in background. User can speak again when ready.")
+                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
                 }
+                
+                // For new chats, we need to refresh conversations list after server creates it
+                if (currentChatId <= 0) {
+                    try {
+                        viewModelScope.launch {
+                            // Remove arbitrary delay - server should acknowledge immediately
+                            repository.refreshConversations()
+                            Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
+                            
+                            // Try to find the newly created conversation and switch to it
+                            val conversations = repository.conversations.value
+                            if (conversations.isNotEmpty()) {
+                                val newestConversation = conversations.first() // Most recent
+                                _chatId.value = newestConversation.id
+                                _chatTitle.value = newestConversation.title
+                                Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
+                    }
+                }
+                
+                // Trigger UI refresh to show user message saved by WebSocket server
+                try {
+                    viewModelScope.launch {
+                        // Remove arbitrary delay - refresh immediately after sending
+                        repository.refreshMessages()
+                        Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
+                }
+                
+                // Response handling is done in observeServerMessages
             } else {
                 // --- Local Fallback ---
                 Log.d(TAG, "sendUserInput: Using local fallback")
@@ -1209,7 +1054,7 @@ class ChatViewModel @Inject constructor(
     fun toggleVoiceResponse() {
         _isVoiceResponseEnabled.update { !it }
         if (!_isVoiceResponseEnabled.value) {
-            tts?.stop() // Stop speaking if toggled off
+            ttsManager.stop() // Stop speaking if toggled off
             _isSpeaking.value = false
             
             // If continuous listening is enabled, restart it immediately when TTS is stopped
@@ -1268,7 +1113,7 @@ class ChatViewModel @Inject constructor(
         val utteranceId = UUID.randomUUID().toString()
         Log.d(TAG, "Requesting TTS speak: [$utteranceId] '$text'")
         // QUEUE_FLUSH cancels previous utterances, QUEUE_ADD adds to the end
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        ttsManager.speak(text, "chat_message")
     }
 
     private fun schedulePersistenceCheck(chatId: Long) {
@@ -1293,9 +1138,8 @@ class ChatViewModel @Inject constructor(
         }
         
         speechRecognitionService.release()
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
+        ttsManager.stop()
+        ttsManager.shutdown()
         persistenceJob?.cancel()
         
         // Disconnect WebSocket
@@ -1365,33 +1209,32 @@ class ChatViewModel @Inject constructor(
                 pendingRequests[requestId] = _chatId.value
                 val success = whizServerRepository.sendMessage(textToSend, requestId)
                 if (!success) {
-                    pendingRequests.remove(requestId) // Clear tracking on failure
-                    currentActiveRequestId = null
-                    updateRespondingStateForCurrentChat() // Update based on remaining requests
-                    // Don't show error to user for brief disconnections - handle silently
-                    // _connectionError.value = "Failed to send message. Please try again."
-                    Log.e(TAG, "Failed to send message via WebSocket")
+                    // Message was queued for retry, don't clear the request tracking yet
+                    // The retry mechanism will handle this transparently
+                    Log.d(TAG, "sendInputText: Message queued for retry - keeping request tracking")
                 } else {
-                    // For new chats, refresh conversations after server creates it
-                    if (_chatId.value <= 0) {
-                        try {
-                            viewModelScope.launch {
-                                delay(500) // Delay to ensure server creates conversation
-                                repository.refreshConversations()
-                                Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
-                                
-                                // Try to find the newly created conversation and switch to it
-                                val conversations = repository.conversations.value
-                                if (conversations.isNotEmpty()) {
-                                    val newestConversation = conversations.first() // Most recent
-                                    _chatId.value = newestConversation.id
-                                    _chatTitle.value = newestConversation.title
-                                    Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
-                                }
+                    Log.d(TAG, "sendInputText: Message sent successfully via WebSocket")
+                }
+                
+                // For new chats, refresh conversations after server creates it
+                if (_chatId.value <= 0) {
+                    try {
+                        viewModelScope.launch {
+                            // Remove arbitrary delay - server should acknowledge immediately
+                            repository.refreshConversations()
+                            Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
+                            
+                            // Try to find the newly created conversation and switch to it
+                            val conversations = repository.conversations.value
+                            if (conversations.isNotEmpty()) {
+                                val newestConversation = conversations.first() // Most recent
+                                _chatId.value = newestConversation.id
+                                _chatTitle.value = newestConversation.title
+                                Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
                     }
                 }
             } else {
@@ -1496,8 +1339,8 @@ class ChatViewModel @Inject constructor(
             
             if (!voiceSettings.useSystemDefaults) {
                 Log.d(TAG, "Applying custom voice settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
-                tts?.setSpeechRate(voiceSettings.speechRate)
-                tts?.setPitch(voiceSettings.pitch)
+                ttsManager.setSpeechRate(voiceSettings.speechRate)
+                ttsManager.setPitch(voiceSettings.pitch)
             } else {
                 // Check if we're switching from custom to system defaults
                 if (previousSettings != null && !previousSettings.useSystemDefaults) {
@@ -1505,11 +1348,20 @@ class ChatViewModel @Inject constructor(
                     // We need to reinitialize the TTS engine to clear custom settings
                     viewModelScope.launch {
                         try {
-                            tts?.stop()
-                            tts?.shutdown()
-                            tts = TextToSpeech(context, this@ChatViewModel)
+                            ttsManager.stop()
+                            ttsManager.shutdown()
+                            ttsManager.initialize { success ->
+                                if (success) {
+                                    Log.d(TAG, "TTS reinitialized successfully")
+                                    _isTTSInitialized.value = true
+                                } else {
+                                    Log.e(TAG, "Failed to reinitialize TTS")
+                                    _isTTSInitialized.value = false
+                                }
+                            }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error reinitializing TTS for system defaults", e)
+                            Log.e(TAG, "Error reinitializing TTS", e)
+                            _isTTSInitialized.value = false
                         }
                     }
                 } else {
@@ -1617,5 +1469,54 @@ class ChatViewModel @Inject constructor(
         
         Log.d(TAG, "interruptResponse: Interrupting with message: '$currentInput'")
         sendUserInput(currentInput, isInterrupt = true)
+    }
+
+    private fun initializeTTS() {
+        // Use event-driven approach without delays
+        ttsManager.initialize { success ->
+            if (success) {
+                Log.d(TAG, "TTS initialized successfully")
+                _isTTSInitialized.value = true
+                
+                // Apply current voice settings if available
+                currentVoiceSettings?.let { settings ->
+                    applyVoiceSettings(settings)
+                }
+                
+                // Set up event callbacks for TTS coordination
+                ttsManager.setAudioEventCallbacks(
+                    onStarted = {
+                        Log.d(TAG, "TTS started - audio focus acquired")
+                        _isSpeaking.value = true
+                    },
+                    onCompleted = {
+                        Log.d(TAG, "TTS completed - audio focus released")
+                        _isSpeaking.value = false
+                        // Handle continuous listening if enabled and headphones are connected
+                        if (continuousListeningEnabled && areHeadphonesConnected()) {
+                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                            startContinuousListening()
+                        }
+                    },
+                    onError = {
+                        Log.e(TAG, "TTS error - audio focus released")
+                        _isSpeaking.value = false
+                    }
+                )
+            } else {
+                Log.e(TAG, "Failed to initialize TTS")
+                _isTTSInitialized.value = false
+            }
+        }
+    }
+
+    private fun speakText(text: String) {
+        if (!_isTTSInitialized.value) {
+            Log.w(TAG, "TTS not initialized, cannot speak")
+            return
+        }
+        
+        Log.d(TAG, "[LOG] Speaking text: $text, continuousListeningEnabled=$continuousListeningEnabled")
+        ttsManager.speak(text, "chat_message")
     }
 }

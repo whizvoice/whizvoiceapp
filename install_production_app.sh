@@ -31,13 +31,3 @@ if adb shell pm list packages | grep -q "com.example.whiz$"; then
 else
     echo "   ❌ Production version - Installation may have failed"
 fi
-
-echo ""
-echo "🎯 Perfect setup:"
-echo "   • Daily use: 'Whiz Voice' (normal colors, production features)"
-echo "   • Testing: '🧪 WhizVoice DEBUG' (orange colors, debug features)"
-echo ""
-echo "🚀 Commands:"
-echo "   • Test changes: ./test_with_latest_changes.sh"
-echo "   • Update production: ./install_production_app.sh"
-echo "   • Check status: ./check_installed_apps.sh" 
