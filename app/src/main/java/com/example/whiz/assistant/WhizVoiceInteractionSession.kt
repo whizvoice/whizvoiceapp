@@ -7,25 +7,21 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.util.Log
-import android.view.View
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.example.whiz.AssistantActivity
-import com.example.whiz.ui.screens.AssistantOverlayUi
-import com.example.whiz.ui.viewmodels.ChatViewModel
 
 class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(context) {
     private val TAG = "WhizVoiceInteractionSession"
-    private lateinit var chatViewModel: ChatViewModel
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate: Session created")
-        chatViewModel = ServiceLocator.getChatViewModel(context)
-        val intent = Intent(context, AssistantActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        intent.putExtra("IS_ASSISTANT_LAUNCH", true)
+        
+        // Launch AssistantActivity which handles all the business logic
+        // AssistantActivity uses Hilt for dependency injection
+        val intent = Intent(context, AssistantActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("IS_ASSISTANT_LAUNCH", true)
+        }
         Log.d(TAG, "Starting AssistantActivity from session's onCreate")
         startAssistantActivity(intent)
     }

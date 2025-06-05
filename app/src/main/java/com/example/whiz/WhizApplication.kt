@@ -60,6 +60,17 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
         }
     }
     
+    override fun onDestroy(owner: LifecycleOwner) {
+        super<DefaultLifecycleObserver>.onDestroy(owner)
+        Log.d("WhizApplication", "App destroyed - releasing speech recognition resources")
+        try {
+            // Release speech recognition resources to prevent memory leaks
+            speechRecognitionService.release()
+        } catch (e: Exception) {
+            Log.e("WhizApplication", "Error releasing speech recognition on destroy", e)
+        }
+    }
+    
     override fun onStart(owner: LifecycleOwner) {
         super<DefaultLifecycleObserver>.onStart(owner)
         Log.d("WhizApplication", "App moved to foreground")

@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ class SpeechRecognitionService @Inject constructor(
 ) {
     private val TAG = "SpeechRecognition"
     private var speechRecognizer: SpeechRecognizer? = null
+    private var recognitionListener: RecognitionListener? = null
 
     // --- State Flows ---
     private val _transcriptionState = MutableStateFlow("")
@@ -72,7 +74,7 @@ class SpeechRecognitionService @Inject constructor(
         recognitionCallback = null
         
         // Safely release any existing recognizer first
-        releaseInternal(isReinitializing = true)
+        cleanup()
         
         // Setup intent
         setupRecognizerIntent()
@@ -80,22 +82,16 @@ class SpeechRecognitionService @Inject constructor(
         // Create the new recognizer with error handling
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(createRecognitionListener())
+            recognitionListener = createRecognitionListener()
+            speechRecognizer?.setRecognitionListener(recognitionListener)
             Log.d(TAG, "Speech recognizer initialized successfully.")
             _errorState.value = null
             _isInitialized = true
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SpeechRecognizer", e)
             _errorState.value = "Failed to initialize speech service."
-            speechRecognizer = null
+            cleanup()
             _isInitialized = false
-            // Try to clean up
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "Error during cleanup", cleanupError)
-            }
         }
     }
 
@@ -155,7 +151,8 @@ class SpeechRecognitionService @Inject constructor(
                     _errorState.value = "Failed to create speech recognizer"
                     return
                 }
-                speechRecognizer?.setRecognitionListener(createRecognitionListener())
+                recognitionListener = createRecognitionListener()
+                speechRecognizer?.setRecognitionListener(recognitionListener)
             }
 
             // Validate the recognizer is in a good state
@@ -181,17 +178,11 @@ class SpeechRecognitionService @Inject constructor(
             recognitionCallback = null
             
             // Force cleanup and reinitialize on error
-            try {
-                speechRecognizer?.cancel()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-                Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
-                
-                // Try to reinitialize for next attempt
-                initialize()
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
-            }
+            cleanup()
+            Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
+            
+            // Try to reinitialize for next attempt
+            initialize()
         }
     }
 
@@ -214,42 +205,59 @@ class SpeechRecognitionService @Inject constructor(
             _isListening.value = false // Ensure listening state is false on error
             recognitionCallback = null // Only clear on error
             // Try to clean up
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
-            }
+            cleanup()
         }
     }
 
     fun release() {
         Log.i(TAG, "Releasing SpeechRecognitionService resources.")
-        serviceScope.launch { /* cancel pending jobs */ } // Placeholder
-        releaseInternal(isReinitializing = false)
+        serviceScope.cancel() // Cancel all pending coroutines
+        cleanup()
         recognitionCallback = null
+        _isInitialized = false
+    }
+
+    /**
+     * Safely cleanup SpeechRecognizer and related resources
+     */
+    private fun cleanup() {
+        try {
+            speechRecognizer?.let { recognizer ->
+                try {
+                    recognizer.cancel() // Cancel any ongoing recognition
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error cancelling speech recognizer", e)
+                }
+                
+                try {
+                    recognizer.setRecognitionListener(null) // Clear listener before destroy
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error clearing recognition listener", e)
+                }
+                
+                try {
+                    recognizer.destroy() // Destroy the recognizer
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error destroying speech recognizer", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during cleanup", e)
+        } finally {
+            speechRecognizer = null
+            recognitionListener = null
+            _isListening.value = false
+            _transcriptionState.value = ""
+            manualStopInProgress = false
+            utteranceFinalized = false
+            recognizerIntent = null
+        }
     }
 
     private fun releaseInternal(isReinitializing: Boolean) {
-        if (speechRecognizer != null) {
-            try {
-                speechRecognizer?.cancel() // Cancel any ongoing recognition immediately
-                speechRecognizer?.destroy()
-                Log.d(TAG,"SpeechRecognizer destroyed.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during SpeechRecognizer release", e)
-            } finally {
-                speechRecognizer = null
-                if (!isReinitializing) {
-                    _isListening.value = false
-                    _transcriptionState.value = ""
-                    manualStopInProgress = false
-                    utteranceFinalized = false
-                    recognizerIntent = null // Clear intent too
-                }
-            }
-        } else {
-            Log.d(TAG,"Recognizer was already null during release.")
+        cleanup()
+        if (!isReinitializing) {
+            _isInitialized = false
         }
     }
 

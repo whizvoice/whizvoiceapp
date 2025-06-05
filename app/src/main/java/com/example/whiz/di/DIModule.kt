@@ -73,32 +73,71 @@ object AppModule {
     ): OkHttpClient {
         return OkHttpClient.Builder()
             .authenticator(tokenAuthenticator)
-            .addInterceptor(Interceptor { chain ->
-                val originalRequest = chain.request()
-                val requestBuilder = originalRequest.newBuilder()
-                
-                // Skip adding Authorization header for authentication endpoints
-                val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
-                
-                if (!isAuthRequest) {
-                    // Get AuthRepository instance via provider
-                    val authRepository = authRepositoryProvider.get()
-                    // Get token asynchronously but don't block if it's null
-                    val token: String? = runBlocking { 
-                        authRepository.serverToken.first() // Get current token, could be null
-                    }
-
-                    if (token != null) {
-                        requestBuilder.header("Authorization", "Bearer $token")
-                    }
-                }
-                
-                chain.proceed(requestBuilder.build())
-            })
-            .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
+            .addInterceptor(AuthInterceptor(authRepositoryProvider))
+            .readTimeout(30, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
+    }
+
+    /**
+     * Optimized auth interceptor that minimizes blocking operations
+     */
+    private class AuthInterceptor(
+        private val authRepositoryProvider: Provider<AuthRepository>
+    ) : Interceptor {
+        
+        @Volatile
+        private var cachedToken: String? = null
+        private var lastTokenFetchTime: Long = 0
+        private val tokenCacheValidityMs = 5000L // Cache token for 5 seconds
+        
+        override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+            val originalRequest = chain.request()
+            
+            // Skip adding Authorization header for authentication endpoints
+            val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
+            if (isAuthRequest) {
+                return chain.proceed(originalRequest)
+            }
+            
+            // Get token with minimal blocking - use cached token when possible
+            val token = getCurrentToken()
+            
+            val requestBuilder = originalRequest.newBuilder()
+            if (token != null) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
+            
+            return chain.proceed(requestBuilder.build())
+        }
+        
+        private fun getCurrentToken(): String? {
+            val currentTime = System.currentTimeMillis()
+            
+            // Use cached token if it's still valid
+            if (cachedToken != null && (currentTime - lastTokenFetchTime) < tokenCacheValidityMs) {
+                return cachedToken
+            }
+            
+            // Fetch new token (this is the only unavoidable blocking operation)
+            return try {
+                val authRepository = authRepositoryProvider.get()
+                val token = runBlocking { 
+                    authRepository.serverToken.first()
+                }
+                
+                // Update cache
+                cachedToken = token
+                lastTokenFetchTime = currentTime
+                
+                token
+            } catch (e: Exception) {
+                // Log but don't crash - request will proceed without auth header
+                android.util.Log.w("AuthInterceptor", "Failed to get token", e)
+                null
+            }
+        }
     }
 
     @Provides
