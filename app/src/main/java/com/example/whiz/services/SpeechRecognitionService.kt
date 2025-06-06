@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,9 +48,11 @@ class SpeechRecognitionService @Inject constructor(
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
     private var _isInitialized = false
     
-    // 🔧 Rate limiting for restarts
-    private var lastStartTime = 0L
-    private val RESTART_DELAY_MS = 500L // Minimum delay between restarts
+    // 🔧 Smart rate limiting - only for error-based restarts
+    private var lastErrorTime = 0L
+    private var errorRestartCount = 0
+    private val ERROR_RESTART_WINDOW_MS = 5000L // Window for counting rapid errors
+    private val MAX_ERROR_RESTARTS = 3 // Max error restarts within window
     
     val isInitialized: Boolean
         get() = _isInitialized
@@ -115,14 +118,6 @@ class SpeechRecognitionService @Inject constructor(
         
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
-        
-        // 🔧 Rate limiting check - but don't return early if already listening (callback is set above)
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastStartTime < RESTART_DELAY_MS && !_isListening.value) {
-            Log.d(TAG, "[DEBUG] startListening rate limited and not currently listening. Last start was ${currentTime - lastStartTime}ms ago")
-            return
-        }
-        lastStartTime = currentTime
         
         if (!isInitialized) {
             Log.w(TAG, "[DEBUG] SpeechRecognitionService not initialized")
@@ -287,18 +282,11 @@ class SpeechRecognitionService @Inject constructor(
                 }
                 // If still in voice mode, explicitly restart listening for the next phrase
                 Log.d(TAG, "[DEBUG] Natural end of speech detected, explicitly restarting listener.")
-                // Use rate limiting instead of arbitrary delay - more intelligent timing
+                // Normal restart after end of speech - no rate limiting needed
                 if(_isListening.value) { // Check state immediately
                     try {
-                        // 🔧 Rate limiting check before restart - this provides the intelligent timing
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastStartTime >= RESTART_DELAY_MS) {
-                            speechRecognizer?.startListening(recognizerIntent)
-                            lastStartTime = currentTime // Update last start time
-                            Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
-                        } else {
-                            Log.d(TAG, "[DEBUG] Restart after end of speech skipped due to rate limiting")
-                        }
+                        speechRecognizer?.startListening(recognizerIntent)
+                        Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
                     } catch (e: Exception) {
                         Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
                         _isListening.value = false
@@ -331,15 +319,24 @@ class SpeechRecognitionService @Inject constructor(
                 
                 _isListening.value = false
 
-                // --- Continuous listening auto-restart logic ---
+                // --- Continuous listening auto-restart logic with smart rate limiting ---
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled) {
                     Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
-                    // Use intelligent rate limiting instead of arbitrary delay
+                    
+                    // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastStartTime >= RESTART_DELAY_MS && continuousListeningEnabled) {
+                    if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
+                        // Reset error count if outside the window
+                        errorRestartCount = 0
+                    }
+                    lastErrorTime = currentTime
+                    errorRestartCount++
+                    
+                    if (errorRestartCount <= MAX_ERROR_RESTARTS && continuousListeningEnabled) {
+                        Log.d(TAG, "[LOG] Error restart $errorRestartCount/$MAX_ERROR_RESTARTS - proceeding")
                         startListening(recognitionCallback ?: { })
                     } else {
-                        Log.d(TAG, "[LOG] Auto-restart skipped due to rate limiting or disabled continuous listening")
+                        Log.w(TAG, "[LOG] Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
                     }
                 }
             }

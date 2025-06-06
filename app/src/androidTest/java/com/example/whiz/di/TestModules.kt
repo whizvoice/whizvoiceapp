@@ -37,7 +37,10 @@ import javax.inject.Named
  */
 
 @Module
-@InstallIn(SingletonComponent::class)
+@TestInstallIn(
+    components = [SingletonComponent::class],
+    replaces = [AppModule::class]
+)
 object TestAppModule {
 
     private const val TAG = "TestAppModule"

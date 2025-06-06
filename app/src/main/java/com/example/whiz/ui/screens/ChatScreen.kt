@@ -38,6 +38,7 @@ import com.example.whiz.data.local.DateFormatter
 import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.ui.viewmodels.ChatViewModel
+
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
@@ -112,7 +113,7 @@ fun ChatScreen(
         Log.d("ChatScreen", "Auto-permission check: hasPermission=$hasPermission")
         if (!hasPermission) {
             // Small delay to ensure UI is fully composed before showing dialog
-            kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(500L)
             Log.d("ChatScreen", "Auto-showing permission dialog - no microphone permission granted")
             showPermissionDialog = true
         }
@@ -182,7 +183,7 @@ fun ChatScreen(
     // Scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) { // Trigger scroll based on message count change
         if (messages.isNotEmpty()) {
-            delay(100) // Allow layout
+            delay(100L) // Allow layout
             listState.animateScrollToItem(messages.size - 1)
         }
     }
@@ -231,7 +232,7 @@ fun ChatScreen(
             Log.d("ChatScreen", "[LOG] Voice mode explicitly enabled - proceeding with voice setup")
             if (hasPermission) {
                 Log.d("ChatScreen", "[LOG] Delaying voice mode setup to ensure UI is ready")
-                kotlinx.coroutines.delay(500) // Wait for UI to be fully composed and activity to be foregrounded
+                kotlinx.coroutines.delay(500L) // Wait for UI to be fully composed and activity to be foregrounded
                 
                 // Enable voice responses since user opened app via voice
                 Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch (current state: $isVoiceResponseEnabled)")
@@ -538,13 +539,13 @@ fun TypingIndicator() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(dotSpacing)) {
                 for (i in 0 until dotCount) {
-                    val delay = i * 200 // 200ms delay between each dot
+                    val delay = i * 200 // Delay between each dot
                     
                     // Each dot has its own animation state
                     var dotVisible by remember { mutableStateOf(false) }
                     val alpha by animateFloatAsState(
                         targetValue = if (dotVisible) 1f else 0.3f,
-                        animationSpec = tween(durationMillis = 600),
+                                                  animationSpec = tween(durationMillis = 600),
                         label = "dotAlpha$i"
                     )
                     
@@ -553,9 +554,9 @@ fun TypingIndicator() {
                         delay(delay.toLong()) // Initial delay for staggered effect
                         while (isAnimating) {
                             dotVisible = true
-                            delay(600) // Stay visible
-                            dotVisible = false  
-                            delay(600) // Stay dim
+                                                      delay(600L) // Stay visible
+                          dotVisible = false
+                          delay(600L) // Stay dim
                         }
                     }
                     
@@ -770,7 +771,7 @@ fun ChatScreenWithPermissionDialog(
     // Automatic permission prompt logic
     LaunchedEffect(hasPermission) {
         if (!hasPermission) {
-            delay(500) // 500ms delay
+            delay(500L) // Permission check delay
             showPermissionDialog = true
         }
     }

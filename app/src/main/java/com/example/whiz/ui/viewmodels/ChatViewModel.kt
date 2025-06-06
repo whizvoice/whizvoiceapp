@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
+
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -75,7 +76,7 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "[LOG] Just finished computing - restarting continuous listening immediately")
                 viewModelScope.launch {
                     // Small delay to ensure state propagation
-                    delay(50)
+                    delay(50L)
                     if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
                         startContinuousListening()
                     }
@@ -206,7 +207,7 @@ class ChatViewModel @Inject constructor(
             
             viewModelScope.launch {
                 // Small delay to ensure TTS stop is processed
-                delay(100)
+                delay(100L)
                 if (!_isResponding.value && !_isSpeaking.value) {
                     startContinuousListening()
                 }
@@ -757,14 +758,14 @@ class ChatViewModel @Inject constructor(
                 if (_micPermissionGranted.value) {
                     try {
                         Log.d(TAG, "[LOG] Auto-enabling continuous listening on chat load (permission granted)")
-                        delay(500) // Increased delay to ensure speech service is fully stopped
+                        delay(500L) // Increased delay to ensure speech service is fully stopped
                         
                         // Always enable continuous listening and start it, regardless of current state
                         continuousListeningEnabled = true
                         speechRecognitionService.continuousListeningEnabled = true
                         
                         // Force start continuous listening, but add additional delay to ensure clean state
-                        delay(200) // Additional delay to ensure isListening state is updated
+                        delay(200L) // Additional delay to ensure isListening state is updated
                         val currentListening = isListening.value
                         Log.d(TAG, "[LOG] About to start continuous listening - isListening: $currentListening, speaking: ${_isSpeaking.value}, responding: ${_isResponding.value}")
                         
@@ -923,7 +924,7 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "[LOG] Continuous listening: restarting after result (isResponding=${_isResponding.value})")
                 viewModelScope.launch {
                     // Small delay to ensure the previous listening session is fully stopped
-                    delay(100)
+                    delay(100L)
                     if (continuousListeningEnabled && !_isSpeaking.value) {
                         startContinuousListening() // This will check isSpeaking again
                     }
@@ -1077,7 +1078,7 @@ class ChatViewModel @Inject constructor(
             if (continuousListeningEnabled && !_isResponding.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
                 viewModelScope.launch {
-                    delay(50) // Very short delay to ensure TTS stop is processed
+                    delay(50L) // Very short delay to ensure TTS stop is processed
                     if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
                         startContinuousListening()
                     }
@@ -1100,7 +1101,7 @@ class ChatViewModel @Inject constructor(
         if (chatId <= 0 || configUseRemoteAgent) return // Don't run if using remote or invalid ID
 
         _isResponding.value = true
-        delay(1000)
+                        delay(1000L)
 
         // ... (keep the rest of the local response generation logic)
         val responses = listOf(
@@ -1275,7 +1276,7 @@ class ChatViewModel @Inject constructor(
             if (_chatId.value != 0L && !continuousListeningEnabled) {
                 Log.d(TAG, "[LOG] Auto-enabling continuous listening after permission granted")
                 viewModelScope.launch {
-                    delay(100) // Small delay to ensure service is initialized
+                    delay(100L) // Small delay to ensure service is initialized
                     continuousListeningEnabled = true
                     speechRecognitionService.continuousListeningEnabled = true
                     startContinuousListening()
@@ -1316,7 +1317,7 @@ class ChatViewModel @Inject constructor(
                 if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
                     Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
                     viewModelScope.launch {
-                        delay(200) // Small delay to ensure app is fully resumed
+                        delay(200L) // Small delay to ensure app is fully resumed
                         if (continuousListeningEnabled && !_isSpeaking.value && !_isResponding.value) {
                             startContinuousListening()
                         }

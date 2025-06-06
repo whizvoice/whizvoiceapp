@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.data.local.MessageType // Import MessageType
 import android.util.Log // Import Log
@@ -80,7 +81,7 @@ fun AssistantOverlayUi(
             viewModel.onMicrophonePermissionDenied()
         }
         // Small delay to ensure permission state is set
-        delay(100)
+        delay(100L)
         // Load new chat (this will reset isResponding state for fresh chat)
         viewModel.loadChat(-1L)
         

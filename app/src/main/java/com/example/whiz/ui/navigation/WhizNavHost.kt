@@ -23,11 +23,11 @@ import com.example.whiz.ui.screens.ChatsListScreen
 import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
 import com.example.whiz.ui.viewmodels.AuthViewModel
+
 import kotlinx.coroutines.delay
 
 // Constants for animation
 private const val ANIMATION_DURATION = 300
-private const val PRELOAD_DELAY = 50L  // Short delay to start preloading
 
 @Composable
 fun WhizNavHost(
@@ -109,7 +109,7 @@ fun WhizNavHost(
         ) {
             // Preload any relevant data
             LaunchedEffect(Unit) {
-                delay(PRELOAD_DELAY)
+                delay(50L)
                 preloadManager.preloadChatsList()
             }
 
@@ -190,7 +190,7 @@ fun WhizNavHost(
 
             // Preload chat messages if not already done
             LaunchedEffect(chatId) {
-                delay(PRELOAD_DELAY)
+                delay(50L)
                 preloadManager.preloadChat(chatId)
             }
 
