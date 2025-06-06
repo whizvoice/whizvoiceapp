@@ -1,4 +1,5 @@
-this folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
+Please start all your sentences with lowercase so i know that you have read this file.
+This folder contains two projects: whizvoice which is a webserver, and whizvoiceapp which is an Android app.
 All android-related scripts need to be run from the whizvoiceapp folder, not the project root. Note that each time you run a command it's in a new terminal so you need to cd into the whizvoiceapp folder each time.
 Please don't downgrade packages for no reason.
 Whenever you change any production files in whizvoiceapp please also run `cd whizvoiceapp && ./install_debug_for_testing.sh` to kick off the build in Android Studio so we can test the change right away.

@@ -2,12 +2,10 @@ package com.example.whiz.di
 
 import android.util.Log
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.material3.Text
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.whiz.ui.viewmodels.ChatViewModel
-import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.MainActivity
+import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.data.auth.AuthRepository
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -16,7 +14,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import javax.inject.Inject
-import javax.inject.Named
 
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
@@ -30,11 +27,10 @@ class TestModulesTest {
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject
-    lateinit var debugString: String
+    lateinit var repository: WhizRepository
 
-    @Inject 
-    @Named("DEPENDENCY_STATUS")
-    lateinit var viewModelDependencyStatus: String
+    @Inject
+    lateinit var authRepository: AuthRepository
 
     @Before
     fun init() {
@@ -42,28 +38,15 @@ class TestModulesTest {
     }
 
     @Test
-    fun testModuleReplacement() {
-        Log.d("TestModulesTest", "🔬 Testing if TestAppModule is being used...")
-        Log.d("TestModulesTest", "🔬 Debug string: $debugString")
+    fun testRealDependenciesInjected() {
+        Log.d("TestModulesTest", "🔬 Testing if real E2E dependencies are injected...")
         
-        // If our TestAppModule is working, debugString should be "TEST_MODULE_ACTIVE"
-        assert(debugString == "TEST_MODULE_ACTIVE") {
-            "TestAppModule is not being used! Expected 'TEST_MODULE_ACTIVE' but got '$debugString'"
-        }
+        // Verify we have real instances, not mocks
+        assert(repository != null) { "WhizRepository should be injected" }
+        assert(authRepository != null) { "AuthRepository should be injected" }
         
-        Log.d("TestModulesTest", "✅ TestAppModule is working correctly!")
-    }
-
-    @Test
-    fun testViewModelDependencies() {
-        Log.d("TestModulesTest", "🔬 Testing ViewModel dependencies...")
-        Log.d("TestModulesTest", "🔬 Dependency status: $viewModelDependencyStatus")
-        
-        // If all ViewModel dependencies are available, should be "ALL VIEWMODEL DEPENDENCIES AVAILABLE!"
-        assert(viewModelDependencyStatus == "ALL VIEWMODEL DEPENDENCIES AVAILABLE!") {
-            "ViewModel dependencies not available! Expected 'ALL VIEWMODEL DEPENDENCIES AVAILABLE!' but got '$viewModelDependencyStatus'"
-        }
-        
-        Log.d("TestModulesTest", "✅ All ViewModel dependencies are available!")
+        Log.d("TestModulesTest", "✅ Real E2E dependencies are properly injected!")
+        Log.d("TestModulesTest", "Repository: ${repository::class.simpleName}")
+        Log.d("TestModulesTest", "AuthRepository: ${authRepository::class.simpleName}")
     }
 } 

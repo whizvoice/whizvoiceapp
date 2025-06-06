@@ -21,8 +21,8 @@ import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
-import com.example.whiz.data.api.SupabaseApi
 import com.example.whiz.data.auth.TokenAuthenticator
+import com.example.whiz.data.preferences.UserPreferences
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
@@ -86,57 +86,32 @@ object AppModule {
     private class AuthInterceptor(
         private val authRepositoryProvider: Provider<AuthRepository>
     ) : Interceptor {
-        
-        @Volatile
-        private var cachedToken: String? = null
-        private var lastTokenFetchTime: Long = 0
-        private val tokenCacheValidityMs = 5000L // Cache token for 5 seconds
-        
         override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
             val originalRequest = chain.request()
+            val requestBuilder = originalRequest.newBuilder()
             
             // Skip adding Authorization header for authentication endpoints
             val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
-            if (isAuthRequest) {
-                return chain.proceed(originalRequest)
-            }
             
-            // Get token with minimal blocking - use cached token when possible
-            val token = getCurrentToken()
-            
-            val requestBuilder = originalRequest.newBuilder()
-            if (token != null) {
-                requestBuilder.header("Authorization", "Bearer $token")
+            if (!isAuthRequest) {
+                try {
+                    // Get AuthRepository instance via provider
+                    val authRepository = authRepositoryProvider.get()
+                    // Get token asynchronously but don't block if it's null
+                    val token: String? = runBlocking { 
+                        authRepository.serverToken.first() // Get current token, could be null
+                    }
+
+                    if (token != null) {
+                        requestBuilder.header("Authorization", "Bearer $token")
+                    }
+                } catch (e: Exception) {
+                    // Log but don't fail the request if we can't get the token
+                    android.util.Log.w("AuthInterceptor", "Failed to get auth token", e)
+                }
             }
             
             return chain.proceed(requestBuilder.build())
-        }
-        
-        private fun getCurrentToken(): String? {
-            val currentTime = System.currentTimeMillis()
-            
-            // Use cached token if it's still valid
-            if (cachedToken != null && (currentTime - lastTokenFetchTime) < tokenCacheValidityMs) {
-                return cachedToken
-            }
-            
-            // Fetch new token (this is the only unavoidable blocking operation)
-            return try {
-                val authRepository = authRepositoryProvider.get()
-                val token = runBlocking { 
-                    authRepository.serverToken.first()
-                }
-                
-                // Update cache
-                cachedToken = token
-                lastTokenFetchTime = currentTime
-                
-                token
-            } catch (e: Exception) {
-                // Log but don't crash - request will proceed without auth header
-                android.util.Log.w("AuthInterceptor", "Failed to get token", e)
-                null
-            }
         }
     }
 
@@ -168,22 +143,11 @@ object AppModule {
     @Singleton
     fun provideApiService(okHttpClient: OkHttpClient): ApiService {
         return Retrofit.Builder()
-            .baseUrl("https://whizvoice.com/")
+            .baseUrl("https://whizvoice.com/api/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
-    }
-
-    @Provides
-    @Singleton
-    fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
-        return Retrofit.Builder()
-            .baseUrl("https://whizvoice.com/")
-            .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(SupabaseApi::class.java)
     }
 
     @Provides
@@ -196,5 +160,23 @@ object AppModule {
     @Singleton
     fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
         return TTSManager(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideTokenAuthenticator(
+        authRepositoryProvider: Provider<AuthRepository>,
+        authApiProvider: Provider<AuthApi>
+    ): TokenAuthenticator {
+        return TokenAuthenticator(authRepositoryProvider, authApiProvider)
+    }
+
+    @Provides
+    @Singleton
+    fun provideUserPreferences(
+        apiService: ApiService,
+        authRepository: AuthRepository
+    ): UserPreferences {
+        return UserPreferences(apiService, authRepository)
     }
 }
