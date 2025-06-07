@@ -22,6 +22,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 
+
 sealed class WebSocketEvent {
     data class Message(val text: String, val requestId: String? = null) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
@@ -61,7 +62,7 @@ class WhizServerRepository @Inject constructor(
     // Reconnection logic parameters
     private var currentReconnectAttempts = 0
     private val maxReconnectAttempts = 5
-    private val initialReconnectDelayMs = 1000L // 1 second
+    private val initialReconnectDelayMs = 1000L
     private val reconnectDelayBackoffFactor = 2.0
     private var reconnectJob: Job? = null
     private var isManuallyDisconnected = false // Flag to prevent reconnect on manual disconnect
@@ -69,7 +70,7 @@ class WhizServerRepository @Inject constructor(
     // Message retry queue and parameters
     private val messageRetryQueue = mutableListOf<PendingMessage>()
     private val maxMessageRetries = 3
-    private val messageRetryDelayMs = 2000L // 2 seconds
+    private val messageRetryDelayMs = 2000L
     private var retryJob: Job? = null
     private var currentConversationId: Long? = null
 
@@ -331,7 +332,7 @@ class WhizServerRepository @Inject constructor(
                 if (!isManuallyDisconnected) {
                     val conversationId = currentConversationId
                     scope.launch {
-                        delay(100) // Small delay before reconnect
+                        delay(100L) // Small delay before reconnect
                         connect(conversationId)
                     }
                 }

@@ -11,11 +11,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +27,7 @@ class SpeechRecognitionService @Inject constructor(
 ) {
     private val TAG = "SpeechRecognition"
     private var speechRecognizer: SpeechRecognizer? = null
+    private var recognitionListener: RecognitionListener? = null
 
     // --- State Flows ---
     private val _transcriptionState = MutableStateFlow("")
@@ -45,9 +48,11 @@ class SpeechRecognitionService @Inject constructor(
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
     private var _isInitialized = false
     
-    // 🔧 Rate limiting for restarts
-    private var lastStartTime = 0L
-    private val RESTART_DELAY_MS = 500L // Minimum delay between restarts
+    // 🔧 Smart rate limiting - only for error-based restarts
+    private var lastErrorTime = 0L
+    private var errorRestartCount = 0
+    private val ERROR_RESTART_WINDOW_MS = 5000L // Window for counting rapid errors
+    private val MAX_ERROR_RESTARTS = 3 // Max error restarts within window
     
     val isInitialized: Boolean
         get() = _isInitialized
@@ -72,7 +77,7 @@ class SpeechRecognitionService @Inject constructor(
         recognitionCallback = null
         
         // Safely release any existing recognizer first
-        releaseInternal(isReinitializing = true)
+        cleanup()
         
         // Setup intent
         setupRecognizerIntent()
@@ -80,22 +85,16 @@ class SpeechRecognitionService @Inject constructor(
         // Create the new recognizer with error handling
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(createRecognitionListener())
+            recognitionListener = createRecognitionListener()
+            speechRecognizer?.setRecognitionListener(recognitionListener)
             Log.d(TAG, "Speech recognizer initialized successfully.")
             _errorState.value = null
             _isInitialized = true
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SpeechRecognizer", e)
             _errorState.value = "Failed to initialize speech service."
-            speechRecognizer = null
+            cleanup()
             _isInitialized = false
-            // Try to clean up
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "Error during cleanup", cleanupError)
-            }
         }
     }
 
@@ -119,14 +118,6 @@ class SpeechRecognitionService @Inject constructor(
         
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
-        
-        // 🔧 Rate limiting check - but don't return early if already listening (callback is set above)
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastStartTime < RESTART_DELAY_MS && !_isListening.value) {
-            Log.d(TAG, "[DEBUG] startListening rate limited and not currently listening. Last start was ${currentTime - lastStartTime}ms ago")
-            return
-        }
-        lastStartTime = currentTime
         
         if (!isInitialized) {
             Log.w(TAG, "[DEBUG] SpeechRecognitionService not initialized")
@@ -155,7 +146,8 @@ class SpeechRecognitionService @Inject constructor(
                     _errorState.value = "Failed to create speech recognizer"
                     return
                 }
-                speechRecognizer?.setRecognitionListener(createRecognitionListener())
+                recognitionListener = createRecognitionListener()
+                speechRecognizer?.setRecognitionListener(recognitionListener)
             }
 
             // Validate the recognizer is in a good state
@@ -181,17 +173,11 @@ class SpeechRecognitionService @Inject constructor(
             recognitionCallback = null
             
             // Force cleanup and reinitialize on error
-            try {
-                speechRecognizer?.cancel()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-                Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
-                
-                // Try to reinitialize for next attempt
-                initialize()
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
-            }
+            cleanup()
+            Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
+            
+            // Try to reinitialize for next attempt
+            initialize()
         }
     }
 
@@ -207,50 +193,66 @@ class SpeechRecognitionService @Inject constructor(
             manualStopInProgress = true
             speechRecognizer?.stopListening()
             _isListening.value = false // Set listening state to false
-            recognitionCallback = null
             Log.d(TAG, "[DEBUG] Speech recognition stopped successfully")
         } catch (e: Exception) {
             Log.e(TAG, "[DEBUG] Error stopping speech recognition", e)
             _errorState.value = "Error stopping speech recognition: ${e.message}"
             _isListening.value = false // Ensure listening state is false on error
-            recognitionCallback = null
+            recognitionCallback = null // Only clear on error
             // Try to clean up
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-            } catch (cleanupError: Exception) {
-                Log.e(TAG, "[DEBUG] Error during cleanup", cleanupError)
-            }
+            cleanup()
         }
     }
 
     fun release() {
         Log.i(TAG, "Releasing SpeechRecognitionService resources.")
-        serviceScope.launch { /* cancel pending jobs */ } // Placeholder
-        releaseInternal(isReinitializing = false)
+        serviceScope.cancel() // Cancel all pending coroutines
+        cleanup()
         recognitionCallback = null
+        _isInitialized = false
+    }
+
+    /**
+     * Safely cleanup SpeechRecognizer and related resources
+     */
+    private fun cleanup() {
+        try {
+            speechRecognizer?.let { recognizer ->
+                try {
+                    recognizer.cancel() // Cancel any ongoing recognition
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error cancelling speech recognizer", e)
+                }
+                
+                try {
+                    recognizer.setRecognitionListener(null) // Clear listener before destroy
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error clearing recognition listener", e)
+                }
+                
+                try {
+                    recognizer.destroy() // Destroy the recognizer
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error destroying speech recognizer", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during cleanup", e)
+        } finally {
+            speechRecognizer = null
+            recognitionListener = null
+            _isListening.value = false
+            _transcriptionState.value = ""
+            manualStopInProgress = false
+            utteranceFinalized = false
+            recognizerIntent = null
+        }
     }
 
     private fun releaseInternal(isReinitializing: Boolean) {
-        if (speechRecognizer != null) {
-            try {
-                speechRecognizer?.cancel() // Cancel any ongoing recognition immediately
-                speechRecognizer?.destroy()
-                Log.d(TAG,"SpeechRecognizer destroyed.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during SpeechRecognizer release", e)
-            } finally {
-                speechRecognizer = null
-                if (!isReinitializing) {
-                    _isListening.value = false
-                    _transcriptionState.value = ""
-                    manualStopInProgress = false
-                    utteranceFinalized = false
-                    recognizerIntent = null // Clear intent too
-                }
-            }
-        } else {
-            Log.d(TAG,"Recognizer was already null during release.")
+        cleanup()
+        if (!isReinitializing) {
+            _isInitialized = false
         }
     }
 
@@ -280,25 +282,15 @@ class SpeechRecognitionService @Inject constructor(
                 }
                 // If still in voice mode, explicitly restart listening for the next phrase
                 Log.d(TAG, "[DEBUG] Natural end of speech detected, explicitly restarting listener.")
-                // Add a small delay to prevent immediate restart if results are coming
-                serviceScope.launch {
-                    delay(100) // Small delay (e.g., 100ms)
-                    if(_isListening.value) { // Re-check state after delay
-                        try {
-                            // 🔧 Rate limiting check before restart
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastStartTime >= RESTART_DELAY_MS) {
-                                speechRecognizer?.startListening(recognizerIntent)
-                                lastStartTime = currentTime // Update last start time
-                                Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
-                            } else {
-                                Log.d(TAG, "[DEBUG] Restart after end of speech skipped due to rate limiting")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
-                            _isListening.value = false
-                            _errorState.value = "Error restarting listening: ${e.message}"
-                        }
+                // Normal restart after end of speech - no rate limiting needed
+                if(_isListening.value) { // Check state immediately
+                    try {
+                        speechRecognizer?.startListening(recognizerIntent)
+                        Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
+                        _isListening.value = false
+                        _errorState.value = "Error restarting listening: ${e.message}"
                     }
                 }
             }
@@ -327,18 +319,24 @@ class SpeechRecognitionService @Inject constructor(
                 
                 _isListening.value = false
 
-                // --- Continuous listening auto-restart logic ---
+                // --- Continuous listening auto-restart logic with smart rate limiting ---
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled) {
                     Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
-                    serviceScope.launch {
-                        delay(500) // Increased delay to prevent rapid restarts
-                        // 🔧 Additional rate limiting check before auto-restart
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastStartTime >= RESTART_DELAY_MS && continuousListeningEnabled) {
-                            startListening(recognitionCallback ?: { })
-                        } else {
-                            Log.d(TAG, "[LOG] Auto-restart skipped due to rate limiting or disabled continuous listening")
-                        }
+                    
+                    // Smart rate limiting: only prevent restart if too many rapid errors
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
+                        // Reset error count if outside the window
+                        errorRestartCount = 0
+                    }
+                    lastErrorTime = currentTime
+                    errorRestartCount++
+                    
+                    if (errorRestartCount <= MAX_ERROR_RESTARTS && continuousListeningEnabled) {
+                        Log.d(TAG, "[LOG] Error restart $errorRestartCount/$MAX_ERROR_RESTARTS - proceeding")
+                        startListening(recognitionCallback ?: { })
+                    } else {
+                        Log.w(TAG, "[LOG] Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
                     }
                 }
             }
@@ -349,8 +347,20 @@ class SpeechRecognitionService @Inject constructor(
                 val finalText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
-                recognitionCallback?.invoke(finalText)
+                
+                if (recognitionCallback != null) {
+                    if (finalText.isNotBlank()) {
+                        Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
+                        // Deliver final transcription even if manually stopped
+                        // This ensures the user gets their speech text in the input field
+                        recognitionCallback?.invoke(finalText)
+                    }
+                }
+                
                 _isListening.value = false
+                
+                // 🔧 Clear callback after results are delivered (safe to clear now)
+                recognitionCallback = null
                 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
                 _transcriptionState.value = ""

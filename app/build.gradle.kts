@@ -80,6 +80,12 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Exclude MockK and JUnit conflicting files
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/LICENSE-notice.md"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
         }
     }
     
@@ -218,6 +224,10 @@ dependencies {
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("com.google.code.gson:gson:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
+    
+    // MockK for mocking Android APIs in integration tests
+    androidTestImplementation("io.mockk:mockk-android:1.13.8")
+    androidTestImplementation("io.mockk:mockk-agent:1.13.8")
 }
 
 // Allow references to generated code

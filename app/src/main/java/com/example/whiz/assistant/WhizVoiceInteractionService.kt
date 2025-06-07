@@ -1,32 +1,29 @@
 package com.example.whiz.assistant
 
 import android.content.Intent
-import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.util.Log
-import com.example.whiz.services.SpeechRecognitionService
 
 /**
  * The main entry point for the Assistant integration with the Android system.
  * This service is started when the user designates Whiz as the default assistant
  * and triggers it (e.g., via long-press home/power or hotword).
+ * 
+ * This service delegates all actual work to activities that can use Hilt for DI.
  */
 class WhizVoiceInteractionService : VoiceInteractionService() {
 
     private val TAG = "WhizVoiceInteractionSvc"
 
-    private lateinit var speechRecognitionService: SpeechRecognitionService
-
     override fun onCreate() {
         super.onCreate()
-        speechRecognitionService = SpeechRecognitionService(applicationContext)
+        Log.d(TAG, "onCreate - Voice Interaction Service created")
     }
 
     override fun onReady() {
         super.onReady()
-        Log.d(TAG, "onReady - Service is ready.")
-        // Initialize speech recognition service
-        speechRecognitionService.initialize()
+        Log.d(TAG, "onReady - Service is ready")
+        // No direct service initialization here - delegate to activities with proper DI
     }
 
     // This method is called when the system wants to start a voice interaction session.

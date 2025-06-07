@@ -24,6 +24,10 @@ import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.data.preferences.VoiceSettings
+import com.example.whiz.ui.components.CancelButton
+import com.example.whiz.ui.components.ClearButton
+import com.example.whiz.ui.components.LoadingButton
+import com.example.whiz.ui.components.SaveButton
 import kotlinx.coroutines.launch
 import android.util.Log
 import kotlin.math.roundToInt
@@ -305,26 +309,18 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Button(
+                        LoadingButton(
+                            text = "Change",
                             onClick = { onInputChange(""); editMode = true },
+                            isLoading = false,
                             enabled = !isBusy
-                        ) {
-                            Text("Change")
-                        }
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Button(
+                        ClearButton(
                             onClick = { clearOperationInitiated = true; onClearClick() },
-                            enabled = !isBusy,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                        ) {
-                            if (isBusy && clearOperationInitiated) {
-                                Log.d("TokenInputSection", "[$title] Displaying: Clear button (busy)")
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                            } else {
-                                Log.d("TokenInputSection", "[$title] Displaying: Clear button (idle)")
-                                Text("Clear")
-                            }
-                        }
+                            isLoading = isBusy && clearOperationInitiated,
+                            enabled = !isBusy
+                        )
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
                         // In edit mode for an existing token (user clicked "Change")
@@ -349,27 +345,17 @@ fun TokenInputSection(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                Button(
-                                    onClick = { editMode = false }, // Cancel edit mode
-                                    enabled = !isBusy,
-                                    colors = ButtonDefaults.outlinedButtonColors()
-
-                                ) {
-                                    Text("Cancel")
-                                }
+                                CancelButton(
+                                    onClick = { editMode = false },
+                                    enabled = !isBusy
+                                )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Button(
+                                SaveButton(
+                                    text = "Save $title",
                                     onClick = { saveOperationInitiated = true; onSaveClick() },
+                                    isLoading = isBusy && saveOperationInitiated,
                                     enabled = !isBusy && inputValue.isNotBlank()
-                                ) {
-                                    if (isBusy && saveOperationInitiated) {
-                                        Log.d("TokenInputSection", "[$title] Displaying: Save button (busy, in editMode for existing token)")
-                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                    } else {
-                                        Log.d("TokenInputSection", "[$title] Displaying: Save button (idle, in editMode for existing token)")
-                                        Text("Save $title")
-                                    }
-                                }
+                                )
                             }
                         }
                     }
@@ -396,23 +382,13 @@ fun TokenInputSection(
                             }
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(
+                        SaveButton(
+                            text = "Save $title",
                             onClick = { saveOperationInitiated = true; onSaveClick() },
+                            isLoading = isBusy && saveOperationInitiated,
                             enabled = !isBusy && inputValue.isNotBlank(),
-                            modifier = Modifier.align(Alignment.End) // Align button to the right
-                        ) {
-                            if (isBusy && saveOperationInitiated) {
-                                Log.d("TokenInputSection", "[$title] Displaying: Save button (busy, token not set)")
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            } else {
-                                Log.d("TokenInputSection", "[$title] Displaying: Save button (idle, token not set)")
-                                Text("Save $title")
-                            }
-                        }
+                            modifier = Modifier.align(Alignment.End)
+                        )
                     }
                 }
             }

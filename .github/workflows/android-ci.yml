@@ -169,6 +169,12 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Setup test credentials
+        run: |
+          echo "🔐 Setting up test credentials for E2E testing..."
+          echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
+          echo "✅ Test credentials file created"
+
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -179,7 +185,7 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096
           disable-animations: true
           script: |
-            echo "🚀 Starting comprehensive instrumented tests..."
+            echo "🚀 Starting comprehensive instrumented tests with REAL credentials..."
             adb wait-for-device
             echo "⏳ Waiting for system boot..."
             sleep 15
@@ -192,8 +198,10 @@ jobs:
             echo "🧹 Cleaning up any existing app installations..."
             adb uninstall com.example.whiz || echo "No existing app to uninstall"
             adb uninstall com.example.whiz.test || echo "No existing test app to uninstall"
-            echo "🧪 Running all tests except resource-intensive ones..."
-            ./gradlew connectedDebugAndroidTest --stacktrace --continue -Pandroid.testInstrumentationRunnerArguments.notClass=com.example.whiz.ui.screens.LoginScreenRealAuthTest,com.example.whiz.voice.VoiceInteractionFlowTest,com.example.whiz.voice.VoiceChatIntegrationTest
+            echo "📁 Pushing test credentials to emulator..."
+            adb push test_credentials.json /data/local/tmp/test_credentials.json
+            echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
+            ./gradlew connectedDebugAndroidTest --stacktrace --continue
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1

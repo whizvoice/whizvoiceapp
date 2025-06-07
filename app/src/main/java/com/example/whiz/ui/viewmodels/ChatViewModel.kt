@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
+
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -59,7 +60,7 @@ class ChatViewModel @Inject constructor(
     private var currentActiveRequestId: String? = null
 
     // Track locally-saved interrupt messages to prevent server duplication
-    private val locallyStoredInterruptMessages = mutableSetOf<String>()
+
 
     // Helper function to update responding state based on current chat's pending requests
     private fun updateRespondingStateForCurrentChat() {
@@ -75,7 +76,7 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "[LOG] Just finished computing - restarting continuous listening immediately")
                 viewModelScope.launch {
                     // Small delay to ensure state propagation
-                    delay(50)
+                    delay(50L)
                     if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
                         startContinuousListening()
                     }
@@ -206,7 +207,7 @@ class ChatViewModel @Inject constructor(
             
             viewModelScope.launch {
                 // Small delay to ensure TTS stop is processed
-                delay(100)
+                delay(100L)
                 if (!_isResponding.value && !_isSpeaking.value) {
                     startContinuousListening()
                 }
@@ -293,21 +294,27 @@ class ChatViewModel @Inject constructor(
                                     content = "Error: Unable to send message. Please try again."
                                 )
                             }
+                            // Clear all pending requests on final connection error
+                            pendingRequests.clear()
+                            _isResponding.value = false
+                            currentActiveRequestId = null
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
-                            // Don't show error to user immediately, let retry mechanism handle it
+                            
+                            // Clear responding state for temporary connection errors too
+                            // When message retries have failed completely (~6-8 seconds of trying),
+                            // clear the responding state to allow user to interact with the microphone button
+                            if (_isResponding.value) {
+                                Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+                                _isResponding.value = false
+                                pendingRequests.clear()
+                                currentActiveRequestId = null
+                            }
                         }
                         
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
-                        
-                        // Only clear pending requests if this is a final failure
-                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
-                            pendingRequests.clear() // 🔧 Clear all pending requests on final connection error
-                            _isResponding.value = false
-                            currentActiveRequestId = null // Clear active request on error
-                        }
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -751,14 +758,14 @@ class ChatViewModel @Inject constructor(
                 if (_micPermissionGranted.value) {
                     try {
                         Log.d(TAG, "[LOG] Auto-enabling continuous listening on chat load (permission granted)")
-                        delay(500) // Increased delay to ensure speech service is fully stopped
+                        delay(500L) // Increased delay to ensure speech service is fully stopped
                         
                         // Always enable continuous listening and start it, regardless of current state
                         continuousListeningEnabled = true
                         speechRecognitionService.continuousListeningEnabled = true
                         
                         // Force start continuous listening, but add additional delay to ensure clean state
-                        delay(200) // Additional delay to ensure isListening state is updated
+                        delay(200L) // Additional delay to ensure isListening state is updated
                         val currentListening = isListening.value
                         Log.d(TAG, "[LOG] About to start continuous listening - isListening: $currentListening, speaking: ${_isSpeaking.value}, responding: ${_isResponding.value}")
                         
@@ -897,17 +904,27 @@ class ChatViewModel @Inject constructor(
         speechRecognitionService.startListening { finalText ->
             Log.d(TAG, "[LOG] startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText', isResponding=${_isResponding.value}")
             
-            // 🔧 Set transcribed text to input field and send immediately
-            Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field for UX: '$finalText'")
+            // Always set transcribed text to input field when we have valid text
+            // This ensures text is preserved even when user manually stops the microphone
+            if (finalText.isNotBlank()) {
+                Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field: '$finalText'")
             _inputText.value = finalText
+                
+                // Only auto-send if continuous listening is still enabled
+                if (continuousListeningEnabled) {
+                    Log.d(TAG, "[LOG] startContinuousListening: Auto-sending transcription (continuous listening enabled)")
             sendUserInput(finalText) // Send the transcription
+                } else {
+                    Log.d(TAG, "[LOG] startContinuousListening: Preserving transcription in input field (continuous listening disabled, user can manually send)")
+                }
+            }
             
             // Always restart listening if continuous listening is enabled, regardless of responding state
             if (continuousListeningEnabled) {
                 Log.d(TAG, "[LOG] Continuous listening: restarting after result (isResponding=${_isResponding.value})")
                 viewModelScope.launch {
                     // Small delay to ensure the previous listening session is fully stopped
-                    delay(100)
+                    delay(100L)
                     if (continuousListeningEnabled && !_isSpeaking.value) {
                         startContinuousListening() // This will check isSpeaking again
                     }
@@ -928,12 +945,12 @@ class ChatViewModel @Inject constructor(
         if (shouldInterrupt) {
             Log.d(TAG, "sendUserInput: Auto-detecting interrupt condition, routing to sendInterruptMessage")
             sendInterruptMessage(trimmedText)
-            return
+            return // 🔧 Return immediately - sendInterruptMessage handles everything
         }
         
         if (isInterrupt && canInterrupt()) {
             sendInterruptMessage(text)
-            return
+            return // 🔧 Return immediately - sendInterruptMessage handles everything
         }
         
         // Only block sending if responding AND this is not an interrupt scenario
@@ -942,7 +959,7 @@ class ChatViewModel @Inject constructor(
             return
         }
 
-        // 🔧 Clear input text immediately when sending message
+        // 🔧 Clear input text immediately when sending message (only for non-interrupt flow)
         Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
         _inputText.value = ""
 
@@ -972,12 +989,19 @@ class ChatViewModel @Inject constructor(
                 }
             }
 
-            // Only save user message to local DB if NOT using remote agent
-            // Remote agent (WebSocket server) handles message persistence
-            if (!configUseRemoteAgent && currentChatId > 0) {
-                repository.addUserMessage(currentChatId, trimmedText)
+            // 🔧 OPTIMISTIC UI: Only add user message locally when disconnected for better UX
+            // When connected, trust the server to handle the message to avoid duplicates
+            if (currentChatId > 0 && !_isConnectedToServer.value) {
+                try {
+                    val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
+                    Log.d(TAG, "sendUserInput: Added optimistic user message to UI while disconnected (localId: $localMessageId)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
+                }
+            } else if (currentChatId > 0) {
+                Log.d(TAG, "sendUserInput: Connected to server - trusting server to handle message persistence (no optimistic UI)")
             } else {
-                Log.d(TAG, "sendUserInput: Skipping local user message save - remote agent will handle persistence")
+                Log.d(TAG, "sendUserInput: Skipping optimistic UI for new chat - will show after server creates conversation")
             }
 
             // --- Server Interaction ---
@@ -1024,12 +1048,12 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // Trigger UI refresh to show user message saved by WebSocket server
+                // Trigger UI refresh to reconcile with server messages (will deduplicate automatically)
                 try {
                     viewModelScope.launch {
                         // Remove arbitrary delay - refresh immediately after sending
                         repository.refreshMessages()
-                        Log.d(TAG, "sendUserInput: Triggered messages refresh after sending user message")
+                        Log.d(TAG, "sendUserInput: Triggered messages refresh for server reconciliation")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
@@ -1061,7 +1085,7 @@ class ChatViewModel @Inject constructor(
             if (continuousListeningEnabled && !_isResponding.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
                 viewModelScope.launch {
-                    delay(50) // Very short delay to ensure TTS stop is processed
+                    delay(50L) // Very short delay to ensure TTS stop is processed
                     if (!_isResponding.value && !_isSpeaking.value && continuousListeningEnabled) {
                         startContinuousListening()
                     }
@@ -1084,7 +1108,7 @@ class ChatViewModel @Inject constructor(
         if (chatId <= 0 || configUseRemoteAgent) return // Don't run if using remote or invalid ID
 
         _isResponding.value = true
-        delay(1000)
+                        delay(1000L)
 
         // ... (keep the rest of the local response generation logic)
         val responses = listOf(
@@ -1259,7 +1283,7 @@ class ChatViewModel @Inject constructor(
             if (_chatId.value != 0L && !continuousListeningEnabled) {
                 Log.d(TAG, "[LOG] Auto-enabling continuous listening after permission granted")
                 viewModelScope.launch {
-                    delay(100) // Small delay to ensure service is initialized
+                    delay(100L) // Small delay to ensure service is initialized
                     continuousListeningEnabled = true
                     speechRecognitionService.continuousListeningEnabled = true
                     startContinuousListening()
@@ -1300,7 +1324,7 @@ class ChatViewModel @Inject constructor(
                 if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
                     Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
                     viewModelScope.launch {
-                        delay(200) // Small delay to ensure app is fully resumed
+                        delay(200L) // Small delay to ensure app is fully resumed
                         if (continuousListeningEnabled && !_isSpeaking.value && !_isResponding.value) {
                             startContinuousListening()
                         }
@@ -1388,14 +1412,27 @@ class ChatViewModel @Inject constructor(
             return
         }
 
-        if (!_isConnectedToServer.value) {
-            Log.w(TAG, "sendInterruptMessage: Cannot send interrupt - not connected to server")
-            // Don't show error to user for brief disconnections - handle silently
-            // _connectionError.value = "Not connected to server"
-            return
-        }
-
         Log.d(TAG, "sendInterruptMessage: Sending interrupt message: '$trimmedText'")
+        
+        // 🔧 OPTIMISTIC UI: Only add interrupt message locally when disconnected for better UX
+        // When connected, trust the server to handle the message to avoid duplicates
+        val currentChatId = _chatId.value
+        if (currentChatId > 0 && !_isConnectedToServer.value) {
+            viewModelScope.launch {
+                try {
+                    val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
+                    Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI while disconnected (localId: $localMessageId)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)
+                }
+            }
+        } else if (currentChatId > 0) {
+            Log.d(TAG, "sendInterruptMessage: Connected to server - trusting server to handle interrupt persistence (no optimistic UI)")
+        }
+        
+        // Clear input text immediately after sending interrupt (like normal sendUserInput)
+        Log.d(TAG, "[LOG] 🔥 sendInterruptMessage: Clearing input text immediately after sending (was: '${_inputText.value}')")
+        _inputText.value = ""
         
         // Generate new request ID for the interrupt
         val requestId = java.util.UUID.randomUUID().toString()
@@ -1409,36 +1446,22 @@ class ChatViewModel @Inject constructor(
             pendingRequests[requestId] = _chatId.value
             Log.d(TAG, "sendInterruptMessage: Interrupt sent successfully with requestId: $requestId")
             
-            // Clear input text immediately after sending interrupt (like normal sendUserInput)
-            Log.d(TAG, "[LOG] 🔥 sendInterruptMessage: Clearing input text immediately after sending (was: '${_inputText.value}')")
-            _inputText.value = ""
-            
-            // Immediately save interrupt message to local chat UI for instant feedback
-            // Track it to prevent duplication when server response arrives
-            val messageKey = "${_chatId.value}_${trimmedText}_interrupt"
-            locallyStoredInterruptMessages.add(messageKey)
-            
-            if (_chatId.value > 0) {
-                viewModelScope.launch {
-                    try {
-                        repository.addUserMessage(_chatId.value, trimmedText)
-                        Log.d(TAG, "sendInterruptMessage: Added interrupt message to local chat UI: '$trimmedText'")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "sendInterruptMessage: Error saving interrupt message to local UI", e)
-                        // Remove from tracking set if save failed
-                        locallyStoredInterruptMessages.remove(messageKey)
-                    }
-                }
-            }
-            
             // Update UI state
             _isResponding.value = true
             
         } else {
             currentActiveRequestId = null
-            // Don't show error to user for brief disconnections - handle silently
-            // _connectionError.value = "Failed to send interrupt message"
-            Log.e(TAG, "sendInterruptMessage: Failed to send interrupt via WebSocket")
+            Log.d(TAG, "sendInterruptMessage: Interrupt queued for retry - message already visible in UI")
+        }
+        
+        // Trigger UI refresh to reconcile with server messages (will deduplicate automatically)
+        try {
+            viewModelScope.launch {
+                repository.refreshMessages()
+                Log.d(TAG, "sendInterruptMessage: Triggered messages refresh for server reconciliation")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "sendInterruptMessage: Error triggering messages refresh", e)
         }
     }
 
@@ -1447,9 +1470,8 @@ class ChatViewModel @Inject constructor(
      */
     fun canInterrupt(): Boolean {
         return configUseRemoteAgent && 
-               _isConnectedToServer.value && 
                _isResponding.value && 
-               pendingRequests.isNotEmpty()
+               _chatId.value > 0  // Allow interrupts even when disconnected - optimistic UI will handle it
     }
 
     /**

@@ -1,0 +1,160 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Whiz Project Development Rules
+
+@context {
+  "type": "project_rules",
+  "projects": ["whizvoice", "whizvoiceapp"],
+  "format_version": "1.0.0"
+}
+
+## Communication Protocol
+
+@communication_rules [
+  {
+    "id": "lowercase_start",
+    "severity": "error",
+    "description": "Please start all your sentences with lowercase so i know that you have read this file"
+  }
+]
+
+## Project Structure
+
+@project_structure {
+  "whizvoice": {
+    "type": "webserver",
+    "location": "./whizvoice/",
+    "description": "Web server component"
+  },
+  "whizvoiceapp": {
+    "type": "android_app", 
+    "location": "./whizvoiceapp/",
+    "description": "Android application component"
+  }
+}
+
+## Android Development Rules
+
+@android_rules [
+  {
+    "id": "working_directory",
+    "severity": "error",
+    "description": "All android-related scripts need to be run from the whizvoiceapp folder, not the project root"
+  },
+  {
+    "id": "new_terminal_cd",
+    "severity": "error", 
+    "description": "Each time you run a command it's in a new terminal so you need to cd into the whizvoiceapp folder each time"
+  },
+  {
+    "id": "auto_build_trigger",
+    "severity": "error",
+    "description": "Whenever you change any production files in whizvoiceapp please also run `cd whizvoiceapp && ./install_debug_for_testing.sh` to kick off the build in Android Studio"
+  }
+]
+
+## Package Management
+
+@package_rules [
+  {
+    "id": "no_downgrade",
+    "severity": "warning",
+    "description": "Please don't downgrade packages for no reason"
+  }
+]
+
+## Testing Workflow
+
+@testing_rules [
+  {
+    "id": "test_command",
+    "severity": "info",
+    "description": "For running tests, use `cd whizvoiceapp && ./run_tests_on_debug.sh`. Test output is also logged to test_output.log"
+  },
+  {
+    "id": "when_to_test",
+    "severity": "error",
+    "description": "Please run tests if you change tests or if you change functionality covered by tests"
+  },
+  {
+    "id": "integration_tests_rml",
+    "severity": "error",
+    "description": "When you run integration tests, please also run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
+  },
+  {
+    "id": "write_tests",
+    "severity": "warning",
+    "description": "Please write tests if you add new functionality"
+  }
+]
+
+## Development Workflow
+
+@workflow_rules [
+  {
+    "id": "immediate_changes",
+    "severity": "info",
+    "description": "Please change files right away whenever you think they need to be changed. There is no need to ask for confirmation"
+  },
+  {
+    "id": "no_acceptance_needed",
+    "severity": "info",
+    "description": "There is no need to ask me to accept the changes either - just do it. I am using an IDE that will automatically show me any changes you made for me to review"
+  },
+  {
+    "id": "read_files_freely",
+    "severity": "info",
+    "description": "If you need to read files to understand how to change them to fix the problem, please do so. There is no need to ask for confirmation"
+  }
+]
+
+## Server Management
+
+@server_rules [
+  {
+    "id": "no_restart",
+    "severity": "error",
+    "description": "Don't try to restart the server yourself - just ask me to do it. It's on a different machine"
+  }
+]
+
+## Version Control
+
+@git_rules [
+  {
+    "id": "git_responsibility",
+    "severity": "info", 
+    "description": "Please leave git commit and git push to me, though I may need your help merging sometimes"
+  }
+]
+
+## Database Development Rules
+
+@database_rules [
+  {
+    "id": "read_supabaseinfo",
+    "severity": "error",
+    "description": "When writing code that interacts with the database, always read whizvoiceapp/.supabaseinfo first to understand the table structure, available functions, and database schema"
+  },
+  {
+    "id": "use_available_functions",
+    "severity": "warning", 
+    "description": "Use the existing Supabase functions documented in .supabaseinfo (like get_preference_value, set_preference_value, get_decrypted_preferences, etc.) rather than writing raw SQL when possible"
+  },
+  {
+    "id": "respect_table_structure",
+    "severity": "error",
+    "description": "Follow the exact table structure and column names as defined in .supabaseinfo, including foreign key relationships and indexes"
+  }
+]
+
+## Command Examples
+
+@command_examples {
+  "android_testing": "cd whizvoiceapp && ./run_tests_on_debug.sh",
+  "android_build": "cd whizvoiceapp && ./install_debug_for_testing.sh",
+  "rml_check": "/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
+}

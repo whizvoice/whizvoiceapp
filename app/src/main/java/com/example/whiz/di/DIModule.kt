@@ -21,8 +21,8 @@ import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
-import com.example.whiz.data.api.SupabaseApi
 import com.example.whiz.data.auth.TokenAuthenticator
+import com.example.whiz.data.preferences.UserPreferences
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
@@ -73,14 +73,28 @@ object AppModule {
     ): OkHttpClient {
         return OkHttpClient.Builder()
             .authenticator(tokenAuthenticator)
-            .addInterceptor(Interceptor { chain ->
-                val originalRequest = chain.request()
-                val requestBuilder = originalRequest.newBuilder()
-                
-                // Skip adding Authorization header for authentication endpoints
-                val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
-                
-                if (!isAuthRequest) {
+            .addInterceptor(AuthInterceptor(authRepositoryProvider))
+            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * Optimized auth interceptor that minimizes blocking operations
+     */
+    private class AuthInterceptor(
+        private val authRepositoryProvider: Provider<AuthRepository>
+    ) : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+            val originalRequest = chain.request()
+            val requestBuilder = originalRequest.newBuilder()
+            
+            // Skip adding Authorization header for authentication endpoints
+            val isAuthRequest = originalRequest.url.pathSegments.contains("auth")
+            
+            if (!isAuthRequest) {
+                try {
                     // Get AuthRepository instance via provider
                     val authRepository = authRepositoryProvider.get()
                     // Get token asynchronously but don't block if it's null
@@ -91,14 +105,14 @@ object AppModule {
                     if (token != null) {
                         requestBuilder.header("Authorization", "Bearer $token")
                     }
+                } catch (e: Exception) {
+                    // Log but don't fail the request if we can't get the token
+                    android.util.Log.w("AuthInterceptor", "Failed to get auth token", e)
                 }
-                
-                chain.proceed(requestBuilder.build())
-            })
-            .readTimeout(30, TimeUnit.SECONDS) // Adjust timeouts as needed
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+            }
+            
+            return chain.proceed(requestBuilder.build())
+        }
     }
 
     @Provides
@@ -129,22 +143,11 @@ object AppModule {
     @Singleton
     fun provideApiService(okHttpClient: OkHttpClient): ApiService {
         return Retrofit.Builder()
-            .baseUrl("https://whizvoice.com/")
+            .baseUrl("https://whizvoice.com/api/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
-    }
-
-    @Provides
-    @Singleton
-    fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
-        return Retrofit.Builder()
-            .baseUrl("https://whizvoice.com/")
-            .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(SupabaseApi::class.java)
     }
 
     @Provides
@@ -157,5 +160,23 @@ object AppModule {
     @Singleton
     fun provideTTSManager(@ApplicationContext context: Context): TTSManager {
         return TTSManager(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideTokenAuthenticator(
+        authRepositoryProvider: Provider<AuthRepository>,
+        authApiProvider: Provider<AuthApi>
+    ): TokenAuthenticator {
+        return TokenAuthenticator(authRepositoryProvider, authApiProvider)
+    }
+
+    @Provides
+    @Singleton
+    fun provideUserPreferences(
+        apiService: ApiService,
+        authRepository: AuthRepository
+    ): UserPreferences {
+        return UserPreferences(apiService, authRepository)
     }
 }
