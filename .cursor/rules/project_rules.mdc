@@ -80,9 +80,9 @@ alwaysApply: false
     "description": "Please run tests if you change tests or if you change functionality covered by tests"
   },
   {
-    "id": "integration_tests_rml",
+    "id": "rml_code_checking",
     "severity": "error",
-    "description": "When you run integration tests, please also run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
+    "description": "When you run integration tests, please also separately run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
   },
   {
     "id": "write_tests",

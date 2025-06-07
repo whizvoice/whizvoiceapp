@@ -40,6 +40,7 @@ class ChatViewModel @Inject constructor(
     private val authRepository: AuthRepository, // Add this
     private val userPreferences: UserPreferences,
     private val ttsManager: TTSManager,
+    private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
 ) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -239,6 +240,26 @@ class ChatViewModel @Inject constructor(
                 if (_isTTSInitialized.value) {
                     applyVoiceSettings(voiceSettings)
                 }
+            }
+        }
+        
+        // Observe app foreground events to restart continuous listening
+        Log.d(TAG, "Setting up app foreground event collection")
+        viewModelScope.launch {
+            Log.d(TAG, "Started collecting app foreground events")
+            appLifecycleService.appForegroundEvent.collect {
+                Log.d(TAG, "App foreground event received")
+                onAppForegrounded()
+            }
+        }
+        
+        // Observe app background events to sync state
+        Log.d(TAG, "Setting up app background event collection")
+        viewModelScope.launch {
+            Log.d(TAG, "Started collecting app background events")
+            appLifecycleService.appBackgroundEvent.collect {
+                Log.d(TAG, "App background event received")
+                onAppBackgrounded()
             }
         }
 
@@ -989,17 +1010,15 @@ class ChatViewModel @Inject constructor(
                 }
             }
 
-            // 🔧 OPTIMISTIC UI: Only add user message locally when disconnected for better UX
-            // When connected, trust the server to handle the message to avoid duplicates
-            if (currentChatId > 0 && !_isConnectedToServer.value) {
+            // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
+            // Server will handle deduplication if needed
+            if (currentChatId > 0) {
                 try {
                     val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
-                    Log.d(TAG, "sendUserInput: Added optimistic user message to UI while disconnected (localId: $localMessageId)")
+                    Log.d(TAG, "sendUserInput: Added optimistic user message to UI immediately (localId: $localMessageId)")
                 } catch (e: Exception) {
                     Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
                 }
-            } else if (currentChatId > 0) {
-                Log.d(TAG, "sendUserInput: Connected to server - trusting server to handle message persistence (no optimistic UI)")
             } else {
                 Log.d(TAG, "sendUserInput: Skipping optimistic UI for new chat - will show after server creates conversation")
             }
@@ -1310,33 +1329,81 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // Called when app goes to background - sync the continuous listening state
+    fun onAppBackgrounded() {
+        Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Stop continuous listening cleanly and sync state
+        if (continuousListeningEnabled) {
+            Log.d(TAG, "[LOG] Stopping continuous listening due to app backgrounded")
+            try {
+                continuousListeningEnabled = false
+                speechRecognitionService.continuousListeningEnabled = false
+                speechRecognitionService.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping continuous listening on background", e)
+            }
+        }
+    }
+
     // Called when app comes back to foreground - restart continuous listening if it was enabled
     fun onAppForegrounded() {
         Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
+        Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${_isSpeaking.value}, isResponding: ${_isResponding.value}")
         
-        // Only restart if we have permission, are in a chat, and continuous listening was enabled
-        if (_micPermissionGranted.value && _chatId.value > 0 && continuousListeningEnabled) {
+        // Only restart if we have permission, are in a chat, and we're in voice mode
+        if (_micPermissionGranted.value && _chatId.value > 0) {
             try {
-                // Re-enable continuous listening in the service
+                // Re-enable continuous listening
+                continuousListeningEnabled = true
                 speechRecognitionService.continuousListeningEnabled = true
                 
-                // Start listening if not already listening and not busy
-                if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
-                    Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
-                    viewModelScope.launch {
-                        delay(200L) // Small delay to ensure app is fully resumed
-                        if (continuousListeningEnabled && !_isSpeaking.value && !_isResponding.value) {
-                            startContinuousListening()
-                        }
+                // More aggressive restart logic to handle edge cases
+                viewModelScope.launch {
+                    delay(300L) // Slightly longer delay to ensure app is fully resumed
+                    
+                    // Reset potentially stuck states that might prevent restart
+                    if (_isSpeaking.value) {
+                        Log.d(TAG, "[LOG] Detected stuck speaking state, clearing it")
+                        _isSpeaking.value = false
+                        ttsManager.stop() // Force stop TTS to clear speaking state
                     }
-                } else {
-                    Log.d(TAG, "[LOG] Not restarting continuous listening - isListening: ${isListening.value}, isSpeaking: ${_isSpeaking.value}, isResponding: ${_isResponding.value}")
+                    
+                    // Double-check conditions and force restart if needed
+                    if (continuousListeningEnabled && !isListening.value) {
+                        Log.d(TAG, "[LOG] Force restarting continuous listening after app foregrounded")
+                        try {
+                            // Force stop any existing listening first
+                            speechRecognitionService.stopListening()
+                            delay(100L) // Brief pause
+                            startContinuousListening()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "[LOG] Error in force restart, trying direct service restart", e)
+                            // Fallback: try direct service restart
+                            speechRecognitionService.stopListening()
+                            delay(100L)
+                            if (continuousListeningEnabled) {
+                                speechRecognitionService.startListening { finalText ->
+                                    if (finalText.isNotBlank()) {
+                                        _inputText.value = finalText
+                                        if (continuousListeningEnabled) {
+                                            sendUserInput(finalText)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (isListening.value) {
+                        Log.d(TAG, "[LOG] Already listening, no restart needed")
+                    } else {
+                        Log.d(TAG, "[LOG] Not restarting - continuousListeningEnabled: $continuousListeningEnabled, isListening: ${isListening.value}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error restarting continuous listening after app foregrounded", e)
             }
         } else {
-            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}, continuousEnabled: $continuousListeningEnabled")
+            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}")
         }
     }
 
@@ -1414,20 +1481,18 @@ class ChatViewModel @Inject constructor(
 
         Log.d(TAG, "sendInterruptMessage: Sending interrupt message: '$trimmedText'")
         
-        // 🔧 OPTIMISTIC UI: Only add interrupt message locally when disconnected for better UX
-        // When connected, trust the server to handle the message to avoid duplicates
+        // 🔧 OPTIMISTIC UI: Always show interrupt messages immediately for good UX
+        // Server will handle deduplication if needed
         val currentChatId = _chatId.value
-        if (currentChatId > 0 && !_isConnectedToServer.value) {
+        if (currentChatId > 0) {
             viewModelScope.launch {
                 try {
                     val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
-                    Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI while disconnected (localId: $localMessageId)")
+                    Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI immediately (localId: $localMessageId)")
                 } catch (e: Exception) {
                     Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)
                 }
             }
-        } else if (currentChatId > 0) {
-            Log.d(TAG, "sendInterruptMessage: Connected to server - trusting server to handle interrupt persistence (no optimistic UI)")
         }
         
         // Clear input text immediately after sending interrupt (like normal sendUserInput)
