@@ -293,4 +293,36 @@ class AuthRepository @Inject constructor(
             false
         }
     }
+    
+    /**
+     * Test-only method to set up authentication state for integration tests.
+     * This bypasses normal authentication flow for testing purposes.
+     */
+    suspend fun setTestAuthenticationState(
+        email: String,
+        userId: String = "test_user_${System.currentTimeMillis()}",
+        name: String = "Test User"
+    ) {
+        withContext(Dispatchers.IO) {
+            Log.d(TAG, "🧪 Setting test authentication state for: $email")
+            
+            // Set up all required authentication data
+            sharedPreferences.edit().apply {
+                putString(PreferenceKeys.USER_ID, userId)
+                putString(PreferenceKeys.USER_NAME, name)
+                putString(PreferenceKeys.USER_EMAIL, email)
+                putString(PreferenceKeys.USER_PHOTO_URL, "")
+                putString(PreferenceKeys.AUTH_TOKEN, "test_id_token_${System.currentTimeMillis()}")
+                putString(PreferenceKeys.SERVER_TOKEN, "test_server_token_${System.currentTimeMillis()}")
+                putString(PreferenceKeys.REFRESH_TOKEN, "test_refresh_token_${System.currentTimeMillis()}")
+                apply()
+            }
+            
+            // Update the flows
+            refreshUserProfile()
+            _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
+            
+            Log.d(TAG, "✅ Test authentication state set successfully")
+        }
+    }
 } 

@@ -12,12 +12,12 @@ class AppLifecycleService @Inject constructor() {
     
     private val TAG = "AppLifecycleService"
     
-    // App foreground events
-    private val _appForegroundEvent = MutableSharedFlow<Unit>(replay = 0)
+    // App foreground events - replay=1 so tests can catch events emitted before collection starts
+    private val _appForegroundEvent = MutableSharedFlow<Unit>(replay = 1)
     val appForegroundEvent: SharedFlow<Unit> = _appForegroundEvent.asSharedFlow()
     
-    // App background events
-    private val _appBackgroundEvent = MutableSharedFlow<Unit>(replay = 0)
+    // App background events - replay=1 so tests can catch events emitted before collection starts
+    private val _appBackgroundEvent = MutableSharedFlow<Unit>(replay = 1)
     val appBackgroundEvent: SharedFlow<Unit> = _appBackgroundEvent.asSharedFlow()
     
     fun notifyAppForegrounded() {

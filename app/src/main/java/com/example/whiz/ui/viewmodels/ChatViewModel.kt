@@ -1012,15 +1012,19 @@ class ChatViewModel @Inject constructor(
 
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
             // Server will handle deduplication if needed
-            if (currentChatId > 0) {
-                try {
-                    val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
-                    Log.d(TAG, "sendUserInput: Added optimistic user message to UI immediately (localId: $localMessageId)")
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
+            try {
+                val actualChatId = if (currentChatId > 0) currentChatId else {
+                    // For new chats, create a temporary local chat to show the message immediately
+                    val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val tempChatId = repository.createChat(tempTitle)
+                    _chatId.value = tempChatId
+                    _chatTitle.value = tempTitle
+                    tempChatId
                 }
-            } else {
-                Log.d(TAG, "sendUserInput: Skipping optimistic UI for new chat - will show after server creates conversation")
+                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                Log.d(TAG, "sendUserInput: Added optimistic user message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
             }
 
             // --- Server Interaction ---
@@ -1045,22 +1049,12 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
                 }
                 
-                // For new chats, we need to refresh conversations list after server creates it
+                // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI
                 if (currentChatId <= 0) {
                     try {
                         viewModelScope.launch {
-                            // Remove arbitrary delay - server should acknowledge immediately
                             repository.refreshConversations()
-                            Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat")
-                            
-                            // Try to find the newly created conversation and switch to it
-                            val conversations = repository.conversations.value
-                            if (conversations.isNotEmpty()) {
-                                val newestConversation = conversations.first() // Most recent
-                                _chatId.value = newestConversation.id
-                                _chatTitle.value = newestConversation.title
-                                Log.d(TAG, "sendUserInput: Switched to new conversation ${newestConversation.id}")
-                            }
+                            Log.d(TAG, "sendUserInput: Triggered conversations refresh for new chat (staying with local chat ${_chatId.value})")
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "sendUserInput: Error refreshing conversations for new chat", e)
@@ -1484,14 +1478,20 @@ class ChatViewModel @Inject constructor(
         // 🔧 OPTIMISTIC UI: Always show interrupt messages immediately for good UX
         // Server will handle deduplication if needed
         val currentChatId = _chatId.value
-        if (currentChatId > 0) {
-            viewModelScope.launch {
-                try {
-                    val localMessageId = repository.addUserMessage(currentChatId, trimmedText)
-                    Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI immediately (localId: $localMessageId)")
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)
+        viewModelScope.launch {
+            try {
+                val actualChatId = if (currentChatId > 0) currentChatId else {
+                    // For new chats, create a temporary local chat to show the message immediately
+                    val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val tempChatId = repository.createChat(tempTitle)
+                    _chatId.value = tempChatId
+                    _chatTitle.value = tempTitle
+                    tempChatId
                 }
+                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)
             }
         }
         

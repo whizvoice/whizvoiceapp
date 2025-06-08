@@ -22,6 +22,7 @@ import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.TestCredentialsManager
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.ui.screens.GoogleSignInAutomator
+import com.example.whiz.integration.AuthenticationTestHelper
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -65,65 +66,28 @@ class MessageFlowIntegrationTest {
     }
 
     /**
-     * Automated sign-in helper that checks authentication and signs in if needed
+     * Checks authentication and provides clear guidance for manual login
      */
-    private suspend fun ensureAuthenticated(): Boolean {
+    private fun checkAuthentication(): Boolean {
         android.util.Log.d("MessageFlowTest", "🔐 Checking authentication status...")
         
+        val currentUser = authRepository.userProfile.value
         val isSignedIn = authRepository.isSignedIn()
-        if (isSignedIn) {
-            android.util.Log.d("MessageFlowTest", "✅ User already authenticated!")
-            return true
-        }
         
-        android.util.Log.d("MessageFlowTest", "🔄 User not authenticated, starting automated sign-in...")
-        val credentials = TestCredentialsManager.credentials
-        
-        // Step 1: Launch sign-in intent
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val signInIntent = authRepository.createSignInIntent()
-        
-        try {
-            android.util.Log.d("MessageFlowTest", "🚀 Launching Google Sign-In intent...")
-            context.startActivity(signInIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-            
-            // Step 2: Use GoogleSignInAutomator to handle the flow
-            android.util.Log.d("MessageFlowTest", "🤖 Starting automated Google Sign-In flow...")
-            val authSuccess = GoogleSignInAutomator.performGoogleSignIn(
-                device,
-                credentials.googleTestAccount.email,
-                credentials.googleTestAccount.password
-            )
-            
-            if (!authSuccess) {
-                android.util.Log.w("MessageFlowTest", "⚠️ Automated sign-in flow returned false")
-                return false
-            }
-            
-            // Step 3: Wait for authentication to complete in the app
-            android.util.Log.d("MessageFlowTest", "⏳ Waiting for authentication to complete...")
-            
-            var attempts = 0
-            val maxAttempts = 30 // 15 seconds max
-            while (attempts < maxAttempts) {
-                delay(500)
-                val newAuthState = authRepository.isSignedIn()
-                android.util.Log.d("MessageFlowTest", "Auth check $attempts: $newAuthState")
-                
-                if (newAuthState) {
-                    android.util.Log.d("MessageFlowTest", "🎉 Automated authentication successful!")
-                    return true
-                }
-                attempts++
-            }
-            
-            android.util.Log.w("MessageFlowTest", "⚠️ Authentication did not complete within timeout")
-            return false
-            
-        } catch (e: Exception) {
-            android.util.Log.e("MessageFlowTest", "❌ Error during automated sign-in", e)
+        if (!isSignedIn || currentUser?.email?.contains("whizvoicetest") != true) {
+            android.util.Log.w("MessageFlowTest", "⚠️ Not authenticated as REDACTED_TEST_EMAIL")
+            android.util.Log.w("MessageFlowTest", "Current user: ${currentUser?.email}")
+            android.util.Log.w("MessageFlowTest", "")
+            android.util.Log.w("MessageFlowTest", "📱 MANUAL AUTHENTICATION REQUIRED:")
+            android.util.Log.w("MessageFlowTest", "1. Open the WhizVoice debug app on this device")
+            android.util.Log.w("MessageFlowTest", "2. Sign in as REDACTED_TEST_EMAIL")
+            android.util.Log.w("MessageFlowTest", "3. Leave the app open and re-run these tests")
+            android.util.Log.w("MessageFlowTest", "")
             return false
         }
+        
+        android.util.Log.d("MessageFlowTest", "✅ Authenticated as: ${currentUser?.email}")
+        return true
     }
 
     @Test
@@ -161,7 +125,7 @@ class MessageFlowIntegrationTest {
         android.util.Log.d("MessageFlowTest", "🔐 AUTOMATED AUTHENTICATION TEST")
         
         try {
-            val authSuccess = ensureAuthenticated()
+            val authSuccess = checkAuthentication()
             
             if (authSuccess) {
                 android.util.Log.d("MessageFlowTest", "✅ Automated authentication completed successfully!")
@@ -198,11 +162,11 @@ class MessageFlowIntegrationTest {
         android.util.Log.d("MessageFlowTest", "🧪 Testing repository functionality WITH automated authentication")
         
         try {
-            // Step 1: Ensure we're authenticated (automated)
-            val authSuccess = ensureAuthenticated()
+            // Step 1: Check authentication (manual)
+            val authSuccess = checkAuthentication()
             
             if (!authSuccess) {
-                android.util.Log.w("MessageFlowTest", "⚠️ Could not authenticate automatically - skipping API test")
+                android.util.Log.w("MessageFlowTest", "⚠️ Not authenticated as whizvoicetest - skipping API test")
                 return@runBlocking
             }
             
@@ -232,13 +196,13 @@ class MessageFlowIntegrationTest {
         android.util.Log.d("MessageFlowTest", "E2E API Endpoint: ${credentials.testEnvironment.apiBaseUrl}")
         
         try {
-            // Step 1: Automated authentication
-            android.util.Log.d("MessageFlowTest", "🔐 Starting automated authentication...")
-            val authSuccess = ensureAuthenticated()
+            // Step 1: Check authentication 
+            android.util.Log.d("MessageFlowTest", "🔐 Checking authentication...")
+            val authSuccess = checkAuthentication()
             
             if (!authSuccess) {
-                android.util.Log.w("MessageFlowTest", "⚠️ Automated authentication failed - this is a test infrastructure issue")
-                android.util.Log.w("MessageFlowTest", "The E2E infrastructure is working, but automated sign-in didn't complete")
+                android.util.Log.w("MessageFlowTest", "⚠️ Authentication check failed - manual login required")
+                android.util.Log.w("MessageFlowTest", "Please sign into the debug app as REDACTED_TEST_EMAIL")
                 return@runBlocking
             }
             
