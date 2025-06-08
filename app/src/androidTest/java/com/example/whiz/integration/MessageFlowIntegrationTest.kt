@@ -21,7 +21,7 @@ import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.TestCredentialsManager
 import com.example.whiz.data.remote.AuthApi
-import com.example.whiz.ui.screens.GoogleSignInAutomator
+import com.example.whiz.integration.GoogleSignInAutomator
 import com.example.whiz.integration.AuthenticationTestHelper
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount

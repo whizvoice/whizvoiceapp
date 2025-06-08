@@ -6,7 +6,7 @@ import androidx.test.uiautomator.UiDevice
 import com.example.whiz.TestCredentialsManager
 import com.example.whiz.TestCredentials
 import com.example.whiz.data.auth.AuthRepository
-import com.example.whiz.ui.screens.GoogleSignInAutomator
+import com.example.whiz.integration.GoogleSignInAutomator
 import kotlinx.coroutines.delay
 
 /**

@@ -151,10 +151,34 @@ count_total_tests() {
     log_with_time "📊 Found $unit_test_count unit tests + $integration_test_count instrumented tests = $total_tests total tests"
 }
 
+# Function to read test credentials from JSON file
+read_test_credentials() {
+    local credentials_file="test_credentials.json"
+    if [[ ! -f "$credentials_file" ]]; then
+        log_with_time "❌ ERROR: $credentials_file not found. Please create it with test credentials."
+        exit 1
+    fi
+    
+    # Read username and password using a simple parser (avoids jq dependency)
+    TEST_USERNAME=$(grep -o '"email": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
+    TEST_PASSWORD=$(grep -o '"password": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
+    
+    if [[ -z "$TEST_USERNAME" || -z "$TEST_PASSWORD" || "$TEST_PASSWORD" == "REPLACE_WITH_ACTUAL_PASSWORD" ]]; then
+        log_with_time "❌ ERROR: Test credentials in $credentials_file are incomplete or placeholders."
+        log_with_time "Please ensure 'email' and 'password' are set correctly for the 'google_test_account'."
+        exit 1
+    fi
+    
+    log_with_time "🔑 Successfully read test credentials for user: $TEST_USERNAME"
+}
+
 log_with_time "🧪 Running tests on WhizVoice Debug with latest changes..."
 
 # Count and display total tests
 count_total_tests
+
+# Read test credentials
+read_test_credentials
 
 if [[ "$CLEAN_AFTER_TESTS" == "true" ]]; then
     log_with_time "🗑️  Will uninstall debug app after tests complete"
@@ -222,7 +246,7 @@ TEST_PROGRESS_PID=$!
 
 monitor_tests "Instrumented tests" &
 MONITOR_PID=$!
-run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain"
+run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""
 kill $MONITOR_PID 2>/dev/null || true
 kill $LOGCAT_PID 2>/dev/null || true
 kill $TEST_PROGRESS_PID 2>/dev/null || true

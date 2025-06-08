@@ -200,8 +200,8 @@ class SpeechRecognitionService @Inject constructor(
             // Force state to false immediately
             _isListening.value = false
             
-            // Clear callback to prevent restart
-            recognitionCallback = null
+            // 🔧 BUG FIX: DO NOT clear callback here! Let onResults() deliver final transcription first
+            // recognitionCallback = null  // ← REMOVED: This was preventing final results delivery
             
             // Clear transcription state
             _transcriptionState.value = ""
@@ -211,7 +211,8 @@ class SpeechRecognitionService @Inject constructor(
             Log.e(TAG, "[DEBUG] Error stopping speech recognition", e)
             _errorState.value = "Error stopping speech recognition: ${e.message}"
             _isListening.value = false
-            recognitionCallback = null
+            // 🔧 BUG FIX: Don't clear callback on error either - let onResults() handle cleanup
+            // recognitionCallback = null  // ← REMOVED: This was preventing final results delivery
             continuousListeningEnabled = false
             // Try to clean up
             cleanup()

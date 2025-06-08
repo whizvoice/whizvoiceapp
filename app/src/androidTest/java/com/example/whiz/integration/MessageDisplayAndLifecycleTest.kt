@@ -18,7 +18,7 @@ import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.TestCredentialsManager
-import com.example.whiz.ui.screens.GoogleSignInAutomator
+import com.example.whiz.integration.GoogleSignInAutomator
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import com.example.whiz.integration.AuthenticationTestHelper

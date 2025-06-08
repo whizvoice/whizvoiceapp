@@ -75,6 +75,11 @@ alwaysApply: false
     "description": "For running tests, use `cd whizvoiceapp && ./run_tests_on_debug.sh`. Test output is also logged to test_output.log"
   },
   {
+    "id": "test_credentials_location",
+    "severity": "error",
+    "description": "When you are writing tests, you can reference the test_credentials.json file in the whizvoiceapp directory."
+  },
+  {
     "id": "when_to_test",
     "severity": "error",
     "description": "Please run tests if you change tests or if you change functionality covered by tests"
