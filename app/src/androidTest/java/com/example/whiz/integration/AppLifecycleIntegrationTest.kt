@@ -46,6 +46,12 @@ class AppLifecycleIntegrationTest {
     @Inject
     lateinit var speechRecognitionService: SpeechRecognitionService
 
+    @Inject
+    lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
+
+    @Inject
+    lateinit var authApi: com.example.whiz.data.remote.AuthApi
+
     private lateinit var device: UiDevice
     private lateinit var context: Context
     private val packageName = "com.example.whiz.debug"
@@ -65,59 +71,124 @@ class AppLifecycleIntegrationTest {
     }
 
     private fun authenticateUser(): Boolean {
-        Log.d(TAG, "🔐 Authenticating user for lifecycle testing...")
+        Log.d(TAG, "🔐 Smart authentication check for lifecycle testing...")
         
         val arguments = InstrumentationRegistry.getArguments()
-        val testEmail = arguments.getString("testUsername")
+        val expectedEmail = arguments.getString("testUsername") ?: "REDACTED_TEST_EMAIL"
         val testPassword = arguments.getString("testPassword")
 
-        if (testEmail.isNullOrBlank() || testPassword.isNullOrBlank()) {
-            Log.e(TAG, "❌ ERROR: Missing test credentials. testUsername and testPassword must be provided.")
-            // Fail fast if credentials are not provided
-            throw IllegalStateException("Test credentials (testUsername, testPassword) were not provided to the test runner.")
+        if (testPassword.isNullOrBlank()) {
+            Log.e(TAG, "❌ ERROR: Missing test password. testPassword must be provided.")
+            throw IllegalStateException("Test password was not provided to the test runner.")
         }
 
-        Log.d(TAG, "Attempting to sign in as $testEmail")
-        
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)!!
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        context.startActivity(intent)
-        
-        device.wait(Until.hasObject(By.pkg(packageName)), 10000)
-        Thread.sleep(3000)
-        
-        val hasMainInterface = device.hasObject(By.textContains("New Chat").pkg(packageName)) ||
-                              device.hasObject(By.descContains("Start new chat").pkg(packageName))
-        
-        if (hasMainInterface) {
-            Log.d(TAG, "✅ User already signed in.")
-            return true
-        }
-        
-        val signInButton = device.findObject(UiSelector().textMatches("(?i).*sign.*in.*google.*"))
-        if (signInButton.waitForExists(5000)) {
-            Log.d(TAG, "🔘 Found 'Sign in with Google' button, clicking...")
-            signInButton.click()
-            Thread.sleep(2000)
+        try {
+            // STEP 1: Check if we're already authenticated as the correct user
+            val currentUser = authRepository.userProfile.value
+            val isSignedIn = authRepository.isSignedIn()
             
-            // Use the reliable GoogleSignInAutomator
-            val authSuccess = GoogleSignInAutomator.performGoogleSignIn(device, testEmail, testPassword)
+            Log.d(TAG, "📊 Current auth state: signed in = $isSignedIn")
+            Log.d(TAG, "📊 Current user: ${currentUser?.email}")
+            Log.d(TAG, "📊 Expected user: $expectedEmail")
             
-            if (authSuccess) {
-                Thread.sleep(5000) // Wait for app to load after auth
-                val finalCheck = device.wait(Until.hasObject(By.pkg(packageName).textContains("New Chat")), 10000)
-                
-                if(finalCheck) {
-                    Log.d(TAG, "✅ Authentication successful, main interface found.")
-                } else {
-                    Log.d(TAG, "❌ Authentication may have succeeded, but main interface not found.")
-                }
-                return finalCheck
-            } else {
-                Log.e(TAG, "❌ GoogleSignInAutomator failed to perform sign in.")
+            if (isSignedIn && currentUser?.email == expectedEmail) {
+                Log.d(TAG, "✅ Already authenticated as correct user: ${currentUser.email}")
+                return true
             }
-        } else {
-            Log.e(TAG, "❌ Could not find the Google Sign In button.")
+            
+            // STEP 2: Need to authenticate - launch app
+            Log.d(TAG, "🚀 Need to authenticate as $expectedEmail...")
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)!!
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            context.startActivity(intent)
+            
+            device.wait(Until.hasObject(By.pkg(packageName)), 10000)
+            Thread.sleep(3000)
+            
+            // STEP 3: Check if UI shows we're already signed in  
+            val hasMainInterface = device.hasObject(By.textContains("New Chat").pkg(packageName)) ||
+                                  device.hasObject(By.descContains("Start new chat").pkg(packageName))
+            
+            if (hasMainInterface) {
+                Log.d(TAG, "✅ UI shows authenticated state - main interface visible")
+                return true
+            }
+            
+            // STEP 4: Try programmatic Firebase authentication (bypass Google verification)
+            Log.d(TAG, "🔐 Attempting programmatic Firebase authentication for $expectedEmail...")
+            
+            // Check if we have an existing Google account for the expected user
+            val googleAccount = authRepository.getLastSignedInGoogleAccount()
+            if (googleAccount != null && googleAccount.email == expectedEmail) {
+                Log.d(TAG, "📱 Found existing Google account: ${googleAccount.email}")
+                
+                // Get ID token for direct server authentication
+                val idToken = googleAccount.idToken
+                if (idToken != null) {
+                    Log.d(TAG, "🎫 Got ID token, authenticating with server directly...")
+                    
+                    try {
+                        // Direct API authentication - bypasses Google verification screen!
+                        kotlinx.coroutines.runBlocking {
+                            val authResult = authApi.authenticateWithGoogle(idToken)
+                            if (authResult.isSuccess) {
+                                val authResponse = authResult.getOrThrow()
+                                Log.d(TAG, "🎉 Direct server authentication successful!")
+                                Log.d(TAG, "User: ${authResponse.user.email}")
+                                
+                                // Save tokens
+                                authRepository.saveAuthTokensFromServer(
+                                    accessToken = authResponse.accessToken,
+                                    refreshToken = authResponse.refreshToken ?: ""
+                                )
+                                Log.d(TAG, "💾 Tokens saved successfully")
+                                
+                                Thread.sleep(2000) // Brief wait for state to settle
+                                return@runBlocking
+                            } else {
+                                Log.e(TAG, "❌ Direct server authentication failed: ${authResult.exceptionOrNull()}")
+                            }
+                        }
+                        return true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Exception during direct server auth", e)
+                    }
+                } else {
+                    Log.w(TAG, "⚠️ No ID token available from existing Google account")
+                }
+            } else {
+                Log.w(TAG, "⚠️ No existing Google account found for $expectedEmail")
+            }
+            
+            // STEP 5: Fallback to UI automation if programmatic auth failed
+            Log.d(TAG, "🔄 Falling back to UI authentication for $expectedEmail...")
+            val signInButton = device.findObject(UiSelector().textMatches("(?i).*sign.*in.*google.*"))
+            if (signInButton.waitForExists(5000)) {
+                Log.d(TAG, "🔘 Found 'Sign in with Google' button, clicking...")
+                signInButton.click()
+                Thread.sleep(2000)
+                
+                val authSuccess = GoogleSignInAutomator.performGoogleSignIn(device, expectedEmail, testPassword)
+                
+                if (authSuccess) {
+                    Thread.sleep(5000) // Wait for app to load after auth
+                    val finalCheck = device.wait(Until.hasObject(By.pkg(packageName).textContains("New Chat")), 10000)
+                    
+                    if(finalCheck) {
+                        Log.d(TAG, "✅ UI authentication successful, main interface found.")
+                    } else {
+                        Log.d(TAG, "❌ Authentication may have succeeded, but main interface not found.")
+                    }
+                    return finalCheck
+                } else {
+                    Log.e(TAG, "❌ UI authentication failed.")
+                }
+            } else {
+                Log.e(TAG, "❌ Could not find the Google Sign In button.")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during smart authentication", e)
         }
         
         return false
