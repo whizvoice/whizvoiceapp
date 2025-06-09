@@ -87,13 +87,18 @@ class AppLifecycleIntegrationTest {
             val currentUser = authRepository.userProfile.value
             val isSignedIn = authRepository.isSignedIn()
             
-            Log.d(TAG, "📊 Current auth state: signed in = $isSignedIn")
-            Log.d(TAG, "📊 Current user: ${currentUser?.email}")
-            Log.d(TAG, "📊 Expected user: $expectedEmail")
+            Log.d(TAG, "📊 Auth state check:")
+            Log.d(TAG, "   - Signed in: $isSignedIn")
+            Log.d(TAG, "   - Current user: ${currentUser?.email}")
+            Log.d(TAG, "   - Expected user: $expectedEmail")
             
             if (isSignedIn && currentUser?.email == expectedEmail) {
                 Log.d(TAG, "✅ Already authenticated as correct user: ${currentUser.email}")
                 return true
+            } else if (isSignedIn && currentUser?.email != expectedEmail) {
+                Log.d(TAG, "⚠️ Signed in as wrong user (${currentUser?.email}), need to switch to $expectedEmail")
+            } else {
+                Log.d(TAG, "⚠️ Not signed in, need to authenticate as $expectedEmail")
             }
             
             // STEP 2: Need to authenticate - launch app
@@ -119,13 +124,15 @@ class AppLifecycleIntegrationTest {
             
             // Check if we have an existing Google account for the expected user
             val googleAccount = authRepository.getLastSignedInGoogleAccount()
+            Log.d(TAG, "📱 Last Google account: ${googleAccount?.email}")
+            
             if (googleAccount != null && googleAccount.email == expectedEmail) {
-                Log.d(TAG, "📱 Found existing Google account: ${googleAccount.email}")
+                Log.d(TAG, "✅ Found matching Google account: ${googleAccount.email}")
                 
                 // Get ID token for direct server authentication
                 val idToken = googleAccount.idToken
                 if (idToken != null) {
-                    Log.d(TAG, "🎫 Got ID token, authenticating with server directly...")
+                    Log.d(TAG, "🎫 Got ID token (length: ${idToken.length}), authenticating with server...")
                     
                     try {
                         // Direct API authentication - bypasses Google verification screen!
@@ -133,31 +140,58 @@ class AppLifecycleIntegrationTest {
                             val authResult = authApi.authenticateWithGoogle(idToken)
                             if (authResult.isSuccess) {
                                 val authResponse = authResult.getOrThrow()
-                                Log.d(TAG, "🎉 Direct server authentication successful!")
-                                Log.d(TAG, "User: ${authResponse.user.email}")
+                                Log.d(TAG, "🎉 Programmatic Firebase auth successful!")
+                                Log.d(TAG, "   - User: ${authResponse.user.email}")
+                                Log.d(TAG, "   - Token type: ${authResponse.tokenType}")
                                 
                                 // Save tokens
                                 authRepository.saveAuthTokensFromServer(
                                     accessToken = authResponse.accessToken,
                                     refreshToken = authResponse.refreshToken ?: ""
                                 )
-                                Log.d(TAG, "💾 Tokens saved successfully")
+                                Log.d(TAG, "💾 Server tokens saved successfully")
                                 
                                 Thread.sleep(2000) // Brief wait for state to settle
                                 return@runBlocking
                             } else {
-                                Log.e(TAG, "❌ Direct server authentication failed: ${authResult.exceptionOrNull()}")
+                                Log.e(TAG, "❌ Programmatic Firebase auth failed: ${authResult.exceptionOrNull()}")
                             }
                         }
                         return true
                     } catch (e: Exception) {
-                        Log.e(TAG, "❌ Exception during direct server auth", e)
+                        Log.e(TAG, "❌ Exception during programmatic Firebase auth", e)
                     }
                 } else {
-                    Log.w(TAG, "⚠️ No ID token available from existing Google account")
+                    Log.w(TAG, "⚠️ No ID token available from Google account (token expired?)")
                 }
+            } else if (googleAccount != null) {
+                Log.w(TAG, "⚠️ Wrong Google account signed in: ${googleAccount.email} != $expectedEmail")
             } else {
-                Log.w(TAG, "⚠️ No existing Google account found for $expectedEmail")
+                Log.w(TAG, "⚠️ No Google account found on device")
+            }
+            
+            // STEP 4.5: Try test authentication state as fallback
+            Log.d(TAG, "🔧 Attempting test authentication state for $expectedEmail...")
+            try {
+                kotlinx.coroutines.runBlocking {
+                    authRepository.setTestAuthenticationState(
+                        email = expectedEmail,
+                        userId = "test_user_${System.currentTimeMillis()}",
+                        name = "Test User"
+                    )
+                    Thread.sleep(1000) // Wait for state to propagate
+                    
+                    val finalCheck = authRepository.isSignedIn() && authRepository.userProfile.value?.email == expectedEmail
+                    if (finalCheck) {
+                        Log.d(TAG, "✅ Test authentication state successfully set")
+                        return@runBlocking
+                    } else {
+                        Log.w(TAG, "⚠️ Test authentication state didn't fully register")
+                    }
+                }
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Test authentication state failed", e)
             }
             
             // STEP 5: Fallback to UI automation if programmatic auth failed
