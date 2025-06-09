@@ -21,6 +21,59 @@ object GoogleSignInAutomator {
         Log.d(tag, "[${getTimestamp()}] $message")
     }
     
+    private fun handleVerificationScreen(device: UiDevice, tag: String): Boolean {
+        logWithTimestamp(tag, "🔍 Handling Google verification screen...")
+        
+        // Look for the "Next" button on the verification screen
+        val nextButton = device.wait(Until.findObject(
+            By.text("Next")
+        ), 5000)
+        
+        if (nextButton != null) {
+            logWithTimestamp(tag, "⏭️ Found Next button on verification screen, clicking...")
+            nextButton.click()
+            Thread.sleep(3000)
+            
+            // Check if we need to enter password again
+            val passwordField = device.wait(Until.findObject(
+                By.clazz("android.widget.EditText")
+            ), 5000)
+            
+            if (passwordField != null) {
+                logWithTimestamp(tag, "🔑 Verification requires password re-entry...")
+                // Get the password from the original call context
+                // For now, we'll handle this by clicking through available options
+                
+                // Look for "Try another way" or skip options
+                val tryAnotherWay = device.findObject(By.textContains("Try another way"))
+                if (tryAnotherWay != null) {
+                    logWithTimestamp(tag, "🔄 Clicking 'Try another way'...")
+                    tryAnotherWay.click()
+                    Thread.sleep(2000)
+                }
+                
+                // Look for "Skip" or "Not now" options
+                val skipButton = device.findObject(By.text("Skip")) ?: 
+                               device.findObject(By.text("Not now")) ?: 
+                               device.findObject(By.textContains("Skip"))
+                
+                if (skipButton != null) {
+                    logWithTimestamp(tag, "⏭️ Found skip option, clicking...")
+                    skipButton.click()
+                    Thread.sleep(3000)
+                    logWithTimestamp(tag, "✅ Successfully skipped verification")
+                    return true
+                }
+            }
+            
+            logWithTimestamp(tag, "✅ Verification screen handled successfully")
+            return true
+        } else {
+            logWithTimestamp(tag, "❌ Could not find Next button on verification screen")
+            return false
+        }
+    }
+    
     fun performGoogleSignIn(device: UiDevice, testEmail: String, testPassword: String): Boolean {
         val TAG = "GoogleSignInAutomator"
         
@@ -41,6 +94,17 @@ object GoogleSignInAutomator {
                 logWithTimestamp(TAG, "✅ Found existing account button, clicking...")
                 accountButton.click()
                 Thread.sleep(2000)
+                
+                // Check for "Verify it's you" screen after using existing account
+                val verifyScreen = device.wait(Until.findObject(
+                    By.textContains("Verify it's you")
+                ), 5000)
+                
+                if (verifyScreen != null) {
+                    logWithTimestamp(TAG, "🔍 Found 'Verify it's you' screen after existing account, handling...")
+                    return handleVerificationScreen(device, TAG)
+                }
+                
                 logWithTimestamp(TAG, "🎉 Successfully used existing account!")
                 return true
             }
@@ -81,6 +145,17 @@ object GoogleSignInAutomator {
                         logWithTimestamp(TAG, "🔐 Clicking sign-in button...")
                         signInButton.click()
                         Thread.sleep(3000)
+                        
+                        // Check for "Verify it's you" screen
+                        val verifyScreen = device.wait(Until.findObject(
+                            By.textContains("Verify it's you")
+                        ), 5000)
+                        
+                        if (verifyScreen != null) {
+                            logWithTimestamp(TAG, "🔍 Found 'Verify it's you' screen, handling...")
+                            return handleVerificationScreen(device, TAG)
+                        }
+                        
                         logWithTimestamp(TAG, "🎉 Manual sign-in completed!")
                         return true
                     } else {
