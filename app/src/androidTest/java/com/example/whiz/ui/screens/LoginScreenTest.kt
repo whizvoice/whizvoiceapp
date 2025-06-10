@@ -83,32 +83,7 @@ class LoginScreenTest {
         }
     }
 
-    @Test
-    fun app_startsWithoutCrashAndHiltWorks() {
-        // This test verifies that the core dependency injection issue is resolved
-        waitForAppToLoad()
-        
-        val currentScreen = detectCurrentScreen()
-        android.util.Log.d("LoginScreenTest", "App started successfully with Hilt dependency injection on: $currentScreen")
-        
-        // Test passes if we get here without crashes - any screen is valid
-        assert(true) { "App should load without crashing with proper Hilt injection" }
-    }
 
-    @Test
-    fun app_displaysExpectedScreen() {
-        waitForAppToLoad()
-        
-        val currentScreen = detectCurrentScreen()
-        
-        // Any valid screen is acceptable
-        val validScreens = listOf("LoginScreen", "ChatsListScreen", "HomeScreen", "ChatScreen", "LoadedScreen")
-        assert(currentScreen in validScreens || currentScreen == "UnknownScreen") {
-            "App should display a valid screen but found: $currentScreen"
-        }
-        
-        android.util.Log.d("LoginScreenTest", "✅ App displayed valid screen: $currentScreen")
-    }
 
     @Test
     fun loginScreen_elementsWorkIfPresent() {

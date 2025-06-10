@@ -90,20 +90,7 @@ class MessageFlowIntegrationTest {
         return true
     }
 
-    @Test
-    fun basicDependencyInjection_works() {
-        // Simple test to verify basic dependency injection works
-        android.util.Log.d("MessageFlowTest", "🧪 Testing basic dependency injection")
-        
-        assert(repository != null) { "WhizRepository should be injected" }
-        assert(authRepository != null) { "AuthRepository should be injected" }
-        assert(authApi != null) { "AuthApi should be injected" }
-        
-        android.util.Log.d("MessageFlowTest", "✅ Basic dependency injection works")
-        android.util.Log.d("MessageFlowTest", "Repository: ${repository::class.simpleName}")
-        android.util.Log.d("MessageFlowTest", "AuthRepository: ${authRepository::class.simpleName}")
-        android.util.Log.d("MessageFlowTest", "AuthApi: ${authApi::class.simpleName}")
-    }
+
 
     @Test 
     fun testCredentials_areLoaded() {

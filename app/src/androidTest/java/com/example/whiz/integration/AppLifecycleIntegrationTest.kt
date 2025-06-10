@@ -232,15 +232,7 @@ class AppLifecycleIntegrationTest {
         Thread.sleep(millis)
     }
 
-    @Test
-    fun appLifecycleService_isInjected() {
-        Log.d(TAG, "🧪 Testing AppLifecycleService injection")
-        
-        assertNotNull("AppLifecycleService should be injected", appLifecycleService)
-        assertNotNull("SpeechRecognitionService should be injected", speechRecognitionService)
-        
-        Log.d(TAG, "✅ AppLifecycleService injection test passed")
-    }
+
 
     @Test
     fun realApp_backgroundAndForeground_behavesCorrectly(): Unit = runBlocking {

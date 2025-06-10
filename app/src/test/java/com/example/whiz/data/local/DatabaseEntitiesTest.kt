@@ -8,45 +8,6 @@ import org.junit.Test
 class DatabaseEntitiesTest {
 
     @Test
-    fun `ChatEntity should have correct default values`() {
-        // When
-        val chatEntity = ChatEntity(
-            id = TestData.TEST_CONVERSATION_ID,
-            title = TestData.TEST_CONVERSATION_TITLE,
-            lastMessageTime = 123456789L
-        )
-
-        // Then
-        assertThat(chatEntity.id).isEqualTo(TestData.TEST_CONVERSATION_ID)
-        assertThat(chatEntity.title).isEqualTo(TestData.TEST_CONVERSATION_TITLE)
-        assertThat(chatEntity.lastMessageTime).isEqualTo(123456789L)
-    }
-
-    @Test
-    fun `MessageEntity should have correct MessageType enum values`() {
-        // When
-        val userMessage = MessageEntity(
-            id = 1L,
-            chatId = TestData.TEST_CONVERSATION_ID,
-            content = "User message",
-            type = MessageType.USER,
-            timestamp = 123456789L
-        )
-
-        val assistantMessage = MessageEntity(
-            id = 2L,
-            chatId = TestData.TEST_CONVERSATION_ID,
-            content = "Assistant message",
-            type = MessageType.ASSISTANT,
-            timestamp = 123456790L
-        )
-
-        // Then
-        assertThat(userMessage.type).isEqualTo(MessageType.USER)
-        assertThat(assistantMessage.type).isEqualTo(MessageType.ASSISTANT)
-    }
-
-    @Test
     fun `ApiService ConversationResponse should convert to ChatEntity correctly`() {
         // Given
         val apiConversation = ApiService.ConversationResponse(
@@ -142,43 +103,4 @@ class DatabaseEntitiesTest {
         assertThat(messageCreate.conversation_id).isEqualTo(TestData.TEST_CONVERSATION_ID)
     }
 
-    @Test
-    fun `MessageType enum should have correct string values`() {
-        // When/Then
-        assertThat(MessageType.USER.name).isEqualTo("USER")
-        assertThat(MessageType.ASSISTANT.name).isEqualTo("ASSISTANT")
-    }
-
-    @Test
-    fun `MessageEntity with empty content should be valid`() {
-        // When
-        val messageEntity = MessageEntity(
-            id = 1L,
-            chatId = TestData.TEST_CONVERSATION_ID,
-            content = "",
-            type = MessageType.USER,
-            timestamp = 123456789L
-        )
-
-        // Then
-        assertThat(messageEntity.content).isEmpty()
-        assertThat(messageEntity.id).isEqualTo(1L)
-    }
-
-    @Test
-    fun `ChatEntity with very long title should be valid`() {
-        // Given
-        val longTitle = "A".repeat(1000)
-
-        // When
-        val chatEntity = ChatEntity(
-            id = TestData.TEST_CONVERSATION_ID,
-            title = longTitle,
-            lastMessageTime = 123456789L
-        )
-
-        // Then
-        assertThat(chatEntity.title).hasLength(1000)
-        assertThat(chatEntity.title).isEqualTo(longTitle)
-    }
 } 

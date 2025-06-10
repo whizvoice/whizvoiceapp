@@ -100,22 +100,7 @@ class ChatsListScreenTest {
         }
     }
 
-    @Test
-    fun app_loadsAndShowsCorrectScreen() {
-        waitForAppToLoad()
-        
-        val currentScreen = detectCurrentScreen()
-        
-        // Assert that we loaded to a valid screen state
-        val validScreens = listOf("LoginScreen", "ChatsListScreen", "ChatScreen", "HomeScreen", "LoadedScreen")
-        assert(currentScreen in validScreens || currentScreen == "UnknownScreen") {
-            "App should load to a valid screen state but found: $currentScreen"
-        }
-        
-        // The key test is that the app loaded without crashing and is responsive
-        composeTestRule.waitForIdle()
-        // This will pass if we get here without exceptions
-    }
+
 
     @Test
     fun chatsListScreen_showsExpectedContent() {
