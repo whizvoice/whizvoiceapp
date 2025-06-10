@@ -218,8 +218,7 @@ rm -f .test_progress .test_status 2>/dev/null || true
 touch .test_status
 
 # Monitor gradle output for test progress in background
-{
-    # Follow the gradle log output and parse test information
+monitor_test_progress() {
     tail -f test_output.log 2>/dev/null | while IFS= read -r line; do
         # Look for gradle test execution patterns
         if [[ "$line" == *"started"* && "$line" == *"Test"* ]]; then
@@ -241,15 +240,32 @@ touch .test_status
             fi
         fi
     done
-} &
+}
+
+monitor_test_progress &
 TEST_PROGRESS_PID=$!
 
 monitor_tests "Instrumented tests" &
 MONITOR_PID=$!
 run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""
-kill $MONITOR_PID 2>/dev/null || true
-kill $LOGCAT_PID 2>/dev/null || true
-kill $TEST_PROGRESS_PID 2>/dev/null || true
+
+# Clean up background processes gracefully
+log_with_time "🧹 Cleaning up background monitoring processes..."
+if [[ -n "$TEST_PROGRESS_PID" ]]; then
+    kill $TEST_PROGRESS_PID >/dev/null 2>&1 || true
+    wait $TEST_PROGRESS_PID >/dev/null 2>&1 || true
+    log_with_time "✅ Cleaned up test progress monitoring"
+fi
+if [[ -n "$MONITOR_PID" ]]; then
+    kill $MONITOR_PID >/dev/null 2>&1 || true
+    wait $MONITOR_PID >/dev/null 2>&1 || true
+    log_with_time "✅ Cleaned up test status monitoring"
+fi
+if [[ -n "$LOGCAT_PID" ]]; then
+    kill $LOGCAT_PID >/dev/null 2>&1 || true
+    wait $LOGCAT_PID >/dev/null 2>&1 || true
+    log_with_time "✅ Cleaned up logcat monitoring"
+fi
 
 # Clean up progress files
 rm -f .test_progress .test_status 2>/dev/null || true
