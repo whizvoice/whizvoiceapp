@@ -184,6 +184,26 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    suspend fun deleteChat(chatId: Long) {
+        try {
+            Log.d(TAG, "deleteChat: deleting chat $chatId via API")
+            apiService.deleteConversation(chatId)
+            Log.d(TAG, "deleteChat: deleted chat $chatId and its messages")
+            
+            // Use incremental sync to handle deletion via tombstone records
+            // No need to clear cache - incremental sync will detect and remove the deleted conversation
+            ongoingConversationRequests.clear()
+            ongoingMessageRequests.clear()
+            Log.d(TAG, "deleteChat: cleared request tracking for fresh incremental sync")
+            
+            // Trigger incremental refresh - tombstone record will remove the deleted chat
+            triggerConversationsRefresh()
+            triggerMessagesRefresh()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting chat $chatId via API", e)
+        }
+    }
+
     suspend fun deleteAllChats() {
         try {
             Log.d(TAG, "deleteAllChats: deleting all chats via API")
@@ -465,23 +485,36 @@ class WhizRepository @Inject constructor(
             // Update sync timestamp
             updateLastSyncTimestamp("conversations", response.server_timestamp)
             
-            val newConversations = response.conversations.map { it.toChatEntity() }
+            val newConversations = response.conversations
+                .filter { it.deleted_at == null }  // Filter out soft-deleted conversations
+                .map { it.toChatEntity() }
             
             // If this is incremental sync, merge with existing conversations
             if (response.is_incremental && lastSync != null && !shouldForceFullSync) {
                 val existingConversationsList = existingConversations.toMutableList()
                 
-                // Update or add new conversations
-                newConversations.forEach { newConversation ->
-                    val existingIndex = existingConversationsList.indexOfFirst { it.id == newConversation.id }
-                    if (existingIndex >= 0) {
-                        // Update existing conversation
-                        existingConversationsList[existingIndex] = newConversation
-                        Log.d("Repository", "Updated existing conversation ${newConversation.id}")
+                // Handle both updates and deletions from incremental sync
+                response.conversations.forEach { apiConversation ->
+                    val existingIndex = existingConversationsList.indexOfFirst { it.id == apiConversation.id }
+                    
+                    if (apiConversation.deleted_at != null) {
+                        // Remove deleted conversation from local cache
+                        if (existingIndex >= 0) {
+                            existingConversationsList.removeAt(existingIndex)
+                            Log.d("Repository", "Removed deleted conversation ${apiConversation.id}")
+                        }
                     } else {
-                        // Add new conversation at the beginning (most recent first)
-                        existingConversationsList.add(0, newConversation)
-                        Log.d("Repository", "Added new conversation ${newConversation.id}")
+                        // Update or add non-deleted conversation
+                        val chatEntity = apiConversation.toChatEntity()
+                        if (existingIndex >= 0) {
+                            // Update existing conversation
+                            existingConversationsList[existingIndex] = chatEntity
+                            Log.d("Repository", "Updated existing conversation ${chatEntity.id}")
+                        } else {
+                            // Add new conversation at the beginning (most recent first)
+                            existingConversationsList.add(0, chatEntity)
+                            Log.d("Repository", "Added new conversation ${chatEntity.id}")
+                        }
                     }
                 }
                 

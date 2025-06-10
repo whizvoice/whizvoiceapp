@@ -1,6 +1,8 @@
 package com.example.whiz.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,8 +22,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +39,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -110,7 +119,10 @@ fun ChatsListScreen(
             } else {
                 ChatsList(
                     chats = chats,
-                    onChatClick = onChatSelected
+                    onChatClick = onChatSelected,
+                    onChatLongPress = { chatId ->
+                        viewModel.deleteChat(chatId)
+                    }
                 )
             }
         }
@@ -120,30 +132,63 @@ fun ChatsListScreen(
 @Composable
 fun ChatsList(
     chats: List<ChatEntity>,
-    onChatClick: (Long) -> Unit
+    onChatClick: (Long) -> Unit,
+    onChatLongPress: (Long) -> Unit
 ) {
+    var chatToDelete by remember { mutableStateOf<ChatEntity?>(null) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize()
     ) {
         items(chats) { chat ->
             ChatItem(
                 chat = chat,
-                onClick = { onChatClick(chat.id) }
+                onClick = { onChatClick(chat.id) },
+                onLongPress = { chatToDelete = chat }
             )
-            Divider()
+            HorizontalDivider()
         }
+    }
+
+    // Delete confirmation dialog
+    chatToDelete?.let { chat ->
+        AlertDialog(
+            onDismissRequest = { chatToDelete = null },
+            title = { Text("Delete Chat") },
+            text = { Text("Are you sure you want to delete \"${chat.title}\"? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onChatLongPress(chat.id)
+                        chatToDelete = null
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { chatToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatItem(
     chat: ChatEntity,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongPress: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongPress
+            )
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
