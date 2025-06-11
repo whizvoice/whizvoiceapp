@@ -18,6 +18,7 @@ import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
+import org.junit.After
 import android.util.Log
 
 /**
@@ -45,11 +46,29 @@ class ChatViewModelIntegrationTest {
         private const val TAG = "ChatViewModelIntegrationTest"
         private const val TEST_TIMEOUT = 10000L // 10 seconds
     }
+    
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
 
     @Before
     fun setup() {
         hiltRule.inject()
         Log.d(TAG, "🧪 ChatViewModel Integration Test Setup")
+    }
+
+    @After
+    fun cleanup() = runBlocking {
+        Log.d(TAG, "🧹 Cleaning up test chats")
+        createdChatIds.forEach { chatId ->
+            try {
+                repository.deleteChat(chatId)
+                Log.d(TAG, "🗑️ Deleted test chat: $chatId")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Failed to delete test chat $chatId", e)
+            }
+        }
+        createdChatIds.clear()
+        Log.d(TAG, "✅ Test cleanup completed")
     }
 
     @Test
@@ -64,6 +83,7 @@ class ChatViewModelIntegrationTest {
         try {
             Log.d(TAG, "📤 Creating chat with title: $testChatTitle")
             val chatId = repository.createChat(testChatTitle)
+            createdChatIds.add(chatId) // Track for cleanup
             
             assertTrue("Chat ID should be positive", chatId > 0)
             Log.d(TAG, "✅ Chat created successfully with ID: $chatId")
@@ -125,6 +145,7 @@ class ChatViewModelIntegrationTest {
             try {
                 if (title.trim().isNotBlank()) {
                     val chatId = repository.createChat(title)
+                    createdChatIds.add(chatId) // Track for cleanup
                     assertTrue("Valid title should create chat", chatId > 0)
                     Log.d(TAG, "✅ Chat created with title: '$title' -> ID: $chatId")
                 }

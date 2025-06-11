@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import org.junit.Before
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Ignore
@@ -52,6 +53,9 @@ class MessageFlowIntegrationTest {
     lateinit var authApi: AuthApi
 
     private lateinit var device: UiDevice
+    
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
 
     @Before
     fun setup() {
@@ -63,6 +67,21 @@ class MessageFlowIntegrationTest {
         android.util.Log.d("MessageFlowTest", "Using test user: ${credentials.googleTestAccount.email}")
         android.util.Log.d("MessageFlowTest", "API Base URL: ${credentials.testEnvironment.apiBaseUrl}")
         android.util.Log.d("MessageFlowTest", "Real Auth Enabled: ${credentials.testEnvironment.useRealAuth}")
+    }
+
+    @After
+    fun cleanup() = runBlocking {
+        android.util.Log.d("MessageFlowTest", "🧹 Cleaning up test chats")
+        createdChatIds.forEach { chatId ->
+            try {
+                repository.deleteChat(chatId)
+                android.util.Log.d("MessageFlowTest", "🗑️ Deleted test chat: $chatId")
+            } catch (e: Exception) {
+                android.util.Log.w("MessageFlowTest", "⚠️ Failed to delete test chat $chatId", e)
+            }
+        }
+        createdChatIds.clear()
+        android.util.Log.d("MessageFlowTest", "✅ Test cleanup completed")
     }
 
     /**
@@ -162,6 +181,7 @@ class MessageFlowIntegrationTest {
             
             val testChatTitle = "Automated E2E Test - ${System.currentTimeMillis()}"
             val chatId = repository.createChat(testChatTitle)
+            createdChatIds.add(chatId) // Track for cleanup
             
             android.util.Log.d("MessageFlowTest", "Created chat with ID: $chatId, title: $testChatTitle")
             assert(chatId > 0) { "Chat ID should be positive, got: $chatId" }
@@ -199,6 +219,7 @@ class MessageFlowIntegrationTest {
             // Create test chat in production database with whizvoicetest user
             val chatTitle = "FULL E2E Automated Test - ${System.currentTimeMillis()}"
             val chatId = repository.createChat(chatTitle)
+            createdChatIds.add(chatId) // Track for cleanup
             android.util.Log.d("MessageFlowTest", "Created E2E test chat in production DB - ID: $chatId")
             
             assert(chatId > 0) { "Failed to create chat in production database" }
