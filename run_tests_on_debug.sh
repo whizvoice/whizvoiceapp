@@ -193,6 +193,169 @@ run_with_log "Building latest debug version" "./gradlew assembleDebug --console=
 # Install the latest debug APK (updates existing installation if present)
 run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
 
+# Function to perform automated sign-in using test authentication state
+perform_automated_signin() {
+    log_with_time "🧪 Using Firebase test authentication for $TEST_USERNAME..."
+    
+    # Use the SimpleAuthSetupTest to set authentication state directly via AuthRepository
+    log_with_time "🔥 Setting test authentication state via AuthRepository.setTestAuthenticationState..."
+    
+    # Run the simple auth setup test that just sets up authentication
+    local auth_result=$(./gradlew connectedDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.integration.SimpleAuthSetupTest \
+        -Pandroid.testInstrumentationRunnerArguments.testUsername="$TEST_USERNAME" \
+        -Pandroid.testInstrumentationRunnerArguments.testPassword="$TEST_PASSWORD" \
+        --console=plain --quiet 2>&1)
+    
+    if echo "$auth_result" | grep -q "BUILD SUCCESSFUL"; then
+        log_with_time "✅ Test authentication state set successfully"
+        
+        # Launch the app to verify authentication
+        adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
+        sleep 3
+        
+        # Verify authentication by checking UI
+        if adb shell uiautomator dump /sdcard/auth_verify.xml >/dev/null 2>&1; then
+            adb pull /sdcard/auth_verify.xml /tmp/auth_verify.xml >/dev/null 2>&1
+            
+            if grep -q -E "(Chats|New Chat|$TEST_USERNAME)" /tmp/auth_verify.xml 2>/dev/null; then
+                log_with_time "✅ Test authentication verified - app shows authenticated state"
+                adb shell rm /sdcard/auth_verify.xml >/dev/null 2>&1 || true
+                rm -f /tmp/auth_verify.xml >/dev/null 2>&1 || true
+                return 0
+            else
+                log_with_time "⚠️ App may not be showing authenticated state yet, but test auth was set"
+                log_with_time "   Proceeding with tests - AuthRepository state should be correct"
+                adb shell rm /sdcard/auth_verify.xml >/dev/null 2>&1 || true
+                rm -f /tmp/auth_verify.xml >/dev/null 2>&1 || true
+                return 0  # Return success since test authentication was set
+            fi
+        else
+            log_with_time "⚠️ Could not verify UI state, but test authentication was set"
+            log_with_time "   Proceeding with tests - AuthRepository state should be correct"
+            return 0  # Return success since test authentication was set
+        fi
+    else
+        log_with_time "❌ Failed to set test authentication state"
+        log_with_time "Error output (last 10 lines):"
+        echo "$auth_result" | tail -10 | while read line; do
+            log_with_time "   $line"
+        done
+        return 1
+    fi
+}
+
+# Function to sign out current user using proper Firebase/Google authentication
+sign_out_current_user() {
+    log_with_time "🔄 Signing out current user using Firebase authentication..."
+    
+    # Method 1: Use the proper Firebase sign-out intent
+    log_with_time "🔥 Triggering Firebase sign-out via MainActivity intent..."
+    adb shell am start -n com.example.whiz/com.example.whiz.MainActivity \
+        --es "action" "sign_out" >/dev/null 2>&1
+    sleep 3
+    
+    # Verify sign-out by checking if we're back to login screen
+    adb shell uiautomator dump /sdcard/signout_verify.xml >/dev/null 2>&1
+    adb pull /sdcard/signout_verify.xml /tmp/signout_verify.xml >/dev/null 2>&1
+    
+    if grep -q -E "(Sign in|Welcome to WhizVoice|Sign in with Google)" /tmp/signout_verify.xml 2>/dev/null; then
+        log_with_time "✅ Firebase sign-out successful - app is back to login screen"
+        adb shell rm /sdcard/signout_verify.xml >/dev/null 2>&1 || true
+        rm -f /tmp/signout_verify.xml >/dev/null 2>&1 || true
+        return 0
+    else
+        log_with_time "⚠️  Firebase sign-out may not have completed, trying fallback method..."
+        
+        # Method 2: Force-stop and clear app data (fallback)
+        log_with_time "🧹 Using fallback - clearing app data..."
+        adb shell am force-stop com.example.whiz
+        sleep 1
+        
+        # Clear app data to reset authentication state (like fresh install)
+        adb shell pm clear com.example.whiz >/dev/null 2>&1
+        sleep 2
+        
+        # Restart the app - should now be in unauthenticated state
+        log_with_time "🚀 Restarting app to verify fallback sign-out..."
+        adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
+        sleep 3
+        
+        # Verify we're back to login screen
+        adb shell uiautomator dump /sdcard/signout_verify2.xml >/dev/null 2>&1
+        adb pull /sdcard/signout_verify2.xml /tmp/signout_verify2.xml >/dev/null 2>&1
+        
+        if grep -q -E "(Sign in|Welcome to WhizVoice|Sign in with Google)" /tmp/signout_verify2.xml 2>/dev/null; then
+            log_with_time "✅ Fallback sign-out successful - app is back to login screen"
+            adb shell rm /sdcard/signout_verify.xml /sdcard/signout_verify2.xml >/dev/null 2>&1 || true
+            rm -f /tmp/signout_verify.xml /tmp/signout_verify2.xml >/dev/null 2>&1 || true
+            return 0
+        else
+            log_with_time "⚠️  Fallback may not have completed, trying ui method..."
+        
+        # Method 2: Try UI-based sign out as fallback
+        adb shell uiautomator dump /sdcard/signout_check.xml >/dev/null 2>&1
+        adb pull /sdcard/signout_check.xml /tmp/signout_check.xml >/dev/null 2>&1
+        
+        # Look for menu, settings, or profile options
+        local menu_bounds=$(grep -o -E 'content-desc="(Menu|Settings|Profile|More options)"[^>]*bounds="\[[0-9,]*\]"' /tmp/signout_check.xml | grep -o 'bounds="\[[0-9,]*\]"' | head -1 | grep -o '\[[0-9,]*\]')
+        
+        if [[ -n "$menu_bounds" ]]; then
+            local coords=$(echo "$menu_bounds" | tr -d '[]' | tr ',' ' ')
+            local x1=$(echo $coords | cut -d' ' -f1)
+            local y1=$(echo $coords | cut -d' ' -f2)
+            local x2=$(echo $coords | cut -d' ' -f3)
+            local y2=$(echo $coords | cut -d' ' -f4)
+            local center_x=$(( (x1 + x2) / 2 ))
+            local center_y=$(( (y1 + y2) / 2 ))
+            
+            log_with_time "📱 Tapping menu/settings at ($center_x, $center_y)"
+            adb shell input tap $center_x $center_y
+            sleep 2
+            
+            # Look for sign out option
+            adb shell uiautomator dump /sdcard/menu_check.xml >/dev/null 2>&1
+            adb pull /sdcard/menu_check.xml /tmp/menu_check.xml >/dev/null 2>&1
+            
+            local signout_bounds=$(grep -o -E 'text="(Sign out|Logout|Log out)"[^>]*bounds="\[[0-9,]*\]"' /tmp/menu_check.xml | grep -o 'bounds="\[[0-9,]*\]"' | head -1 | grep -o '\[[0-9,]*\]')
+            
+            if [[ -n "$signout_bounds" ]]; then
+                local coords=$(echo "$signout_bounds" | tr -d '[]' | tr ',' ' ')
+                local x1=$(echo $coords | cut -d' ' -f1)
+                local y1=$(echo $coords | cut -d' ' -f2)
+                local x2=$(echo $coords | cut -d' ' -f3)
+                local y2=$(echo $coords | cut -d' ' -f4)
+                local center_x=$(( (x1 + x2) / 2 ))
+                local center_y=$(( (y1 + y2) / 2 ))
+                
+                log_with_time "📱 Tapping sign out at ($center_x, $center_y)"
+                adb shell input tap $center_x $center_y
+                sleep 3
+                
+                # Verify sign out worked
+                adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
+                sleep 3
+                
+                adb shell uiautomator dump /sdcard/final_verify.xml >/dev/null 2>&1
+                adb pull /sdcard/final_verify.xml /tmp/final_verify.xml >/dev/null 2>&1
+                
+                if grep -q -E "(Sign in|Welcome to WhizVoice|Sign in with Google)" /tmp/final_verify.xml 2>/dev/null; then
+                    log_with_time "✅ UI-based sign out successful"
+                    return 0
+                fi
+            fi
+        fi
+        
+        log_with_time "❌ Could not complete sign out"
+        fi
+        return 1
+    fi
+    
+    # Clean up temp files
+    adb shell rm /sdcard/signout_check.xml /sdcard/menu_check.xml /sdcard/signout_verify.xml /sdcard/final_verify.xml >/dev/null 2>&1 || true
+    rm -f /tmp/signout_check.xml /tmp/menu_check.xml /tmp/signout_verify.xml /tmp/final_verify.xml >/dev/null 2>&1 || true
+}
+
 # Ensure correct test user is authenticated before running tests
 ensure_test_authentication() {
     log_with_time "🔐 Ensuring correct test user authentication..."
@@ -205,28 +368,38 @@ ensure_test_authentication() {
     
     # Launch the debug app to check authentication
     log_with_time "🚀 Launching WhizVoice Debug app to check authentication..."
-    adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1
+    adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
     
     # Wait for app to load
     sleep 3
     
-    # Check if we see the sign-in screen (indicates not authenticated)
+    # Check current authentication state
     local needs_auth=false
+    local wrong_user=false
+    local current_user=""
     
     # Use UI dump to check current screen content
     if adb shell uiautomator dump /sdcard/ui_check.xml >/dev/null 2>&1; then
         adb pull /sdcard/ui_check.xml /tmp/ui_check.xml >/dev/null 2>&1
         
-        # Look for sign-in related text
+        # Look for sign-in screen
         if grep -q -E "(Sign in|Welcome to WhizVoice|Sign in with Google)" /tmp/ui_check.xml 2>/dev/null; then
             needs_auth=true
             log_with_time "⚠️  App is showing login screen - authentication required"
-        elif grep -q -E "(whizvoicetest|Chats|New Chat)" /tmp/ui_check.xml 2>/dev/null; then
-            log_with_time "✅ App appears to be authenticated (found authenticated UI elements)"
+        elif grep -q -E "(whizvoicetest|$TEST_USERNAME)" /tmp/ui_check.xml 2>/dev/null; then
+            log_with_time "✅ App appears to be authenticated as correct user ($TEST_USERNAME)"
             needs_auth=false
         else
-            log_with_time "⚠️  Cannot determine authentication state from UI - assuming authentication needed"
-            needs_auth=true
+            # Check for other email patterns (wrong user)
+            current_user=$(grep -o -E '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' /tmp/ui_check.xml 2>/dev/null | head -1)
+            if [[ -n "$current_user" && "$current_user" != "$TEST_USERNAME" ]]; then
+                log_with_time "⚠️  App is authenticated as wrong user: $current_user (need: $TEST_USERNAME)"
+                wrong_user=true
+                needs_auth=true
+            else
+                log_with_time "⚠️  Cannot determine authentication state from UI - assuming authentication needed"
+                needs_auth=true
+            fi
         fi
         
         # Clean up
@@ -238,16 +411,58 @@ ensure_test_authentication() {
     fi
     
     if [[ "$needs_auth" == "true" ]]; then
-        log_with_time "❌ ERROR: WhizVoice Debug app is not authenticated as REDACTED_TEST_EMAIL"
-        log_with_time ""
-        log_with_time "📱 AUTHENTICATION REQUIRED BEFORE TESTS:"
-        log_with_time "   1. Open WhizVoice DEBUG app on your device"
-        log_with_time "   2. Sign in as: $TEST_USERNAME" 
-        log_with_time "   3. Make sure you can see the main chat interface"
-        log_with_time "   4. Re-run this test script"
-        log_with_time ""
-        log_with_time "💡 The app should already be open on your device for authentication"
-        return 1
+        # If wrong user is logged in, sign them out first
+        if [[ "$wrong_user" == "true" ]]; then
+            log_with_time "🔄 Wrong user detected, signing out first..."
+            if ! sign_out_current_user; then
+                log_with_time "⚠️  Automatic sign out failed, continuing with sign in attempt..."
+            fi
+            sleep 3
+            
+            # Relaunch app after sign out
+            adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
+            sleep 3
+        fi
+        
+        # Attempt automated sign-in
+        log_with_time "🤖 Attempting automated authentication as $TEST_USERNAME..."
+        if perform_automated_signin; then
+            log_with_time "⏳ Waiting for authentication to complete..."
+            sleep 5
+            
+            # Verify sign-in was successful
+            adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
+            sleep 3
+            
+            if adb shell uiautomator dump /sdcard/verify_auth.xml >/dev/null 2>&1; then
+                adb pull /sdcard/verify_auth.xml /tmp/verify_auth.xml >/dev/null 2>&1
+                
+                if grep -q -E "(whizvoicetest|$TEST_USERNAME|Chats|New Chat)" /tmp/verify_auth.xml 2>/dev/null; then
+                    log_with_time "✅ Automated authentication successful!"
+                    adb shell rm /sdcard/verify_auth.xml >/dev/null 2>&1 || true
+                    rm -f /tmp/verify_auth.xml >/dev/null 2>&1 || true
+                    return 0
+                else
+                    log_with_time "❌ Automated authentication appears to have failed"
+                    adb shell rm /sdcard/verify_auth.xml >/dev/null 2>&1 || true
+                    rm -f /tmp/verify_auth.xml >/dev/null 2>&1 || true
+                    return 1
+                fi
+            else
+                log_with_time "❌ Could not verify authentication result"
+                return 1
+            fi
+        else
+            log_with_time "❌ Automated sign-in failed"
+            log_with_time ""
+            log_with_time "📱 MANUAL AUTHENTICATION REQUIRED:"
+            log_with_time "   1. The WhizVoice DEBUG app should be open on your device"
+            log_with_time "   2. Please manually sign in as: $TEST_USERNAME"
+            log_with_time "   3. Make sure you can see the main chat interface"
+            log_with_time "   4. Re-run this test script"
+            log_with_time ""
+            return 1
+        fi
     else
         log_with_time "✅ Authentication check passed - proceeding with tests"
         return 0

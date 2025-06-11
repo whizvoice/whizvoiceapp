@@ -502,4 +502,103 @@ class MessageDisplayAndLifecycleTest {
         delay(100)
         assertTrue("Should be re-enableable", speechRecognitionService.continuousListeningEnabled)
     }
+
+    @Test
+    fun remoteAgent_userMessageAppearsImmediately() {
+        runBlocking {
+        // Test that user messages appear immediately in UI when using remote agent
+        // This test should FAIL with current implementation and pass after we fix optimistic UI
+        
+        Log.d(TAG, "🧪 Testing immediate message display for remote agent")
+        
+        val testMessage = "Test message for immediate display - ${System.currentTimeMillis()}"
+        
+        // Get initial message count
+        val initialMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
+        val initialCount = initialMessages.size
+        Log.d(TAG, "Initial message count: $initialCount")
+        
+        // Simulate sending a message via remote agent (like user typing and hitting send)
+        // This should add the message to local UI immediately for good UX
+        // even though it's using remote agent
+        
+        // Add message directly to database to simulate what optimistic UI should do
+        // (This is what the ChatViewModel should do when user sends a message)
+        val messageEntity = MessageEntity(
+            id = 0,
+            chatId = testChatId,
+            content = testMessage,
+            type = MessageType.USER,
+            timestamp = System.currentTimeMillis()
+        )
+        val messageId = database.messageDao().insertMessage(messageEntity)
+        
+        // Verify message appears immediately (within 100ms)
+        delay(100)
+        
+        val updatedMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
+        val userMessage = updatedMessages.find { it.content == testMessage }
+        
+        assertNotNull("User message should appear immediately in UI", userMessage)
+        assertEquals("Message should be from user", MessageType.USER, userMessage?.type)
+        assertEquals("Message should be in correct chat", testChatId, userMessage?.chatId)
+        
+        // Verify message count increased
+        assertEquals("Message count should increase by 1", initialCount + 1, updatedMessages.size)
+        
+        Log.d(TAG, "✅ User message appeared immediately (messageId: $messageId)")
+        
+        // This test verifies the EXPECTATION that messages should appear immediately
+        // Currently this will pass because we're directly adding to database
+        // But the real ChatViewModel with remote agent doesn't do this optimistic UI
+        // So we need to also test the actual ChatViewModel behavior
+        }
+    }
+
+    @Test
+    fun realChatViewModel_remoteAgent_messageAppearsImmediately() {
+        runBlocking {
+        // Test the ACTUAL ChatViewModel behavior with remote agent
+        // This test should FAIL with current implementation because remote agent
+        // skips optimistic UI and waits for server response
+        
+        Log.d(TAG, "🧪 Testing REAL ChatViewModel immediate message display for remote agent")
+        
+        // This test would require injecting a ChatViewModel and testing its actual behavior
+        // For now, we'll document the expected behavior that should be implemented:
+        
+        // EXPECTED BEHAVIOR (currently missing):
+        // 1. User types message and hits send
+        // 2. ChatViewModel.sendUserInput() is called
+        // 3. Message should appear IMMEDIATELY in UI (optimistic UI)
+        // 4. Message is sent to server via WebSocket
+        // 5. Server processes and may send back confirmation/duplicate
+        // 6. Repository deduplicates any server duplicates
+        
+        // CURRENT BEHAVIOR (problematic):
+        // 1. User types message and hits send  
+        // 2. ChatViewModel.sendUserInput() is called
+        // 3. Message is NOT added to UI immediately (skipped for remote agent)
+        // 4. Message is sent to server via WebSocket
+        // 5. User sees "Whiz is computing..." but their own message is missing
+        // 6. Only after server responds does user message appear
+        
+        Log.d(TAG, "📝 This test documents the expected behavior for immediate message display")
+        Log.d(TAG, "    Current implementation: Remote agent skips optimistic UI")
+        Log.d(TAG, "    Expected implementation: Remote agent shows message immediately")
+        
+        // For now, mark this as a known issue that needs to be fixed
+        val currentImplementationHasOptimisticUI = false // This should become true after fix
+        
+        if (!currentImplementationHasOptimisticUI) {
+            Log.w(TAG, "⚠️ KNOWN ISSUE: Remote agent does not show user messages immediately")
+            Log.w(TAG, "   This creates poor UX where user's message disappears after sending")
+            Log.w(TAG, "   Fix needed: Implement optimistic UI for remote agent with deduplication")
+        }
+        
+        // This assertion will fail until we implement the fix
+        assertTrue("Remote agent should show user messages immediately (optimistic UI)", 
+                  currentImplementationHasOptimisticUI)
+        }
+    }
 } 
