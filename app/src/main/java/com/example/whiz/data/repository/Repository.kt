@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -57,6 +58,9 @@ class WhizRepository @Inject constructor(
     
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
+    
+    // Track optimistic messages to enable smart deduplication
+    private val optimisticMessages = mutableMapOf<Long, MutableList<MessageEntity>>()
     
     init {
         repositoryScope.launch {
@@ -272,6 +276,29 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    // 🔧 NEW: Add optimistic user message for immediate UI feedback (with deduplication support)
+    fun addOptimisticUserMessage(chatId: Long, content: String): Long {
+        // Generate a temporary local ID (negative to distinguish from server IDs)
+        val temporaryId = -(System.currentTimeMillis())
+        
+        val optimisticMessage = MessageEntity(
+            id = temporaryId,
+            chatId = chatId,
+            content = content,
+            type = MessageType.USER,
+            timestamp = System.currentTimeMillis()
+        )
+        
+        // Store in optimistic cache for deduplication
+        addOptimisticMessage(chatId, optimisticMessage)
+        
+        // Trigger refresh to show the optimistic message immediately
+        triggerMessagesRefresh()
+        
+        Log.d(TAG, "addOptimisticUserMessage: Added optimistic user message with local ID $temporaryId for chat $chatId")
+        return temporaryId
+    }
+
     suspend fun addAssistantMessage(chatId: Long, content: String): Long {
         return try {
             Log.d(TAG, "addAssistantMessage: adding assistant message to chat $chatId via API")
@@ -345,12 +372,18 @@ class WhizRepository @Inject constructor(
             try {
                 Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId")
                 val response = apiService.getMessagesIncremental(chatId, since = null)
-                val messageEntities = response.messages.map { it.toMessageEntity() }
-                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${messageEntities.size} messages for chat $chatId")
-                messageEntities
+                val serverMessages = response.messages.map { it.toMessageEntity() }
+                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} server messages for chat $chatId")
+                
+                // 🔧 SMART DEDUPLICATION: Merge optimistic + server messages intelligently
+                val deduplicatedMessages = deduplicateMessages(chatId, serverMessages)
+                Log.d(TAG, "fetchMessagesWithDeduplication: After deduplication: ${deduplicatedMessages.size} messages for chat $chatId")
+                
+                deduplicatedMessages
             } catch (e: Exception) {
                 Log.e(TAG, "Error in fetchMessagesWithDeduplication for chat $chatId", e)
-                emptyList<MessageEntity>()
+                // Return optimistic messages if server fails
+                optimisticMessages[chatId]?.toList() ?: emptyList()
             } finally {
                 // Clean up the tracking when done
                 ongoingMessageRequests.remove(chatId)
@@ -360,6 +393,96 @@ class WhizRepository @Inject constructor(
         
         ongoingMessageRequests[chatId] = deferred
         return deferred.await()
+    }
+    
+    // 🔧 NEW: Smart deduplication logic to merge optimistic + server messages
+    private fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
+        val localOptimisticMessages = optimisticMessages[chatId] ?: emptyList()
+        
+        Log.d(TAG, "deduplicateMessages: Optimistic=${localOptimisticMessages.size}, Server=${serverMessages.size}")
+        
+        if (localOptimisticMessages.isEmpty()) {
+            // No optimistic messages, just use server messages
+            Log.d(TAG, "deduplicateMessages: No optimistic messages, using server messages as-is")
+            return serverMessages
+        }
+        
+        // Create result list starting with server messages (authoritative)
+        val result = mutableListOf<MessageEntity>()
+        val matchedOptimisticIds = mutableSetOf<Long>()
+        
+        // Step 1: Add all server messages (they're authoritative)
+        result.addAll(serverMessages)
+        
+        // Step 2: Find optimistic messages that match server messages (potential duplicates)
+        for (optimisticMsg in localOptimisticMessages) {
+            val matchingServerMsg = serverMessages.find { serverMsg ->
+                isMessageDuplicate(optimisticMsg, serverMsg)
+            }
+            
+            if (matchingServerMsg != null) {
+                // Found a match - the server message is already in result, mark optimistic as matched
+                matchedOptimisticIds.add(optimisticMsg.id)
+                Log.d(TAG, "deduplicateMessages: Optimistic message '${optimisticMsg.content.take(30)}...' matches server message, using server version")
+            }
+        }
+        
+        // Step 3: Add unique optimistic messages (ones that server hasn't seen yet)
+        for (optimisticMsg in localOptimisticMessages) {
+            if (optimisticMsg.id !in matchedOptimisticIds) {
+                // Check if this optimistic message is truly unique (no content match with server)
+                val hasContentMatch = serverMessages.any { serverMsg ->
+                    serverMsg.content.trim() == optimisticMsg.content.trim() && 
+                    serverMsg.type == optimisticMsg.type
+                }
+                
+                if (!hasContentMatch) {
+                    result.add(optimisticMsg)
+                    Log.d(TAG, "deduplicateMessages: Keeping unique optimistic message '${optimisticMsg.content.take(30)}...'")
+                } else {
+                    Log.d(TAG, "deduplicateMessages: Filtering out duplicate optimistic message '${optimisticMsg.content.take(30)}...'")
+                }
+            }
+        }
+        
+        // Step 4: Sort by timestamp to maintain message order
+        val sortedResult = result.sortedBy { it.timestamp }
+        
+        // Step 5: Clear optimistic messages for this chat since we now have server state
+        optimisticMessages.remove(chatId)
+        
+        Log.d(TAG, "deduplicateMessages: Final result: ${sortedResult.size} messages (${serverMessages.size} server + ${sortedResult.size - serverMessages.size} unique optimistic)")
+        return sortedResult
+    }
+    
+    // Helper function to determine if two messages are duplicates
+    private fun isMessageDuplicate(optimistic: MessageEntity, server: MessageEntity): Boolean {
+        // Messages are duplicates if:
+        // 1. Same content (ignoring whitespace)
+        // 2. Same type (USER/ASSISTANT)  
+        // 3. Similar timestamp (within 60 seconds - accounts for server processing delay)
+        
+        val contentMatch = optimistic.content.trim() == server.content.trim()
+        val typeMatch = optimistic.type == server.type
+        val timestampDiff = kotlin.math.abs(optimistic.timestamp - server.timestamp)
+        val timestampMatch = timestampDiff <= 60_000 // 60 seconds tolerance for server processing
+        
+        val isDuplicate = contentMatch && typeMatch && timestampMatch
+        
+        if (isDuplicate) {
+            Log.d(TAG, "isMessageDuplicate: DUPLICATE found - optimistic='${optimistic.content.take(20)}...' vs server='${server.content.take(20)}...' (Δt=${timestampDiff}ms)")
+        }
+        
+        return isDuplicate
+    }
+
+    // Add message to optimistic cache for deduplication
+    private fun addOptimisticMessage(chatId: Long, message: MessageEntity) {
+        if (optimisticMessages[chatId] == null) {
+            optimisticMessages[chatId] = mutableListOf()
+        }
+        optimisticMessages[chatId]?.add(message)
+        Log.d(TAG, "addOptimisticMessage: Added optimistic message to cache for chat $chatId: '${message.content.take(30)}...'")
     }
 
     // Deduplicated conversation fetching - prevents multiple concurrent API calls

@@ -1011,7 +1011,7 @@ class ChatViewModel @Inject constructor(
             }
 
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
-            // Server will handle deduplication if needed
+            // We'll handle deduplication when server messages arrive
             try {
                 val actualChatId = if (currentChatId > 0) currentChatId else {
                     // For new chats, create a temporary local chat to show the message immediately
@@ -1021,13 +1021,19 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = tempTitle
                     tempChatId
                 }
-                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                val localMessageId = repository.addOptimisticUserMessage(actualChatId, trimmedText)
                 Log.d(TAG, "sendUserInput: Added optimistic user message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
             } catch (e: Exception) {
                 Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
             }
 
-            // --- Server Interaction ---
+            // Send to agent (local or remote)
+            if (configUseRemoteAgent && !_isConnectedToServer.value) {
+                Log.w(TAG, "sendUserInput: Remote agent not connected, cannot send message")
+                _errorState.value = "Not connected to server. Please check your connection."
+                return@launch
+            }
+
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 
@@ -1061,12 +1067,13 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // Trigger UI refresh to reconcile with server messages (will deduplicate automatically)
+                // 🔧 SMART DEDUPLICATION: Trigger refresh to reconcile with server, repository will deduplicate
+                // This ensures we get the authoritative server message while avoiding duplicates
                 try {
                     viewModelScope.launch {
-                        // Remove arbitrary delay - refresh immediately after sending
+                        delay(100) // Small delay to let server process
                         repository.refreshMessages()
-                        Log.d(TAG, "sendUserInput: Triggered messages refresh for server reconciliation")
+                        Log.d(TAG, "sendUserInput: Triggered messages refresh for server reconciliation with deduplication")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
@@ -1488,7 +1495,7 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = tempTitle
                     tempChatId
                 }
-                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                val localMessageId = repository.addOptimisticUserMessage(actualChatId, trimmedText)
                 Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
             } catch (e: Exception) {
                 Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)

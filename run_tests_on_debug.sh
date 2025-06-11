@@ -288,7 +288,9 @@ capture_test_screenshots() {
 }
 
 # Run tests and capture screenshots on failure
-if ! run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""; then
+# Pass credentials via instrumentation arguments with --no-configuration-cache to avoid warnings
+log_with_time "🔑 Passing test credentials via instrumentation arguments..."
+if ! run_with_log "Running instrumented tests with credentials" "./gradlew connectedDebugAndroidTest --console=plain --no-configuration-cache -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""; then
     # Tests failed, capture screenshots and debugging info
     capture_test_screenshots
     TEST_EXIT_CODE=$?

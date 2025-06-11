@@ -18,6 +18,7 @@ import org.junit.Ignore
 import org.junit.runner.RunWith
 import javax.inject.Inject
 import com.example.whiz.di.AppModule
+import com.example.whiz.di.TestAppModule
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.TestCredentialsManager
@@ -70,18 +71,20 @@ class MessageFlowIntegrationTest {
     }
 
     @After
-    fun cleanup() = runBlocking {
-        android.util.Log.d("MessageFlowTest", "🧹 Cleaning up test chats")
-        createdChatIds.forEach { chatId ->
-            try {
-                repository.deleteChat(chatId)
-                android.util.Log.d("MessageFlowTest", "🗑️ Deleted test chat: $chatId")
-            } catch (e: Exception) {
-                android.util.Log.w("MessageFlowTest", "⚠️ Failed to delete test chat $chatId", e)
+    fun cleanup() {
+        runBlocking {
+            android.util.Log.d("MessageFlowTest", "🧹 Cleaning up test chats")
+            createdChatIds.forEach { chatId ->
+                try {
+                    repository.deleteChat(chatId)
+                    android.util.Log.d("MessageFlowTest", "🗑️ Deleted test chat: $chatId")
+                } catch (e: Exception) {
+                    android.util.Log.w("MessageFlowTest", "⚠️ Failed to delete test chat $chatId", e)
+                }
             }
+            createdChatIds.clear()
+            android.util.Log.d("MessageFlowTest", "✅ Test cleanup completed")
         }
-        createdChatIds.clear()
-        android.util.Log.d("MessageFlowTest", "✅ Test cleanup completed")
     }
 
     /**

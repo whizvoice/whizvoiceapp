@@ -21,12 +21,12 @@ import android.util.Log
 
 /**
  * Focused integration test for mic button behavior during server responses.
- * Tests the exact scenario that caused the production issue:
+ * Tests the fixed behavior for the production issue:
  * 1. User sends message
  * 2. isResponding = true
  * 3. User tries to turn mic on/off during response
- * 4. Should be blocked with proper error message
- * 5. After response, mic should work again
+ * 4. Should work normally (fixed behavior - no longer blocked)
+ * 5. After response, mic continues to work
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
@@ -64,16 +64,10 @@ class MicButtonDuringResponseTest {
                 micClickCount++
                 Log.d(TAG, "🎤 Mic clicked (count: $micClickCount), isResponding: $isResponding")
                 
-                if (isResponding) {
-                    // This is the exact error condition from production
-                    errorMessage = "Cannot start listening while assistant is busy"
-                    Log.d(TAG, "🚫 Blocked mic toggle during response")
-                } else {
-                    // Normal toggle behavior
-                    isContinuousListening = !isContinuousListening
-                    errorMessage = null
-                    Log.d(TAG, "🔄 Toggled continuous listening to: $isContinuousListening")
-                }
+                // FIXED: Allow mic toggle during response (only block during speaking)
+                isContinuousListening = !isContinuousListening
+                errorMessage = null
+                Log.d(TAG, "🔄 Toggled continuous listening to: $isContinuousListening")
             }
             
             fun simulateMessageSend() {
@@ -154,38 +148,32 @@ class MicButtonDuringResponseTest {
         composeTestRule.onNodeWithText("Send Message").performClick()
         composeTestRule.onNodeWithText("Responding: true").assertIsDisplayed()
         
-        // Step 4: Try to toggle mic during response - should be blocked
-        Log.d(TAG, "4️⃣ Testing mic blocked during response")
+        // Step 4: Try to toggle mic during response - should work now!
+        Log.d(TAG, "4️⃣ Testing mic works during response (fixed behavior)")
         composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
         
-        // Verify error message appears
+        // Verify mic click worked - count incremented and state changed
         composeTestRule.onNodeWithText("Mic clicks: 2").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Error: Cannot start listening while assistant is busy").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
         
-        // Continuous listening state should NOT change
-        composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
-        
-        // Step 5: Try again - should be blocked again
-        Log.d(TAG, "5️⃣ Testing mic still blocked on second attempt")
-        composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
+        // Step 5: Try again - should toggle back on
+        Log.d(TAG, "5️⃣ Testing mic toggle works again during response")
+        composeTestRule.onNodeWithContentDescription("Start listening").performClick()
         composeTestRule.onNodeWithText("Mic clicks: 3").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Error: Cannot start listening while assistant is busy").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
         
         // Step 6: Simulate response received (clears isResponding)
         Log.d(TAG, "6️⃣ Simulating response received")
         composeTestRule.onNodeWithText("Response Received").performClick()
         composeTestRule.onNodeWithText("Responding: false").assertIsDisplayed()
         
-        // Step 7: Verify mic works again after response
-        Log.d(TAG, "7️⃣ Testing mic works again after response")
+        // Step 7: Verify mic continues to work after response ends
+        Log.d(TAG, "7️⃣ Testing mic still works after response ends")
         composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
         
-        // Should work now - no error, state changes
+        // Should work - state changes
         composeTestRule.onNodeWithText("Mic clicks: 4").assertIsDisplayed()
         composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
-        
-        // Error should be cleared
-        composeTestRule.onNodeWithText("Error: Cannot start listening while assistant is busy").assertDoesNotExist()
         
         Log.d(TAG, "✅ Mic button during response test completed successfully")
     }
@@ -201,12 +189,9 @@ class MicButtonDuringResponseTest {
             var cycleCount by remember { mutableStateOf(0) }
             
             fun handleMicClick() {
-                if (isResponding) {
-                    errorMessage = "Cannot start listening while assistant is busy"
-                } else {
-                    isContinuousListening = !isContinuousListening
-                    errorMessage = null
-                }
+                // FIXED: Allow mic toggle during response (only block during speaking)
+                isContinuousListening = !isContinuousListening
+                errorMessage = null
             }
             
             fun runRequestResponseCycle() {
@@ -276,18 +261,17 @@ class MicButtonDuringResponseTest {
             composeTestRule.onNodeWithText("Cycle: ${cycle + 1}").assertIsDisplayed()
             composeTestRule.onNodeWithText("Responding: true").assertIsDisplayed()
             
-            // Try to use mic during response - should fail
+            // Try to use mic during response - should work now (fixed behavior)
             composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
-            composeTestRule.onNodeWithText("Error: Cannot start listening while assistant is busy").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
             
             // Complete the cycle
             composeTestRule.onNodeWithText("Complete Cycle").performClick()
             composeTestRule.onNodeWithText("Responding: false").assertIsDisplayed()
             
-            // Mic should work again
-            val expectedState = if (cycle % 2 == 0) "false" else "true"
-            composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
-            composeTestRule.onNodeWithText("Continuous listening: $expectedState").assertIsDisplayed()
+            // Mic should continue to work
+            composeTestRule.onNodeWithContentDescription("Start listening").performClick()
+            composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
         }
         
         Log.d(TAG, "✅ Multiple cycle test completed successfully")
@@ -305,14 +289,10 @@ class MicButtonDuringResponseTest {
             
             fun handleMicClick() {
                 rapidClickCount++
-                if (isResponding) {
-                    errorMessage = "Cannot start listening while assistant is busy"
-                    Log.d(TAG, "🚫 Rapid click $rapidClickCount blocked")
-                } else {
-                    isContinuousListening = !isContinuousListening
-                    errorMessage = null
-                    Log.d(TAG, "✅ Rapid click $rapidClickCount succeeded")
-                }
+                // FIXED: Allow mic toggle during response (only block during speaking)
+                isContinuousListening = !isContinuousListening
+                errorMessage = null
+                Log.d(TAG, "✅ Rapid click $rapidClickCount succeeded")
             }
             
             WhizTheme {
@@ -351,14 +331,21 @@ class MicButtonDuringResponseTest {
             }
         }
         
-        // Rapid fire clicks during response - all should be blocked
+        // Rapid fire clicks during response - should work now (fixed behavior)
         Log.d(TAG, "⚡ Performing rapid clicks during response")
+        
+        // Start with continuous listening = false, so first click should turn it on
+        var currentState = false
+        
         repeat(5) { clickIndex ->
-            composeTestRule.onNodeWithContentDescription("Start listening").performClick()
+            val contentDescription = if (currentState) "Turn off continuous listening" else "Start listening"
+            composeTestRule.onNodeWithContentDescription(contentDescription).performClick()
+            
+            // Toggle the state for next iteration
+            currentState = !currentState
+            
             composeTestRule.onNodeWithText("Rapid clicks: ${clickIndex + 1}").assertIsDisplayed()
-            composeTestRule.onNodeWithText("Error: Cannot start listening while assistant is busy").assertIsDisplayed()
-            // State should not change
-            composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Continuous listening: $currentState").assertIsDisplayed()
         }
         
         // Stop responding
@@ -366,10 +353,12 @@ class MicButtonDuringResponseTest {
         composeTestRule.onNodeWithText("Stop Responding").performClick()
         composeTestRule.onNodeWithText("Responding: false").assertIsDisplayed()
         
-        // Now mic should work
-        Log.d(TAG, "✅ Testing mic works after response")
-        composeTestRule.onNodeWithContentDescription("Start listening").performClick()
-        composeTestRule.onNodeWithText("Continuous listening: true").assertIsDisplayed()
+        // Mic should continue to work (was working during response too)
+        // After 5 clicks starting from false: false->true->false->true->false->true
+        // So we should end with continuous listening = true
+        Log.d(TAG, "✅ Testing mic continues to work after response")
+        composeTestRule.onNodeWithContentDescription("Turn off continuous listening").performClick()
+        composeTestRule.onNodeWithText("Continuous listening: false").assertIsDisplayed()
         composeTestRule.onNodeWithText("Rapid clicks: 6").assertIsDisplayed()
         
         Log.d(TAG, "✅ Rapid toggle test completed successfully")
