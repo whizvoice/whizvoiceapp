@@ -851,7 +851,7 @@ class ChatViewModel @Inject constructor(
             return
         }
         
-        // Case 2: Continuous listening is enabled but mic not actively listening (e.g., during responses)
+        // Case 2: Continuous listening is enabled but mic not actively listening
         // Allow user to disable continuous listening mode
         if (continuousListeningEnabled) {
             Log.d(TAG, "[LOG] Disabling continuous listening mode (was enabled but not actively listening)")
@@ -860,19 +860,33 @@ class ChatViewModel @Inject constructor(
             return
         }
         
-        // Case 3: Want to enable continuous listening - prevent during speaking/responding
-        if (_isSpeaking.value || _isResponding.value) {
-            Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking or responding")
-            _errorState.value = "Cannot start listening while assistant is busy"
+        // Case 3: Want to enable continuous listening - only block during TTS speaking
+        // 🔧 FIXED: Allow microphone during server responses, only block during TTS
+        if (_isSpeaking.value) {
+            Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking (TTS)")
+            _errorState.value = "Cannot start listening while assistant is speaking"
             return
         }
         
-        // Case 4: Enable continuous listening
+        // Case 4: Enable continuous listening and start immediately unless TTS is active
         Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
         _inputText.value = ""
         continuousListeningEnabled = true
         speechRecognitionService.continuousListeningEnabled = true
-        startContinuousListening()
+        
+        // 🔧 IMPROVED: Start listening immediately unless TTS is speaking
+        // Allow listening during server responses for better UX
+        if (!_isSpeaking.value) {
+            Log.d(TAG, "[LOG] Starting microphone immediately (isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value})")
+            speechRecognitionService.startListening { recognizedText ->
+                Log.d(TAG, "[LOG] toggleSpeechRecognition startListening callback. recognizedText: '$recognizedText'")
+                if (recognizedText.isNotBlank()) {
+                    sendUserInput(recognizedText)
+                }
+            }
+        } else {
+            Log.d(TAG, "[LOG] Delaying microphone start - TTS is speaking (${_isSpeaking.value})")
+        }
     }
 
     // Method specifically for ensuring continuous listening is enabled (for voice mode activation)
@@ -1010,21 +1024,23 @@ class ChatViewModel @Inject constructor(
                 }
             }
 
-            // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
-            // We'll handle deduplication when server messages arrive
-            try {
-                val actualChatId = if (currentChatId > 0) currentChatId else {
-                    // For new chats, create a temporary local chat to show the message immediately
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChat(tempTitle)
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                    tempChatId
+            // 🔧 REMOTE VS LOCAL: Only use optimistic UI for local agents
+            // Remote agents get messages via WebSocket, so skip optimistic UI to prevent duplicates
+            if (!configUseRemoteAgent) {
+                try {
+                    val actualChatId = if (currentChatId > 0) currentChatId else {
+                        // For new chats, create a temporary local chat to show the message immediately
+                        val tempTitle = repository.deriveChatTitle(trimmedText)
+                        val tempChatId = repository.createChat(tempTitle)
+                        _chatId.value = tempChatId
+                        _chatTitle.value = tempTitle
+                        tempChatId
+                    }
+                    val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                    Log.d(TAG, "sendUserInput: Added local user message for local agent (chatId: $actualChatId, messageId: $localMessageId)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendUserInput: Failed to add local user message", e)
                 }
-                val localMessageId = repository.addOptimisticUserMessage(actualChatId, trimmedText)
-                Log.d(TAG, "sendUserInput: Added optimistic user message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
             }
 
             // Send to agent (local or remote)
@@ -1495,10 +1511,10 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = tempTitle
                     tempChatId
                 }
-                val localMessageId = repository.addOptimisticUserMessage(actualChatId, trimmedText)
-                Log.d(TAG, "sendInterruptMessage: Added optimistic interrupt message to UI immediately (chatId: $actualChatId, localId: $localMessageId)")
+                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
+                Log.d(TAG, "sendInterruptMessage: Added local user message for local agent (chatId: $actualChatId, messageId: $localMessageId)")
             } catch (e: Exception) {
-                Log.e(TAG, "sendInterruptMessage: Failed to add optimistic interrupt message", e)
+                Log.e(TAG, "sendInterruptMessage: Failed to add local user message", e)
             }
         }
         

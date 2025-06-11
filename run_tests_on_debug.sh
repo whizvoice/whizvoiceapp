@@ -193,6 +193,75 @@ run_with_log "Building latest debug version" "./gradlew assembleDebug --console=
 # Install the latest debug APK (updates existing installation if present)
 run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
 
+# Ensure correct test user is authenticated before running tests
+ensure_test_authentication() {
+    log_with_time "🔐 Ensuring correct test user authentication..."
+    
+    # First check if device is connected and responsive
+    if ! adb shell echo "test" >/dev/null 2>&1; then
+        log_with_time "❌ ERROR: ADB device not connected or not responsive"
+        return 1
+    fi
+    
+    # Launch the debug app to check authentication
+    log_with_time "🚀 Launching WhizVoice Debug app to check authentication..."
+    adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1
+    
+    # Wait for app to load
+    sleep 3
+    
+    # Check if we see the sign-in screen (indicates not authenticated)
+    local needs_auth=false
+    
+    # Use UI dump to check current screen content
+    if adb shell uiautomator dump /sdcard/ui_check.xml >/dev/null 2>&1; then
+        adb pull /sdcard/ui_check.xml /tmp/ui_check.xml >/dev/null 2>&1
+        
+        # Look for sign-in related text
+        if grep -q -E "(Sign in|Welcome to WhizVoice|Sign in with Google)" /tmp/ui_check.xml 2>/dev/null; then
+            needs_auth=true
+            log_with_time "⚠️  App is showing login screen - authentication required"
+        elif grep -q -E "(whizvoicetest|Chats|New Chat)" /tmp/ui_check.xml 2>/dev/null; then
+            log_with_time "✅ App appears to be authenticated (found authenticated UI elements)"
+            needs_auth=false
+        else
+            log_with_time "⚠️  Cannot determine authentication state from UI - assuming authentication needed"
+            needs_auth=true
+        fi
+        
+        # Clean up
+        adb shell rm /sdcard/ui_check.xml >/dev/null 2>&1 || true
+        rm -f /tmp/ui_check.xml >/dev/null 2>&1 || true
+    else
+        log_with_time "⚠️  Cannot dump UI to check authentication - assuming authentication needed"
+        needs_auth=true
+    fi
+    
+    if [[ "$needs_auth" == "true" ]]; then
+        log_with_time "❌ ERROR: WhizVoice Debug app is not authenticated as REDACTED_TEST_EMAIL"
+        log_with_time ""
+        log_with_time "📱 AUTHENTICATION REQUIRED BEFORE TESTS:"
+        log_with_time "   1. Open WhizVoice DEBUG app on your device"
+        log_with_time "   2. Sign in as: $TEST_USERNAME" 
+        log_with_time "   3. Make sure you can see the main chat interface"
+        log_with_time "   4. Re-run this test script"
+        log_with_time ""
+        log_with_time "💡 The app should already be open on your device for authentication"
+        return 1
+    else
+        log_with_time "✅ Authentication check passed - proceeding with tests"
+        return 0
+    fi
+}
+
+# Authenticate before running tests
+if ! ensure_test_authentication; then
+    log_with_time "❌ Tests cancelled due to authentication requirement"
+    echo "" | tee -a test_output.log
+    echo "🔑 Please authenticate as $TEST_USERNAME and try again" | tee -a test_output.log
+    exit 1
+fi
+
 # Run unit tests first (fast, always use latest code)
 log_with_time "🧪 Starting unit tests..."
 monitor_tests "Unit tests" &
