@@ -203,6 +203,11 @@ kill $MONITOR_PID 2>/dev/null || true
 # Run instrumented tests on debug build
 log_with_time "🧪 Starting instrumented tests..."
 
+# Create screenshots directory for failed tests
+SCREENSHOTS_DIR="test_screenshots"
+mkdir -p "$SCREENSHOTS_DIR"
+log_with_time "📸 Created screenshots directory: $SCREENSHOTS_DIR"
+
 # Start logcat monitoring in background to capture test logs
 log_with_time "📱 Starting logcat monitoring for test details..."
 adb logcat -c  # Clear logcat
@@ -247,7 +252,49 @@ TEST_PROGRESS_PID=$!
 
 monitor_tests "Instrumented tests" &
 MONITOR_PID=$!
-run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""
+
+# Function to capture screenshots on test failure
+capture_test_screenshots() {
+    log_with_time "📸 Capturing screenshots for failed tests..."
+    
+    # Wait a moment for any UI animations to settle
+    sleep 2
+    
+    # Capture current screen
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local screenshot_file="$SCREENSHOTS_DIR/test_failure_${timestamp}.png"
+    
+    if adb exec-out screencap -p > "$screenshot_file" 2>/dev/null; then
+        log_with_time "📸 Screenshot saved: $screenshot_file"
+    else
+        log_with_time "⚠️  Failed to capture screenshot"
+    fi
+    
+    # Also try to dump the current UI hierarchy
+    local ui_dump_file="$SCREENSHOTS_DIR/ui_hierarchy_${timestamp}.xml"
+    if adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1; then
+        if adb pull /sdcard/window_dump.xml "$ui_dump_file" >/dev/null 2>&1; then
+            log_with_time "📋 UI hierarchy saved: $ui_dump_file"
+            adb shell rm /sdcard/window_dump.xml >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Get current app state from logcat
+    local logcat_snippet="$SCREENSHOTS_DIR/recent_logs_${timestamp}.txt"
+    adb logcat -d -t 100 | grep -E "(WhizVoice|Test|Error|Exception)" > "$logcat_snippet" || true
+    if [[ -s "$logcat_snippet" ]]; then
+        log_with_time "📝 Recent logs saved: $logcat_snippet"
+    fi
+}
+
+# Run tests and capture screenshots on failure
+if ! run_with_log "Running instrumented tests on latest debug build" "./gradlew connectedDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.testUsername=\"$TEST_USERNAME\" -Pandroid.testInstrumentationRunnerArguments.testPassword=\"$TEST_PASSWORD\""; then
+    # Tests failed, capture screenshots and debugging info
+    capture_test_screenshots
+    TEST_EXIT_CODE=$?
+else
+    TEST_EXIT_CODE=0
+fi
 
 # Clean up background processes gracefully
 log_with_time "🧹 Cleaning up background monitoring processes..."
@@ -301,4 +348,19 @@ else
 fi
 
 echo "" | tee -a test_output.log
-echo "📋 Full test log saved to: test_output.log" | tee -a test_output.log 
+
+# Show screenshot info if any were captured
+if [[ -d "$SCREENSHOTS_DIR" ]] && [[ -n "$(ls -A "$SCREENSHOTS_DIR" 2>/dev/null)" ]]; then
+    echo "📸 Test debugging files saved to: $SCREENSHOTS_DIR/" | tee -a test_output.log
+    echo "   • Screenshots: $(ls "$SCREENSHOTS_DIR"/*.png 2>/dev/null | wc -l) files" | tee -a test_output.log
+    echo "   • UI dumps: $(ls "$SCREENSHOTS_DIR"/*.xml 2>/dev/null | wc -l) files" | tee -a test_output.log
+    echo "   • Log snippets: $(ls "$SCREENSHOTS_DIR"/*.txt 2>/dev/null | wc -l) files" | tee -a test_output.log
+    echo "" | tee -a test_output.log
+fi
+
+echo "📋 Full test log saved to: test_output.log" | tee -a test_output.log
+
+# Exit with the same code as the tests
+if [[ -n "$TEST_EXIT_CODE" ]] && [[ "$TEST_EXIT_CODE" -ne 0 ]]; then
+    exit $TEST_EXIT_CODE
+fi 

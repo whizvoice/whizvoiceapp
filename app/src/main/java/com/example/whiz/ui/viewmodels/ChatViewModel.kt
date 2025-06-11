@@ -463,11 +463,11 @@ class ChatViewModel @Inject constructor(
                                         chatId
                                     } else {
                                         // Request ID provided but not found in pending requests
-                                        Log.w(TAG, "$eventLogId Request ID ${event.requestId} not found in pending requests. This response might be for a different chat or session. Available: ${pendingRequests.keys}")
-                                        // Don't process this message as it's likely for a different chat/session
-                                        Log.w(TAG, "$eventLogId Skipping message processing - orphaned response")
-                                        updateRespondingStateForCurrentChat()
-                                        return@collect // Skip processing this message entirely
+                                        Log.w(TAG, "$eventLogId Request ID ${event.requestId} not found in pending requests. Available: ${pendingRequests.keys}")
+                                        // This could be a race condition or resumed session response
+                                        // Process the message for current chat as fallback instead of skipping entirely
+                                        Log.d(TAG, "$eventLogId Processing orphaned response for current chat as fallback")
+                                        _chatId.value
                                     }
                                 } else {
                                     // No request ID - this is a legacy message or server-initiated message

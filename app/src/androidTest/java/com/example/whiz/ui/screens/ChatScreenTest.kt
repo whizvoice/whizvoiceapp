@@ -2,20 +2,14 @@ package com.example.whiz.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.printToLog
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.whiz.data.local.MessageEntity
-import com.example.whiz.data.local.MessageType
+import com.example.whiz.ui.screens.ChatInputBar
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.di.AppModule
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -25,21 +19,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import androidx.test.platform.app.InstrumentationRegistry
-import android.util.Log
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import androidx.room.Room
-import com.example.whiz.data.local.WhizDatabase
-import com.example.whiz.data.api.ApiService
-import com.example.whiz.data.repository.WhizRepository
-import com.example.whiz.data.local.toMessageEntity
-import com.example.whiz.data.local.ChatEntity
-import org.junit.Assert
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import io.mockk.mockk
-import io.mockk.coEvery
 
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
