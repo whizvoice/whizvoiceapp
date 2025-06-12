@@ -1024,23 +1024,27 @@ class ChatViewModel @Inject constructor(
                 }
             }
 
-            // 🔧 REMOTE VS LOCAL: Only use optimistic UI for local agents
-            // Remote agents get messages via WebSocket, so skip optimistic UI to prevent duplicates
-            if (!configUseRemoteAgent) {
-                try {
-                    val actualChatId = if (currentChatId > 0) currentChatId else {
-                        // For new chats, create a temporary local chat to show the message immediately
-                        val tempTitle = repository.deriveChatTitle(trimmedText)
-                        val tempChatId = repository.createChat(tempTitle)
-                        _chatId.value = tempChatId
-                        _chatTitle.value = tempTitle
-                        tempChatId
-                    }
-                    val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
-                    Log.d(TAG, "sendUserInput: Added local user message for local agent (chatId: $actualChatId, messageId: $localMessageId)")
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendUserInput: Failed to add local user message", e)
+            // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
+            // Repository will handle deduplication when server messages arrive
+            try {
+                val actualChatId = if (currentChatId > 0) currentChatId else {
+                    // For new chats, create a temporary local chat to show the message immediately
+                    val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val tempChatId = repository.createChat(tempTitle)
+                    _chatId.value = tempChatId
+                    _chatTitle.value = tempTitle
+                    tempChatId
                 }
+                val localMessageId = if (configUseRemoteAgent) {
+                    // For remote agent: use optimistic UI (local only, no API call)
+                    repository.addUserMessageOptimistic(actualChatId, trimmedText)
+                } else {
+                    // For local agent: use regular method (creates via API)
+                    repository.addUserMessage(actualChatId, trimmedText)
+                }
+                Log.d(TAG, "sendUserInput: Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId, agent: ${if (configUseRemoteAgent) "remote" else "local"})")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
             }
 
             // Send to agent (local or remote)
@@ -1250,13 +1254,21 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "🔥 sendInputText: Using existing chatId: ${_chatId.value}")
             }
             
-            Log.d(TAG, "🔥 sendInputText: Adding user message to chat ${_chatId.value}: '$textToSend'")
-            // Only save user message to local DB if NOT using remote agent
-            // Remote agent (WebSocket server) handles message persistence
-            if (!configUseRemoteAgent && _chatId.value > 0) {
-                repository.addUserMessage(_chatId.value, textToSend)
+            Log.d(TAG, "🔥 sendInputText: Adding optimistic user message to chat ${_chatId.value}: '$textToSend'")
+            // Always save user message for immediate display (optimistic UI)
+            // Repository will handle deduplication when server messages arrive
+            if (_chatId.value > 0) {
+                if (configUseRemoteAgent) {
+                    // For remote agent: use optimistic UI (local only, no API call)
+                    repository.addUserMessageOptimistic(_chatId.value, textToSend)
+                    Log.d(TAG, "sendInputText: Added optimistic user message for remote agent")
+                } else {
+                    // For local agent: use regular method (creates via API)
+                    repository.addUserMessage(_chatId.value, textToSend)
+                    Log.d(TAG, "sendInputText: Added user message for local agent")
+                }
             } else {
-                Log.d(TAG, "sendInputText: Skipping local user message save - remote agent will handle persistence")
+                Log.d(TAG, "sendInputText: Skipping message save - no valid chat ID")
             }
 
             // 🔧 Input will be cleared when bot responds (better UX)
@@ -1511,8 +1523,14 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = tempTitle
                     tempChatId
                 }
-                val localMessageId = repository.addUserMessage(actualChatId, trimmedText)
-                Log.d(TAG, "sendInterruptMessage: Added local user message for local agent (chatId: $actualChatId, messageId: $localMessageId)")
+                val localMessageId = if (configUseRemoteAgent) {
+                    // For remote agent: use optimistic UI (local only, no API call)
+                    repository.addUserMessageOptimistic(actualChatId, trimmedText)
+                } else {
+                    // For local agent: use regular method (creates via API)
+                    repository.addUserMessage(actualChatId, trimmedText)
+                }
+                Log.d(TAG, "sendInterruptMessage: Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId)")
             } catch (e: Exception) {
                 Log.e(TAG, "sendInterruptMessage: Failed to add local user message", e)
             }

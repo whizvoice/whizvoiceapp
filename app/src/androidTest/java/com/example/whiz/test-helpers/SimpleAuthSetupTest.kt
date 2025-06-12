@@ -46,33 +46,57 @@ class SimpleAuthSetupTest {
             Log.d(TAG, "📧 Setting up authentication for: $testUsername")
             
             try {
-                // Sign out any existing user first
-                authRepository.signOut()
-                Thread.sleep(1000)
-                
-                // Set test authentication state
+                // Set test authentication state directly (this now handles cleanup internally)
+                Log.d(TAG, "🧪 Setting test authentication state...")
                 authRepository.setTestAuthenticationState(
                     email = testUsername,
                     userId = "test_user_${System.currentTimeMillis()}",
                     name = "Test User"
                 )
                 
-                Thread.sleep(1000) // Wait for state to propagate
+                // Wait for state to propagate
+                Thread.sleep(1000)
                 
-                // Verify authentication was set
-                val isSignedIn = authRepository.isSignedIn()
-                val userProfile = authRepository.userProfile.value
+                // Verify authentication was set - try multiple times for stability
+                var verificationAttempts = 0
+                var isAuthenticated = false
+                var correctUser = false
+                var hasServerToken = false
                 
-                Log.d(TAG, "🔍 Authentication verification:")
-                Log.d(TAG, "  - Is signed in: $isSignedIn")
-                Log.d(TAG, "  - User email: ${userProfile?.email}")
-                Log.d(TAG, "  - User ID: ${userProfile?.userId}")
+                while (verificationAttempts < 3 && (!isAuthenticated || !correctUser || !hasServerToken)) {
+                    verificationAttempts++
+                    Log.d(TAG, "🔍 Authentication verification attempt $verificationAttempts...")
+                    
+                    val isSignedIn = authRepository.isSignedIn()
+                    val userProfile = authRepository.userProfile.value
+                    val serverToken = authRepository.serverToken.value
+                    
+                    isAuthenticated = isSignedIn
+                    correctUser = userProfile?.email == testUsername
+                    hasServerToken = !serverToken.isNullOrBlank()
+                    
+                    Log.d(TAG, "  - Is signed in: $isSignedIn")
+                    Log.d(TAG, "  - User email: ${userProfile?.email}")
+                    Log.d(TAG, "  - User ID: ${userProfile?.userId}")
+                    Log.d(TAG, "  - User name: ${userProfile?.name}")
+                    Log.d(TAG, "  - Has server token: $hasServerToken")
+                    
+                    if (isAuthenticated && correctUser && hasServerToken) {
+                        Log.d(TAG, "✅ Test authentication setup successful!")
+                        break
+                    } else {
+                        Log.d(TAG, "⏳ Waiting for authentication state to stabilize...")
+                        Thread.sleep(500)
+                    }
+                }
                 
-                if (isSignedIn && userProfile?.email == testUsername) {
-                    Log.d(TAG, "✅ Test authentication setup successful!")
+                if (!isAuthenticated || !correctUser || !hasServerToken) {
+                    Log.w(TAG, "⚠️ Test authentication verification incomplete after $verificationAttempts attempts")
+                    Log.w(TAG, "  Final state - authenticated: $isAuthenticated, correct user: $correctUser, has token: $hasServerToken")
+                    Log.w(TAG, "  This may be expected for test-only authentication state")
+                    Log.w(TAG, "  Tests should still work if AuthRepository state is set correctly")
                 } else {
-                    Log.w(TAG, "⚠️ Test authentication may not be fully active")
-                    Log.w(TAG, "  This is expected for test-only authentication state")
+                    Log.d(TAG, "🎉 Test authentication fully verified and ready!")
                 }
                 
             } catch (e: Exception) {

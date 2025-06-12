@@ -60,9 +60,11 @@ object AppModule {
     @Singleton
     fun provideWhizRepository(
         apiService: ApiService,
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        messageDao: MessageDao,
+        chatDao: ChatDao
     ): WhizRepository {
-        return WhizRepository(apiService, context)
+        return WhizRepository(apiService, context, messageDao, chatDao)
     }
 
     @Provides

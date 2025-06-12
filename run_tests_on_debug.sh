@@ -205,7 +205,7 @@ perform_automated_signin() {
         -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.integration.SimpleAuthSetupTest \
         -Pandroid.testInstrumentationRunnerArguments.testUsername="$TEST_USERNAME" \
         -Pandroid.testInstrumentationRunnerArguments.testPassword="$TEST_PASSWORD" \
-        --console=plain --quiet 2>&1)
+        --console=plain 2>&1)
     
     if echo "$auth_result" | grep -q "BUILD SUCCESSFUL"; then
         log_with_time "✅ Test authentication state set successfully"
@@ -554,14 +554,7 @@ capture_test_screenshots() {
         log_with_time "⚠️  Failed to capture screenshot"
     fi
     
-    # Also try to dump the current UI hierarchy
-    local ui_dump_file="$SCREENSHOTS_DIR/ui_hierarchy_${timestamp}.xml"
-    if adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1; then
-        if adb pull /sdcard/window_dump.xml "$ui_dump_file" >/dev/null 2>&1; then
-            log_with_time "📋 UI hierarchy saved: $ui_dump_file"
-            adb shell rm /sdcard/window_dump.xml >/dev/null 2>&1 || true
-        fi
-    fi
+    # UI hierarchy dump removed for faster debugging - screenshots are usually sufficient
     
     # Get current app state from logcat
     local logcat_snippet="$SCREENSHOTS_DIR/recent_logs_${timestamp}.txt"

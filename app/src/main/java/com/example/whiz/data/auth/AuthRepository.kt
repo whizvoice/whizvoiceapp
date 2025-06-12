@@ -9,6 +9,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -306,23 +307,64 @@ class AuthRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             Log.d(TAG, "🧪 Setting test authentication state for: $email")
             
-            // Set up all required authentication data
-            sharedPreferences.edit().apply {
-                putString(PreferenceKeys.USER_ID, userId)
-                putString(PreferenceKeys.USER_NAME, name)
-                putString(PreferenceKeys.USER_EMAIL, email)
-                putString(PreferenceKeys.USER_PHOTO_URL, "")
-                putString(PreferenceKeys.AUTH_TOKEN, "test_id_token_${System.currentTimeMillis()}")
-                putString(PreferenceKeys.SERVER_TOKEN, "test_server_token_${System.currentTimeMillis()}")
-                putString(PreferenceKeys.REFRESH_TOKEN, "test_refresh_token_${System.currentTimeMillis()}")
-                apply()
+            try {
+                // First, clear all existing authentication data
+                Log.d(TAG, "🧪 Clearing all existing SharedPreferences...")
+                sharedPreferences.edit().clear().apply()
+                
+                // Clear flows immediately
+                _userProfileFlow.value = null
+                _serverTokenFlow.value = null
+                
+                Log.d(TAG, "🧪 Performing synchronous Google Sign-In cleanup...")
+                
+                // Use Tasks.await to make Google Sign-In operations synchronous
+                try {
+                    com.google.android.gms.tasks.Tasks.await(googleSignInClient.signOut())
+                    Log.d(TAG, "🧪 Google Sign-In signOut completed successfully")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🧪 Google Sign-In signOut failed (this may be expected in tests): ${e.message}")
+                }
+                
+                try {
+                    com.google.android.gms.tasks.Tasks.await(googleSignInClient.revokeAccess())
+                    Log.d(TAG, "🧪 Google Sign-In revokeAccess completed successfully")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🧪 Google Sign-In revokeAccess failed (this may be expected in tests): ${e.message}")
+                }
+                
+                // Additional wait to ensure operations are fully complete
+                Thread.sleep(500)
+                
+                // Now set up all required authentication data for test
+                Log.d(TAG, "🧪 Setting test authentication data...")
+                sharedPreferences.edit().apply {
+                    putString(PreferenceKeys.USER_ID, userId)
+                    putString(PreferenceKeys.USER_NAME, name)
+                    putString(PreferenceKeys.USER_EMAIL, email)
+                    putString(PreferenceKeys.USER_PHOTO_URL, "")
+                    putString(PreferenceKeys.AUTH_TOKEN, "test_id_token_${System.currentTimeMillis()}")
+                    putString(PreferenceKeys.SERVER_TOKEN, "test_server_token_${System.currentTimeMillis()}")
+                    putString(PreferenceKeys.REFRESH_TOKEN, "test_refresh_token_${System.currentTimeMillis()}")
+                    apply()
+                }
+                
+                // Update the flows with new data
+                refreshUserProfile()
+                _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
+                
+                // Wait a moment for flows to update
+                Thread.sleep(200)
+                
+                Log.d(TAG, "✅ Test authentication state set successfully")
+                Log.d(TAG, "🧪 Test user profile: ${_userProfileFlow.value}")
+                Log.d(TAG, "🧪 Server token available: ${_serverTokenFlow.value != null}")
+                Log.d(TAG, "🧪 Is signed in: ${isSignedIn()}")
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error setting test authentication state", e)
+                throw e
             }
-            
-            // Update the flows
-            refreshUserProfile()
-            _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
-            
-            Log.d(TAG, "✅ Test authentication state set successfully")
         }
     }
 } 

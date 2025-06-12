@@ -76,10 +76,12 @@ object TestAppModule {
     @Singleton
     fun provideWhizRepository(
         apiService: ApiService,
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        messageDao: MessageDao,
+        chatDao: ChatDao
     ): WhizRepository {
-        Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService")
-        return WhizRepository(apiService, context)
+        Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService and database DAOs")
+        return WhizRepository(apiService, context, messageDao, chatDao)
     }
 
     @Provides
