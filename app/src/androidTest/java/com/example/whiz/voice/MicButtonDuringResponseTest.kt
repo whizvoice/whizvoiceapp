@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.whiz.AutoTestAuthentication
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
@@ -186,8 +187,71 @@ class MicButtonDuringResponseTest : BaseIntegrationTest() {
     // Simplified helper functions for clean test implementation
     private fun navigateToChat() {
         Log.d(TAG, "🎯 Navigating to chat...")
+        
+        // Debug: Check authentication state before navigation
+        val isAuthenticated = runBlocking { authRepository.isSignedIn() }
+        val userProfile = runBlocking { authRepository.userProfile.value }
+        val serverToken = runBlocking { authRepository.serverToken.value }
+        Log.d(TAG, "🔍 Auth state: isSignedIn=$isAuthenticated, userProfile=${userProfile?.email}, hasServerToken=${serverToken != null}")
+        
+        // Check if we need to authenticate (should be handled by BaseIntegrationTest, but let's be sure)
+        val expectedEmail = "REDACTED_TEST_EMAIL" // From test credentials
+        if (!isAuthenticated || userProfile?.email != expectedEmail) {
+            Log.d(TAG, "🔐 Authentication needed - current user: ${userProfile?.email}, expected: $expectedEmail")
+            
+            // Use the BaseIntegrationTest authentication system
+            try {
+                runBlocking {
+                    Log.d(TAG, "🔐 Calling AutoTestAuthentication.ensureAuthenticated()...")
+                    val authSuccess = AutoTestAuthentication.ensureAuthenticated(authRepository)
+                    Log.d(TAG, "✅ AutoTestAuthentication.ensureAuthenticated() completed: $authSuccess")
+                    
+                    if (!authSuccess) {
+                        throw AssertionError("AutoTestAuthentication.ensureAuthenticated() returned false")
+                    }
+                }
+                
+                // Verify authentication worked
+                val newAuthState = runBlocking { authRepository.isSignedIn() }
+                val newUserProfile = runBlocking { authRepository.userProfile.value }
+                Log.d(TAG, "🔍 After auth: isSignedIn=$newAuthState, userProfile=${newUserProfile?.email}")
+                
+                if (!newAuthState || newUserProfile?.email != expectedEmail) {
+                    throw AssertionError("Authentication failed - expected $expectedEmail, got ${newUserProfile?.email}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Authentication failed: ${e.message}")
+                throw AssertionError("Failed to authenticate as $expectedEmail: ${e.message}")
+            }
+        } else {
+            Log.d(TAG, "✅ Already authenticated as correct user: ${userProfile.email}")
+        }
+        
         Thread.sleep(2000) // Wait for UI to stabilize
         composeTestRule.waitForIdle()
+        
+        // Debug: Log what UI elements are currently visible
+        Log.d(TAG, "🔍 Checking current UI state...")
+        try {
+            // Check if we're on login screen
+            val loginElements = composeTestRule.onAllNodesWithText("Welcome to WhizVoice").fetchSemanticsNodes()
+            if (loginElements.isNotEmpty()) {
+                Log.d(TAG, "❌ Still on login screen despite authentication!")
+                // Try to find what's visible
+                val signInButton = composeTestRule.onAllNodesWithText("Sign in with Google").fetchSemanticsNodes()
+                Log.d(TAG, "🔍 Sign in button visible: ${signInButton.isNotEmpty()}")
+                throw AssertionError("App still showing login screen despite successful authentication")
+            } else {
+                Log.d(TAG, "✅ Not on login screen")
+            }
+            
+            // Check if we're on home screen
+            val homeElements = composeTestRule.onAllNodesWithContentDescription("New Chat").fetchSemanticsNodes()
+            Log.d(TAG, "🔍 New Chat button visible: ${homeElements.isNotEmpty()}")
+            
+        } catch (e: Exception) {
+            Log.d(TAG, "⚠️ Error checking UI state: ${e.message}")
+        }
         
         val newChatButtons = composeTestRule.onAllNodesWithContentDescription("New Chat")
         if (newChatButtons.fetchSemanticsNodes().isNotEmpty()) {
@@ -196,6 +260,7 @@ class MicButtonDuringResponseTest : BaseIntegrationTest() {
             Thread.sleep(2000) // Wait for chat screen to load
             composeTestRule.waitForIdle()
         } else {
+            Log.e(TAG, "❌ Could not find New Chat button - app may still be on login screen")
             throw AssertionError("Could not find New Chat button")
         }
     }

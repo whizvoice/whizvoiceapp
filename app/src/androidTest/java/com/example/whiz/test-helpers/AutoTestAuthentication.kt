@@ -18,7 +18,7 @@ object AutoTestAuthentication {
      * Automatically set up authentication for tests that don't test the login UI.
      * This method will:
      * 1. Check if already authenticated
-     * 2. If not, attempt programmatic authentication with test credentials
+     * 2. If not, attempt test authentication using the new bypass method
      * 3. Fail fast with clear error if authentication is not possible
      */
     suspend fun ensureAuthenticated(authRepository: AuthRepository): Boolean {
@@ -32,90 +32,80 @@ object AutoTestAuthentication {
                 return true
             }
             
-            Log.e(TAG, "🔐 [AUTO] Not authenticated, attempting automatic sign-in...")
+            Log.e(TAG, "🔐 [AUTO] Not authenticated, attempting test authentication...")
             
-            // Get test credentials from our new helper
-            val credentials = TestCredentialsHelper.getTestCredentials()
-            val testEmail = credentials.email
-            
-            Log.e(TAG, "🔐 [AUTO] Using test email: $testEmail")
-            
-            // Attempt programmatic authentication using the new method
-            val authResult = authRepository.authenticateProgrammatically(testEmail)
-            
-            if (authResult.isSuccess) {
-                Log.e(TAG, "🔐 [AUTO] ✅ Programmatic authentication successful!")
+            // Cast to TestAuthRepository to access test-specific methods
+            val testAuthRepository = authRepository as? TestAuthRepository
+            if (testAuthRepository != null) {
+                Log.e(TAG, "🔐 [AUTO] Using TestAuthRepository for bypass authentication...")
                 
-                // Wait for authentication state to settle
-                val isAuthenticated = withTimeoutOrNull(5000) {
-                    authRepository.userProfile.first { it != null }
-                    authRepository.serverToken.first { it != null }
-                    true
-                } ?: false
+                // Use the new test authentication method that bypasses Google OAuth
+                val authResult = testAuthRepository.authenticateWithTestCredentials()
                 
-                if (isAuthenticated) {
-                    val userProfile = authRepository.userProfile.first()
-                    Log.e(TAG, "🔐 [AUTO] ✅ Authentication confirmed: ${userProfile?.email}")
-                    return true
+                if (authResult.isSuccess) {
+                    Log.e(TAG, "🔐 [AUTO] ✅ Test authentication successful!")
+                    
+                    // Wait for authentication state to settle
+                    Log.e(TAG, "🔐 [AUTO] Waiting for authentication state to settle...")
+                    val isAuthenticated = withTimeoutOrNull(10000) {
+                        Log.e(TAG, "🔐 [AUTO] Checking userProfile flow...")
+                        val userProfile = authRepository.userProfile.first { it != null }
+                        Log.e(TAG, "🔐 [AUTO] userProfile settled: ${userProfile?.email}")
+                        
+                        Log.e(TAG, "🔐 [AUTO] Checking serverToken flow...")
+                        val serverToken = authRepository.serverToken.first { it != null }
+                        Log.e(TAG, "🔐 [AUTO] serverToken settled: ${if (serverToken != null) "present" else "null"}")
+                        
+                        Log.e(TAG, "🔐 [AUTO] Both flows settled successfully")
+                        true
+                    } ?: false
+                    
+                    if (isAuthenticated) {
+                        val userProfile = authRepository.userProfile.first()
+                        Log.e(TAG, "🔐 [AUTO] ✅ Authentication confirmed: ${userProfile?.email}")
+                        return true
+                    } else {
+                        Log.e(TAG, "🔐 [AUTO] ❌ Authentication state did not settle properly")
+                        
+                        // Debug: Check current state
+                        Log.e(TAG, "🔐 [AUTO] 🔍 Debugging current state:")
+                        try {
+                            val currentUserProfile = authRepository.userProfile.first()
+                            Log.e(TAG, "🔐 [AUTO] 🔍 Current userProfile: ${currentUserProfile?.email ?: "null"}")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "🔐 [AUTO] 🔍 Failed to get userProfile: ${e.message}")
+                        }
+                        
+                        try {
+                            val currentServerToken = authRepository.serverToken.first()
+                            Log.e(TAG, "🔐 [AUTO] 🔍 Current serverToken: ${if (currentServerToken != null) "present" else "null"}")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "🔐 [AUTO] 🔍 Failed to get serverToken: ${e.message}")
+                        }
+                        
+                        Log.e(TAG, "🔐 [AUTO] 🔍 isSignedIn(): ${authRepository.isSignedIn()}")
+                        
+                        return false
+                    }
                 } else {
-                    Log.e(TAG, "🔐 [AUTO] ❌ Authentication state did not settle properly")
+                    val exception = authResult.exceptionOrNull()
+                    Log.e(TAG, "🔐 [AUTO] ❌ Test authentication failed: ${exception?.message}", exception)
                     return false
                 }
             } else {
-                val exception = authResult.exceptionOrNull()
-                Log.e(TAG, "🔐 [AUTO] ❌ Programmatic authentication failed: ${exception?.message}", exception)
-                
-                // Try the fallback method
-                Log.e(TAG, "🔐 [AUTO] Trying fallback test authentication method...")
-                return setupTestAuthentication(authRepository)
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "🔐 [AUTO] ❌ Exception during automatic authentication", e)
-            return false
-        }
-    }
-    
-    /**
-     * Set up authentication using the setTestAuthenticationState method.
-     * This uses our new test authentication that bypasses Google OAuth.
-     */
-    suspend fun setupTestAuthentication(authRepository: AuthRepository): Boolean {
-        Log.e(TAG, "🔐 [AUTO] Setting up test authentication (new method)...")
-        
-        try {
-            val credentials = TestCredentialsHelper.getTestCredentials()
-            
-            // Use the new setTestAuthenticationState method with proper parameters
-            authRepository.setTestAuthenticationState(
-                email = credentials.email,
-                userId = credentials.userId,
-                name = credentials.displayName
-            )
-            
-            // Wait for authentication state to settle
-            val isAuthenticated = withTimeoutOrNull(10000) { // Increased timeout for server call
-                authRepository.userProfile.first { it != null }
-                authRepository.serverToken.first { it != null }
-                true
-            } ?: false
-            
-            if (isAuthenticated) {
-                Log.e(TAG, "🔐 [AUTO] ✅ Test authentication setup successful")
-                return true
-            } else {
-                Log.e(TAG, "🔐 [AUTO] ❌ Test authentication setup failed - state did not settle")
+                Log.e(TAG, "🔐 [AUTO] ❌ AuthRepository is not TestAuthRepository - cannot use bypass authentication")
                 return false
             }
             
         } catch (e: Exception) {
-            Log.e(TAG, "🔐 [AUTO] ❌ Exception during test authentication setup: ${e.message}", e)
+            Log.e(TAG, "🔐 [AUTO] ❌ Exception during automatic authentication", e)
             
             // Provide helpful error message
             Log.e(TAG, "🔐 [AUTO] ❌ POSSIBLE ISSUES:")
-            Log.e(TAG, "🔐 [AUTO] ❌   1. Server test endpoint not available (needs restart with env vars)")
+            Log.e(TAG, "🔐 [AUTO] ❌   1. Server test endpoint not available (check server logs)")
             Log.e(TAG, "🔐 [AUTO] ❌   2. Network connectivity issues")
             Log.e(TAG, "🔐 [AUTO] ❌   3. Test credentials not properly configured")
+            Log.e(TAG, "🔐 [AUTO] ❌   4. Server not running or not accessible")
             
             return false
         }

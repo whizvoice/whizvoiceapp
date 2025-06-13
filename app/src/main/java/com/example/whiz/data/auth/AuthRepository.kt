@@ -241,7 +241,7 @@ open class AuthRepository @Inject constructor(
     }
     
     // Refresh the user profile data from SharedPreferences
-    private fun refreshUserProfile() {
+    protected fun refreshUserProfile() {
         val userId = sharedPreferences.getString(PreferenceKeys.USER_ID, null)
         
         if (userId != null) {

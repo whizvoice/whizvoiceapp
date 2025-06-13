@@ -55,16 +55,22 @@ class TestAuthRepository @Inject constructor(
             if (authResult.isSuccess) {
                 val authResponse = authResult.getOrThrow()
                 Log.d(TAG, "🧪 Test authentication successful for: $testEmail")
+                Log.d(TAG, "🧪 Server response - accessToken: ${authResponse.accessToken.take(20)}...")
+                Log.d(TAG, "🧪 Server response - refreshToken: ${authResponse.refreshToken.take(20)}...")
+                Log.d(TAG, "🧪 Server response - user.id: ${authResponse.user.id}")
+                Log.d(TAG, "🧪 Server response - user.name: ${authResponse.user.name}")
+                Log.d(TAG, "🧪 Server response - user.email: ${authResponse.user.email}")
                 
-                // Use parent class methods to save auth data
-                // Create a mock GoogleSignInAccount-like object for the parent class to process
-                // But since we can't do that easily, let's call the parent's saveAuthTokensFromServer method
+                // Save auth tokens first
+                Log.d(TAG, "🧪 Saving auth tokens to secure storage...")
                 saveAuthTokensFromServer(
                     accessToken = authResponse.accessToken,
                     refreshToken = authResponse.refreshToken
                 )
+                Log.d(TAG, "🧪 Auth tokens saved successfully")
                 
-                // Save user data manually to SharedPreferences (accessing parent's method indirectly)
+                // Save user data manually to SharedPreferences
+                Log.d(TAG, "🧪 Saving user data to SharedPreferences...")
                 val sharedPrefs = context.getSharedPreferences("auth_preferences", Context.MODE_PRIVATE)
                 sharedPrefs.edit().apply {
                     putString("user_id", authResponse.user.id)
@@ -74,6 +80,32 @@ class TestAuthRepository @Inject constructor(
                     putString("auth_token", "test_auth_token") // Not used, but kept for compatibility
                     putBoolean("test_mode", true)
                     apply()
+                }
+                Log.d(TAG, "🧪 User data saved to SharedPreferences")
+                
+                // Trigger user profile refresh now that refreshUserProfile() is protected
+                Log.d(TAG, "🧪 Calling refreshUserProfile() to update user profile flow...")
+                refreshUserProfile()
+                Log.d(TAG, "🧪 refreshUserProfile() completed")
+                
+                // Check if the state is properly set
+                Log.d(TAG, "🧪 Checking authentication state after setup...")
+                val isSignedIn = isSignedIn()
+                Log.d(TAG, "🧪 isSignedIn() returns: $isSignedIn")
+                
+                // Check the flows
+                try {
+                    val userProfile = userProfile.first()
+                    Log.d(TAG, "🧪 userProfile flow has: ${userProfile?.email ?: "null"}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🧪 Failed to read userProfile flow: ${e.message}")
+                }
+                
+                try {
+                    val serverToken = serverToken.first()
+                    Log.d(TAG, "🧪 serverToken flow has: ${if (serverToken != null) "token present" else "null"}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🧪 Failed to read serverToken flow: ${e.message}")
                 }
                 
                 Log.d(TAG, "🧪 Test authentication setup complete!")
