@@ -17,11 +17,11 @@ object AuthenticationTestHelper {
     private const val TAG = "AuthTestHelper"
     
     /**
-     * Ensures we're authenticated as REDACTED_TEST_EMAIL.
-     * Returns true if successful, false if authentication failed.
+     * New method: Use programmatic authentication with real test credentials.
+     * This method uses Android Credential Manager for headless authentication.
      */
-    suspend fun ensureWhizVoiceTestAuthentication(authRepository: AuthRepository, device: UiDevice): Boolean {
-        Log.d(TAG, "🔐 Ensuring authentication as REDACTED_TEST_EMAIL...")
+    suspend fun ensureProgrammaticAuthentication(authRepository: AuthRepository): Boolean {
+        Log.d(TAG, "🤖 Starting programmatic authentication...")
         
         // Check current authentication state
         val currentUser = authRepository.userProfile.value
@@ -30,6 +30,74 @@ object AuthenticationTestHelper {
             return true
         }
         
+        // Load test credentials
+        val credentials = TestCredentialsManager.credentials
+        val testEmail = credentials.googleTestAccount.email
+        val testPassword = credentials.googleTestAccount.password
+        
+        Log.d(TAG, "🤖 Using credentials - Email: $testEmail, HasPassword: ${testPassword.isNotEmpty()}")
+        
+        // Try programmatic authentication
+        try {
+            val result = authRepository.authenticateProgrammatically(
+                email = testEmail,
+                password = testPassword
+            )
+            
+            if (result.isSuccess) {
+                Log.d(TAG, "🎉 Programmatic authentication successful!")
+                
+                // Wait for flows to update
+                delay(1000)
+                
+                // Verify authentication
+                val newUser = authRepository.userProfile.value
+                val isAuthenticated = authRepository.isSignedIn()
+                
+                Log.d(TAG, "✅ Authentication verification - User: ${newUser?.email}, Authenticated: $isAuthenticated")
+                return isAuthenticated
+                
+            } else {
+                Log.e(TAG, "❌ Programmatic authentication failed: ${result.exceptionOrNull()}")
+                return false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception during programmatic authentication", e)
+            return false
+        }
+    }
+    
+    /**
+     * Ensures we're authenticated as REDACTED_TEST_EMAIL.
+     * Returns true if successful, false if authentication failed.
+     */
+    suspend fun ensureWhizVoiceTestAuthentication(authRepository: AuthRepository, device: UiDevice): Boolean {
+        Log.d(TAG, "🔐 Ensuring authentication as REDACTED_TEST_EMAIL...")
+        
+        // Try programmatic authentication first
+        val programmaticSuccess = ensureProgrammaticAuthentication(authRepository)
+        if (programmaticSuccess) {
+            Log.d(TAG, "✅ Programmatic authentication successful, skipping UI automation")
+            return true
+        }
+        
+        // Fallback to existing UI automation method
+        Log.d(TAG, "⚠️ Programmatic authentication failed, trying UI automation...")
+        return ensureWhizVoiceTestAuthenticationUI(authRepository, device)
+    }
+    
+    /**
+     * Original UI-based authentication method (kept as fallback).
+     */
+    private suspend fun ensureWhizVoiceTestAuthenticationUI(authRepository: AuthRepository, device: UiDevice): Boolean {
+        // Check current authentication state
+        val currentUser = authRepository.userProfile.value
+        if (authRepository.isSignedIn() && currentUser?.email?.contains("whizvoicetest") == true) {
+            Log.d(TAG, "✅ Already authenticated as whizvoicetest: ${currentUser.email}")
+            return true
+        }
+
         // Try to get credentials from instrumentation arguments (Firebase Test Lab / ADB)
         val arguments = InstrumentationRegistry.getArguments()
         val testUsername = arguments.getString("testUsername")

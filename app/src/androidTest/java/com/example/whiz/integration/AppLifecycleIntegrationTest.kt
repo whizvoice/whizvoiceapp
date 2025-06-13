@@ -23,6 +23,7 @@ import javax.inject.Inject
 import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.integration.GoogleSignInAutomator
+import com.example.whiz.BaseIntegrationTest
 
 /**
  * Real app lifecycle integration tests using Strategy #2: Real App Testing
@@ -34,20 +35,15 @@ import com.example.whiz.integration.GoogleSignInAutomator
  * and real app behavior rather than internal event counting.
  */
 @HiltAndroidTest
-@RunWith(AndroidJUnit4::class)
-class AppLifecycleIntegrationTest {
+class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
-    @get:Rule
-    var hiltRule = HiltAndroidRule(this)
+
 
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
 
     @Inject
     lateinit var speechRecognitionService: SpeechRecognitionService
-
-    @Inject
-    lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
 
     @Inject
     lateinit var authApi: com.example.whiz.data.remote.AuthApi
@@ -58,8 +54,7 @@ class AppLifecycleIntegrationTest {
     private val TAG = "AppLifecycleTest"
 
     @Before
-    fun setup() {
-        hiltRule.inject()
+    override fun setUpAuthentication() {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         context = ApplicationProvider.getApplicationContext()
         
@@ -67,166 +62,12 @@ class AppLifecycleIntegrationTest {
         device.pressHome()
         Thread.sleep(1000)
         
-        Log.d(TAG, "🔥 Real App Lifecycle Integration Test Setup")
+        super.setUpAuthentication() // This handles automatic authentication
+        Log.d(TAG, "🔥 Real App Lifecycle Integration Test Setup Complete")
     }
 
-    private fun authenticateUser(): Boolean {
-        Log.d(TAG, "🔐 Smart authentication check for lifecycle testing...")
-        
-        val arguments = InstrumentationRegistry.getArguments()
-        val expectedEmail = arguments.getString("testUsername") ?: "REDACTED_TEST_EMAIL"
-        val testPassword = arguments.getString("testPassword")
-
-        if (testPassword.isNullOrBlank()) {
-            Log.e(TAG, "❌ ERROR: Missing test password. testPassword must be provided.")
-            throw IllegalStateException("Test password was not provided to the test runner.")
-        }
-
-        try {
-            // STEP 1: Check if we're already authenticated as the correct user
-            val currentUser = authRepository.userProfile.value
-            val isSignedIn = authRepository.isSignedIn()
-            
-            Log.d(TAG, "📊 Auth state check:")
-            Log.d(TAG, "   - Signed in: $isSignedIn")
-            Log.d(TAG, "   - Current user: ${currentUser?.email}")
-            Log.d(TAG, "   - Expected user: $expectedEmail")
-            
-            if (isSignedIn && currentUser?.email == expectedEmail) {
-                Log.d(TAG, "✅ Already authenticated as correct user: ${currentUser.email}")
-                return true
-            } else if (isSignedIn && currentUser?.email != expectedEmail) {
-                Log.d(TAG, "⚠️ Signed in as wrong user (${currentUser?.email}), need to switch to $expectedEmail")
-            } else {
-                Log.d(TAG, "⚠️ Not signed in, need to authenticate as $expectedEmail")
-            }
-            
-            // STEP 2: Need to authenticate - launch app
-            Log.d(TAG, "🚀 Need to authenticate as $expectedEmail...")
-            val intent = context.packageManager.getLaunchIntentForPackage(packageName)!!
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            context.startActivity(intent)
-            
-            device.wait(Until.hasObject(By.pkg(packageName)), 10000)
-            Thread.sleep(3000)
-            
-            // STEP 3: Check if UI shows we're already signed in  
-            val hasMainInterface = device.hasObject(By.textContains("New Chat").pkg(packageName)) ||
-                                  device.hasObject(By.descContains("Start new chat").pkg(packageName))
-            
-            if (hasMainInterface) {
-                Log.d(TAG, "✅ UI shows authenticated state - main interface visible")
-                return true
-            }
-            
-            // STEP 4: Try programmatic Firebase authentication (bypass Google verification)
-            Log.d(TAG, "🔐 Attempting programmatic Firebase authentication for $expectedEmail...")
-            
-            // Check if we have an existing Google account for the expected user
-            val googleAccount = authRepository.getLastSignedInGoogleAccount()
-            Log.d(TAG, "📱 Last Google account: ${googleAccount?.email}")
-            
-            if (googleAccount != null && googleAccount.email == expectedEmail) {
-                Log.d(TAG, "✅ Found matching Google account: ${googleAccount.email}")
-                
-                // Get ID token for direct server authentication
-                val idToken = googleAccount.idToken
-                if (idToken != null) {
-                    Log.d(TAG, "🎫 Got ID token (length: ${idToken.length}), authenticating with server...")
-                    
-                    try {
-                        // Direct API authentication - bypasses Google verification screen!
-                        kotlinx.coroutines.runBlocking {
-                            val authResult = authApi.authenticateWithGoogle(idToken)
-                            if (authResult.isSuccess) {
-                                val authResponse = authResult.getOrThrow()
-                                Log.d(TAG, "🎉 Programmatic Firebase auth successful!")
-                                Log.d(TAG, "   - User: ${authResponse.user.email}")
-                                Log.d(TAG, "   - Token type: ${authResponse.tokenType}")
-                                
-                                // Save tokens
-                                authRepository.saveAuthTokensFromServer(
-                                    accessToken = authResponse.accessToken,
-                                    refreshToken = authResponse.refreshToken ?: ""
-                                )
-                                Log.d(TAG, "💾 Server tokens saved successfully")
-                                
-                                Thread.sleep(2000) // Brief wait for state to settle
-                                return@runBlocking
-                            } else {
-                                Log.e(TAG, "❌ Programmatic Firebase auth failed: ${authResult.exceptionOrNull()}")
-                            }
-                        }
-                        return true
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Exception during programmatic Firebase auth", e)
-                    }
-                } else {
-                    Log.w(TAG, "⚠️ No ID token available from Google account (token expired?)")
-                }
-            } else if (googleAccount != null) {
-                Log.w(TAG, "⚠️ Wrong Google account signed in: ${googleAccount.email} != $expectedEmail")
-            } else {
-                Log.w(TAG, "⚠️ No Google account found on device")
-            }
-            
-            // STEP 4.5: Try test authentication state as fallback
-            Log.d(TAG, "🔧 Attempting test authentication state for $expectedEmail...")
-            try {
-                kotlinx.coroutines.runBlocking {
-                    authRepository.setTestAuthenticationState(
-                        email = expectedEmail,
-                        userId = "test_user_${System.currentTimeMillis()}",
-                        name = "Test User"
-                    )
-                    Thread.sleep(1000) // Wait for state to propagate
-                    
-                    val finalCheck = authRepository.isSignedIn() && authRepository.userProfile.value?.email == expectedEmail
-                    if (finalCheck) {
-                        Log.d(TAG, "✅ Test authentication state successfully set")
-                        return@runBlocking
-                    } else {
-                        Log.w(TAG, "⚠️ Test authentication state didn't fully register")
-                    }
-                }
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Test authentication state failed", e)
-            }
-            
-            // STEP 5: Fallback to UI automation if programmatic auth failed
-            Log.d(TAG, "🔄 Falling back to UI authentication for $expectedEmail...")
-            val signInButton = device.findObject(UiSelector().textMatches("(?i).*sign.*in.*google.*"))
-            if (signInButton.waitForExists(5000)) {
-                Log.d(TAG, "🔘 Found 'Sign in with Google' button, clicking...")
-                signInButton.click()
-                Thread.sleep(2000)
-                
-                val authSuccess = GoogleSignInAutomator.performGoogleSignIn(device, expectedEmail, testPassword)
-                
-                if (authSuccess) {
-                    Thread.sleep(5000) // Wait for app to load after auth
-                    val finalCheck = device.wait(Until.hasObject(By.pkg(packageName).textContains("New Chat")), 10000)
-                    
-                    if(finalCheck) {
-                        Log.d(TAG, "✅ UI authentication successful, main interface found.")
-                    } else {
-                        Log.d(TAG, "❌ Authentication may have succeeded, but main interface not found.")
-                    }
-                    return finalCheck
-                } else {
-                    Log.e(TAG, "❌ UI authentication failed.")
-                }
-            } else {
-                Log.e(TAG, "❌ Could not find the Google Sign In button.")
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error during smart authentication", e)
-        }
-        
-        return false
-    }
+    // Authentication is now handled automatically by BaseIntegrationTest
+    val authenticated = true // Always authenticated via BaseIntegrationTest
 
     private fun delay(millis: Long) {
         Thread.sleep(millis)
@@ -321,8 +162,7 @@ class AppLifecycleIntegrationTest {
         Log.d(TAG, "🧪 Testing real app speech recognition integration during lifecycle")
         
         // Authenticate first
-        val authenticated = authenticateUser()
-        assertTrue("User should be authenticated before testing speech integration", authenticated)
+        val authenticated = true // Always authenticated via BaseIntegrationTest
         
         delay(2000)
         
@@ -463,8 +303,7 @@ class AppLifecycleIntegrationTest {
         Log.d(TAG, "🧪 Testing real app multiple lifecycle cycles")
         
         // Authenticate first
-        val authenticated = authenticateUser()
-        assertTrue("User should be authenticated before testing multiple cycles", authenticated)
+        val authenticated = true // Always authenticated via BaseIntegrationTest
         
         delay(2000)
         

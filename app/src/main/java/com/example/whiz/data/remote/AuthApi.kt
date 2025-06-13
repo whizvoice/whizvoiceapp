@@ -15,6 +15,7 @@ import javax.inject.Singleton
 import android.util.Log
 import com.example.whiz.data.auth.RefreshTokenRequest
 import com.example.whiz.data.auth.NewAccessTokenResponse
+import com.example.whiz.TestCredentialsHelper
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.POST
@@ -78,6 +79,79 @@ class AuthApi @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Exception during authenticateWithGoogle", e)
+            return@withContext Result.failure(e)
+        }
+    }
+    
+    /**
+     * Test authentication that bypasses Google OAuth
+     * Uses HTTP Basic Auth for security
+     */
+    suspend fun authenticateWithTestCredentials(
+        email: String,
+        userId: String,
+        name: String = "Test User"
+    ): Result<AuthResponse> = withContext(Dispatchers.IO) {
+        try {
+            // Get test credentials from helper
+            val testCreds = TestCredentialsHelper.getTestCredentials()
+            
+            val jsonBody = JSONObject().apply {
+                put("email", email)
+                put("user_id", userId)
+                put("name", name)
+            }
+            
+            val requestBody = jsonBody.toString().toRequestBody(JSON)
+            
+            // Create basic auth header
+            val credentials = "${testCreds.email}:${testCreds.password}"
+            val basicAuth = "Basic " + android.util.Base64.encodeToString(
+                credentials.toByteArray(), 
+                android.util.Base64.NO_WRAP
+            )
+            
+            val request = Request.Builder()
+                .url("$SERVER_URL/auth/test")
+                .header("Authorization", basicAuth)
+                .post(requestBody)
+                .build()
+            
+            Log.d(TAG, "Sending test authentication request to $SERVER_URL/auth/test")    
+            val response = okHttpClient.newCall(request).execute()
+            val responseBody = response.body?.string()
+            Log.d(TAG, "Raw /auth/test response body: $responseBody")
+            
+            if (!response.isSuccessful || responseBody == null) {
+                Log.e(TAG, "Test authentication failed with code: ${response.code}, message: ${response.message}")
+                return@withContext Result.failure(IOException("Test authentication failed: ${response.code}"))
+            }
+            
+            Log.d(TAG, "Test authentication successful, processing response")
+            // Parse the response (same format as Google auth)
+            val jsonResponse = JSONObject(responseBody)
+            val accessToken = jsonResponse.getString("access_token")
+            val tokenType = jsonResponse.getString("token_type")
+            val refreshToken = jsonResponse.getString("refresh_token")
+            val userJson = jsonResponse.getJSONObject("user")
+            
+            val user = User(
+                id = userJson.getString("sub"),
+                name = if (userJson.has("name") && !userJson.isNull("name")) userJson.getString("name") else null,
+                email = if (userJson.has("email")) userJson.getString("email") else null,
+                photoUrl = if (userJson.has("picture") && !userJson.isNull("picture")) userJson.getString("picture") else null
+            )
+            
+            return@withContext Result.success(
+                AuthResponse(
+                    accessToken = accessToken,
+                    tokenType = tokenType,
+                    refreshToken = refreshToken,
+                    user = user
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during test authentication", e)
             return@withContext Result.failure(e)
         }
     }

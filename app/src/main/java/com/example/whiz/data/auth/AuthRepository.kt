@@ -4,12 +4,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.GetCredentialResponse
+import androidx.credentials.exceptions.GetCredentialException
 import com.example.whiz.data.remote.AuthApi
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.tasks.Tasks
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,14 +75,19 @@ data class NewAccessTokenResponse(
 */
 
 @Singleton
-class AuthRepository @Inject constructor(
-    private val context: Context,
-    private val authApi: AuthApi // Inject your actual AuthApi interface
+open class AuthRepository @Inject constructor(
+    protected val context: Context,
+    protected val authApi: AuthApi // Inject your actual AuthApi interface
 ) {
     private val TAG = "AuthRepository"
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences(
         "auth_preferences", Context.MODE_PRIVATE
     )
+    
+    // Android Credential Manager for programmatic authentication
+    private val credentialManager: CredentialManager by lazy {
+        CredentialManager.create(context)
+    }
     
     // Google Sign-In client
     private val googleSignInClient: GoogleSignInClient by lazy {
@@ -117,11 +129,18 @@ class AuthRepository @Inject constructor(
         val account = GoogleSignIn.getLastSignedInAccount(context)
         val serverToken = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
         val userId = sharedPreferences.getString(PreferenceKeys.USER_ID, null)
+        val isTestMode = sharedPreferences.getBoolean("test_mode", false)
         
-        Log.d(TAG, "Checking sign-in state: Google account=${account != null}, Server token=${serverToken != null}, User ID=${userId != null}")
+        Log.d(TAG, "Checking sign-in state: Google account=${account != null}, Server token=${serverToken != null}, User ID=${userId != null}, Test mode=${isTestMode}")
         
         if (account != null && serverToken == null) {
             Log.w(TAG, "Google account present but server token is missing. User is in a half-logged-in state.")
+        }
+        
+        // In test mode, only require server token and user ID (skip Google account check)
+        if (isTestMode) {
+            Log.d(TAG, "Test mode active - checking only server token and user ID")
+            return serverToken != null && userId != null
         }
         
         // Only consider signed in if we have all required data
@@ -250,6 +269,7 @@ class AuthRepository @Inject constructor(
                     remove(PreferenceKeys.USER_NAME)
                     remove(PreferenceKeys.USER_EMAIL)
                     remove(PreferenceKeys.USER_PHOTO_URL)
+                    remove("test_mode") // Clear test mode flag
                     apply()
                 }
                 
@@ -296,73 +316,270 @@ class AuthRepository @Inject constructor(
     }
     
     /**
-     * Test-only method to set up authentication state for integration tests.
-     * This bypasses normal authentication flow for testing purposes.
+     * Programmatically authenticate using existing Google credentials without UI interaction.
+     * This method checks for existing Google accounts and uses them directly.
      */
-    suspend fun setTestAuthenticationState(
+    open suspend fun authenticateProgrammatically(
+        email: String,
+        password: String? = null
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            Log.e(TAG, "🤖 [DETAILED] Starting programmatic authentication for: $email")
+            
+            // First check if we already have a valid Google account with the right email
+            val existingAccount = getLastSignedInGoogleAccount()
+            Log.e(TAG, "🤖 [DETAILED] getLastSignedInGoogleAccount() returned: ${existingAccount?.email ?: "null"}")
+            
+            if (existingAccount?.email == email) {
+                Log.e(TAG, "🤖 [DETAILED] Found matching Google account: ${existingAccount.email}")
+                
+                val idToken = existingAccount.idToken
+                Log.e(TAG, "🤖 [DETAILED] ID token present: ${idToken != null}, length: ${idToken?.length ?: 0}")
+                
+                if (idToken != null) {
+                    Log.e(TAG, "🤖 [DETAILED] Calling authApi.authenticateWithGoogle()...")
+                    
+                    try {
+                        // Authenticate with server using existing token
+                        val authResult = authApi.authenticateWithGoogle(idToken)
+                        Log.e(TAG, "🤖 [DETAILED] authApi.authenticateWithGoogle() completed, success: ${authResult.isSuccess}")
+                        
+                        if (authResult.isSuccess) {
+                            val authResponse = authResult.getOrThrow()
+                            Log.e(TAG, "🤖 [DETAILED] Server authentication successful, user: ${authResponse.user.email}")
+                            
+                            // Save all authentication data
+                            Log.e(TAG, "🤖 [DETAILED] Saving authentication data to SharedPreferences...")
+                            sharedPreferences.edit().apply {
+                                putString(PreferenceKeys.USER_ID, authResponse.user.id)
+                                putString(PreferenceKeys.USER_NAME, authResponse.user.name)
+                                putString(PreferenceKeys.USER_EMAIL, authResponse.user.email)
+                                putString(PreferenceKeys.USER_PHOTO_URL, authResponse.user.photoUrl)
+                                putString(PreferenceKeys.AUTH_TOKEN, idToken)
+                                putBoolean("test_mode", true)
+                                apply()
+                            }
+                            Log.e(TAG, "🤖 [DETAILED] SharedPreferences saved successfully")
+                            
+                            Log.e(TAG, "🤖 [DETAILED] Calling saveAuthTokensFromServer()...")
+                            saveAuthTokensFromServer(
+                                accessToken = authResponse.accessToken,
+                                refreshToken = authResponse.refreshToken ?: ""
+                            )
+                            Log.e(TAG, "🤖 [DETAILED] saveAuthTokensFromServer() completed")
+                            
+                            Log.e(TAG, "🤖 [DETAILED] Calling refreshUserProfile()...")
+                            refreshUserProfile()
+                            Log.e(TAG, "🤖 [DETAILED] refreshUserProfile() completed")
+                            
+                            Log.e(TAG, "🤖 [DETAILED] Programmatic authentication SUCCESS!")
+                            return@withContext Result.success(true)
+                        } else {
+                            val exception = authResult.exceptionOrNull()
+                            Log.e(TAG, "🤖 [DETAILED] Server authentication failed: ${exception?.message}", exception)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "🤖 [DETAILED] Exception during server authentication", e)
+                    }
+                } else {
+                    Log.e(TAG, "🤖 [DETAILED] Existing Google account has no ID token")
+                }
+            } else {
+                if (existingAccount != null) {
+                    Log.e(TAG, "🤖 [DETAILED] Existing Google account email (${existingAccount.email}) doesn't match target ($email)")
+                } else {
+                    Log.e(TAG, "🤖 [DETAILED] No existing Google account found")
+                }
+            }
+            
+            // Try using Credential Manager with authorized accounts only (no UI)
+            Log.d(TAG, "🤖 Attempting Credential Manager with authorized accounts only...")
+            
+            try {
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(AuthConfig.WEB_CLIENT_ID)
+                    .setFilterByAuthorizedAccounts(true) // Only use pre-authorized accounts (no UI)
+                    .build()
+                    
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+                
+                val result = credentialManager.getCredential(
+                    context = context,
+                    request = request
+                )
+                
+                val credential = result.credential
+                if (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    try {
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        val idToken = googleIdTokenCredential.idToken
+                        
+                        Log.d(TAG, "🤖 Got Google ID token via Credential Manager (authorized accounts)")
+                        
+                        // Authenticate with server
+                        val authResult = authApi.authenticateWithGoogle(idToken)
+                        if (authResult.isSuccess) {
+                            val authResponse = authResult.getOrThrow()
+                            Log.d(TAG, "🤖 Programmatic authentication successful!")
+                            
+                            // Save all authentication data
+                            sharedPreferences.edit().apply {
+                                putString(PreferenceKeys.USER_ID, authResponse.user.id)
+                                putString(PreferenceKeys.USER_NAME, authResponse.user.name)
+                                putString(PreferenceKeys.USER_EMAIL, authResponse.user.email)
+                                putString(PreferenceKeys.USER_PHOTO_URL, authResponse.user.photoUrl)
+                                putString(PreferenceKeys.AUTH_TOKEN, idToken)
+                                putBoolean("test_mode", true)
+                                apply()
+                            }
+                            
+                            saveAuthTokensFromServer(
+                                accessToken = authResponse.accessToken,
+                                refreshToken = authResponse.refreshToken ?: ""
+                            )
+                            
+                            refreshUserProfile()
+                            return@withContext Result.success(true)
+                        } else {
+                            Log.e(TAG, "🤖 Server authentication failed: ${authResult.exceptionOrNull()}")
+                        }
+                    } catch (e: GoogleIdTokenParsingException) {
+                        Log.e(TAG, "🤖 Invalid Google ID token response", e)
+                    }
+                } else {
+                    Log.e(TAG, "🤖 Unexpected credential type: ${credential.type}")
+                }
+            } catch (e: GetCredentialException) {
+                Log.w(TAG, "🤖 Credential Manager with authorized accounts failed (expected if no pre-authorized accounts): ${e.message}")
+            }
+            
+            // If we get here, programmatic authentication failed
+            Log.w(TAG, "🤖 Programmatic authentication failed - no valid credentials available")
+            return@withContext Result.failure(Exception("No valid Google credentials available for programmatic authentication"))
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "🤖 Programmatic authentication failed", e)
+            return@withContext Result.failure(e)
+        }
+    }
+
+    /**
+     * Prepare authentication state after manual Google Sign-In.
+     * This method should be called after a user manually signs in to prepare for programmatic use.
+     */
+    suspend fun prepareAuthenticationForTesting(email: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔧 Preparing authentication for testing: $email")
+            
+            // Check if we have the right account signed in
+            val currentAccount = getLastSignedInGoogleAccount()
+            if (currentAccount?.email == email) {
+                Log.d(TAG, "🔧 Found correct Google account: ${currentAccount.email}")
+                
+                val idToken = currentAccount.idToken
+                if (idToken != null) {
+                    Log.d(TAG, "🔧 Account has valid ID token, authenticating with server...")
+                    
+                    // Authenticate with server
+                    val authResult = authApi.authenticateWithGoogle(idToken)
+                    if (authResult.isSuccess) {
+                        val authResponse = authResult.getOrThrow()
+                        Log.d(TAG, "🔧 Server authentication successful!")
+                        
+                        // Save all authentication data
+                        sharedPreferences.edit().apply {
+                            putString(PreferenceKeys.USER_ID, authResponse.user.id)
+                            putString(PreferenceKeys.USER_NAME, authResponse.user.name)
+                            putString(PreferenceKeys.USER_EMAIL, authResponse.user.email)
+                            putString(PreferenceKeys.USER_PHOTO_URL, authResponse.user.photoUrl)
+                            putString(PreferenceKeys.AUTH_TOKEN, idToken)
+                            putBoolean("test_mode", true)
+                            apply()
+                        }
+                        
+                        saveAuthTokensFromServer(
+                            accessToken = authResponse.accessToken,
+                            refreshToken = authResponse.refreshToken ?: ""
+                        )
+                        
+                        refreshUserProfile()
+                        Log.d(TAG, "🔧 Authentication preparation complete - programmatic auth should now work")
+                        return@withContext Result.success(true)
+                    } else {
+                        Log.e(TAG, "🔧 Server authentication failed: ${authResult.exceptionOrNull()}")
+                        return@withContext Result.failure(authResult.exceptionOrNull() ?: Exception("Server authentication failed"))
+                    }
+                } else {
+                    Log.e(TAG, "🔧 Google account has no ID token")
+                    return@withContext Result.failure(Exception("Google account has no ID token"))
+                }
+            } else {
+                Log.e(TAG, "🔧 Wrong Google account signed in. Expected: $email, Found: ${currentAccount?.email}")
+                return@withContext Result.failure(Exception("Wrong Google account signed in"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "🔧 Error preparing authentication for testing", e)
+            return@withContext Result.failure(e)
+        }
+    }
+
+    /**
+     * Test-only method to set up authentication state for integration tests.
+     * This method NEVER shows UI and fails fast if programmatic authentication is not possible.
+     */
+    open suspend fun setTestAuthenticationState(
         email: String,
         userId: String = "test_user_${System.currentTimeMillis()}",
         name: String = "Test User"
     ) {
         withContext(Dispatchers.IO) {
-            Log.d(TAG, "🧪 Setting test authentication state for: $email")
+            Log.e(TAG, "🧪 [TEST] Setting test authentication state for: $email")
+            Log.e(TAG, "🧪 [TEST] IMPORTANT: This method will NEVER show UI - it will fail fast if programmatic auth is not possible")
             
             try {
-                // First, clear all existing authentication data
-                Log.d(TAG, "🧪 Clearing all existing SharedPreferences...")
-                sharedPreferences.edit().clear().apply()
-                
-                // Clear flows immediately
-                _userProfileFlow.value = null
-                _serverTokenFlow.value = null
-                
-                Log.d(TAG, "🧪 Performing synchronous Google Sign-In cleanup...")
-                
-                // Use Tasks.await to make Google Sign-In operations synchronous
+                // Try programmatic authentication first (this should work if user manually signed in earlier)
+                Log.e(TAG, "🧪 [TEST] Attempting programmatic authentication...")
                 try {
-                    com.google.android.gms.tasks.Tasks.await(googleSignInClient.signOut())
-                    Log.d(TAG, "🧪 Google Sign-In signOut completed successfully")
+                    val authResult = authenticateProgrammatically(email)
+                    if (authResult.isSuccess) {
+                        Log.e(TAG, "🧪 [TEST] ✅ Programmatic authentication successful!")
+                        return@withContext
+                    } else {
+                        Log.e(TAG, "🧪 [TEST] ❌ Programmatic authentication failed: ${authResult.exceptionOrNull()}")
+                    }
                 } catch (e: Exception) {
-                    Log.w(TAG, "🧪 Google Sign-In signOut failed (this may be expected in tests): ${e.message}")
+                    Log.e(TAG, "🧪 [TEST] ❌ Programmatic authentication exception: ${e.message}", e)
                 }
                 
+                // If programmatic auth failed, try to prepare it
+                Log.e(TAG, "🧪 [TEST] Attempting to prepare authentication from existing sign-in...")
                 try {
-                    com.google.android.gms.tasks.Tasks.await(googleSignInClient.revokeAccess())
-                    Log.d(TAG, "🧪 Google Sign-In revokeAccess completed successfully")
+                    val prepareResult = prepareAuthenticationForTesting(email)
+                    if (prepareResult.isSuccess) {
+                        Log.e(TAG, "🧪 [TEST] ✅ Authentication preparation successful!")
+                        return@withContext
+                    } else {
+                        Log.e(TAG, "🧪 [TEST] ❌ Authentication preparation failed: ${prepareResult.exceptionOrNull()}")
+                    }
                 } catch (e: Exception) {
-                    Log.w(TAG, "🧪 Google Sign-In revokeAccess failed (this may be expected in tests): ${e.message}")
+                    Log.e(TAG, "🧪 [TEST] ❌ Authentication preparation exception: ${e.message}", e)
                 }
                 
-                // Additional wait to ensure operations are fully complete
-                Thread.sleep(500)
+                // CRITICAL: Never allow UI fallback in test mode
+                Log.e(TAG, "🧪 [TEST] ❌ CRITICAL ERROR: Programmatic authentication failed completely")
+                Log.e(TAG, "🧪 [TEST] ❌ This means the test account ($email) is not properly set up on this device")
+                Log.e(TAG, "🧪 [TEST] ❌ Required steps:")
+                Log.e(TAG, "🧪 [TEST] ❌   1. Add $email to device Settings > Accounts")
+                Log.e(TAG, "🧪 [TEST] ❌   2. Sign into WhizVoice app manually with $email at least once")
+                Log.e(TAG, "🧪 [TEST] ❌   3. Ensure the account has a valid ID token")
+                Log.e(TAG, "🧪 [TEST] ❌ FAILING TEST to prevent UI dialog...")
                 
-                // Now set up all required authentication data for test
-                Log.d(TAG, "🧪 Setting test authentication data...")
-                sharedPreferences.edit().apply {
-                    putString(PreferenceKeys.USER_ID, userId)
-                    putString(PreferenceKeys.USER_NAME, name)
-                    putString(PreferenceKeys.USER_EMAIL, email)
-                    putString(PreferenceKeys.USER_PHOTO_URL, "")
-                    putString(PreferenceKeys.AUTH_TOKEN, "test_id_token_${System.currentTimeMillis()}")
-                    putString(PreferenceKeys.SERVER_TOKEN, "test_server_token_${System.currentTimeMillis()}")
-                    putString(PreferenceKeys.REFRESH_TOKEN, "test_refresh_token_${System.currentTimeMillis()}")
-                    apply()
-                }
-                
-                // Update the flows with new data
-                refreshUserProfile()
-                _serverTokenFlow.value = sharedPreferences.getString(PreferenceKeys.SERVER_TOKEN, null)
-                
-                // Wait a moment for flows to update
-                Thread.sleep(200)
-                
-                Log.d(TAG, "✅ Test authentication state set successfully")
-                Log.d(TAG, "🧪 Test user profile: ${_userProfileFlow.value}")
-                Log.d(TAG, "🧪 Server token available: ${_serverTokenFlow.value != null}")
-                Log.d(TAG, "🧪 Is signed in: ${isSignedIn()}")
+                throw Exception("TEST AUTHENTICATION FAILED: Cannot authenticate $email programmatically. UI authentication is disabled in test mode. Please set up the test account properly on the device.")
                 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Error setting test authentication state", e)
+                Log.e(TAG, "🧪 [TEST] ❌ Error setting test authentication state", e)
                 throw e
             }
         }

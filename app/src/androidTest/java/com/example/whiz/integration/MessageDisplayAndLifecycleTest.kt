@@ -2,7 +2,7 @@ package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
-import dagger.hilt.android.testing.HiltAndroidRule
+import com.example.whiz.BaseIntegrationTest
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -16,12 +16,8 @@ import javax.inject.Inject
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.data.repository.WhizRepository
-import com.example.whiz.data.auth.AuthRepository
-import com.example.whiz.TestCredentialsManager
-import com.example.whiz.integration.GoogleSignInAutomator
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
-import com.example.whiz.integration.AuthenticationTestHelper
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import com.example.whiz.data.local.WhizDatabase
@@ -44,10 +40,7 @@ import com.example.whiz.data.local.ChatEntity
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class MessageDisplayAndLifecycleTest {
-
-    @get:Rule
-    var hiltRule = HiltAndroidRule(this)
+class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     
     @get:Rule
     val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
@@ -65,64 +58,21 @@ class MessageDisplayAndLifecycleTest {
     
     @Inject
     lateinit var database: WhizDatabase
-    
-    @Inject
-    lateinit var authRepository: AuthRepository
 
     private var testChatId = 0L
     private val TAG = "MessageDisplayTest"
     private lateinit var device: UiDevice
 
     @Before
-    fun setup() {
-        hiltRule.inject()
+    override fun setUpAuthentication() {
+        // Call parent authentication setup first
+        super.setUpAuthentication()
+        
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         
-        // Ensure proper authentication before running tests
+        // Set up test data
         runBlocking {
             try {
-                Log.d(TAG, "🔐 Setting up authentication for tests...")
-                
-                // Always start fresh by logging out any existing user
-                Log.d(TAG, "🔄 Logging out any existing user...")
-                authRepository.signOut()
-                delay(1000) // Wait for signout to complete
-                
-                // Verify we're logged out
-                val isSignedOut = !authRepository.isSignedIn()
-                Log.d(TAG, "✅ Logout complete: $isSignedOut")
-                
-                // Set up test authentication state since this test is not testing sign-in functionality
-                Log.d(TAG, "🔧 Setting up test authentication state...")
-                val arguments = InstrumentationRegistry.getArguments()
-                val testEmail = arguments.getString("testUsername") ?: "REDACTED_TEST_EMAIL"
-                
-                try {
-                    authRepository.setTestAuthenticationState(testEmail)
-                    delay(500) // Wait for state to propagate
-                    
-                    val isSignedIn = authRepository.isSignedIn()
-                    val userProfile = authRepository.userProfile.value
-                    
-                    Log.d(TAG, "🔍 Test auth state: isSignedIn=$isSignedIn, user=${userProfile?.email}")
-                    
-                    if (!isSignedIn) {
-                        Log.w(TAG, "⚠️ Test authentication state not fully recognized by AuthRepository")
-                        Log.w(TAG, "   This is expected - these tests focus on message/lifecycle functionality")
-                        Log.w(TAG, "   Tests will proceed with partial auth state for repository access")
-                    }
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Failed to set test authentication state", e)
-                    throw RuntimeException("Failed to set up test authentication state: ${e.message}")
-                }
-                
-                // Verify final authentication state
-                val finalUser = authRepository.userProfile.value
-                Log.d(TAG, "🎉 Authentication setup complete! Authenticated as: ${finalUser?.email}")
-                
-                // Create a test chat directly in database (bypass API authentication requirement)
-                // These tests are for message/lifecycle functionality, not chat creation
                 Log.d(TAG, "🔧 Creating test chat via direct database access...")
                 val testChatEntity = ChatEntity(
                     id = 0, // Auto-generated
@@ -162,8 +112,6 @@ class MessageDisplayAndLifecycleTest {
             }
         }
     }
-
-
 
     @Test
     fun messageRepository_addsMessagesImmediately() = runBlocking {

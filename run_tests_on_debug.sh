@@ -193,6 +193,23 @@ run_with_log "Building latest debug version" "./gradlew assembleDebug --console=
 # Install the latest debug APK (updates existing installation if present)
 run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
 
+# Grant necessary permissions for testing (especially microphone for voice tests)
+log_with_time "🔐 Granting necessary permissions for testing..."
+# Launch app first, then grant permissions while it's running
+adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1 || true
+sleep 3
+adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev/null || true
+adb shell pm grant com.example.whiz.debug android.permission.WRITE_SETTINGS 2>/dev/null || true
+# Stop the app to avoid interference with tests
+adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
+sleep 1
+# Verify permission was granted
+if adb shell dumpsys package com.example.whiz.debug | grep -q "android.permission.RECORD_AUDIO: granted=true"; then
+    log_with_time "✅ Microphone permission granted successfully"
+else
+    log_with_time "⚠️ Microphone permission may not be granted - tests might fail"
+fi
+
 # Function to perform automated sign-in using test authentication state
 perform_automated_signin() {
     log_with_time "🧪 Using Firebase test authentication for $TEST_USERNAME..."
@@ -487,8 +504,13 @@ kill $MONITOR_PID 2>/dev/null || true
 # Run instrumented tests on debug build
 log_with_time "🧪 Starting instrumented tests..."
 
-# Create screenshots directory for failed tests
+# Clean up old screenshots and create fresh directory for failed tests
 SCREENSHOTS_DIR="test_screenshots"
+if [[ -d "$SCREENSHOTS_DIR" ]]; then
+    log_with_time "🧹 Cleaning up old screenshots from previous test runs..."
+    rm -rf "$SCREENSHOTS_DIR"/*
+    log_with_time "✅ Cleaned up old screenshots"
+fi
 mkdir -p "$SCREENSHOTS_DIR"
 log_with_time "📸 Created screenshots directory: $SCREENSHOTS_DIR"
 

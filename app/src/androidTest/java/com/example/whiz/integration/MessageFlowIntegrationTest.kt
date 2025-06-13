@@ -28,6 +28,7 @@ import com.example.whiz.integration.AuthenticationTestHelper
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.example.whiz.BaseIntegrationTest
 
 /**
  * Integration tests for message flow with REAL E2E authentication and production database
@@ -38,17 +39,12 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
-@RunWith(AndroidJUnit4::class)
-class MessageFlowIntegrationTest {
+class MessageFlowIntegrationTest : BaseIntegrationTest() {
 
-    @get:Rule
-    var hiltRule = HiltAndroidRule(this)
+
 
     @Inject
     lateinit var repository: WhizRepository
-
-    @Inject
-    lateinit var authRepository: AuthRepository
     
     @Inject
     lateinit var authApi: AuthApi
@@ -59,15 +55,10 @@ class MessageFlowIntegrationTest {
     private val createdChatIds = mutableListOf<Long>()
 
     @Before
-    fun setup() {
-        hiltRule.inject()
+    override fun setUpAuthentication() {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        
-        android.util.Log.d("MessageFlowTest", "🔥 E2E Integration Test Setup")
-        val credentials = TestCredentialsManager.credentials
-        android.util.Log.d("MessageFlowTest", "Using test user: ${credentials.googleTestAccount.email}")
-        android.util.Log.d("MessageFlowTest", "API Base URL: ${credentials.testEnvironment.apiBaseUrl}")
-        android.util.Log.d("MessageFlowTest", "Real Auth Enabled: ${credentials.testEnvironment.useRealAuth}")
+        super.setUpAuthentication() // This handles automatic authentication
+        android.util.Log.d("MessageFlowTest", "🧪 MessageFlow Integration Test Setup Complete")
     }
 
     @After
@@ -87,30 +78,7 @@ class MessageFlowIntegrationTest {
         }
     }
 
-    /**
-     * Checks authentication and provides clear guidance for manual login
-     */
-    private fun checkAuthentication(): Boolean {
-        android.util.Log.d("MessageFlowTest", "🔐 Checking authentication status...")
-        
-        val currentUser = authRepository.userProfile.value
-        val isSignedIn = authRepository.isSignedIn()
-        
-        if (!isSignedIn || currentUser?.email?.contains("whizvoicetest") != true) {
-            android.util.Log.w("MessageFlowTest", "⚠️ Not authenticated as REDACTED_TEST_EMAIL")
-            android.util.Log.w("MessageFlowTest", "Current user: ${currentUser?.email}")
-            android.util.Log.w("MessageFlowTest", "")
-            android.util.Log.w("MessageFlowTest", "📱 MANUAL AUTHENTICATION REQUIRED:")
-            android.util.Log.w("MessageFlowTest", "1. Open the WhizVoice debug app on this device")
-            android.util.Log.w("MessageFlowTest", "2. Sign in as REDACTED_TEST_EMAIL")
-            android.util.Log.w("MessageFlowTest", "3. Leave the app open and re-run these tests")
-            android.util.Log.w("MessageFlowTest", "")
-            return false
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ Authenticated as: ${currentUser?.email}")
-        return true
-    }
+
 
 
 
@@ -133,68 +101,38 @@ class MessageFlowIntegrationTest {
     fun automatedAuthentication_completesSuccessfully(): Unit = runBlocking {
         android.util.Log.d("MessageFlowTest", "🔐 AUTOMATED AUTHENTICATION TEST")
         
-        try {
-            val authSuccess = checkAuthentication()
-            
-            if (authSuccess) {
-                android.util.Log.d("MessageFlowTest", "✅ Automated authentication completed successfully!")
-                
-                // Verify we have all required auth components
-                val serverToken = authRepository.serverToken.first()
-                val userProfile = authRepository.userProfile.first()
-                val googleAccount = authRepository.getLastSignedInGoogleAccount()
-                
-                android.util.Log.d("MessageFlowTest", "📋 Authentication verification:")
-                android.util.Log.d("MessageFlowTest", "  Server token: ${serverToken != null}")
-                android.util.Log.d("MessageFlowTest", "  User profile: ${userProfile?.email}")
-                android.util.Log.d("MessageFlowTest", "  Google account: ${googleAccount?.email}")
-                
-                assert(serverToken != null) { "Server token should be available after authentication" }
-                assert(userProfile?.email?.contains("whizvoicetest") == true) { "User should be whizvoicetest" }
-                
-            } else {
-                android.util.Log.w("MessageFlowTest", "⚠️ Automated authentication did not complete successfully")
-                android.util.Log.w("MessageFlowTest", "This may be due to UI changes or network issues")
-                
-                // Don't fail the test - just skip
-                return@runBlocking
-            }
-            
-        } catch (e: Exception) {
-            android.util.Log.e("MessageFlowTest", "❌ Automated authentication test failed", e)
-            throw e
-        }
+        // Authentication is automatically handled by BaseIntegrationTest
+        android.util.Log.d("MessageFlowTest", "✅ Automated authentication completed successfully!")
+        
+        // Verify we have all required auth components
+        val serverToken = authRepository.serverToken.first()
+        val userProfile = authRepository.userProfile.first()
+        val googleAccount = authRepository.getLastSignedInGoogleAccount()
+        
+        android.util.Log.d("MessageFlowTest", "📋 Authentication verification:")
+        android.util.Log.d("MessageFlowTest", "  Server token: ${serverToken != null}")
+        android.util.Log.d("MessageFlowTest", "  User profile: ${userProfile?.email}")
+        android.util.Log.d("MessageFlowTest", "  Google account: ${googleAccount?.email}")
+        
+        assert(serverToken != null) { "Server token should be available after authentication" }
+        assert(userProfile?.email?.contains("whizvoicetest") == true) { "User should be whizvoicetest" }
     }
 
     @Test
     fun repository_createChat_withAutomatedAuth(): Unit = runBlocking {
         android.util.Log.d("MessageFlowTest", "🧪 Testing repository functionality WITH automated authentication")
         
-        try {
-            // Step 1: Check authentication (manual)
-            val authSuccess = checkAuthentication()
-            
-            if (!authSuccess) {
-                android.util.Log.w("MessageFlowTest", "⚠️ Not authenticated as whizvoicetest - skipping API test")
-                return@runBlocking
-            }
-            
-            // Step 2: Test creating a chat with authentication
-            android.util.Log.d("MessageFlowTest", "✅ User authenticated, testing chat creation...")
-            
-            val testChatTitle = "Automated E2E Test - ${System.currentTimeMillis()}"
-            val chatId = repository.createChat(testChatTitle)
-            createdChatIds.add(chatId) // Track for cleanup
-            
-            android.util.Log.d("MessageFlowTest", "Created chat with ID: $chatId, title: $testChatTitle")
-            assert(chatId > 0) { "Chat ID should be positive, got: $chatId" }
-            
-            android.util.Log.d("MessageFlowTest", "✅ Automated authenticated repository functionality works!")
-            
-        } catch (e: Exception) {
-            android.util.Log.e("MessageFlowTest", "Repository test failed", e)
-            throw e
-        }
+        // Authentication is automatically handled by BaseIntegrationTest
+        android.util.Log.d("MessageFlowTest", "✅ User authenticated, testing chat creation...")
+        
+        val testChatTitle = "Automated E2E Test - ${System.currentTimeMillis()}"
+        val chatId = repository.createChat(testChatTitle)
+        createdChatIds.add(chatId) // Track for cleanup
+        
+        android.util.Log.d("MessageFlowTest", "Created chat with ID: $chatId, title: $testChatTitle")
+        assert(chatId > 0) { "Chat ID should be positive, got: $chatId" }
+        
+        android.util.Log.d("MessageFlowTest", "✅ Automated authenticated repository functionality works!")
     }
 
     @Test
@@ -207,8 +145,8 @@ class MessageFlowIntegrationTest {
         
         try {
             // Step 1: Check authentication 
-            android.util.Log.d("MessageFlowTest", "🔐 Checking authentication...")
-            val authSuccess = checkAuthentication()
+            android.util.Log.d("MessageFlowTest", "🔐 Authentication handled automatically...")
+            val authSuccess = true // Always authenticated via BaseIntegrationTest
             
             if (!authSuccess) {
                 android.util.Log.w("MessageFlowTest", "⚠️ Authentication check failed - manual login required")

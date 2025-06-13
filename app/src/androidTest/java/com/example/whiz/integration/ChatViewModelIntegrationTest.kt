@@ -16,9 +16,9 @@ import javax.inject.Inject
 import com.example.whiz.di.AppModule
 import com.example.whiz.di.TestAppModule
 import com.example.whiz.data.repository.WhizRepository
-import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.TestCredentialsManager
+import com.example.whiz.BaseIntegrationTest
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.After
@@ -34,17 +34,12 @@ import android.util.Log
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
-@RunWith(AndroidJUnit4::class)
-class ChatViewModelIntegrationTest {
+class ChatViewModelIntegrationTest : BaseIntegrationTest() {
 
-    @get:Rule
-    var hiltRule = HiltAndroidRule(this)
+
     
     @Inject
     lateinit var repository: WhizRepository
-    
-    @Inject
-    lateinit var authRepository: AuthRepository
     
     @Inject
     lateinit var speechRecognitionService: SpeechRecognitionService
@@ -58,38 +53,9 @@ class ChatViewModelIntegrationTest {
     private val createdChatIds = mutableListOf<Long>()
 
     @Before
-    fun setup() {
-        hiltRule.inject()
-        Log.d(TAG, "🧪 ChatViewModel Integration Test Setup")
-        
-        // Check authentication status
-        runBlocking {
-            val isAuthenticated = checkAndLogAuthentication()
-            if (!isAuthenticated) {
-                Log.w(TAG, "⚠️ Tests will be skipped - authentication required")
-                Log.w(TAG, "📱 Please sign into debug app as REDACTED_TEST_EMAIL")
-            }
-        }
-    }
-    
-    /**
-     * Check authentication and provide clear guidance
-     */
-    private suspend fun checkAndLogAuthentication(): Boolean {
-        Log.d(TAG, "🔐 Checking authentication status...")
-        
-        val currentUser = authRepository.userProfile.value
-        val isSignedIn = authRepository.isSignedIn()
-        
-        if (!isSignedIn || currentUser?.email?.contains("whizvoicetest") != true) {
-            Log.w(TAG, "⚠️ Not authenticated as REDACTED_TEST_EMAIL")
-            Log.w(TAG, "Current user: ${currentUser?.email}")
-            Log.w(TAG, "Is signed in: $isSignedIn")
-            return false
-        }
-        
-        Log.d(TAG, "✅ Authenticated as: ${currentUser?.email}")
-        return true
+    override fun setUpAuthentication() {
+        super.setUpAuthentication() // This handles automatic authentication
+        Log.d(TAG, "🧪 ChatViewModel Integration Test Setup Complete")
     }
 
     @After
@@ -113,11 +79,7 @@ class ChatViewModelIntegrationTest {
     fun repository_createChat_withValidData_succeeds() = runTest {
         Log.d(TAG, "🔥 Testing repository chat creation (core business logic)")
         
-        // Check authentication first
-        if (!checkAndLogAuthentication()) {
-            Log.w(TAG, "⚠️ Skipping test - not authenticated as whizvoicetest")
-            return@runTest
-        }
+        // Authentication is automatically handled by BaseIntegrationTest
         
         // This test verifies the core repository functionality works
         // which is essential for the message flow that was failing
@@ -179,11 +141,8 @@ class ChatViewModelIntegrationTest {
     fun dataValidation_handlesEdgeCases_correctly() = runTest {
         Log.d(TAG, "🔍 Testing data validation edge cases")
         
-        // Check authentication first
-        if (!checkAndLogAuthentication()) {
-            Log.w(TAG, "⚠️ Skipping test - not authenticated as whizvoicetest")
-            return@runTest
-        }
+        // Authentication is automatically handled by BaseIntegrationTest
+        // No need to check authentication manually
         
         // Test the business logic validation that was missing
         // and caused some of the production issues
@@ -217,11 +176,8 @@ class ChatViewModelIntegrationTest {
     fun messageFlow_detectsDuplicationPatterns() = runTest {
         Log.d(TAG, "🔍 Testing message flow for duplication patterns (production bug detection)")
         
-        // Check authentication first
-        if (!checkAndLogAuthentication()) {
-            Log.w(TAG, "⚠️ Skipping test - not authenticated as whizvoicetest")
-            return@runTest
-        }
+        // Authentication is automatically handled by BaseIntegrationTest
+        // No need to check authentication manually
         
         // This test specifically looks for the message duplication pattern
         // that was happening in production
