@@ -210,46 +210,7 @@ else
     log_with_time "⚠️ Microphone permission may not be granted - tests might fail"
 fi
 
-# Function to perform automated sign-in using test authentication state
-perform_automated_signin() {
-    log_with_time "🧪 Using new test authentication that bypasses Google OAuth for $TEST_USERNAME..."
-    
-    # Use the SimpleAuthTest to verify authentication works with new system
-    log_with_time "🔥 Testing authentication via new TestAuthRepository system..."
-    
-    # Run a simple auth test that uses the new bypass authentication
-    local auth_result=$(./gradlew connectedDebugAndroidTest \
-        -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.SimpleAuthTest#testProgrammaticAuthentication \
-        --console=plain 2>&1)
-    
-    if echo "$auth_result" | grep -q "BUILD SUCCESSFUL"; then
-        log_with_time "✅ New test authentication system working successfully"
-        
-        # Launch the app to verify authentication
-        adb shell am start -n com.example.whiz/com.example.whiz.MainActivity >/dev/null 2>&1
-        sleep 3
-        
-        # Note: The app UI might not show authenticated state immediately since we're bypassing Google OAuth
-        # But the AuthRepository state should be correct for tests
-        log_with_time "✅ Test authentication verified - AuthRepository state is ready for tests"
-        log_with_time "   Note: App UI may not show authenticated state since we bypass Google OAuth"
-        log_with_time "   But all tests will work correctly with the new authentication system"
-        
-        # Give UI components time to observe the updated authentication flows
-        log_with_time "⏳ Allowing UI components time to observe authentication state changes..."
-        sleep 3
-        log_with_time "✅ UI state synchronization complete"
-        
-        return 0
-    else
-        log_with_time "❌ Failed to verify new test authentication system"
-        log_with_time "Error output (last 10 lines):"
-        echo "$auth_result" | tail -10 | while read line; do
-            log_with_time "   $line"
-        done
-        return 1
-    fi
-}
+
 
 # Function to sign out current user using proper Firebase/Google authentication
 sign_out_current_user() {
@@ -362,44 +323,7 @@ sign_out_current_user() {
     rm -f /tmp/signout_check.xml /tmp/menu_check.xml /tmp/signout_verify.xml /tmp/final_verify.xml >/dev/null 2>&1 || true
 }
 
-# Ensure correct test user is authenticated before running tests
-ensure_test_authentication() {
-    log_with_time "🔐 Ensuring correct test user authentication..."
-    
-    # First check if device is connected and responsive
-    if ! adb shell echo "test" >/dev/null 2>&1; then
-        log_with_time "❌ ERROR: ADB device not connected or not responsive"
-        return 1
-    fi
-    
-    # With the new authentication system, we don't need to check UI state
-    # since we bypass Google OAuth entirely. Just verify the test auth works.
-    log_with_time "🧪 Using new test authentication system that bypasses Google OAuth"
-    log_with_time "🔄 Attempting automated authentication as $TEST_USERNAME..."
-    
-    if perform_automated_signin; then
-        log_with_time "✅ Authentication check passed - proceeding with tests"
-        return 0
-    else
-        log_with_time "❌ New test authentication system failed"
-        log_with_time ""
-        log_with_time "🔧 TROUBLESHOOTING:"
-        log_with_time "   1. Check that the server is running and accessible"
-        log_with_time "   2. Verify test_credentials.json has correct credentials"
-        log_with_time "   3. Check server logs for authentication errors"
-        log_with_time "   4. Ensure TestAuthRepository is properly injected"
-        log_with_time ""
-        return 1
-    fi
-}
 
-# Authenticate before running tests
-if ! ensure_test_authentication; then
-    log_with_time "❌ Tests cancelled due to authentication requirement"
-    echo "" | tee -a test_output.log
-    echo "🔑 Please authenticate as $TEST_USERNAME and try again" | tee -a test_output.log
-    exit 1
-fi
 
 # Run unit tests first (fast, always use latest code)
 log_with_time "🧪 Starting unit tests..."
