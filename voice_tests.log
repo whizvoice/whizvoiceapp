@@ -1,0 +1,56 @@
+
+com.example.whiz.voice.MicButtonDuringResponseTest:
+Error in realApp_micButtonDuringResponse_worksCorrectly(com.example.whiz.voice.MicButtonDuringResponseTest):
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (ContentDescription = 'Start listening' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.findMicrophoneButton(MicButtonDuringResponseTest.kt:687)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.navigateToChat(MicButtonDuringResponseTest.kt:628)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.realApp_micButtonDuringResponse_worksCorrectly(MicButtonDuringResponseTest.kt:194)
+.
+Error in realApp_micButtonPersistenceAcrossNavigation_worksCorrectly(com.example.whiz.voice.MicButtonDuringResponseTest):
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (ContentDescription = 'Start listening' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.findMicrophoneButton(MicButtonDuringResponseTest.kt:687)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.navigateToChat(MicButtonDuringResponseTest.kt:628)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.realApp_micButtonPersistenceAcrossNavigation_worksCorrectly(MicButtonDuringResponseTest.kt:222)
+
+
+Time: 26.028
+There were 2 failures:
+1) realApp_micButtonDuringResponse_worksCorrectly(com.example.whiz.voice.MicButtonDuringResponseTest)
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (ContentDescription = 'Start listening' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.findMicrophoneButton(MicButtonDuringResponseTest.kt:687)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.navigateToChat(MicButtonDuringResponseTest.kt:628)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.realApp_micButtonDuringResponse_worksCorrectly(MicButtonDuringResponseTest.kt:194)
+2) realApp_micButtonPersistenceAcrossNavigation_worksCorrectly(com.example.whiz.voice.MicButtonDuringResponseTest)
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (ContentDescription = 'Start listening' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.findMicrophoneButton(MicButtonDuringResponseTest.kt:687)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.navigateToChat(MicButtonDuringResponseTest.kt:628)
+	at com.example.whiz.voice.MicButtonDuringResponseTest.realApp_micButtonPersistenceAcrossNavigation_worksCorrectly(MicButtonDuringResponseTest.kt:222)
+
+FAILURES!!!
+Tests run: 3,  Failures: 2
+
+

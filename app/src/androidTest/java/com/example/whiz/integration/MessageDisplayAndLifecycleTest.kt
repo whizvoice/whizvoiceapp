@@ -101,10 +101,69 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             try {
                 Log.d(TAG, "🧹 Cleaning up test session...")
                 
+                // CRITICAL: Ensure app is in a clean state for subsequent tests
+                // The voice tests use compose test rules and need a clean UI state
+                
+                // 1. Stop any ongoing speech recognition
+                try {
+                    speechRecognitionService.continuousListeningEnabled = false
+                    Log.d(TAG, "✅ Disabled speech recognition")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not disable speech recognition: ${e.message}")
+                }
+                
+                // 2. Reset app lifecycle service state
+                try {
+                    appLifecycleService.notifyAppForegrounded()
+                    Log.d(TAG, "✅ Reset app lifecycle to foreground state")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not reset app lifecycle: ${e.message}")
+                }
+                
+                // 3. Navigate to a clean screen (home screen) to clear any UI state
+                try {
+                    val context = InstrumentationRegistry.getInstrumentation().targetContext
+                    val intent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
+                    if (intent != null) {
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        context.startActivity(intent)
+                        
+                        // Wait for navigation to complete
+                        Thread.sleep(1000)
+                        Log.d(TAG, "✅ Navigated to clean home screen")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not navigate to clean screen: ${e.message}")
+                }
+                
+                // 4. Clear any compose-related state that might interfere with subsequent tests
+                try {
+                    // Force finish any activities that might have compose content
+                    val instrumentation = InstrumentationRegistry.getInstrumentation()
+                    instrumentation.runOnMainSync {
+                        // This will help clear any lingering compose state
+                        System.gc()
+                    }
+                    Thread.sleep(500)
+                    Log.d(TAG, "✅ Cleared compose state on main thread")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not clear compose state: ${e.message}")
+                }
+                
+                // 5. Force garbage collection to clean up any lingering objects
+                try {
+                    System.gc()
+                    Thread.sleep(100)
+                    Log.d(TAG, "✅ Forced garbage collection")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not force garbage collection: ${e.message}")
+                }
+                
                 // Leave user authenticated for manual testing
                 // Don't logout - let user stay logged in
                 
-                Log.d(TAG, "✅ Test cleanup completed (user remains authenticated)")
+                Log.d(TAG, "✅ Test cleanup completed (user remains authenticated, UI state cleaned)")
                 
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Error during test cleanup", e)
