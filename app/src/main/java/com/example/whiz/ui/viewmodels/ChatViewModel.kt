@@ -778,12 +778,16 @@ class ChatViewModel @Inject constructor(
                 
                 if (_micPermissionGranted.value) {
                     try {
-                        Log.d(TAG, "[LOG] Auto-enabling continuous listening on chat load (permission granted)")
+                        Log.d(TAG, "🔧 TEST_DEBUG: Auto-enabling continuous listening on chat load (permission granted)")
+                        Log.d(TAG, "🔧 TEST_DEBUG: Current continuousListeningEnabled before: $continuousListeningEnabled")
+                        Log.d(TAG, "🔧 TEST_DEBUG: Service continuousListeningEnabled before: ${speechRecognitionService.continuousListeningEnabled}")
                         delay(500L) // Increased delay to ensure speech service is fully stopped
                         
                         // Always enable continuous listening and start it, regardless of current state
                         continuousListeningEnabled = true
                         speechRecognitionService.continuousListeningEnabled = true
+                        Log.d(TAG, "🔧 TEST_DEBUG: After setting - continuousListeningEnabled: $continuousListeningEnabled")
+                        Log.d(TAG, "🔧 TEST_DEBUG: After setting - service continuousListeningEnabled: ${speechRecognitionService.continuousListeningEnabled}")
                         
                         // Force start continuous listening, but add additional delay to ensure clean state
                         delay(200L) // Additional delay to ensure isListening state is updated

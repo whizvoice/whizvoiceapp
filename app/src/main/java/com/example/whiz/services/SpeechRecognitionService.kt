@@ -59,6 +59,14 @@ class SpeechRecognitionService @Inject constructor(
 
     // --- Continuous Listening State ---
     var continuousListeningEnabled: Boolean = false
+        set(value) {
+            Log.d(TAG, "🔧 TEST_DEBUG: Setting continuousListeningEnabled from ${field} to $value")
+            field = value
+        }
+        get() {
+            Log.d(TAG, "🔧 TEST_DEBUG: Getting continuousListeningEnabled = $field")
+            return field
+        }
 
     fun initialize() {
         // Check availability first without doing anything that could crash

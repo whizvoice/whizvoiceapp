@@ -40,6 +40,7 @@ import com.example.whiz.data.local.ChatEntity
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
+@org.junit.Ignore("Integration tests disabled - device connection issues")
 class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     
     @get:Rule

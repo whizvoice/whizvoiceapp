@@ -1,25 +1,19 @@
 #!/bin/bash
 
-# Run tests on WhizVoice Debug version with PARALLEL EXECUTION and PROCESS ISOLATION
-# This builds, installs latest debug version, then runs tests in parallel for speed
-# Different test types run in separate processes to avoid interference
+# Run tests on WhizVoice Debug version with SEQUENTIAL EXECUTION
+# This builds, installs latest debug version, then runs tests sequentially for reliability
+# Tests run one after another to avoid app state interference
 # The debug app stays installed after testing for manual testing
 #
 # Usage:
-#   ./run_tests_on_debug.sh          # Run tests in parallel (default)
-#   ./run_tests_on_debug.sh --clean  # Run tests in parallel and uninstall app after
-#   ./run_tests_on_debug.sh --sequential  # Run tests sequentially (old behavior)
+#   ./run_tests_on_debug.sh          # Run tests sequentially (default)
+#   ./run_tests_on_debug.sh --clean  # Run tests sequentially and uninstall app after
 
 set -e
 
 # Parse command line arguments
 CLEAN_AFTER_TESTS=false
-SEQUENTIAL_MODE=false
 if [[ "$1" == "--clean" ]]; then
-    CLEAN_AFTER_TESTS=true
-elif [[ "$1" == "--sequential" ]]; then
-    SEQUENTIAL_MODE=true
-elif [[ "$2" == "--clean" ]]; then
     CLEAN_AFTER_TESTS=true
 fi
 
@@ -105,29 +99,31 @@ parse_test_results_from_file() {
     local test_failed="0"
     local test_skipped="0"
     
-    # Look for test execution lines
-    local test_lines=$(grep -E "^Test running|^OK \([0-9]+ test|^FAILURES!!!" "$log_file")
+    # Look for test execution lines - handle both adb and gradle formats
+    local test_lines=$(grep -E "^Test running|^OK \([0-9]+ test|^FAILURES!!!|^OK \([0-9]+ tests\)" "$log_file")
     
     if [[ -n "$test_lines" ]]; then
-        # Count individual test results
-        test_passed=$(grep -c "^OK" "$log_file" 2>/dev/null || echo "0")
-        test_failed=$(grep -c "^FAILURES!!!" "$log_file" 2>/dev/null || echo "0")
-        
-        # If we have OK results, extract the number
+        # Check for "OK (X tests)" pattern first (adb am instrument format)
         local ok_line=$(grep "^OK (" "$log_file" | tail -1)
         if [[ -n "$ok_line" ]]; then
             test_passed=$(echo "$ok_line" | grep -o "[0-9]\+" | head -1)
-        fi
-        
-        # If we have failure results, extract the number
-        local failure_line=$(grep "^FAILURES!!!" "$log_file" | tail -1)
-        if [[ -n "$failure_line" ]]; then
-            # Look for "Tests run: X, Failures: Y" pattern
-            local tests_run=$(echo "$failure_line" | grep -o "Tests run: [0-9]\+" | grep -o "[0-9]\+")
-            local failures=$(echo "$failure_line" | grep -o "Failures: [0-9]\+" | grep -o "[0-9]\+")
-            if [[ -n "$tests_run" && -n "$failures" ]]; then
-                test_failed="$failures"
-                test_passed=$((tests_run - failures))
+            test_failed="0"
+            test_skipped="0"
+        else
+            # Fallback to other patterns
+            test_passed=$(grep -c "^OK" "$log_file" 2>/dev/null || echo "0")
+            test_failed=$(grep -c "^FAILURES!!!" "$log_file" 2>/dev/null || echo "0")
+            
+            # If we have failure results, extract the number
+            local failure_line=$(grep "^FAILURES!!!" "$log_file" | tail -1)
+            if [[ -n "$failure_line" ]]; then
+                # Look for "Tests run: X, Failures: Y" pattern
+                local tests_run=$(echo "$failure_line" | grep -o "Tests run: [0-9]\+" | grep -o "[0-9]\+")
+                local failures=$(echo "$failure_line" | grep -o "Failures: [0-9]\+" | grep -o "[0-9]\+")
+                if [[ -n "$tests_run" && -n "$failures" ]]; then
+                    test_failed="$failures"
+                    test_passed=$((tests_run - failures))
+                fi
             fi
         fi
     fi
@@ -160,6 +156,83 @@ parse_test_results_from_file() {
             SERVICE_TESTS_FAILED=$test_failed
             SERVICE_TESTS_SKIPPED=$test_skipped
             ;;
+        "Voice Tests")
+            VOICE_TESTS_PASSED=$test_passed
+            VOICE_TESTS_FAILED=$test_failed
+            VOICE_TESTS_SKIPPED=$test_skipped
+            ;;
+    esac
+}
+
+# Function to run voice tests using gradle (more reliable than direct adb)
+run_voice_tests_with_gradle() {
+    local start_time=$(date +%s.%3N)
+    log_with_time "🚀 Starting Voice Tests in parallel..."
+    
+    if ./gradlew connectedDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.voice.MicButtonDuringResponseTest \
+        --console=plain \
+        --no-daemon \
+        > voice_tests.log 2>&1; then
+        
+        local end_time=$(date +%s.%3N)
+        local duration=$(echo "$end_time - $start_time" | bc)
+        log_with_time "✅ Voice Tests completed successfully in ${duration}s"
+        
+        # Parse gradle test results for voice tests
+        parse_gradle_test_results "Voice Tests" "voice_tests.log"
+        return 0
+    else
+        local exit_code=$?
+        local end_time=$(date +%s.%3N)
+        local duration=$(echo "$end_time - $start_time" | bc)
+        log_with_time "❌ Voice Tests failed in ${duration}s (exit code: $exit_code)"
+        
+        # Parse results even from failed runs
+        parse_gradle_test_results "Voice Tests" "voice_tests.log"
+        return $exit_code
+    fi
+}
+
+# Function to parse gradle test results
+parse_gradle_test_results() {
+    local group_name="$1"
+    local log_file="$2"
+    
+    # Look for gradle test summary patterns
+    local test_passed="0"
+    local test_failed="0"
+    local test_skipped="0"
+    
+    # Parse from gradle output patterns like "Starting 5 tests" and "FAILED/SUCCESS"
+    local total_tests=$(grep -o "Starting [0-9]\+ tests" "$log_file" | grep -o "[0-9]\+" | head -1 | tr -d '\n\r ')
+    local failed_count=$(grep -c "FAILED" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    # Count unique skipped tests (avoid double counting from multiple lines per test)
+    local skipped_count=$(grep -c "MicButtonDuringResponseTest.*SKIP" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    
+    if [[ -n "$total_tests" && "$total_tests" -gt 0 ]]; then
+        test_failed="$failed_count"
+        test_skipped="$skipped_count"
+        test_passed=$(( ${total_tests:-0} - ${failed_count:-0} - ${skipped_count:-0} ))
+    else
+        # Fallback: look for BUILD SUCCESSFUL/FAILED
+        local build_result=$(grep -E "BUILD SUCCESSFUL|BUILD FAILED" "$log_file" | tail -1)
+        if [[ "$build_result" == *"BUILD SUCCESSFUL"* ]]; then
+            # Estimate based on test files if no explicit count
+            test_passed=$(find app/src/androidTest -name "*MicButtonDuringResponseTest.kt" -exec grep -c "@Test" {} \; 2>/dev/null | awk '{sum += $1} END {print sum+0}' | tr -d '\n')
+            test_failed="0"
+            test_skipped="0"
+        else
+            test_passed="0"
+            test_failed="unknown"
+            test_skipped="0"
+        fi
+    fi
+    
+    log_with_time "📊 $group_name Results: $test_passed passed, $test_failed failed, $test_skipped skipped"
+    
+    # Store results in global variables for final summary
+    case "$group_name" in
         "Voice Tests")
             VOICE_TESTS_PASSED=$test_passed
             VOICE_TESTS_FAILED=$test_failed
@@ -235,11 +308,7 @@ VOICE_TESTS_PASSED="0"
 VOICE_TESTS_FAILED="0"
 VOICE_TESTS_SKIPPED="0"
 
-if [[ "$SEQUENTIAL_MODE" == "true" ]]; then
-    log_with_time "🧪 Running tests SEQUENTIALLY (old behavior)..."
-else
-    log_with_time "🚀 Running tests in PARALLEL with PROCESS ISOLATION for maximum speed..."
-fi
+log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 
 # Read test credentials
 read_test_credentials
@@ -268,76 +337,42 @@ adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 sleep 1
 log_with_time "✅ Permissions granted"
 
-if [[ "$SEQUENTIAL_MODE" == "true" ]]; then
-    # Sequential execution (old behavior)
-    log_with_time "📱 Running tests sequentially..."
-    
-    # Run unit tests first
-    run_unit_tests
-    unit_exit_code=$?
-    
-    # Run all instrumented tests together
-    if adb shell am instrument -w \
-        com.example.whiz.debug.test/com.example.whiz.HiltTestRunner \
-        > instrumented_tests.log 2>&1; then
-        log_with_time "✅ All instrumented tests completed"
-        parse_test_results_from_file "All Instrumented Tests" "instrumented_tests.log"
-        instrumented_exit_code=0
-    else
-        instrumented_exit_code=$?
-        log_with_time "❌ Some instrumented tests failed"
-        parse_test_results_from_file "All Instrumented Tests" "instrumented_tests.log"
-    fi
-    
-    overall_exit_code=$((unit_exit_code + instrumented_exit_code))
-else
-    # Parallel execution with process isolation using adb am instrument
-    log_with_time "🚀 Starting parallel test execution..."
-    
-    # Start unit tests in background
-    run_unit_tests &
-    unit_pid=$!
-    
-    # Start service tests (MessageDisplayAndLifecycleTest) in background
-    run_test_group "Service Tests" "com.example.whiz.integration.MessageDisplayAndLifecycleTest" "service_tests.log" &
-    service_pid=$!
-    
-    # Start voice tests in background  
-    run_test_group "Voice Tests" "com.example.whiz.voice.MicButtonDuringResponseTest" "voice_tests.log" &
-    voice_pid=$!
-    
-    log_with_time "⏳ All test groups started in parallel. Waiting for completion..."
-    
-    # Wait for all background processes and collect exit codes
-    wait $unit_pid
-    unit_exit_code=$?
-    
-    wait $service_pid
-    service_exit_code=$?
-    
-    wait $voice_pid
-    voice_exit_code=$?
-    
-    overall_exit_code=$((unit_exit_code + service_exit_code + voice_exit_code))
-fi
+# Run tests sequentially for maximum reliability
+log_with_time "📱 Running tests sequentially for maximum reliability..."
+
+# Run unit tests first
+run_unit_tests
+unit_exit_code=$?
+
+# Run service tests
+run_test_group "Service Tests" "com.example.whiz.integration.MessageDisplayAndLifecycleTest" "service_tests.log"
+service_exit_code=$?
+
+# Clean app state before voice tests (most sensitive to app state)
+log_with_time "🧹 Cleaning app state before voice tests..."
+adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
+sleep 2
+log_with_time "✅ App state cleaned"
+
+# Run voice tests last (most sensitive to app state)
+run_voice_tests_with_gradle
+voice_exit_code=$?
+
+overall_exit_code=$((unit_exit_code + service_exit_code + voice_exit_code))
 
 # Final summary
 log_with_time "🏁 TEST EXECUTION COMPLETED"
 log_with_time "=================================="
 
-if [[ "$SEQUENTIAL_MODE" == "true" ]]; then
-    log_with_time "📊 SEQUENTIAL EXECUTION SUMMARY:"
-else
-    log_with_time "📊 PARALLEL EXECUTION SUMMARY:"
-fi
+log_with_time "📊 SEQUENTIAL EXECUTION SUMMARY:"
 
 log_with_time "   Unit Tests: $UNIT_TESTS_PASSED passed, $UNIT_TESTS_FAILED failed"
 log_with_time "   Service Tests: $SERVICE_TESTS_PASSED passed, $SERVICE_TESTS_FAILED failed, $SERVICE_TESTS_SKIPPED skipped"
 log_with_time "   Voice Tests: $VOICE_TESTS_PASSED passed, $VOICE_TESTS_FAILED failed, $VOICE_TESTS_SKIPPED skipped"
 
-total_passed=$((UNIT_TESTS_PASSED + SERVICE_TESTS_PASSED + VOICE_TESTS_PASSED))
-total_failed=$((UNIT_TESTS_FAILED + SERVICE_TESTS_FAILED + VOICE_TESTS_FAILED))
-total_skipped=$((SERVICE_TESTS_SKIPPED + VOICE_TESTS_SKIPPED))
+total_passed=$(( ${UNIT_TESTS_PASSED:-0} + ${SERVICE_TESTS_PASSED:-0} + ${VOICE_TESTS_PASSED:-0} ))
+total_failed=$(( ${UNIT_TESTS_FAILED:-0} + ${SERVICE_TESTS_FAILED:-0} + ${VOICE_TESTS_FAILED:-0} ))
+total_skipped=$(( ${SERVICE_TESTS_SKIPPED:-0} + ${VOICE_TESTS_SKIPPED:-0} ))
 
 log_with_time "📈 TOTAL: $total_passed passed, $total_failed failed, $total_skipped skipped"
 
