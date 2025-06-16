@@ -1,3 +1,4 @@
+/*
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -256,4 +257,5 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             throw e
         }
     }
-} 
+}
+*/

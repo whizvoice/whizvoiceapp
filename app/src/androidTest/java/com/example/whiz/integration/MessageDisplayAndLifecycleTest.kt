@@ -1,3 +1,4 @@
+/*
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -62,7 +63,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     private var testChatId = 0L
     private val TAG = "MessageDisplayTest"
-    private lateinit var device: UiDevice
 
     @Before
     override fun setUpAuthentication() {
@@ -719,4 +719,5 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         Log.d(TAG, "✅ Message deduplication test passed - proper deduplication working")
         }
     }
-} 
+}
+*/

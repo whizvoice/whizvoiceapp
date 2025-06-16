@@ -1,14 +1,26 @@
 package com.example.whiz
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
+import android.content.Context
+import android.content.Intent
+import android.util.Log
 import com.example.whiz.data.auth.AuthRepository
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
 import org.junit.Before
 import org.junit.Rule
 import org.junit.runner.RunWith
 import javax.inject.Inject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Base class for integration tests that need authentication.
@@ -24,14 +36,31 @@ abstract class BaseIntegrationTest {
     @Inject
     lateinit var authRepository: AuthRepository
     
+    protected lateinit var device: UiDevice
+    protected lateinit var context: Context
+    protected val packageName = "com.example.whiz.debug"
+    private val screenshotDir = "/sdcard/Download/test_screenshots"
+    
     /**
      * Override this to skip automatic authentication (e.g., for login UI tests)
      */
     protected open val skipAutoAuthentication: Boolean = false
     
+    /**
+     * Override this to skip automatic app launch (e.g., for tests that need custom launch behavior)
+     */
+    protected open val skipAutoAppLaunch: Boolean = false
+    
     @Before
     open fun setUpAuthentication() {
         hiltRule.inject()
+        
+        // Initialize UiDevice and Context for all tests
+        device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        context = InstrumentationRegistry.getInstrumentation().context
+        
+        // Set up screenshot directory
+        setupScreenshotDirectory()
         
         if (!skipAutoAuthentication) {
             runBlocking {
@@ -49,6 +78,219 @@ abstract class BaseIntegrationTest {
                 }
             }
         }
+        
+        if (!skipAutoAppLaunch) {
+            runBlocking {
+                launchApp()
+            }
+        }
+    }
+    
+    /**
+     * Set up screenshot directory - clear existing screenshots and create fresh directory
+     */
+    private fun setupScreenshotDirectory() {
+        try {
+            // Clear existing screenshots on device
+            device.executeShellCommand("rm -rf $screenshotDir")
+            // Create fresh directory on device
+            device.executeShellCommand("mkdir -p $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "🔧 Device screenshot directory prepared: $screenshotDir")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "Failed to setup screenshot directory", e)
+        }
+    }
+    
+    /**
+     * Launch the app and wait for it to be ready
+     * Ensures clean state by force-stopping any existing instances first
+     */
+    protected suspend fun launchApp() {
+        Log.d("BaseIntegrationTest", "🚀 Launching app...")
+        Log.d("BaseIntegrationTest", "🔍 Package name: $packageName")
+        
+        // First, ensure clean state by force-stopping any existing app instances
+        Log.d("BaseIntegrationTest", "🧹 Cleaning up any existing app instances...")
+        try {
+            device.executeShellCommand("am force-stop $packageName")
+            delay(500) // Give it a moment to fully stop
+            Log.d("BaseIntegrationTest", "✅ Force-stopped existing app instances")
+        } catch (e: Exception) {
+            Log.d("BaseIntegrationTest", "⚠️ Could not force-stop app (may not be running): ${e.message}")
+        }
+        
+        // Clear any existing tasks/activities for this package
+        try {
+            device.executeShellCommand("am kill-all $packageName")
+            delay(200)
+            Log.d("BaseIntegrationTest", "✅ Killed all app processes")
+        } catch (e: Exception) {
+            Log.d("BaseIntegrationTest", "⚠️ Could not kill app processes (may not be running): ${e.message}")
+        }
+        
+        // Try multiple approaches to get the launch intent
+        var intent = context.packageManager.getLaunchIntentForPackage(packageName)
+        
+        if (intent == null) {
+            Log.d("BaseIntegrationTest", "⚠️ First attempt failed, trying with target context...")
+            val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+            intent = targetContext.packageManager.getLaunchIntentForPackage(packageName)
+        }
+        
+        if (intent == null) {
+            Log.d("BaseIntegrationTest", "⚠️ Second attempt failed, creating manual intent...")
+            intent = Intent().apply {
+                component = android.content.ComponentName(packageName, "$packageName.MainActivity")
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+        }
+        
+        Log.d("BaseIntegrationTest", "🔍 Launch intent: $intent")
+        
+        if (intent == null) {
+            Log.d("BaseIntegrationTest", "❌ CRITICAL: No launch intent found for package $packageName")
+            failWithScreenshot("No launch intent found for package $packageName", "No launch intent")
+        }
+        
+        // Use comprehensive flags to ensure clean launch
+        intent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        Log.d("BaseIntegrationTest", "🔍 Starting activity with clean launch flags: $intent")
+        
+        try {
+            context.startActivity(intent)
+            Log.d("BaseIntegrationTest", "✅ Activity started successfully")
+        } catch (e: Exception) {
+            Log.d("BaseIntegrationTest", "❌ CRITICAL: Failed to start activity: ${e.message}")
+            failWithScreenshot("Failed to start activity: ${e.message}", "Activity start failed")
+        }
+        
+        Log.d("BaseIntegrationTest", "⏳ Waiting for app to launch...")
+        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 15000)
+        Log.d("BaseIntegrationTest", "📱 App launched successfully: $appLaunched")
+        
+        if (!appLaunched) {
+            Log.d("BaseIntegrationTest", "❌ CRITICAL: App failed to launch!")
+            Log.d("BaseIntegrationTest", "🔍 Current package: ${device.currentPackageName}")
+            failWithScreenshot("App failed to launch within 15 seconds", "App launch timeout")
+        }
+        
+        delay(1500) // Let app stabilize
+        Log.d("BaseIntegrationTest", "📱 App should be stabilized now")
+        
+        // Verify app is actually in foreground after launch
+        val isInForeground = device.hasObject(By.pkg(packageName))
+        Log.d("BaseIntegrationTest", "📱 App foreground check after launch: $isInForeground")
+        Log.d("BaseIntegrationTest", "🔍 Current package after launch: ${device.currentPackageName}")
+        
+        if (!isInForeground) {
+            Log.d("BaseIntegrationTest", "⚠️ App not in foreground after launch, attempting to bring to front...")
+            // Try to bring app to foreground
+            val foregroundIntent = Intent().apply {
+                component = android.content.ComponentName(packageName, "$packageName.MainActivity")
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            context.startActivity(foregroundIntent)
+            delay(1000)
+            
+            val isNowInForeground = device.hasObject(By.pkg(packageName))
+            Log.d("BaseIntegrationTest", "📱 App foreground check after retry: $isNowInForeground")
+            
+            if (!isNowInForeground) {
+                Log.d("BaseIntegrationTest", "❌ CRITICAL: App failed to stay in foreground after launch!")
+                failWithScreenshot("App launched but failed to stay in foreground", "App not in foreground after launch")
+            }
+        }
+    }
+    
+
+    
+    /**
+     * Take a screenshot for test failure debugging
+     * @param testName Name of the test that failed
+     * @param reason Brief description of the failure
+     */
+    protected fun takeFailureScreenshot(testName: String, reason: String) {
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+            val filename = "${testName}_${timestamp}.png"
+            val filepath = "$screenshotDir/$filename"
+            
+            android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
+            device.takeScreenshot(File(filepath))
+            
+            // Screenshot will be pulled to local folder by test script after completion
+            
+            // Also dump UI hierarchy for debugging
+            val allElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for $testName:")
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
+            
+            val clickableElements = device.findObjects(By.clickable(true).pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${clickableElements.size} clickable elements")
+            clickableElements.forEachIndexed { index, element ->
+                try {
+                    val text = element.text ?: "no text"
+                    val desc = element.contentDescription ?: "no desc" 
+                    val className = element.className ?: "no class"
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Element $index: text='$text', desc='$desc', class='$className'")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Element $index: error reading properties")
+                }
+            }
+            
+            android.util.Log.d("BaseIntegrationTest", "✅ Screenshot saved: $filepath")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "Failed to take failure screenshot", e)
+        }
+    }
+    
+    /**
+     * Get the current test method name from the call stack
+     */
+    private fun getCurrentTestMethodName(): String {
+        return try {
+            val stackTrace = Thread.currentThread().stackTrace
+            // Look for test method (starts with "test" or has @Test annotation)
+            val testMethod = stackTrace.find { 
+                it.methodName.startsWith("test") || 
+                it.methodName.contains("_")  // Common pattern like "testSomething_shouldDoSomething"
+            }
+            testMethod?.methodName ?: "unknownTest"
+        } catch (e: Exception) {
+            "unknownTest"
+        }
+    }
+    
+    /**
+     * Custom fail method that automatically takes a screenshot before failing
+     * @param message The failure message
+     */
+    protected fun failWithScreenshot(message: String): Nothing {
+        val testName = getCurrentTestMethodName()
+        android.util.Log.d("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT: $message")
+        takeFailureScreenshot(testName, message)
+        org.junit.Assert.fail(message)
+        throw AssertionError(message) // This will never be reached but satisfies Nothing return type
+    }
+    
+    /**
+     * Custom fail method with reason parameter for clearer screenshot naming
+     * @param message The failure message  
+     * @param reason Brief description for screenshot filename
+     */
+    protected fun failWithScreenshot(message: String, reason: String): Nothing {
+        val testName = getCurrentTestMethodName()
+        android.util.Log.d("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT (reason: $reason): $message")
+        takeFailureScreenshot(testName, reason)
+        org.junit.Assert.fail(message)
+        throw AssertionError(message) // This will never be reached but satisfies Nothing return type
     }
 }
 

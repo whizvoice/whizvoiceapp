@@ -118,13 +118,6 @@ android {
         xmlReport = true                // Keep XML for CI tools
         textReport = false              // Disable text report
     }
-    
-    // Add test options to handle Android framework mocking
-    testOptions {
-        unitTests {
-            isReturnDefaultValues = true
-        }
-    }
 }
 
 dependencies {
@@ -230,9 +223,6 @@ dependencies {
     androidTestImplementation("com.google.code.gson:gson:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
     
-    // MockK for mocking Android APIs in integration tests
-    androidTestImplementation("io.mockk:mockk-android:1.13.8")
-    androidTestImplementation("io.mockk:mockk-agent:1.13.8")
 }
 
 // Allow references to generated code
@@ -242,3 +232,4 @@ kapt {
         arg("dagger.hilt.disableModulesHaveInstallInCheck", "true")
     }
 }
+

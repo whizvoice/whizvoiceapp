@@ -258,7 +258,7 @@ fun EmptyChatsList(onNewChatClick: () -> Unit) {
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "New Chat",
+                    contentDescription = "Start your first chat",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(32.dp)
                 )

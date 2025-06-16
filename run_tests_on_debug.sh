@@ -6,27 +6,41 @@
 # The debug app stays installed after testing for manual testing
 #
 # Usage:
-#   ./run_tests_on_debug.sh          # Run tests sequentially (default)
-#   ./run_tests_on_debug.sh --clean  # Run tests sequentially and uninstall app after
+#   ./run_tests_on_debug.sh              # Run tests sequentially (default)
+#   ./run_tests_on_debug.sh --clean      # Run tests sequentially and uninstall app after
+#   ./run_tests_on_debug.sh --skip-unit  # Skip unit tests, run only integration tests
 
 set -e
 
 # Parse command line arguments
 CLEAN_AFTER_TESTS=false
-if [[ "$1" == "--clean" ]]; then
-    CLEAN_AFTER_TESTS=true
-fi
+SKIP_UNIT_TESTS=false
+
+for arg in "$@"; do
+    case $arg in
+        --clean)
+            CLEAN_AFTER_TESTS=true
+            ;;
+        --skip-unit)
+            SKIP_UNIT_TESTS=true
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Usage: $0 [--clean] [--skip-unit]"
+            exit 1
+            ;;
+    esac
+done
 
 # Clear previous log files
 > test_output.log
-> unit_tests.log
-> service_tests.log  
-> voice_tests.log
 
 # Function to log with timestamp
 log_with_time() {
     echo "[$(date '+%H:%M:%S.%3N')] $1" | tee -a test_output.log
 }
+
+
 
 # Function to run command with logging and timing
 run_with_log() {
@@ -51,136 +65,39 @@ run_with_log() {
     echo "" | tee -a test_output.log
 }
 
-# Function to run parallel test group using adb am instrument
-run_test_group() {
-    local group_name="$1"
-    local test_class="$2"
-    local log_file="$3"
-    local start_time=$(date +%s.%3N)
-    
-    log_with_time "🚀 Starting $group_name in parallel..."
-    
-    # Run the specific test class using adb am instrument with process isolation
-    if adb shell am instrument -w \
-        -e class "$test_class" \
-        com.example.whiz.debug.test/com.example.whiz.HiltTestRunner \
-        > "$log_file" 2>&1; then
-        
-        local end_time=$(date +%s.%3N)
-        local duration=$(echo "$end_time - $start_time" | bc)
-        log_with_time "✅ $group_name completed successfully in ${duration}s"
-        
-        # Parse results from the specific log file
-        parse_test_results_from_file "$group_name" "$log_file"
-        return 0
-    else
-        local exit_code=$?
-        local end_time=$(date +%s.%3N)
-        local duration=$(echo "$end_time - $start_time" | bc)
-        log_with_time "❌ $group_name failed in ${duration}s (exit code: $exit_code)"
-        
-        # Parse results even from failed runs
-        parse_test_results_from_file "$group_name" "$log_file"
-        return $exit_code
-    fi
-}
-
-# Function to parse test results from adb am instrument output
-parse_test_results_from_file() {
-    local group_name="$1"
-    local log_file="$2"
-    
-    # Look for the instrumentation result summary
-    local instrumentation_result=$(grep -E "INSTRUMENTATION_RESULT:" "$log_file" | tail -1)
-    local instrumentation_code=$(grep -E "INSTRUMENTATION_CODE:" "$log_file" | tail -1)
-    
-    # Parse test counts from the output
-    local test_passed="0"
-    local test_failed="0"
-    local test_skipped="0"
-    
-    # Look for test execution lines - handle both adb and gradle formats
-    local test_lines=$(grep -E "^Test running|^OK \([0-9]+ test|^FAILURES!!!|^OK \([0-9]+ tests\)" "$log_file")
-    
-    if [[ -n "$test_lines" ]]; then
-        # Check for "OK (X tests)" pattern first (adb am instrument format)
-        local ok_line=$(grep "^OK (" "$log_file" | tail -1)
-        if [[ -n "$ok_line" ]]; then
-            test_passed=$(echo "$ok_line" | grep -o "[0-9]\+" | head -1)
-            test_failed="0"
-            test_skipped="0"
-        else
-            # Fallback to other patterns
-            test_passed=$(grep -c "^OK" "$log_file" 2>/dev/null || echo "0")
-            test_failed=$(grep -c "^FAILURES!!!" "$log_file" 2>/dev/null || echo "0")
-            
-            # If we have failure results, extract the number
-            local failure_line=$(grep "^FAILURES!!!" "$log_file" | tail -1)
-            if [[ -n "$failure_line" ]]; then
-                # Look for "Tests run: X, Failures: Y" pattern
-                local tests_run=$(echo "$failure_line" | grep -o "Tests run: [0-9]\+" | grep -o "[0-9]\+")
-                local failures=$(echo "$failure_line" | grep -o "Failures: [0-9]\+" | grep -o "[0-9]\+")
-                if [[ -n "$tests_run" && -n "$failures" ]]; then
-                    test_failed="$failures"
-                    test_passed=$((tests_run - failures))
-                fi
-            fi
-        fi
-    fi
-    
-    # Check instrumentation code for overall success/failure
-    local overall_success=true
-    if [[ "$instrumentation_code" == *"INSTRUMENTATION_CODE: -1"* ]]; then
-        overall_success=false
-    fi
-    
-    # Extract failed test names if any
-    local failed_test_names=$(grep -E "FAIL|Error in" "$log_file" | head -5)
-    
-    if [[ "$test_failed" -gt 0 && -n "$failed_test_names" ]]; then
-        log_with_time "📊 $group_name Results: $test_passed passed, $test_failed failed, $test_skipped skipped"
-        log_with_time "❌ Failed tests in $group_name:"
-        while IFS= read -r test_name; do
-            if [[ -n "$test_name" ]]; then
-                log_with_time "   • $test_name"
-            fi
-        done <<< "$failed_test_names"
-    else
-        log_with_time "📊 $group_name Results: $test_passed passed, $test_failed failed, $test_skipped skipped"
-    fi
-    
-    # Store results in global variables for final summary
-    case "$group_name" in
-        "Service Tests")
-            SERVICE_TESTS_PASSED=$test_passed
-            SERVICE_TESTS_FAILED=$test_failed
-            SERVICE_TESTS_SKIPPED=$test_skipped
-            ;;
-        "Voice Tests")
-            VOICE_TESTS_PASSED=$test_passed
-            VOICE_TESTS_FAILED=$test_failed
-            VOICE_TESTS_SKIPPED=$test_skipped
-            ;;
-    esac
-}
 
 # Function to run voice tests using gradle (more reliable than direct adb)
 run_voice_tests_with_gradle() {
     local start_time=$(date +%s.%3N)
-    log_with_time "🚀 Starting Voice Tests in parallel..."
+    log_with_time "🚀 Starting Voice Tests..."
+    
+    # Add section header to test_output.log
+    echo "" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "📋 DETAILED LOGS FOR Voice Tests" >> test_output.log  
+    echo "Test Class: com.example.whiz.voice.MicButtonDuringResponseTest" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "" >> test_output.log
     
     if ./gradlew connectedDebugAndroidTest \
         -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.voice.MicButtonDuringResponseTest \
         --console=plain \
         --no-daemon \
-        > voice_tests.log 2>&1; then
+        >> test_output.log 2>&1; then
         
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_with_time "✅ Voice Tests completed successfully in ${duration}s"
         
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Voice Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
         # Parse gradle test results for voice tests
-        parse_gradle_test_results "Voice Tests" "voice_tests.log"
+        parse_gradle_test_results "Voice Tests" "test_output.log"
         return 0
     else
         local exit_code=$?
@@ -188,8 +105,15 @@ run_voice_tests_with_gradle() {
         local duration=$(echo "$end_time - $start_time" | bc)
         log_with_time "❌ Voice Tests failed in ${duration}s (exit code: $exit_code)"
         
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Voice Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
         # Parse results even from failed runs
-        parse_gradle_test_results "Voice Tests" "voice_tests.log"
+        parse_gradle_test_results "Voice Tests" "test_output.log"
         return $exit_code
     fi
 }
@@ -232,13 +156,9 @@ parse_gradle_test_results() {
     log_with_time "📊 $group_name Results: $test_passed passed, $test_failed failed, $test_skipped skipped"
     
     # Store results in global variables for final summary
-    case "$group_name" in
-        "Voice Tests")
-            VOICE_TESTS_PASSED=$test_passed
-            VOICE_TESTS_FAILED=$test_failed
-            VOICE_TESTS_SKIPPED=$test_skipped
-            ;;
-    esac
+    INTEGRATION_TESTS_PASSED=$test_passed
+    INTEGRATION_TESTS_FAILED=$test_failed
+    INTEGRATION_TESTS_SKIPPED=$test_skipped
 }
 
 # Function to run unit tests
@@ -246,17 +166,32 @@ run_unit_tests() {
     local start_time=$(date +%s.%3N)
     log_with_time "🧪 Running unit tests..."
     
+    # Add section header to test_output.log
+    echo "" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "📋 DETAILED LOGS FOR Unit Tests" >> test_output.log  
+    echo "Test Command: ./gradlew testDebugUnitTest" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "" >> test_output.log
+    
     if ./gradlew testDebugUnitTest \
         --console=plain \
         --no-daemon \
-        > unit_tests.log 2>&1; then
+        >> test_output.log 2>&1; then
         
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_with_time "✅ Unit tests completed in ${duration}s"
         
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Unit Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
         # Parse unit test results
-        local unit_summary=$(grep -E "BUILD SUCCESSFUL|BUILD FAILED" unit_tests.log | tail -1)
+        local unit_summary=$(grep -E "BUILD SUCCESSFUL|BUILD FAILED" test_output.log | tail -1)
         if [[ "$unit_summary" == *"BUILD SUCCESSFUL"* ]]; then
             local estimated_tests=$(find app/src/test -name "*.kt" -exec grep -c "@Test" {} \; 2>/dev/null | awk '{sum += $1} END {print sum+0}' | tr -d '\n')
             log_with_time "📊 Unit Test Results: ~$estimated_tests tests passed"
@@ -273,6 +208,14 @@ run_unit_tests() {
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_with_time "❌ Unit tests failed in ${duration}s"
+        
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Unit Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
         UNIT_TESTS_PASSED="0"
         UNIT_TESTS_FAILED="unknown"
         return $exit_code
@@ -298,15 +241,164 @@ read_test_credentials() {
     log_with_time "🔑 Successfully read test credentials for user: $TEST_USERNAME"
 }
 
+# Function to pull test screenshots from device to local folder
+pull_test_screenshots() {
+    log_with_time "📸 Pulling test screenshots from device..."
+    
+    # Ensure test_screenshots directory exists (already cleaned before tests)
+    mkdir -p test_screenshots
+    
+    # Check if device has any screenshots
+    local screenshot_count=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+    
+    if [[ "$screenshot_count" -gt 0 ]]; then
+        # Pull all screenshots from device
+        if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+            # Move screenshots from temp folder to final location (find all .png files)
+            find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
+            rm -rf temp_screenshots
+            local local_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+            log_with_time "✅ Successfully pulled $local_count screenshots to test_screenshots/"
+            
+            # List the screenshots that were pulled
+            if [[ "$local_count" -gt 0 ]]; then
+                log_with_time "📋 Screenshots captured:"
+                for screenshot in test_screenshots/*.png; do
+                    if [[ -f "$screenshot" ]]; then
+                        local filename=$(basename "$screenshot")
+                        log_with_time "   • $filename"
+                    fi
+                done
+            fi
+        else
+            log_with_time "⚠️  Failed to pull screenshots from device"
+        fi
+    else
+        log_with_time "📸 No screenshots found on device (no test failures with screenshots)"
+    fi
+}
+
+# Function to run integration tests with logcat capture
+run_integration_tests_with_logcat() {
+    local start_time=$(date +%s.%3N)
+    log_with_time "🚀 Starting Integration Tests with Logcat..."
+    
+    # Add section header to test_output.log
+    echo "" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "📋 DETAILED LOGS FOR Integration Tests" >> test_output.log  
+    echo "Test Classes: All integration test classes" >> test_output.log
+    echo "=================================================================================" >> test_output.log
+    echo "" >> test_output.log
+    
+    # Clear logcat and start capture for test logs in background
+    adb logcat -c
+    local temp_logcat_file="temp_logcat_integration.log"
+    adb logcat -v time "*:S" AppLifecycleTest:D > "$temp_logcat_file" 2>&1 &
+    local logcat_pid=$!
+    
+    # Run all integration tests (this will run all androidTest classes)
+    # Use temp file to filter out gradle task output
+    local temp_gradle_output="temp_gradle_output.log"
+    if ./gradlew connectedDebugAndroidTest \
+        --console=plain \
+        --no-daemon \
+        > "$temp_gradle_output" 2>&1; then
+        
+        # Filter out gradle task lines and append to test_output.log
+        grep -v "^> Task :" "$temp_gradle_output" | \
+        grep -v "^Configuration on demand" | \
+        grep -v "^BUILD SUCCESSFUL" | \
+        grep -v "^BUILD FAILED" | \
+        grep -v "actionable tasks:" >> test_output.log
+        rm -f "$temp_gradle_output"
+        
+        # Stop logcat capture
+        kill $logcat_pid 2>/dev/null || true
+        sleep 1
+        
+        local end_time=$(date +%s.%3N)
+        local duration=$(echo "$end_time - $start_time" | bc)
+        log_with_time "✅ Integration Tests completed successfully in ${duration}s"
+        
+        # Append filtered logcat output to test_output.log
+        echo "" >> test_output.log
+        echo "📱 ANDROID LOGCAT OUTPUT (AppLifecycleTest TAG):" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        if [[ -f "$temp_logcat_file" && -s "$temp_logcat_file" ]]; then
+            cat "$temp_logcat_file" >> test_output.log
+        else
+            echo "No logcat output captured for AppLifecycleTest tag" >> test_output.log
+        fi
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Integration Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
+        # Parse gradle test results for integration tests
+        parse_gradle_test_results "Integration Tests" "test_output.log"
+        
+        # Clean up temp logcat file
+        rm -f "$temp_logcat_file"
+        return 0
+    else
+        local exit_code=$?
+        
+        # Stop logcat capture
+        kill $logcat_pid 2>/dev/null || true
+        sleep 1
+        
+        # Filter out gradle task lines and append to test_output.log even for failures
+        grep -v "^> Task :" "$temp_gradle_output" | \
+        grep -v "^Configuration on demand" | \
+        grep -v "^BUILD SUCCESSFUL" | \
+        grep -v "^BUILD FAILED" | \
+        grep -v "actionable tasks:" >> test_output.log
+        rm -f "$temp_gradle_output"
+        
+        local end_time=$(date +%s.%3N)
+        local duration=$(echo "$end_time - $start_time" | bc)
+        log_with_time "❌ Integration Tests failed in ${duration}s (exit code: $exit_code)"
+        
+        # Append filtered logcat output to test_output.log even for failed tests
+        echo "" >> test_output.log
+        echo "📱 ANDROID LOGCAT OUTPUT (AppLifecycleTest TAG) - FROM FAILED TEST:" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        if [[ -f "$temp_logcat_file" && -s "$temp_logcat_file" ]]; then
+            cat "$temp_logcat_file" >> test_output.log
+        else
+            echo "No logcat output captured for AppLifecycleTest tag" >> test_output.log
+        fi
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
+        # Add end section to test_output.log
+        echo "" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "📋 END OF DETAILED LOGS FOR Integration Tests" >> test_output.log
+        echo "=================================================================================" >> test_output.log
+        echo "" >> test_output.log
+        
+        # Parse results even from failed runs
+        parse_gradle_test_results "Integration Tests" "test_output.log"
+        
+        # Clean up temp logcat file
+        rm -f "$temp_logcat_file"
+        return $exit_code
+    fi
+}
+
 # Initialize result variables
 UNIT_TESTS_PASSED="0"
 UNIT_TESTS_FAILED="0"
-SERVICE_TESTS_PASSED="0"
-SERVICE_TESTS_FAILED="0"
-SERVICE_TESTS_SKIPPED="0"
-VOICE_TESTS_PASSED="0"
-VOICE_TESTS_FAILED="0"
-VOICE_TESTS_SKIPPED="0"
+INTEGRATION_TESTS_PASSED="0"
+INTEGRATION_TESTS_FAILED="0"
+INTEGRATION_TESTS_SKIPPED="0"
 
 log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 
@@ -338,27 +430,42 @@ sleep 1
 log_with_time "✅ Permissions granted"
 
 # Run tests sequentially for maximum reliability
-log_with_time "📱 Running tests sequentially for maximum reliability..."
+if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
+    log_with_time "📱 Running integration tests only (skipping unit tests)..."
+    unit_exit_code=0
+    UNIT_TESTS_PASSED="skipped"
+    UNIT_TESTS_FAILED="0"
+else
+    log_with_time "📱 Running tests sequentially for maximum reliability..."
+    
+    # Run unit tests first
+    run_unit_tests
+    unit_exit_code=$?
+fi
 
-# Run unit tests first
-run_unit_tests
-unit_exit_code=$?
-
-# Run service tests
-run_test_group "Service Tests" "com.example.whiz.integration.MessageDisplayAndLifecycleTest" "service_tests.log"
-service_exit_code=$?
-
-# Clean app state before voice tests (most sensitive to app state)
-log_with_time "🧹 Cleaning app state before voice tests..."
+# Clean app state and screenshots before integration tests
+log_with_time "🧹 Cleaning app state and old screenshots before integration tests..."
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
+
+# Clean old screenshots from local directory
+rm -rf test_screenshots/* 2>/dev/null || true
+mkdir -p test_screenshots
+
+# Clean old screenshots from device
+adb shell rm -rf /sdcard/Download/test_screenshots/* 2>/dev/null || true
+adb shell mkdir -p /sdcard/Download/test_screenshots 2>/dev/null || true
+
 sleep 2
-log_with_time "✅ App state cleaned"
+log_with_time "✅ App state and screenshots cleaned"
 
-# Run voice tests last (most sensitive to app state)
-run_voice_tests_with_gradle
-voice_exit_code=$?
+# Run integration tests with logcat capture
+run_integration_tests_with_logcat
+integration_exit_code=$?
 
-overall_exit_code=$((unit_exit_code + service_exit_code + voice_exit_code))
+# Pull screenshots from device to local folder after all tests complete
+pull_test_screenshots
+
+overall_exit_code=$((unit_exit_code + integration_exit_code))
 
 # Final summary
 log_with_time "🏁 TEST EXECUTION COMPLETED"
@@ -367,12 +474,11 @@ log_with_time "=================================="
 log_with_time "📊 SEQUENTIAL EXECUTION SUMMARY:"
 
 log_with_time "   Unit Tests: $UNIT_TESTS_PASSED passed, $UNIT_TESTS_FAILED failed"
-log_with_time "   Service Tests: $SERVICE_TESTS_PASSED passed, $SERVICE_TESTS_FAILED failed, $SERVICE_TESTS_SKIPPED skipped"
-log_with_time "   Voice Tests: $VOICE_TESTS_PASSED passed, $VOICE_TESTS_FAILED failed, $VOICE_TESTS_SKIPPED skipped"
+log_with_time "   Integration Tests: $INTEGRATION_TESTS_PASSED passed, $INTEGRATION_TESTS_FAILED failed, $INTEGRATION_TESTS_SKIPPED skipped"
 
-total_passed=$(( ${UNIT_TESTS_PASSED:-0} + ${SERVICE_TESTS_PASSED:-0} + ${VOICE_TESTS_PASSED:-0} ))
-total_failed=$(( ${UNIT_TESTS_FAILED:-0} + ${SERVICE_TESTS_FAILED:-0} + ${VOICE_TESTS_FAILED:-0} ))
-total_skipped=$(( ${SERVICE_TESTS_SKIPPED:-0} + ${VOICE_TESTS_SKIPPED:-0} ))
+total_passed=$(( ${UNIT_TESTS_PASSED:-0} + ${INTEGRATION_TESTS_PASSED:-0} ))
+total_failed=$(( ${UNIT_TESTS_FAILED:-0} + ${INTEGRATION_TESTS_FAILED:-0} ))
+total_skipped=$(( ${INTEGRATION_TESTS_SKIPPED:-0} ))
 
 log_with_time "📈 TOTAL: $total_passed passed, $total_failed failed, $total_skipped skipped"
 
@@ -380,10 +486,10 @@ if [[ "$overall_exit_code" -eq 0 ]]; then
     log_with_time "🎉 ALL TESTS PASSED!"
 else
     log_with_time "❌ SOME TESTS FAILED (exit code: $overall_exit_code)"
-    log_with_time "📋 Check individual log files for details:"
-    log_with_time "   • unit_tests.log - Unit test details"
-    log_with_time "   • service_tests.log - Service test details"  
-    log_with_time "   • voice_tests.log - Voice test details"
+    log_with_time "📋 Check test_output.log for full details including:"
+    log_with_time "   • Complete test execution logs with individual test names"
+    log_with_time "   • Detailed error messages and stack traces"  
+    log_with_time "   • Test timing and performance information"
 fi
 
 # Cleanup

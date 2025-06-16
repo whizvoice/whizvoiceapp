@@ -5,6 +5,9 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import com.example.whiz.data.preferences.VoiceSettings
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +18,10 @@ class TTSManager @Inject constructor(
     private val TAG = "TTSManager"
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+    
+    // Expose isSpeaking state for testing and UI
+    private val _isSpeaking = MutableStateFlow(false)
+    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
     
     // Event callbacks for audio coordination
     private var onSpeechStarted: (() -> Unit)? = null
@@ -39,21 +46,25 @@ class TTSManager @Inject constructor(
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 Log.d(TAG, "TTS started for utterance: $utteranceId")
+                _isSpeaking.value = true
                 onSpeechStarted?.invoke()
             }
             
             override fun onDone(utteranceId: String?) {
                 Log.d(TAG, "TTS completed for utterance: $utteranceId")
+                _isSpeaking.value = false
                 onSpeechCompleted?.invoke()
             }
             
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "TTS error for utterance: $utteranceId")
+                _isSpeaking.value = false
                 onSpeechError?.invoke()
             }
             
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
                 Log.d(TAG, "TTS stopped for utterance: $utteranceId, interrupted: $interrupted")
+                _isSpeaking.value = false
                 onSpeechCompleted?.invoke()
             }
         })
