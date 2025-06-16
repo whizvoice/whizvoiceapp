@@ -174,10 +174,20 @@ run_unit_tests() {
     echo "=================================================================================" >> test_output.log
     echo "" >> test_output.log
     
+    # Use temp file to filter out gradle task output
+    local temp_gradle_output="temp_gradle_unit_output.log"
     if ./gradlew testDebugUnitTest \
         --console=plain \
         --no-daemon \
-        >> test_output.log 2>&1; then
+        > "$temp_gradle_output" 2>&1; then
+        
+        # Filter out gradle task lines and append to test_output.log
+        grep -v "^> Task :" "$temp_gradle_output" | \
+        grep -v "^Configuration on demand" | \
+        grep -v "^BUILD SUCCESSFUL" | \
+        grep -v "^BUILD FAILED" | \
+        grep -v "actionable tasks:" >> test_output.log
+        rm -f "$temp_gradle_output"
         
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
@@ -205,6 +215,15 @@ run_unit_tests() {
         return 0
     else
         local exit_code=$?
+        
+        # Filter out gradle task lines and append to test_output.log even for failures
+        grep -v "^> Task :" "$temp_gradle_output" | \
+        grep -v "^Configuration on demand" | \
+        grep -v "^BUILD SUCCESSFUL" | \
+        grep -v "^BUILD FAILED" | \
+        grep -v "actionable tasks:" >> test_output.log
+        rm -f "$temp_gradle_output"
+        
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_with_time "❌ Unit tests failed in ${duration}s"
