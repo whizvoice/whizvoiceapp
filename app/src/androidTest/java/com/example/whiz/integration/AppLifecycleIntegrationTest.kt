@@ -176,19 +176,50 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("Clicked New Chat button but still on My Chats page - navigation failed")
             }
             
-            Log.d(TAG, "✅ Successfully navigated away from My Chats page")
+            Log.d(TAG, "✅ Successfully navigated to New Chat page")
             
+            // Wait for speech recognition service to be ready
+            Log.d(TAG, "⏳ Waiting for speech recognition service to be ready...")
+            var waitAttempts = 0
+            val maxWaitAttempts = 20 // 30 attempts * 100ms = 3 seconds max
+            while (!speechRecognitionService.isInitialized && waitAttempts < maxWaitAttempts) {
+                delay(100)
+                waitAttempts++
+                if (waitAttempts % 10 == 0) { // Log every second
+                    Log.d(TAG, "⏳ Still waiting for service to initialize... attempt $waitAttempts/30, isInitialized=${speechRecognitionService.isInitialized}")
+                }
+            }
+            
+            if (speechRecognitionService.isInitialized) {
+                Log.d(TAG, "✅ Speech recognition service ready after ${waitAttempts * 100}ms")
+            } else {
+                Log.w(TAG, "⚠️ Speech recognition service not ready within 2 seconds")
+                failWithScreenshot("Speech recognition service should be initialized but was not ready within 3 seconds")
+            }
 
-            // Now we should be on a chat page - verify continuous listening is enabled
-            val chatPageListeningState = speechRecognitionService.continuousListeningEnabled
-            Log.d(TAG, "📊 Chat page listening state: continuous=$chatPageListeningState")
+            // Now check if listening is active (after service is ready)
+            val chatPageContinousListening = speechRecognitionService.continuousListeningEnabled
+            val chatPageIsListening = speechRecognitionService.isListening.value
+            val chatPageSpeakingState = ttsManager.isSpeaking.value
+            Log.d(TAG, "📊 Chat page states: continuous=$chatPageContinousListening, isListening=$chatPageIsListening, speaking=$chatPageSpeakingState")
 
-            if (!chatPageListeningState) {
+            if (!chatPageContinousListening) {
                 Log.e(TAG, "❌ CRITICAL: Expected continuous listening to be TRUE on chat page, but got FALSE")
                 failWithScreenshot("Continuous listening should be TRUE on chat page but was FALSE")
             }
 
-            Log.d(TAG, "✅ Continuous listening correctly enabled on chat page")
+            if (!chatPageIsListening) {
+                Log.e(TAG, "❌ CRITICAL: Expected isListening to be TRUE on chat page, but got FALSE")
+                failWithScreenshot("isListening should be TRUE on chat page but was FALSE")
+            }
+
+            // TTS should not be speaking initially (no conversation started yet)
+            if (chatPageSpeakingState) {
+                Log.e(TAG, "❌ CRITICAL: Expected TTS speaking to be FALSE initially, but got TRUE")
+                failWithScreenshot("TTS should not be speaking initially but was TRUE")
+            }
+
+            Log.d(TAG, "✅ Chat page service states correct: continuous=true, isListening=true, speaking=false")
 
             // Check app state - must be in foreground to test lifecycle behavior
             val isInForeground = device.hasObject(By.pkg(packageName))
@@ -220,16 +251,22 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ App successfully backgrounded")
 
-            // Test that real backgrounding affects services - should be FALSE
-            val backgroundState = speechRecognitionService.continuousListeningEnabled
-            Log.d(TAG, "📊 After REAL background: continuous=$backgroundState")
+            // Test that real backgrounding affects services
+            val backgroundContinousListening = speechRecognitionService.continuousListeningEnabled
+            val backgroundIsListening = speechRecognitionService.isListening.value
+            Log.d(TAG, "📊 After REAL background: continuous=$backgroundContinousListening, isListening=$backgroundIsListening")
 
-            if (!backgroundState) {
+            if (!backgroundContinousListening) {
                 Log.e(TAG, "❌ CRITICAL: Expected continuous listening to be TRUE when backgrounded, but got FALSE")
-                failWithScreenshot("Continuous listening should be FALSE when backgrounded but was TRUE")
+                failWithScreenshot("Continuous listening should be TRUE when backgrounded but was FALSE")
             }
 
-            Log.d(TAG, "✅ Continuous listening correctly preserved on state when backgrounded")
+            if (backgroundIsListening) {
+                Log.e(TAG, "❌ CRITICAL: Expected isListening to be FALSE when backgrounded, but got TRUE")
+                failWithScreenshot("isListening should be FALSE when backgrounded but was TRUE")
+            }
+
+            Log.d(TAG, "✅ Service states correctly preserved when backgrounded: continuous=true, isListening=false")
 
             // REAL USER ACTION: Foreground the app via intent (back to chat page)
             Log.d(TAG, "🔄 REAL ACTION: Launching app to foreground...")
@@ -252,17 +289,23 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ App successfully returned to foreground")
         
-            // Test that services are accessible after navigation
-            val afterNavigation = speechRecognitionService.continuousListeningEnabled
-            Log.d(TAG, "📊 After navigation back: continuous=$afterNavigation")
+            // Test that services are accessible after navigation back to foreground
+            val afterNavigationContinuousListening = speechRecognitionService.continuousListeningEnabled
+            val afterNavigationIsListening = speechRecognitionService.isListening.value
+            Log.d(TAG, "📊 After navigation back: continuous=$afterNavigationContinuousListening, isListening=$afterNavigationIsListening")
 
-            if (!afterNavigation) {
+            if (!afterNavigationContinuousListening) {
                 Log.e(TAG, "❌ CRITICAL: Expected continuous listening to remain TRUE when navigating back to app, but got FALSE")
-                failWithScreenshot("Continuous listening should be FALSE when backgrounded but was TRUE")
+                failWithScreenshot("Continuous listening should be TRUE when returning to foreground but was FALSE")
+            }
+
+            if (!afterNavigationIsListening) {
+                Log.e(TAG, "❌ CRITICAL: Expected isListening to be TRUE when returning to foreground, but got FALSE")
+                failWithScreenshot("isListening should be TRUE when returning to foreground but was FALSE")
             }
             
             // Key insight: Real navigation triggered observable service state changes
-            Log.d(TAG, "✅ REAL navigation away and back successfully triggers service behaviors")
+            Log.d(TAG, "✅ REAL navigation away and back successfully preserves service states: continuous=true, isListening=true")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during real navigation test", e)
