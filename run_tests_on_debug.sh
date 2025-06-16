@@ -461,9 +461,11 @@ if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
 else
     log_with_time "📱 Running tests sequentially for maximum reliability..."
     
-    # Run unit tests first
+    # Run unit tests first (don't exit on failure)
+    set +e  # Temporarily disable exit on error
     run_unit_tests
     unit_exit_code=$?
+    set -e  # Re-enable exit on error
 fi
 
 # Clean app state and screenshots before integration tests
@@ -481,9 +483,11 @@ adb shell mkdir -p /sdcard/Download/test_screenshots 2>/dev/null || true
 sleep 2
 log_with_time "✅ App state and screenshots cleaned"
 
-# Run integration tests with logcat capture
+# Run integration tests with logcat capture (don't exit on failure)
+set +e  # Temporarily disable exit on error
 run_integration_tests_with_logcat
 integration_exit_code=$?
+set -e  # Re-enable exit on error
 
 # Pull screenshots from device to local folder after all tests complete
 pull_test_screenshots

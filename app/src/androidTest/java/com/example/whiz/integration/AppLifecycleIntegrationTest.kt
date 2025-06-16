@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.UiObject2
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
@@ -139,25 +140,43 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 }
             }
 
-            // Look for "New Chat" button to create/enter a chat
-            Log.d(TAG, "🔍 Searching for New Chat button patterns...")
-            val newChatButton = device.findObject(By.textContains("New Chat").pkg(packageName)) 
-                ?: device.findObject(By.descContains("Start new chat").pkg(packageName))
-                ?: device.findObject(By.textContains("Start").pkg(packageName))
-                ?: device.findObject(By.textContains("Chat").pkg(packageName))
-                ?: device.findObject(By.textContains("New").pkg(packageName))
-                ?: device.findObject(By.descContains("chat").pkg(packageName))
-
-            if (newChatButton == null) {
-                Log.e(TAG, "❌ CRITICAL: Cannot find New Chat button after UI debugging!")
-                Log.d(TAG, "🔍 Tried patterns: 'New Chat', 'Start new chat', 'Start', 'Chat', 'New', desc:'chat'")
-                failWithScreenshot("Test requires navigation to a chat page but no New Chat button was found")
+            // Look for "New Chat" FAB to create/enter a chat
+            Log.d(TAG, "🔍 Searching for New Chat FAB...")
+            
+            // Try multiple specific approaches to find the FAB
+            var newChatButton: UiObject2? = null
+            
+            // Method 1: Exact content description match
+            newChatButton = device.findObject(By.desc("New Chat").pkg(packageName))
+            if (newChatButton != null) {
+                Log.d(TAG, "✅ Found FAB with exact 'New Chat' description")
+            } else {
+                failWithScreenshot("Test was unable to find New Chat button")
             }
 
-            Log.d(TAG, "🔘 Found New Chat button, clicking...")
-            newChatButton.click()
+
+            // Debug what we're about to click
+            try {
+                val buttonText = newChatButton?.text ?: "no text"
+                val buttonDesc = newChatButton?.contentDescription ?: "no desc"
+                val buttonBounds = newChatButton?.visibleBounds
+                Log.d(TAG, "🔘 About to click: text='$buttonText', desc='$buttonDesc', bounds=$buttonBounds")
+            } catch (e: Exception) {
+                Log.d(TAG, "🔘 Could not read button properties: ${e.message}")
+            }
+            
+            Log.d(TAG, "🔘 Clicking New Chat button...")
+            newChatButton?.click()
             delay(2000) // Wait for chat to load
-            Log.d(TAG, "✅ Successfully navigated to chat page")
+            
+            // Verify we actually navigated by checking if we're still on the chats list
+            val stillOnChatsList = device.hasObject(By.text("My Chats").pkg(packageName))
+            if (stillOnChatsList) {
+                Log.e(TAG, "❌ CRITICAL: Still on 'My Chats' page after clicking - navigation failed!")
+                failWithScreenshot("Clicked New Chat button but still on My Chats page - navigation failed")
+            }
+            
+            Log.d(TAG, "✅ Successfully navigated away from My Chats page")
             
 
             // Now we should be on a chat page - verify continuous listening is enabled
