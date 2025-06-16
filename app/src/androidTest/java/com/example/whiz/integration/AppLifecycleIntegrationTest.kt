@@ -74,7 +74,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(millis)
     }
 
-    // @Test
+    @Test
     fun realApp_navigationAwayAndBack_behavesCorrectly(): Unit = runBlocking {
         Log.d(TAG, "🚀🚀🚀 STARTING TEST: realApp_navigationAwayAndBack_behavesCorrectly 🚀🚀🚀")
         Log.d(TAG, "🧪 Testing REAL navigation away and back triggers correct service behaviors")
@@ -86,7 +86,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         context.startActivity(intent)
         
         device.wait(Until.hasObject(By.pkg(packageName)), 15000)
-        delay(5000) // Let app stabilize longer
+        delay(3000) // Let app stabilize longer
         
         try {
             // Verify we can access services (the core requirement)
@@ -96,62 +96,158 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // Check app state (but don't fail if not perfect)
             val initialAppVisible = device.hasObject(By.pkg(packageName))
             Log.d(TAG, "📱 App initially visible: $initialAppVisible")
+
+            // delay(3000) // Let app stabilize
             
             if (!initialAppVisible) {
                 Log.e(TAG, "❌ CRITICAL: App not detected as foreground!")
                 Log.d(TAG, "🔍 Current package: ${device.currentPackageName}")
                 failWithScreenshot("Test requires app to be initially visible but app is not detected as foreground", "App not initially visible")
             }
+                        // Navigate to a chat page (where continuous listening should be enabled)
+            Log.d(TAG, "📱 Navigating to chat page...")
+
+            // First, let's debug what UI elements are actually available
+            Log.d(TAG, "🔍 UI DEBUGGING: Scanning for available elements...")
+            val allElements = device.findObjects(By.pkg(packageName))
+            Log.d(TAG, "🔍 Found ${allElements.size} total elements in package $packageName")
             
-            Log.d(TAG, "✅ App initially visible")
-        
-        // Navigate to Settings (simulating user navigating away)
-        Log.d(TAG, "🔧 Opening Settings app (navigating away)")
-        val settingsIntent = Intent(android.provider.Settings.ACTION_SETTINGS)
-        settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(settingsIntent)
-        
-        delay(3000)
-        
-        // Verify we're in Settings
-        val inSettings = device.hasObject(By.pkg("com.android.settings"))
-        Log.d(TAG, "📱 In Settings app: $inSettings")
-        
-        // Test that we can still access our app services (integration working)
-        val duringNavigation = speechRecognitionService.continuousListeningEnabled
-        Log.d(TAG, "📊 During navigation away: continuous=$duringNavigation")
-        
-        // Navigate back to our app
-        Log.d(TAG, "🔄 Navigating back to Whiz app")
-        val whizIntent = context.packageManager.getLaunchIntentForPackage(packageName)!!
-        whizIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        context.startActivity(whizIntent)
-        
-        device.wait(Until.hasObject(By.pkg(packageName)), 5000)
-        delay(2000)
-        
-            // Check if we're back in our app
-            val backInApp = device.hasObject(By.pkg(packageName))
-            Log.d(TAG, "📱 Back in app: $backInApp")
-            Log.d(TAG, "🔍 Current package after return: ${device.currentPackageName}")
+            val clickableElements = device.findObjects(By.clickable(true).pkg(packageName))
+            Log.d(TAG, "🔍 Found ${clickableElements.size} clickable elements")
             
-            if (!backInApp) {
-                Log.e(TAG, "❌ CRITICAL: App not detected as foreground after navigation back!")
-                fail("Test requires app to be foreground after navigation back but app is not detected")
+            clickableElements.forEachIndexed { index, element ->
+                try {
+                    val text = element.text ?: "no text"
+                    val desc = element.contentDescription ?: "no desc"
+                    val className = element.className ?: "no class"
+                    Log.d(TAG, "🔍 Clickable[$index]: text='$text', desc='$desc', class='$className'")
+                } catch (e: Exception) {
+                    Log.d(TAG, "🔍 Clickable[$index]: error reading properties - ${e.message}")
+                }
             }
             
-            Log.d(TAG, "✅ Successfully navigated back to app")
+            // Also check for all elements that might have text
+            Log.d(TAG, "🔍 Checking all elements for text content...")
+            allElements.take(15).forEachIndexed { index, element ->
+                try {
+                    val text = element.text
+                    if (!text.isNullOrEmpty()) {
+                        Log.d(TAG, "🔍 Element[$index] with text: '$text'")
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "🔍 Element[$index]: error reading text - ${e.message}")
+                }
+            }
+
+            // Look for "New Chat" button to create/enter a chat
+            Log.d(TAG, "🔍 Searching for New Chat button patterns...")
+            val newChatButton = device.findObject(By.textContains("New Chat").pkg(packageName)) 
+                ?: device.findObject(By.descContains("Start new chat").pkg(packageName))
+                ?: device.findObject(By.textContains("Start").pkg(packageName))
+                ?: device.findObject(By.textContains("Chat").pkg(packageName))
+                ?: device.findObject(By.textContains("New").pkg(packageName))
+                ?: device.findObject(By.descContains("chat").pkg(packageName))
+
+            if (newChatButton == null) {
+                Log.e(TAG, "❌ CRITICAL: Cannot find New Chat button after UI debugging!")
+                Log.d(TAG, "🔍 Tried patterns: 'New Chat', 'Start new chat', 'Start', 'Chat', 'New', desc:'chat'")
+                failWithScreenshot("Test requires navigation to a chat page but no New Chat button was found")
+            }
+
+            Log.d(TAG, "🔘 Found New Chat button, clicking...")
+            newChatButton.click()
+            delay(2000) // Wait for chat to load
+            Log.d(TAG, "✅ Successfully navigated to chat page")
+            
+
+            // Now we should be on a chat page - verify continuous listening is enabled
+            val chatPageListeningState = speechRecognitionService.continuousListeningEnabled
+            Log.d(TAG, "📊 Chat page listening state: continuous=$chatPageListeningState")
+
+            if (!chatPageListeningState) {
+                Log.e(TAG, "❌ CRITICAL: Expected continuous listening to be TRUE on chat page, but got FALSE")
+                failWithScreenshot("Continuous listening should be TRUE on chat page but was FALSE")
+            }
+
+            Log.d(TAG, "✅ Continuous listening correctly enabled on chat page")
+
+            // Check app state - must be in foreground to test lifecycle behavior
+            val isInForeground = device.hasObject(By.pkg(packageName))
+            Log.d(TAG, "📱 App foreground detected: $isInForeground")
+
+            if (!isInForeground) {
+                Log.e(TAG, "❌ CRITICAL: App not detected as foreground!")
+                Log.d(TAG, "🔍 Current package: ${device.currentPackageName}")
+                failWithScreenshot("Test requires app to be in foreground but app is not detected as foreground")
+            }
+
+            Log.d(TAG, "✅ App confirmed in foreground on chat page")
+
+            // REAL USER ACTION: Background the app via home button
+            Log.d(TAG, "🏠 REAL ACTION: Pressing home to background app...")
+            device.pressHome()
+            delay(2000)
+
+            // Check if app is backgrounded (home press should change focus)
+            val isBackgrounded = !device.hasObject(By.pkg(packageName))
+            Log.d(TAG, "📱 App backgrounded: $isBackgrounded")
+            Log.d(TAG, "🔍 Current package after home: ${device.currentPackageName}")
+
+            if (!isBackgrounded) {
+                Log.e(TAG, "❌ CRITICAL: App not successfully backgrounded!")
+                Log.d(TAG, "🔍 Current package after home: ${device.currentPackageName}")
+                failWithScreenshot("Test requires app to be backgrounded but app is still detected as foreground")
+            }
+
+            Log.d(TAG, "✅ App successfully backgrounded")
+
+            // Test that real backgrounding affects services - should be FALSE
+            val backgroundState = speechRecognitionService.continuousListeningEnabled
+            Log.d(TAG, "📊 After REAL background: continuous=$backgroundState")
+
+            if (!backgroundState) {
+                Log.e(TAG, "❌ CRITICAL: Expected continuous listening to be TRUE when backgrounded, but got FALSE")
+                failWithScreenshot("Continuous listening should be FALSE when backgrounded but was TRUE")
+            }
+
+            Log.d(TAG, "✅ Continuous listening correctly preserved on state when backgrounded")
+
+            // REAL USER ACTION: Foreground the app via intent (back to chat page)
+            Log.d(TAG, "🔄 REAL ACTION: Launching app to foreground...")
+            val foregroundIntent = context.packageManager.getLaunchIntentForPackage(packageName)!!
+            foregroundIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            context.startActivity(foregroundIntent)
+
+            device.wait(Until.hasObject(By.pkg(packageName)), 5000)
+            delay(2000)
+
+            // Check if app is back in foreground
+            val isBackInForeground = device.hasObject(By.pkg(packageName))
+            Log.d(TAG, "📱 App back in foreground: $isBackInForeground")
+            Log.d(TAG, "🔍 Current package after launch: ${device.currentPackageName}")
+
+            if (!isBackInForeground) {
+                Log.e(TAG, "❌ CRITICAL: App not successfully returned to foreground!")
+                failWithScreenshot("Test requires app to return to foreground but app is not detected as foreground")
+            }
+
+            Log.d(TAG, "✅ App successfully returned to foreground")
         
             // Test that services are accessible after navigation
             val afterNavigation = speechRecognitionService.continuousListeningEnabled
             Log.d(TAG, "📊 After navigation back: continuous=$afterNavigation")
+
+            if (!afterNavigation) {
+                Log.e(TAG, "❌ CRITICAL: Expected continuous listening to remain TRUE when navigating back to app, but got FALSE")
+                failWithScreenshot("Continuous listening should be FALSE when backgrounded but was TRUE")
+            }
             
             // Key insight: Real navigation triggered observable service state changes
             Log.d(TAG, "✅ REAL navigation away and back successfully triggers service behaviors")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during real navigation test", e)
-            fail("Real navigation should trigger service behaviors: ${e.message}")
+            failWithScreenshot("Real navigation should trigger service behaviors: ${e.message}")
         }
     }
 

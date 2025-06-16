@@ -267,10 +267,10 @@ pull_test_screenshots() {
     # Ensure test_screenshots directory exists (already cleaned before tests)
     mkdir -p test_screenshots
     
-    # Check if device has any screenshots
-    local screenshot_count=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+    # Check if device has any screenshots (more reliable check)
+    local screenshot_files=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | grep -v "No such file" | head -1)
     
-    if [[ "$screenshot_count" -gt 0 ]]; then
+    if [[ -n "$screenshot_files" ]]; then
         # Pull all screenshots from device
         if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
             # Move screenshots from temp folder to final location (find all .png files)
@@ -439,14 +439,18 @@ run_with_log "Installing/updating latest debug APK" "adb install -r app/build/ou
 run_with_log "Building test APK" "./gradlew assembleDebugAndroidTest --console=plain --quiet"
 run_with_log "Installing test APK" "adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 
-# Grant permissions
+# Grant permissions and prepare device
 log_with_time "🔐 Granting necessary permissions for testing..."
+# Wake up the screen and unlock (important for UI tests)
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell input keyevent KEYCODE_MENU
+sleep 1
 adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1 || true
 sleep 3
 adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev/null || true
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 sleep 1
-log_with_time "✅ Permissions granted"
+log_with_time "✅ Permissions granted and device prepared"
 
 # Run tests sequentially for maximum reliability
 if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
