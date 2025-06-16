@@ -313,7 +313,7 @@ run_integration_tests_with_logcat() {
     # Clear logcat and start capture for test logs in background
     adb logcat -c
     local temp_logcat_file="temp_logcat_integration.log"
-    adb logcat -v time "*:S" AppLifecycleTest:D > "$temp_logcat_file" 2>&1 &
+    adb logcat -v time "*:S" AppLifecycleTest:D SimpleTTSTest:D AndroidRuntime:E System.err:E TestRunner:I > "$temp_logcat_file" 2>&1 &
     local logcat_pid=$!
     
     # Run all integration tests (this will run all androidTest classes)
