@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -37,7 +38,9 @@ import kotlinx.coroutines.launch
 @Singleton
 class WhizRepository @Inject constructor(
     private val apiService: ApiService,
-    private val context: Context
+    private val context: Context,
+    private val messageDao: com.example.whiz.data.local.MessageDao,
+    private val chatDao: com.example.whiz.data.local.ChatDao
 ) {
     private val TAG = "WhizRepository"
 
@@ -184,6 +187,26 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    suspend fun deleteChat(chatId: Long) {
+        try {
+            Log.d(TAG, "deleteChat: deleting chat $chatId via API")
+            apiService.deleteConversation(chatId)
+            Log.d(TAG, "deleteChat: deleted chat $chatId and its messages")
+            
+            // Use incremental sync to handle deletion via tombstone records
+            // No need to clear cache - incremental sync will detect and remove the deleted conversation
+            ongoingConversationRequests.clear()
+            ongoingMessageRequests.clear()
+            Log.d(TAG, "deleteChat: cleared request tracking for fresh incremental sync")
+            
+            // Trigger incremental refresh - tombstone record will remove the deleted chat
+            triggerConversationsRefresh()
+            triggerMessagesRefresh()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting chat $chatId via API", e)
+        }
+    }
+
     suspend fun deleteAllChats() {
         try {
             Log.d(TAG, "deleteAllChats: deleting all chats via API")
@@ -248,6 +271,51 @@ class WhizRepository @Inject constructor(
             message.id
         } catch (e: Exception) {
             Log.e(TAG, "Error adding user message to chat $chatId via API", e)
+            -1
+        }
+    }
+
+    /**
+     * Add user message for optimistic UI - only stores locally, doesn't make API call.
+     * Used when we want immediate UI feedback before server processes the message.
+     * The actual server message will be received via WebSocket and deduplicated.
+     */
+    suspend fun addUserMessageOptimistic(chatId: Long, content: String): Long {
+        return try {
+            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only)")
+            
+            // Check if this message already exists to prevent duplicates
+            val existingMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            val duplicateMessage = existingMessages.find { 
+                it.content.trim() == content.trim() && 
+                it.type == MessageType.USER &&
+                // Only consider recent messages (within last 30 seconds) as potential duplicates
+                (System.currentTimeMillis() - it.timestamp) < 30000
+            }
+            
+            if (duplicateMessage != null) {
+                Log.d(TAG, "addUserMessageOptimistic: duplicate message detected, returning existing ID ${duplicateMessage.id}")
+                return duplicateMessage.id
+            }
+            
+            // Create optimistic message entity
+            val messageEntity = MessageEntity(
+                id = 0,
+                chatId = chatId,
+                content = content,
+                type = MessageType.USER,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            val messageId = messageDao.insertMessage(messageEntity)
+            Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId")
+            
+            // Don't trigger API refresh - this is just for immediate UI
+            // The real message will come via WebSocket and trigger refresh
+            
+            messageId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding optimistic user message to chat $chatId", e)
             -1
         }
     }
@@ -325,12 +393,17 @@ class WhizRepository @Inject constructor(
             try {
                 Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId")
                 val response = apiService.getMessagesIncremental(chatId, since = null)
-                val messageEntities = response.messages.map { it.toMessageEntity() }
-                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${messageEntities.size} messages for chat $chatId")
-                messageEntities
+                val serverMessages = response.messages.map { it.toMessageEntity() }
+                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
+                
+                // Deduplicate with local optimistic messages
+                val deduplicatedMessages = deduplicateMessages(chatId, serverMessages)
+                Log.d(TAG, "fetchMessagesWithDeduplication: After deduplication: ${deduplicatedMessages.size} messages for chat $chatId")
+                
+                deduplicatedMessages
             } catch (e: Exception) {
                 Log.e(TAG, "Error in fetchMessagesWithDeduplication for chat $chatId", e)
-                emptyList<MessageEntity>()
+                emptyList()
             } finally {
                 // Clean up the tracking when done
                 ongoingMessageRequests.remove(chatId)
@@ -342,6 +415,58 @@ class WhizRepository @Inject constructor(
         return deferred.await()
     }
 
+    /**
+     * Deduplicate server messages with local optimistic messages.
+     * Removes local optimistic messages that have corresponding server messages.
+     */
+    private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
+        try {
+            // Get current local messages
+            val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            
+            // Find optimistic messages that have server counterparts
+            val messagesToRemove = mutableListOf<Long>()
+            
+            for (serverMessage in serverMessages) {
+                // Look for local messages with same content and type that could be duplicates
+                val duplicateLocal = localMessages.find { localMsg ->
+                    localMsg.content.trim() == serverMessage.content.trim() &&
+                    localMsg.type == serverMessage.type &&
+                    // Only consider recent local messages as potential optimistic duplicates
+                    (serverMessage.timestamp - localMsg.timestamp).let { timeDiff ->
+                        timeDiff >= 0 && timeDiff < 60000 // Server message should be within 60 seconds after local
+                    }
+                }
+                
+                if (duplicateLocal != null) {
+                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
+                    messagesToRemove.add(duplicateLocal.id)
+                }
+            }
+            
+            // Remove duplicate local messages
+            if (messagesToRemove.isNotEmpty()) {
+                messagesToRemove.forEach { messageId ->
+                    messageDao.deleteMessage(messageId)
+                }
+                Log.d(TAG, "deduplicateMessages: Removed ${messagesToRemove.size} duplicate local messages")
+            }
+            
+            // Store server messages in database
+            serverMessages.forEach { serverMessage ->
+                messageDao.insertMessage(serverMessage)
+            }
+            
+            // Return all messages for this chat (fresh from database after deduplication)
+            return messageDao.getMessagesForChatFlow(chatId).first()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in deduplicateMessages for chat $chatId", e)
+            // Fallback: just return server messages
+            return serverMessages
+        }
+    }
+    
     // Deduplicated conversation fetching - prevents multiple concurrent API calls
     private suspend fun fetchConversationsWithDeduplication(forceFullSync: Boolean): List<ChatEntity> {
         val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
@@ -465,23 +590,36 @@ class WhizRepository @Inject constructor(
             // Update sync timestamp
             updateLastSyncTimestamp("conversations", response.server_timestamp)
             
-            val newConversations = response.conversations.map { it.toChatEntity() }
+            val newConversations = response.conversations
+                .filter { it.deleted_at == null }  // Filter out soft-deleted conversations
+                .map { it.toChatEntity() }
             
             // If this is incremental sync, merge with existing conversations
             if (response.is_incremental && lastSync != null && !shouldForceFullSync) {
                 val existingConversationsList = existingConversations.toMutableList()
                 
-                // Update or add new conversations
-                newConversations.forEach { newConversation ->
-                    val existingIndex = existingConversationsList.indexOfFirst { it.id == newConversation.id }
-                    if (existingIndex >= 0) {
-                        // Update existing conversation
-                        existingConversationsList[existingIndex] = newConversation
-                        Log.d("Repository", "Updated existing conversation ${newConversation.id}")
+                // Handle both updates and deletions from incremental sync
+                response.conversations.forEach { apiConversation ->
+                    val existingIndex = existingConversationsList.indexOfFirst { it.id == apiConversation.id }
+                    
+                    if (apiConversation.deleted_at != null) {
+                        // Remove deleted conversation from local cache
+                        if (existingIndex >= 0) {
+                            existingConversationsList.removeAt(existingIndex)
+                            Log.d("Repository", "Removed deleted conversation ${apiConversation.id}")
+                        }
                     } else {
-                        // Add new conversation at the beginning (most recent first)
-                        existingConversationsList.add(0, newConversation)
-                        Log.d("Repository", "Added new conversation ${newConversation.id}")
+                        // Update or add non-deleted conversation
+                        val chatEntity = apiConversation.toChatEntity()
+                        if (existingIndex >= 0) {
+                            // Update existing conversation
+                            existingConversationsList[existingIndex] = chatEntity
+                            Log.d("Repository", "Updated existing conversation ${chatEntity.id}")
+                        } else {
+                            // Add new conversation at the beginning (most recent first)
+                            existingConversationsList.add(0, chatEntity)
+                            Log.d("Repository", "Added new conversation ${chatEntity.id}")
+                        }
                     }
                 }
                 

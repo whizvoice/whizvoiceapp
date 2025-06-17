@@ -57,6 +57,13 @@ class ChatsListViewModel @Inject constructor(
         return repository.createChat(title)
     }
 
+    // Delete a specific chat
+    fun deleteChat(chatId: Long) {
+        viewModelScope.launch {
+            repository.deleteChat(chatId)
+        }
+    }
+
     // Clear all chat history
     fun clearAllChatHistory() {
         viewModelScope.launch {

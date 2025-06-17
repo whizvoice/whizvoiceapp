@@ -43,7 +43,8 @@ interface ApiService {
         val created_at: String,
         val last_message_time: String,
         val source: String,
-        val google_session_id: String? = null
+        val google_session_id: String? = null,
+        val deleted_at: String? = null
     )
 
     data class MessageCreate(
@@ -111,6 +112,9 @@ interface ApiService {
 
     @DELETE("/api/conversations")
     suspend fun deleteAllConversations(): Map<String, String>
+
+    @DELETE("/api/conversations/{id}")
+    suspend fun deleteConversation(@Path("id") id: Long): Map<String, String>
 
     @PUT("/api/conversations/{id}/last_message_time")
     suspend fun updateConversationLastMessageTime(@Path("id") id: Long): Map<String, String>

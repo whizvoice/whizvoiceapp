@@ -1,0 +1,47 @@
+
+com.example.whiz.integration.MessageDisplayAndLifecycleTest:
+Error in initializationError(com.example.whiz.integration.MessageDisplayAndLifecycleTest):
+java.lang.RuntimeException: Failed loading specified test class 'com.example.whiz.integration.MessageDisplayAndLifecycleTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:663)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:437)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.example.whiz.integration.MessageDisplayAndLifecycleTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:597)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.example.whiz.integration.MessageDisplayAndLifecycleTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/base.apk", zip file "/data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/base.apk"],nativeLibraryDirectories=[/data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/lib/arm64, /data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/lib/arm64, /data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/base.apk!/lib/arm64-v8a, /data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/base.apk!/lib/arm64-v8a, /system/lib64, /system_ext/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+
+Time: 0.008
+There was 1 failure:
+1) initializationError(com.example.whiz.integration.MessageDisplayAndLifecycleTest)
+java.lang.RuntimeException: Failed loading specified test class 'com.example.whiz.integration.MessageDisplayAndLifecycleTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:663)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:437)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.example.whiz.integration.MessageDisplayAndLifecycleTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:597)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.example.whiz.integration.MessageDisplayAndLifecycleTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/base.apk", zip file "/data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/base.apk"],nativeLibraryDirectories=[/data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/lib/arm64, /data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/lib/arm64, /data/app/~~lgK1bY_xmevEVV0mlk2Veg==/com.example.whiz.debug.test-G4QC6rymZXbE-hMDT-7uNg==/base.apk!/lib/arm64-v8a, /data/app/~~cbLJ4ABlGbQuMYvDvmRmUA==/com.example.whiz.debug-HPYuzhJ-EbrFeTJvH-shAQ==/base.apk!/lib/arm64-v8a, /system/lib64, /system_ext/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+

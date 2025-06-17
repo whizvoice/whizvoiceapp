@@ -38,6 +38,7 @@ import com.example.whiz.data.local.DateFormatter
 import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.ui.viewmodels.ChatViewModel
+import com.example.whiz.ui.viewmodels.VoiceManager
 
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
@@ -71,6 +72,8 @@ import androidx.compose.ui.unit.sp
 fun ChatScreen(
     chatId: Long,
     onChatsListClick: () -> Unit,
+    permissionManager: com.example.whiz.permissions.PermissionManager,
+    voiceManager: VoiceManager,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
@@ -83,35 +86,43 @@ fun ChatScreen(
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
 
-    // Check for voice mode flag
-    val enableVoiceMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
+    // Check for TTS mode flag (full voice experience: speech recognition + TTS responses)
+    val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
-    Log.d("ChatScreen", "Composed with enableVoiceMode=$enableVoiceMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
+    Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
     
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
-    val isListening by viewModel.isListening.collectAsState()
-    val transcription by viewModel.transcriptionState.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
     val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
-    val speechError by viewModel.speechError.collectAsState()
-    val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
-    val isSpeaking by viewModel.isSpeaking.collectAsState() // TTS actively speaking
     val connectionError by viewModel.connectionError.collectAsState() // General connection errors
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
-    val isContinuousListeningEnabled by viewModel.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
+    val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
+
+    // Voice state from VoiceManager (clean separation)
+    val isListening by voiceManager.isListening.collectAsState()
+    val transcription by voiceManager.transcriptionState.collectAsState()
+    val speechError by voiceManager.speechError.collectAsState()
+    val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
+    val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     
+    // Observe permission state directly from PermissionManager for reactive UI updates
+    val hasPermissionReactive by permissionManager.microphonePermissionGranted.collectAsState()
+    
+    // Use reactive permission state for UI decisions (dialog, mic button, etc.)
+    val effectiveHasPermission = hasPermissionReactive
+    
     // Auto-prompt for microphone permission when app opens (if not already granted)
-    LaunchedEffect(hasPermission) {
-        Log.d("ChatScreen", "Auto-permission check: hasPermission=$hasPermission")
-        if (!hasPermission) {
+    LaunchedEffect(effectiveHasPermission) {
+        Log.d("ChatScreen", "Auto-permission check: effectiveHasPermission=$effectiveHasPermission")
+        if (!effectiveHasPermission) {
             // Small delay to ensure UI is fully composed before showing dialog
             kotlinx.coroutines.delay(500L)
             Log.d("ChatScreen", "Auto-showing permission dialog - no microphone permission granted")
@@ -119,25 +130,16 @@ fun ChatScreen(
         }
     }
     
-    // Update viewModel with current permission state
-    LaunchedEffect(hasPermission) {
-        Log.d("ChatScreen", "Permission state changed: hasPermission=$hasPermission")
-        if (hasPermission) {
-            viewModel.onMicrophonePermissionGranted()
-        } else {
-            viewModel.onMicrophonePermissionDenied()
-        }
-    }
     
     // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
-        if (!hasPermission) {
+        if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
         } else {
-            // The ViewModel will handle when microphone can be turned on/off
-            Log.d("ChatScreen", "[LOG] Mic clicked, calling toggleSpeechRecognition")
-            viewModel.toggleSpeechRecognition()
+            // Use VoiceManager for clean voice coordination
+            Log.d("ChatScreen", "[LOG] Mic clicked, toggling continuous listening via VoiceManager")
+            voiceManager.toggleContinuousListening()
         }
     }
 
@@ -171,9 +173,9 @@ fun ChatScreen(
 
     // Load chat data when chatId changes
     LaunchedEffect(chatId) {
-        // Use voice-mode-aware loading if voice mode is enabled
-        if (enableVoiceMode) {
-            Log.d("ChatScreen", "[LOG] Loading chat with voice mode awareness")
+        // Use TTS-mode-aware loading if TTS mode is enabled
+        if (enableTTSMode) {
+            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness")
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
@@ -223,42 +225,70 @@ fun ChatScreen(
         }
     }
 
-    // Enable voice mode if flag is set
-    LaunchedEffect(enableVoiceMode, isContinuousListeningEnabled) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect(enableVoiceMode) triggered: enableVoiceMode=$enableVoiceMode, hasPermission=$hasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+    // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
+    LaunchedEffect(chatId, enableTTSMode, effectiveHasPermission) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$chatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
         
-        // Only proceed if enableVoiceMode is explicitly true (not just any truthy value)
-        if (enableVoiceMode == true) {
-            Log.d("ChatScreen", "[LOG] Voice mode explicitly enabled - proceeding with voice setup")
-            if (hasPermission) {
-                Log.d("ChatScreen", "[LOG] Delaying voice mode setup to ensure UI is ready")
-                kotlinx.coroutines.delay(500L) // Wait for UI to be fully composed and activity to be foregrounded
+        // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
+        if (effectiveHasPermission) {
+            Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
+            kotlinx.coroutines.delay(500L) // Wait for UI to be ready
+            
+            // Always enable continuous listening for all chats (voice app default)
+            voiceManager.updateContinuousListeningEnabled(true)
+            
+            // Set up transcription callback for chat integration
+            voiceManager.setTranscriptionCallback { transcription ->
+                if (transcription.isNotBlank()) {
+                    Log.d("ChatScreen", "[LOG] Voice transcription received: '$transcription'")
+                    viewModel.updateInputText(transcription)
+                    viewModel.sendUserInput(transcription)
+                }
+            }
+            
+            Log.d("ChatScreen", "[LOG] Continuous listening enabled for chat (voice app default)")
+        } else {
+            Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
+        }
+        
+        // 🔊 GOOGLE ASSISTANT BEHAVIOR: Additionally enable TTS mode if triggered by Assistant
+        if (enableTTSMode == true) {
+            Log.d("ChatScreen", "[LOG] Google Assistant launch detected - enabling FULL voice mode (microphone + TTS)")
+            if (effectiveHasPermission) {
+                kotlinx.coroutines.delay(500L) // Wait for UI to be fully composed
                 
-                // Enable voice responses since user opened app via voice
-                Log.d("ChatScreen", "[LOG] Enabling voice responses for voice-triggered app launch (current state: $isVoiceResponseEnabled)")
+                // Enable voice responses for hands-free Google Assistant experience
+                Log.d("ChatScreen", "[LOG] Enabling voice responses for Assistant-triggered launch (current: $isVoiceResponseEnabled)")
                 if (!isVoiceResponseEnabled) {
-                    Log.d("ChatScreen", "[LOG] Toggling voice response from OFF to ON")
+                    Log.d("ChatScreen", "[LOG] Toggling voice response from OFF to ON for Assistant")
                     viewModel.toggleVoiceResponse()
+                    voiceManager.setVoiceResponseEnabled(true)
                 } else {
-                    Log.d("ChatScreen", "[LOG] Voice response already enabled, skipping toggle")
+                    Log.d("ChatScreen", "[LOG] Voice response already enabled")
                 }
                 
-                // Ensure continuous listening is enabled (don't use toggle to avoid accidentally disabling it)
-                Log.d("ChatScreen", "[LOG] Ensuring continuous listening is enabled for voice mode")
-                viewModel.onMicrophonePermissionGranted()
-                viewModel.ensureContinuousListeningEnabled()
+                // Ensure continuous listening is enabled (should already be set above for new chats)
+                Log.d("ChatScreen", "[LOG] Ensuring continuous listening for Assistant launch")
+                voiceManager.updateContinuousListeningEnabled(true)
                 
-                // Clear the voice mode flag after setup is complete to prevent persistence
-                Log.d("ChatScreen", "[LOG] Voice mode setup complete - clearing ENABLE_VOICE_MODE flag")
+                // Set up transcription callback if not already done
+                voiceManager.setTranscriptionCallback { transcription ->
+                    if (transcription.isNotBlank()) {
+                        Log.d("ChatScreen", "[LOG] Assistant transcription received: '$transcription'")
+                        viewModel.updateInputText(transcription)
+                        viewModel.sendUserInput(transcription)
+                    }
+                }
+                
+                // Clear the TTS mode flag to prevent persistence across navigation
+                Log.d("ChatScreen", "[LOG] Assistant voice setup complete - clearing ENABLE_VOICE_MODE flag")
                 navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
             } else {
-                Log.d("ChatScreen", "[LOG] Permission dialog for voice mode")
+                Log.d("ChatScreen", "[LOG] No microphone permission for Assistant launch - showing dialog")
                 showPermissionDialog = true
-                // Clear flag even if permission not granted to prevent persistence
+                // Clear flag even without permission to prevent persistence
                 navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
             }
-        } else {
-            Log.d("ChatScreen", "[LOG] Voice mode not enabled or false - skipping voice setup")
         }
     }
 
@@ -302,12 +332,12 @@ fun ChatScreen(
                 isResponding = isResponding,
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
                 isSpeaking = isSpeaking,
-                shouldShowMicDuringTTS = viewModel.shouldShowMicButtonDuringTTS(),
+                shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
                 onInterruptClick = { viewModel.interruptResponse() }, // Pass new callback for interrupts
                 onMicClick = { handleMicClick() },
-                onMicClickDuringTTS = { viewModel.handleMicClickDuringTTS() },
+                onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
         }

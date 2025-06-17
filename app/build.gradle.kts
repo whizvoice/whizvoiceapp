@@ -118,13 +118,6 @@ android {
         xmlReport = true                // Keep XML for CI tools
         textReport = false              // Disable text report
     }
-    
-    // Add test options to handle Android framework mocking
-    testOptions {
-        unitTests {
-            isReturnDefaultValues = true
-        }
-    }
 }
 
 dependencies {
@@ -182,6 +175,11 @@ dependencies {
 
     // Authentication
     implementation("com.google.android.gms:play-services-auth:20.7.0")
+    implementation("com.google.firebase:firebase-auth-ktx:23.1.0")
+    implementation("com.google.firebase:firebase-bom:33.7.0")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     // JWT token processing
     implementation("io.jsonwebtoken:jjwt-api:0.12.3")
@@ -225,9 +223,6 @@ dependencies {
     androidTestImplementation("com.google.code.gson:gson:2.8.5")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
     
-    // MockK for mocking Android APIs in integration tests
-    androidTestImplementation("io.mockk:mockk-android:1.13.8")
-    androidTestImplementation("io.mockk:mockk-agent:1.13.8")
 }
 
 // Allow references to generated code
@@ -237,3 +232,4 @@ kapt {
         arg("dagger.hilt.disableModulesHaveInstallInCheck", "true")
     }
 }
+

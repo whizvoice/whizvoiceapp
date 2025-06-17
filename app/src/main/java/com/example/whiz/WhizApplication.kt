@@ -1,6 +1,10 @@
 package com.example.whiz
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -10,6 +14,10 @@ import kotlin.system.exitProcess
 import dagger.hilt.android.HiltAndroidApp
 import com.example.whiz.services.SpeechRecognitionService
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import javax.inject.Singleton
 
 @HiltAndroidApp
 class WhizApplication : Application(), DefaultLifecycleObserver {
@@ -17,11 +25,46 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
     @Inject
     lateinit var speechRecognitionService: SpeechRecognitionService
     
+    @Inject
+    lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
+    
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d("WhizApplication", "Screen turned off - stopping continuous listening")
+                    try {
+                        speechRecognitionService.continuousListeningEnabled = false
+                        speechRecognitionService.stopListening()
+                        appLifecycleService.notifyAppBackgrounded()
+                    } catch (e: Exception) {
+                        Log.e("WhizApplication", "Error stopping speech recognition on screen off", e)
+                    }
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    Log.d("WhizApplication", "Screen turned on - notifying app foreground")
+                    try {
+                        appLifecycleService.notifyAppForegrounded()
+                    } catch (e: Exception) {
+                        Log.e("WhizApplication", "Error notifying foreground on screen on", e)
+                    }
+                }
+            }
+        }
+    }
+    
     override fun onCreate() {
         super<Application>.onCreate()
         
         // Register for app lifecycle events
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        
+        // Register for screen on/off events
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        registerReceiver(screenReceiver, filter)
         
         // Set up global exception handler
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -55,6 +98,8 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
             // Stop continuous listening to prevent microphone staying active when app is in background
             speechRecognitionService.continuousListeningEnabled = false
             speechRecognitionService.stopListening()
+            // Notify through the service that app went to background
+            appLifecycleService.notifyAppBackgrounded()
         } catch (e: Exception) {
             Log.e("WhizApplication", "Error stopping speech recognition on background", e)
         }
@@ -66,24 +111,21 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
         try {
             // Release speech recognition resources to prevent memory leaks
             speechRecognitionService.release()
+            // Unregister screen receiver
+            unregisterReceiver(screenReceiver)
         } catch (e: Exception) {
-            Log.e("WhizApplication", "Error releasing speech recognition on destroy", e)
+            Log.e("WhizApplication", "Error releasing resources on destroy", e)
         }
     }
     
     override fun onStart(owner: LifecycleOwner) {
         super<DefaultLifecycleObserver>.onStart(owner)
-        Log.d("WhizApplication", "App moved to foreground")
-        // Don't automatically restart continuous listening here - let the ChatViewModel handle it
-        // based on the current state and user preferences
-        
-        // Set a flag that ChatViewModels can observe to know the app came to foreground
+        Log.d("WhizApplication", "App moved to foreground - notifying ChatViewModels")
         try {
-            // We could use a shared preference or other mechanism, but for now just log
-            // The ChatViewModel will handle restarting continuous listening in its own lifecycle
-            Log.d("WhizApplication", "App foregrounded - ChatViewModels should handle continuous listening restart")
+            // Notify through the injectable service
+            appLifecycleService.notifyAppForegrounded()
         } catch (e: Exception) {
-            Log.e("WhizApplication", "Error handling app foreground", e)
+            Log.e("WhizApplication", "Error notifying ChatViewModels of app foreground", e)
         }
     }
 } 

@@ -49,6 +49,12 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var permissionManager: PermissionManager
     
+    @Inject
+    lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
+    
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     
@@ -85,6 +91,8 @@ class MainActivity : ComponentActivity() {
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
+                        permissionManager = permissionManager,
+                        voiceManager = voiceManager,
                         hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() }
                     )
@@ -107,6 +115,22 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntentNavigation(intent: Intent?) {
         Log.d(TAG, "handleIntentNavigation called with intent: $intent")
+        
+        // Handle sign-out action first
+        val actionSignOut = intent?.getStringExtra("action")
+        if (actionSignOut == "sign_out") {
+            Log.d(TAG, "Sign-out action detected - triggering Firebase sign-out")
+            lifecycleScope.launch {
+                try {
+                    // Use injected AuthRepository to call signOut
+                    authRepository.signOut()
+                    Log.d(TAG, "Sign-out completed successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error during programmatic sign-out", e)
+                }
+            }
+            return // Don't process other intent extras after sign-out
+        }
         
         val createNewChatOnStart = intent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
         val fromAssistant = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false

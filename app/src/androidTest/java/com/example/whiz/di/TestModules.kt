@@ -17,6 +17,7 @@ import com.example.whiz.data.auth.TokenAuthenticator
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.di.AppModule
 import com.example.whiz.TestCredentialsManager
+import com.example.whiz.TestAuthRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -76,10 +77,12 @@ object TestAppModule {
     @Singleton
     fun provideWhizRepository(
         apiService: ApiService,
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        messageDao: MessageDao,
+        chatDao: ChatDao
     ): WhizRepository {
-        Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService")
-        return WhizRepository(apiService, context)
+        Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService and database DAOs")
+        return WhizRepository(apiService, context, messageDao, chatDao)
     }
 
     @Provides
@@ -135,8 +138,10 @@ object TestAppModule {
         @ApplicationContext context: Context,
         authApi: AuthApi
     ): AuthRepository {
-        Log.d(TAG, "🔧 Creating REAL AuthRepository...")
-        return AuthRepository(context, authApi)
+        Log.d(TAG, "🔧 Creating TEST AuthRepository that bypasses Google OAuth...")
+        // Return TestAuthRepository but cast to AuthRepository interface
+        // This allows tests to bypass Google OAuth while still hitting the real server
+        return TestAuthRepository(context, authApi)
     }
     
     @Provides

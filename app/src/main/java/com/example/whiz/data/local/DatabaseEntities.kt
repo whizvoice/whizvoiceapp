@@ -57,7 +57,7 @@ class MessageTypeConverter {
 
     @TypeConverter
     fun toMessageType(value: String): MessageType {
-        return MessageType.valueOf(value)
+        return parseMessageType(value)
     }
 }
 
@@ -87,10 +87,19 @@ object DateFormatter {
 fun ApiService.ConversationResponse.toChatEntity(): ChatEntity {
     return ChatEntity(
         id = this.id,
-        title = this.title,
+        title = sanitizeChatTitle(this.title),
         createdAt = parseTimestampToMillis(this.created_at),
         lastMessageTime = parseTimestampToMillis(this.last_message_time)
     )
+}
+
+// Helper function to sanitize chat title
+private fun sanitizeChatTitle(title: String): String {
+    return title.trim()
+        .replace(Regex("[\\n\\t\\r]"), " ")
+        .replace(Regex("\\s+"), " ")
+        .take(200)
+        .ifBlank { "Untitled Chat" }
 }
 
 // Convert local ChatEntity to API ConversationCreate
@@ -107,9 +116,19 @@ fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
         id = this.id,
         chatId = this.conversation_id,
         content = this.content,
-        type = MessageType.valueOf(this.message_type),
+        type = parseMessageType(this.message_type),
         timestamp = parseTimestampToMillis(this.timestamp)
     )
+}
+
+// Helper function to safely parse message type with fallback
+private fun parseMessageType(messageType: String): MessageType {
+    return try {
+        MessageType.valueOf(messageType.uppercase())
+    } catch (e: IllegalArgumentException) {
+        // Default to USER for unknown message types
+        MessageType.USER
+    }
 }
 
 // Convert local MessageEntity to API MessageCreate

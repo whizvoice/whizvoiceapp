@@ -75,14 +75,24 @@ alwaysApply: false
     "description": "For running tests, use `cd whizvoiceapp && ./run_tests_on_debug.sh`. Test output is also logged to test_output.log"
   },
   {
+    "id": "test_credentials_location",
+    "severity": "error",
+    "description": "When you are writing tests, you can reference the test_credentials.json file in the whizvoiceapp directory."
+  },
+  {
     "id": "when_to_test",
     "severity": "error",
     "description": "Please run tests if you change tests or if you change functionality covered by tests"
   },
   {
-    "id": "integration_tests_rml",
+    "id": "auth_for_tests",
     "severity": "error",
-    "description": "When you run integration tests, please also run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
+    "description": "Authentication for tests that doesn't use the UI is in whizvoiceapp/app/src/main/java/com/example/whiz/data/auth/AuthRepository.kt line 300 setTestAuthenticationState() method. Please use this for authentication if you are not testing the authentication UI itself."
+  },
+  {
+    "id": "rml_code_checking",
+    "severity": "error",
+    "description": "When you run integration tests, please also separately run RML to check for bugs: `/Users/ruthgracewong/.rml/bin/rml -md `git diff --name-only`"
   },
   {
     "id": "write_tests",

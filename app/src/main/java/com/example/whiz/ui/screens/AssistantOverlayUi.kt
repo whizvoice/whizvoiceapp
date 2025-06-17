@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
 import com.example.whiz.ui.viewmodels.ChatViewModel
+import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.data.local.MessageType // Import MessageType
 import android.util.Log // Import Log
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun AssistantOverlayUi(
     viewModel: ChatViewModel = hiltViewModel(), // Use hiltViewModel for proper DI
+    voiceManager: VoiceManager,
     onDismiss: () -> Unit // Callback to close the activity
 ) {
     val TAG = "AssistantOverlayUi" // Tag for logging
@@ -145,7 +147,7 @@ fun AssistantOverlayUi(
                 isResponding = isResponding,
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
                 isSpeaking = isSpeaking,
-                shouldShowMicDuringTTS = viewModel.shouldShowMicButtonDuringTTS(),
+                shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { viewModel.sendUserInput(inputText) },
                 onMicClick = {
@@ -155,7 +157,7 @@ fun AssistantOverlayUi(
                         Log.w(TAG,"Mic Tapped but no permission.")
                     }
                 },
-                onMicClickDuringTTS = { viewModel.handleMicClickDuringTTS() },
+                onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 // Pass explicit color and shape as decided before
                 surfaceColor = MaterialTheme.colorScheme.surface, // Use the non-transparent color
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) // Use the desired overlay shape
