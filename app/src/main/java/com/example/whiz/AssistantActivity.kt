@@ -23,6 +23,7 @@ import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class AssistantActivity : AppCompatActivity() {
@@ -31,6 +32,9 @@ class AssistantActivity : AppCompatActivity() {
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     private var isHandlingAssistantLaunch = false
     private var isFinishing = false
+    
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,6 +119,7 @@ class AssistantActivity : AppCompatActivity() {
                         color = Color.Transparent
                     ) {
                         AssistantOverlayUi(
+                            voiceManager = voiceManager,
                             onDismiss = { 
                                 Log.d(TAG, "AssistantOverlayUi dismissed")
                                 isFinishing = true

@@ -18,11 +18,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.example.whiz.data.PreloadManager
+import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.screens.ChatsListScreen
 import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
 import com.example.whiz.ui.viewmodels.AuthViewModel
+import com.example.whiz.ui.viewmodels.VoiceManager
 
 import kotlinx.coroutines.delay
 
@@ -33,6 +35,8 @@ private const val ANIMATION_DURATION = 300
 fun WhizNavHost(
     navController: NavHostController,
     preloadManager: PreloadManager,
+    permissionManager: PermissionManager,
+    voiceManager: VoiceManager,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {}
 ) {
@@ -203,6 +207,8 @@ fun WhizNavHost(
                         popUpTo(Screen.Home.route) { inclusive = true }
                     }
                 },
+                permissionManager = permissionManager,
+                voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController
@@ -235,6 +241,8 @@ fun WhizNavHost(
                         popUpTo(Screen.Home.route) { inclusive = true }
                     }
                 },
+                permissionManager = permissionManager,
+                voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController

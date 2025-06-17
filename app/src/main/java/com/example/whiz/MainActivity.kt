@@ -52,6 +52,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
     
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     
@@ -88,6 +91,8 @@ class MainActivity : ComponentActivity() {
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
+                        permissionManager = permissionManager,
+                        voiceManager = voiceManager,
                         hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() }
                     )

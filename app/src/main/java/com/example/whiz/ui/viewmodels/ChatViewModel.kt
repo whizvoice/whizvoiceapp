@@ -1,7 +1,6 @@
 package com.example.whiz.ui.viewmodels
 
 import android.content.Context
-import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -173,50 +172,7 @@ class ChatViewModel @Inject constructor(
     // Track the current voice settings state to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
 
-    // Helper method to detect if headphones are connected
-    private fun areHeadphonesConnected(): Boolean {
-        return try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            // Check for wired headphones or Bluetooth audio
-            audioManager.isWiredHeadsetOn || audioManager.isBluetoothA2dpOn
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking headphone status", e)
-            false // Default to false (safer - assume speakers)
-        }
-    }
 
-    // Helper method to determine if mic button should be shown during TTS
-    fun shouldShowMicButtonDuringTTS(): Boolean {
-        // Show mic button during TTS without headphones to allow interruption
-        // Remove the !continuousListeningEnabled condition to allow interruption always
-        return _isSpeaking.value && !areHeadphonesConnected()
-    }
-    
-    // Handle mic button click during TTS - pause TTS and start listening
-    fun handleMicClickDuringTTS() {
-        if (_isSpeaking.value && !areHeadphonesConnected()) {
-            Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening. continuousListening before: $continuousListeningEnabled")
-            
-            // Pause/stop TTS (but keep voice response enabled for future messages)
-            ttsManager.stop()
-            _isSpeaking.value = false
-            
-            // Enable continuous listening and start immediately
-            // This allows the user to speak and interrupt TTS
-            continuousListeningEnabled = true
-            speechRecognitionService.continuousListeningEnabled = true
-            
-            viewModelScope.launch {
-                // Small delay to ensure TTS stop is processed
-                delay(100L)
-                if (!_isResponding.value && !_isSpeaking.value) {
-                    startContinuousListening()
-                }
-            }
-        } else {
-            Log.w(TAG, "handleMicClickDuringTTS: Called but conditions not met - isSpeaking: ${_isSpeaking.value}, headphones: ${areHeadphonesConnected()}")
-        }
-    }
 
     init {
         // Check if the app already has microphone permission
@@ -768,46 +724,15 @@ class ChatViewModel @Inject constructor(
                     }
                 }
 
-                // Auto-enable continuous listening if we have microphone permission
-                // 🔧 Double-check permission state to ensure it's current
+                // 🎙️ VOICE APP BEHAVIOR: Update permission state and let UI layer control all microphone behavior
+                // Since this is a voice app, the UI always enables continuous listening by default
                 val actualPermissionState = PermissionHandler.hasMicrophonePermission(context)
                 if (_micPermissionGranted.value != actualPermissionState) {
                     Log.d(TAG, "[LOG] Updating permission state from ${_micPermissionGranted.value} to $actualPermissionState")
                     _micPermissionGranted.value = actualPermissionState
                 }
                 
-                if (_micPermissionGranted.value) {
-                    try {
-                        Log.d(TAG, "🔧 TEST_DEBUG: Auto-enabling continuous listening on chat load (permission granted)")
-                        Log.d(TAG, "🔧 TEST_DEBUG: Current continuousListeningEnabled before: $continuousListeningEnabled")
-                        Log.d(TAG, "🔧 TEST_DEBUG: Service continuousListeningEnabled before: ${speechRecognitionService.continuousListeningEnabled}")
-                        delay(500L) // Increased delay to ensure speech service is fully stopped
-                        
-                        // Always enable continuous listening and start it, regardless of current state
-                        continuousListeningEnabled = true
-                        speechRecognitionService.continuousListeningEnabled = true
-                        Log.d(TAG, "🔧 TEST_DEBUG: After setting - continuousListeningEnabled: $continuousListeningEnabled")
-                        Log.d(TAG, "🔧 TEST_DEBUG: After setting - service continuousListeningEnabled: ${speechRecognitionService.continuousListeningEnabled}")
-                        
-                        // Force start continuous listening, but add additional delay to ensure clean state
-                        delay(200L) // Additional delay to ensure isListening state is updated
-                        val currentListening = isListening.value
-                        Log.d(TAG, "[LOG] About to start continuous listening - isListening: $currentListening, speaking: ${_isSpeaking.value}, responding: ${_isResponding.value}")
-                        
-                        if (!currentListening && !_isSpeaking.value && !_isResponding.value) {
-                            Log.d(TAG, "[LOG] Starting continuous listening (conditions met)")
-                            startContinuousListening()
-                        } else {
-                            Log.d(TAG, "[LOG] Force starting continuous listening despite state - isListening: $currentListening")
-                            // Force start anyway since we just loaded a new chat
-                            startContinuousListening()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error starting continuous listening during loadChat", e)
-                    }
-                } else {
-                    Log.w(TAG, "[LOG] Cannot auto-enable continuous listening - no microphone permission")
-                }
+                Log.d(TAG, "[LOG] Chat load complete - UI layer will handle voice app default behavior (always enable microphone)")
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error in loadChat", e)
                 _errorState.value = "Failed to load chat: ${e.message}"
@@ -929,7 +854,7 @@ class ChatViewModel @Inject constructor(
         
         // Headphone-aware listening behavior
         if (_isSpeaking.value) {
-            val headphonesConnected = areHeadphonesConnected()
+            val headphonesConnected = ttsManager.areHeadphonesConnected()
             if (!headphonesConnected) {
                 // Without headphones: Don't listen during TTS to prevent feedback
                 Log.d(TAG, "[LOG] startContinuousListening: Skipping start while TTS is speaking without headphones (will restart when TTS completes)")
@@ -1624,11 +1549,11 @@ class ChatViewModel @Inject constructor(
                     onCompleted = {
                         Log.d(TAG, "TTS completed - audio focus released")
                         _isSpeaking.value = false
-                        // Handle continuous listening if enabled and headphones are connected
-                        if (continuousListeningEnabled && areHeadphonesConnected()) {
-                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
-                            startContinuousListening()
-                        }
+                                        // Handle continuous listening if enabled and headphones are connected
+                if (continuousListeningEnabled && ttsManager.areHeadphonesConnected()) {
+                    Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                    startContinuousListening()
+                }
                     },
                     onError = {
                         Log.e(TAG, "TTS error - audio focus released")

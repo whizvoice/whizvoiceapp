@@ -1,14 +1,13 @@
 package com.example.whiz.ui.viewmodels
 
 import android.content.Context
-import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
-import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,10 +16,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Singleton
 
-@HiltViewModel
+@Singleton
 class VoiceManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val permissionManager: PermissionManager,
     private val speechRecognitionService: SpeechRecognitionService,
     private val ttsManager: TTSManager,
     private val userPreferences: UserPreferences
@@ -64,6 +65,7 @@ class VoiceManager @Inject constructor(
     init {
         initializeTTS()
         observeVoiceSettings()
+        observePermissionChanges()
     }
 
     private fun initializeTTS() {
@@ -118,6 +120,48 @@ class VoiceManager @Inject constructor(
                 if (_isTTSInitialized.value) {
                     applyVoiceSettings(voiceSettings)
                 }
+            }
+        }
+    }
+
+    private fun observePermissionChanges() {
+        viewModelScope.launch {
+            permissionManager.microphonePermissionGranted.collect { hasPermission ->
+                if (hasPermission) {
+                    onPermissionGranted()
+                } else {
+                    onPermissionDenied()
+                }
+            }
+        }
+    }
+
+    private fun onPermissionGranted() {
+        Log.d(TAG, "Microphone permission granted - enabling voice features")
+        try {
+            speechRecognitionService.initialize()
+            
+            // If continuous listening was enabled before permission was granted, start it now
+            if (continuousListeningEnabled) {
+                viewModelScope.launch {
+                    delay(100L) // Small delay to ensure service is initialized
+                    startContinuousListening()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing speech service after permission granted", e)
+        }
+    }
+
+    private fun onPermissionDenied() {
+        Log.w(TAG, "Microphone permission denied - disabling voice features")
+        
+        // Stop any ongoing listening
+        if (isListening.value) {
+            try {
+                speechRecognitionService.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping speech recognition after permission denied", e)
             }
         }
     }
@@ -180,13 +224,35 @@ class VoiceManager @Inject constructor(
         speechRecognitionService.stopListening()
     }
 
+    // Transcription callback for continuous listening (set by consumers like ChatViewModel)
+    private var transcriptionCallback: ((String) -> Unit)? = null
+    
     fun startContinuousListening() {
         if (!continuousListeningEnabled) {
             Log.d(TAG, "startContinuousListening called but continuous listening is disabled")
             return
         }
 
-        startListening { /* No callback needed for continuous listening */ }
+        startListening { finalText ->
+            Log.d(TAG, "startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
+            
+            // Call the transcription callback if set (for chat integration)
+            if (finalText.isNotBlank()) {
+                transcriptionCallback?.invoke(finalText)
+                
+                // Auto-restart continuous listening if still enabled
+                if (continuousListeningEnabled) {
+                    Log.d(TAG, "Continuous listening: restarting after result")
+                    viewModelScope.launch {
+                        // Small delay to ensure the previous listening session is fully stopped
+                        delay(100L)
+                        if (continuousListeningEnabled && !_isSpeaking.value) {
+                            startContinuousListening() // This will check isSpeaking again
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun toggleContinuousListening() {
@@ -202,27 +268,29 @@ class VoiceManager @Inject constructor(
 
     fun updateContinuousListeningEnabled(enabled: Boolean) {
         continuousListeningEnabled = enabled
-    }
-
-    // Helper method to detect if headphones are connected
-    fun areHeadphonesConnected(): Boolean {
-        return try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            audioManager.isWiredHeadsetOn || audioManager.isBluetoothA2dpOn
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking headphone status", e)
-            false
+        Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
+        
+        if (enabled) {
+            // Start continuous listening immediately
+            startContinuousListening()
+        } else {
+            // Stop listening if disabled
+            stopListening()
         }
+    }
+    
+    fun setTranscriptionCallback(callback: (String) -> Unit) {
+        transcriptionCallback = callback
     }
 
     // Helper method to determine if mic button should be shown during TTS
     fun shouldShowMicButtonDuringTTS(): Boolean {
-        return _isSpeaking.value && !areHeadphonesConnected()
+        return ttsManager.shouldShowMicButtonDuringTTS()
     }
 
     // Handle mic button click during TTS - pause TTS and start listening
     fun handleMicClickDuringTTS() {
-        if (_isSpeaking.value && !areHeadphonesConnected()) {
+        if (_isSpeaking.value && !ttsManager.areHeadphonesConnected()) {
             Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening")
             
             // Pause/stop TTS (but keep voice response enabled for future messages)
