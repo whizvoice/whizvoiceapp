@@ -20,6 +20,7 @@ import org.junit.Ignore
 import javax.inject.Inject
 
 import com.example.whiz.services.AppLifecycleService
+import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.integration.GoogleSignInAutomator
@@ -45,6 +46,9 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var voiceManager: VoiceManager  // ← Clean, testable voice coordinator
+    
+    @Inject
+    lateinit var speechRecognitionService: SpeechRecognitionService  // ← Direct access to speech service
     
     @Inject
     lateinit var permissionManager: PermissionManager  // ← Permission coordinator
@@ -147,23 +151,24 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("Failed to activate voice manager: ${e.message}")
             }
             
-            // Wait longer for speech service initialization and listening to start
-            Log.d(TAG, "⏳ Waiting for listening to start (with speech service initialization)...")
+            // Wait for listening to start
+            Log.d(TAG, "⏳ Waiting for listening to start...")
             var waitAttempts = 0
-            val maxWaitAttempts = 50 // 50 attempts * 200ms = 10 seconds max (longer for initialization)
-            while (!voiceManager.isListening.value && waitAttempts < maxWaitAttempts) {
-                delay(200) // Longer delay between attempts
+            val maxWaitAttempts = 30 // 30 attempts * 100ms = 3 seconds max
+
+            while (!speechRecognitionService.isListening.value && waitAttempts < maxWaitAttempts) {
+                delay(100)
                 waitAttempts++
-                if (waitAttempts % 5 == 0) { // Log every second (5 * 200ms = 1000ms)
-                    Log.d(TAG, "⏳ Still waiting... attempt $waitAttempts/50, isListening=${voiceManager.isListening.value}, continuous=${voiceManager.isContinuousListeningEnabled.value}, speaking=${voiceManager.isSpeaking.value}")
+                if (waitAttempts % 10 == 0) { // Log every second
+                    Log.d(TAG, "⏳ Still waiting... attempt $waitAttempts/30, isListening=${speechRecognitionService.isListening.value}, continuous=${voiceManager.isContinuousListeningEnabled.value}, speaking=${voiceManager.isSpeaking.value}")
                 }
             }
             
             // Check the clean coordinator state
             val chatPageContinuous = voiceManager.isContinuousListeningEnabled.value
-            val chatPageIsListening = voiceManager.isListening.value
+            val chatPageSpeechServiceListening = speechRecognitionService.isListening.value
             val chatPageSpeaking = voiceManager.isSpeaking.value
-            Log.d(TAG, "📊 Chat page coordinator states: continuous=$chatPageContinuous, isListening=$chatPageIsListening, speaking=$chatPageSpeaking")
+            Log.d(TAG, "📊 Chat page coordinator states: continuous=$chatPageContinuous, SpeechService.isListening=$chatPageSpeechServiceListening, speaking=$chatPageSpeaking")
 
             // Verify continuous listening is enabled (the setting)
             if (!chatPageContinuous) {
@@ -171,16 +176,21 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("Continuous listening should be TRUE on chat page but was FALSE")
             }
 
-            if (!chatPageIsListening) {
-                Log.w(TAG, "⚠️ WARNING: isListening is FALSE - this might be due to test environment limitations")
-                Log.d(TAG, "📊 Test Environment Check: In test environment, speech recognition might not start due to emulator/permission constraints")
-                Log.d(TAG, "📊 Key Success: Continuous listening setting is correctly enabled: $chatPageContinuous")
-                
-                // For now, just log this as a warning rather than failing the test
-                // since the important part (continuous listening setting) is working
-                Log.d(TAG, "🔧 Test will continue - the critical voice app setting behavior is verified")
+            Log.d(TAG, "🧪 Testing microphone activation attempt via state transitions...")
+            
+            // Check if there's an error indicating activation was attempted but failed
+            val finalError = speechRecognitionService.errorState.value
+            if (!chatPageSpeechServiceListening) {
+                if (finalError?.contains("Failed to initialize speech service") == true || 
+                    finalError?.contains("Speech recognition not available") == true) {
+                    Log.d(TAG, "✅ VERIFIED: Microphone activation was attempted (failed with expected error: $finalError)")
+                } else {
+                    Log.w(TAG, "⚠️ ERROR: Could not verify microphone activation attempt. Error: $finalError")
+                    Log.w(TAG, "⚠️ This may be expected in test environments due to process isolation")
+                    failWithScreenshot("Microphone should be attempted to be activated on new chat page")
+                }
             } else {
-                Log.d(TAG, "✅ Excellent! Microphone is actually listening in test environment")
+                Log.d(TAG, "✅ VERIFIED: Microphone activation successful (isListening=true)")
             }
 
             // TTS should not be speaking initially (no conversation started yet)
@@ -189,7 +199,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("TTS should not be speaking initially but was TRUE")
             }
 
-            Log.d(TAG, "✅ Chat page coordinator states correct: continuous=true, isListening=true, speaking=false")
+            Log.d(TAG, "✅ Chat page coordinator states correct: continuous=true, SpeechService.isListening=true, speaking=false")
 
             // Check app state - must be in foreground to test lifecycle behavior
             val isInForeground = device.hasObject(By.pkg(packageName))
@@ -223,20 +233,21 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             // Test that real backgrounding affects coordinator
             val backgroundContinuous = voiceManager.isContinuousListeningEnabled.value
-            val backgroundIsListening = voiceManager.isListening.value
-            Log.d(TAG, "📊 After REAL background: continuous=$backgroundContinuous, isListening=$backgroundIsListening")
+            val backgroundSpeechServiceListening = speechRecognitionService.isListening.value
+            Log.d(TAG, "📊 After REAL background: continuous=$backgroundContinuous, SpeechService.isListening=$backgroundSpeechServiceListening")
 
             if (!backgroundContinuous) {
                 Log.e(TAG, "❌ CRITICAL: Expected continuous listening to be TRUE when backgrounded, but got FALSE")
                 failWithScreenshot("Continuous listening should be TRUE when backgrounded but was FALSE")
             }
 
-            if (backgroundIsListening) {
-                Log.e(TAG, "❌ CRITICAL: Expected isListening to be FALSE when backgrounded, but got TRUE")
-                failWithScreenshot("isListening should be FALSE when backgrounded but was TRUE")
+            if (backgroundSpeechServiceListening) {
+                Log.e(TAG, "❌ CRITICAL: Expected SpeechService.isListening to be FALSE when backgrounded, but got TRUE")
+                Log.e(TAG, "❌ Details: SpeechService.isListening=$backgroundSpeechServiceListening")
+                failWithScreenshot("SpeechService.isListening should be FALSE when backgrounded but was TRUE")
             }
 
-            Log.d(TAG, "✅ Coordinator states correctly preserved when backgrounded: continuous=true, isListening=false")
+            Log.d(TAG, "✅ Coordinator states correctly preserved when backgrounded: continuous=true, SpeechService.isListening=false")
 
             // REAL USER ACTION: Foreground the app via intent (back to chat page)
             Log.d(TAG, "🔄 REAL ACTION: Launching app to foreground...")
@@ -261,8 +272,8 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         
             // Test that coordinator is accessible after navigation back to foreground
             val afterNavigationContinuous = voiceManager.isContinuousListeningEnabled.value
-            val afterNavigationIsListening = voiceManager.isListening.value
-            Log.d(TAG, "📊 After navigation back: continuous=$afterNavigationContinuous, isListening=$afterNavigationIsListening")
+            val afterNavigationSpeechServiceListening = speechRecognitionService.isListening.value
+            Log.d(TAG, "📊 After navigation back: continuous=$afterNavigationContinuous, SpeechService.isListening=$afterNavigationSpeechServiceListening")
 
             // Verify continuous listening setting is preserved
             if (!afterNavigationContinuous) {
@@ -270,18 +281,23 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("Continuous listening should be TRUE when returning to foreground but was FALSE")
             }
 
-            // ✅ NEW: Verify microphone restart attempt after returning to foreground (voice app behavior)
-            if (!afterNavigationIsListening) {
-                Log.w(TAG, "⚠️ WARNING: isListening is FALSE after foreground return - this might be due to test environment")
-                Log.d(TAG, "📊 Test Environment Check: Speech recognition restart might not work in emulator/test constraints")
-                Log.d(TAG, "📊 Key Success: Continuous listening setting preserved: $afterNavigationContinuous")
-                Log.d(TAG, "🔧 Test continues - voice app lifecycle setting behavior is verified")
+            Log.d(TAG, "🧪 Testing microphone restart attempt after foreground...")
+            val foregroundError = speechRecognitionService.errorState.value
+            if (!afterNavigationSpeechServiceListening) {
+                if (foregroundError?.contains("Failed to initialize speech service") == true || 
+                    foregroundError?.contains("Speech recognition not available") == true) {
+                    Log.d(TAG, "✅ VERIFIED: Microphone restart was attempted (failed with expected error: $foregroundError)")
+                } else {
+                    Log.w(TAG, "⚠️ ERROR: Could not verify microphone restart attempt. Error: $foregroundError")
+                    Log.w(TAG, "⚠️ This may be expected in test environments due to process isolation")
+                    failWithScreenshot("Microphone was not attempted to be restarted when chat with continuous listening returned to foreground")
+                }
             } else {
-                Log.d(TAG, "✅ Excellent! Microphone successfully restarted after foreground return")
+                Log.d(TAG, "✅ VERIFIED: Microphone restart successful (isListening=true)")
             }
             
             // Key insight: Real navigation triggered observable coordinator state changes
-            Log.d(TAG, "✅ REAL navigation away and back successfully preserves coordinator states: continuous=true, isListening=true")
+            Log.d(TAG, "✅ REAL navigation away and back successfully preserves coordinator states: continuous=true, SpeechService.isListening=true")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during real navigation test", e)

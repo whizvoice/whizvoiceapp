@@ -226,12 +226,12 @@ fun ChatScreen(
     }
 
     // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
-    LaunchedEffect(chatId, enableTTSMode) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect(enableTTSMode) triggered: enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+    LaunchedEffect(chatId, enableTTSMode, effectiveHasPermission) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$chatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
         
         // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
         if (effectiveHasPermission) {
-            Log.d("ChatScreen", "[LOG] Chat loaded - enabling continuous listening (voice app default behavior)")
+            Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
             kotlinx.coroutines.delay(500L) // Wait for UI to be ready
             
             // Always enable continuous listening for all chats (voice app default)
@@ -247,6 +247,8 @@ fun ChatScreen(
             }
             
             Log.d("ChatScreen", "[LOG] Continuous listening enabled for chat (voice app default)")
+        } else {
+            Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
         }
         
         // 🔊 GOOGLE ASSISTANT BEHAVIOR: Additionally enable TTS mode if triggered by Assistant
