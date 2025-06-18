@@ -1,4 +1,3 @@
-/*
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -8,6 +7,7 @@ import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Assert
 import org.junit.Before
 import org.junit.After
 import org.junit.Rule
@@ -41,7 +41,6 @@ import com.example.whiz.data.local.ChatEntity
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-@org.junit.Ignore("Integration tests disabled - device connection issues")
 class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     
     @get:Rule
@@ -69,7 +68,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         // Call parent authentication setup first
         super.setUpAuthentication()
         
-        device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // device is already initialized by parent class
         
         // Set up test data
         runBlocking {
@@ -174,38 +173,118 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     }
 
     @Test
-    fun messageRepository_addsMessagesImmediately() = runBlocking {
-        // Test that messages can be added directly to database (simulating optimistic UI)
-        // This verifies the database layer works independently of API authentication
+    fun messageUI_sendMessage_appearsInChat() {
+        runBlocking {
+        // Test that messages appear in the UI when sent through the chat interface
+        // This is a full UI integration test: open chat, type message, click send, verify it appears
         
-        // Create a message directly in database (bypass API authentication requirement)
-        val testMessage = "Test message for immediate display"
-        val testMessageEntity = MessageEntity(
-            id = 0, // Auto-generated
-            chatId = testChatId,
-            content = testMessage,
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis()
+        Log.d(TAG, "🧪 Starting UI message send test")
+        
+        val testMessage = "UI test message - ${System.currentTimeMillis()}"
+        
+        // Step 1: Launch the app for our UI test
+        Log.d(TAG, "🚀 Launching app for UI test...")
+        val intent = InstrumentationRegistry.getInstrumentation().targetContext.packageManager
+            .getLaunchIntentForPackage("com.example.whiz.debug")
+        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        InstrumentationRegistry.getInstrumentation().targetContext.startActivity(intent)
+        
+        // Wait for app to load
+        device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
+        ), 10000)
+        delay(3000) // Let app stabilize
+        
+        Log.d(TAG, "📱 App loaded, looking for New Chat button...")
+        
+        // Step 2: Navigate to new chat
+        val newChatButton = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .descriptionContains("New Chat")
+                .packageName("com.example.whiz.debug")
         )
         
-        val messageId = database.messageDao().insertMessage(testMessageEntity)
+        if (newChatButton.waitForExists(5000)) {
+            Log.d(TAG, "✅ Found New Chat button, clicking...")
+            newChatButton.click()
+            delay(2000) // Wait for chat screen to load
+        } else {
+            Log.w(TAG, "⚠️ New Chat button not found, assuming already in chat")
+        }
         
-        // Verify message was added to database
-        assertTrue("Message ID should be valid", messageId > 0)
+        // Step 3: Find the message input field and type the test message
+        Log.d(TAG, "🔍 Looking for message input field...")
+        val messageInput = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .className("android.widget.EditText")
+                .packageName("com.example.whiz.debug")
+        )
         
-        // Give a small delay for database operations
-        delay(100)
+        if (messageInput.waitForExists(5000)) {
+            Log.d(TAG, "✅ Found message input field, typing message...")
+            messageInput.click() // Focus the input field
+            delay(500)
+            messageInput.setText(testMessage)
+            delay(1000)
+            Log.d(TAG, "✅ Message typed: '$testMessage'")
+        } else {
+            Log.e(TAG, "❌ Could not find message input field")
+            failWithScreenshot("message_input_not_found", "Message input field not found - cannot complete UI test")
+        }
         
-        // Verify message is in database
-        val messages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val addedMessage = messages.find { it.content == testMessage }
+        // Step 4: Find and click the send button
+        Log.d(TAG, "🔍 Looking for send button...")
+        val sendButton = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .descriptionContains("Send message")
+                .packageName("com.example.whiz.debug")
+        )
         
-        assertNotNull("Message should be found in database", addedMessage)
-        assertEquals("Message should be from user", MessageType.USER, addedMessage?.type)
-        assertEquals("Chat ID should match", testChatId, addedMessage?.chatId)
+        if (sendButton.waitForExists(3000)) {
+            Log.d(TAG, "✅ Found send button, clicking...")
+            sendButton.click()
+            delay(1000) // Wait for message to be sent
+            Log.d(TAG, "✅ Send button clicked")
+        } else {
+            Log.e(TAG, "❌ Could not find send button")
+            failWithScreenshot("send_button_not_found", "Send button not found - cannot complete UI test")
+        }
+        
+        // Step 5: Verify the message appears in the chat UI
+        Log.d(TAG, "🔍 Verifying message appears in chat...")
+        delay(2000) // Give time for message to appear
+        
+        // Look for the message text in the UI
+        val messageInChat = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .textContains(testMessage)
+                .packageName("com.example.whiz.debug")
+        )
+        
+        if (messageInChat.waitForExists(5000)) {
+            Log.d(TAG, "✅ SUCCESS: Message appears in chat UI!")
+            assertTrue("Message should appear in chat UI", messageInChat.exists())
+        } else {
+            Log.e(TAG, "❌ FAILURE: Message does not appear in chat UI")
+            
+            // Additional debugging: check if message was saved to database
+            val messagesInDb = database.messageDao().getMessagesForChatFlow(testChatId).first()
+            val messageInDb = messagesInDb.find { it.content == testMessage }
+            
+            if (messageInDb != null) {
+                Log.e(TAG, "❌ Message found in database but not in UI - UI update issue")
+                failWithScreenshot("message_in_db_not_in_ui", "Message saved to database but not displayed in UI - optimistic UI not working")
+            } else {
+                Log.e(TAG, "❌ Message not found in database either - send functionality broken")
+                failWithScreenshot("message_not_sent", "Message not sent - send button functionality broken")
+            }
+        }
+        
+        Log.d(TAG, "🎉 UI message send test completed successfully!")
+        }
     }
 
-    @Test
+    // @Test
     fun speechRecognitionService_canBeControlled() = runBlocking {
         // Test that speech recognition service can be enabled and disabled
         // This verifies the basic functionality needed for continuous listening control
@@ -229,7 +308,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                    speechRecognitionService.continuousListeningEnabled)
     }
 
-    @Test
+    // @Test
     fun appLifecycleService_emitsEvents() = runBlocking {
         // Test that app lifecycle service can emit events
         // This is the foundation for navigation-based microphone control
@@ -273,7 +352,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         assertTrue("AppLifecycleService can emit events", true)
     }
 
-    @Test
+    // @Test
     fun multipleMessages_handledCorrectly() = runBlocking {
         // Test that database can handle multiple messages correctly
         // This verifies that rapid message insertion works (important for voice input)
@@ -326,7 +405,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                   finalMessages.size >= initialCount + 2)
     }
 
-    @Test
+    // @Test
     fun speechRecognition_serviceIntegration() = runBlocking {
         // Test the basic integration between services
         // This verifies that the services can work together
@@ -364,7 +443,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         assertTrue("Services are properly injected and functional", true)
     }
 
-    @Test
+    // @Test
     fun database_persistsMessages() = runBlocking {
         // Test that messages are properly persisted in database
         // This ensures that the database layer works correctly for message storage
@@ -395,7 +474,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                   persistedMessage?.timestamp ?: 0 > System.currentTimeMillis() - 5000)
     }
 
-    @Test
+    // @Test
     fun continuousListening_remainsOffAfterNavigation_canBeManuallyEnabled() = runBlocking {
         // Test that continuous listening remains OFF after navigation if it was OFF
         // and can be manually enabled by user action (mic button press)
@@ -436,7 +515,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                    speechRecognitionService.continuousListeningEnabled)
     }
 
-    @Test
+    // @Test
     fun continuousListening_respectsUserPreference_throughNavigationCycles() = runBlocking {
         // Test multiple navigation cycles with continuous listening OFF
         // Ensures navigation doesn't accidentally enable it
@@ -470,7 +549,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                   speechRecognitionService.continuousListeningEnabled)
     }
 
-    @Test
+    // @Test
     fun continuousListening_onOffToggleWorksThroughNavigation() = runBlocking {
         // Test that manual on/off toggle works correctly even with navigation
         
@@ -511,7 +590,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         assertTrue("Should be re-enableable", speechRecognitionService.continuousListeningEnabled)
     }
 
-    @Test
+    // @Test
     fun remoteAgent_userMessageAppearsImmediately() {
         runBlocking {
         // Test that user messages appear immediately in UI when using remote agent
@@ -563,7 +642,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
     }
 
-    @Test
+    // @Test
     fun realChatViewModel_remoteAgent_messageAppearsImmediately() {
         runBlocking {
         // Test the ACTUAL ChatViewModel behavior with remote agent
@@ -610,7 +689,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
     }
 
-    @Test
+    // @Test
     fun remoteAgent_noDuplicateMessages_afterOptimisticUIAndServerRefresh() {
         runBlocking {
         // Test that specifically checks for message duplication issue
@@ -720,4 +799,3 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
     }
 }
-*/

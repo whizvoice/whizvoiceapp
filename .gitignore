@@ -12,5 +12,7 @@ local.properties
 test_credentials.json
 
 # Test artifacts
-test_output.log
+test_summary.log
+test_logcat_output.log
+test_gradle_output.log
 test_screenshots/

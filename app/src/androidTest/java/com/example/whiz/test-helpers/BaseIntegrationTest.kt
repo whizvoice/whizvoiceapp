@@ -46,11 +46,6 @@ abstract class BaseIntegrationTest {
      */
     protected open val skipAutoAuthentication: Boolean = false
     
-    /**
-     * Override this to skip automatic app launch (e.g., for tests that need custom launch behavior)
-     */
-    protected open val skipAutoAppLaunch: Boolean = false
-    
     @Before
     open fun setUpAuthentication() {
         hiltRule.inject()
@@ -78,12 +73,6 @@ abstract class BaseIntegrationTest {
                 }
             }
         }
-        
-        if (!skipAutoAppLaunch) {
-            runBlocking {
-                launchApp()
-            }
-        }
     }
     
     /**
@@ -101,113 +90,7 @@ abstract class BaseIntegrationTest {
         }
     }
     
-    /**
-     * Launch the app and wait for it to be ready
-     * Ensures clean state by force-stopping any existing instances first
-     */
-    protected suspend fun launchApp() {
-        Log.d("BaseIntegrationTest", "🚀 Launching app...")
-        Log.d("BaseIntegrationTest", "🔍 Package name: $packageName")
-        
-        // First, ensure clean state by force-stopping any existing app instances
-        Log.d("BaseIntegrationTest", "🧹 Cleaning up any existing app instances...")
-        try {
-            device.executeShellCommand("am force-stop $packageName")
-            delay(500) // Give it a moment to fully stop
-            Log.d("BaseIntegrationTest", "✅ Force-stopped existing app instances")
-        } catch (e: Exception) {
-            Log.d("BaseIntegrationTest", "⚠️ Could not force-stop app (may not be running): ${e.message}")
-        }
-        
-        // Clear any existing tasks/activities for this package
-        try {
-            device.executeShellCommand("am kill-all $packageName")
-            delay(200)
-            Log.d("BaseIntegrationTest", "✅ Killed all app processes")
-        } catch (e: Exception) {
-            Log.d("BaseIntegrationTest", "⚠️ Could not kill app processes (may not be running): ${e.message}")
-        }
-        
-        // Try multiple approaches to get the launch intent
-        var intent = context.packageManager.getLaunchIntentForPackage(packageName)
-        
-        if (intent == null) {
-            Log.d("BaseIntegrationTest", "⚠️ First attempt failed, trying with target context...")
-            val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
-            intent = targetContext.packageManager.getLaunchIntentForPackage(packageName)
-        }
-        
-        if (intent == null) {
-            Log.d("BaseIntegrationTest", "⚠️ Second attempt failed, creating manual intent...")
-            intent = Intent().apply {
-                component = android.content.ComponentName(packageName, "$packageName.MainActivity")
-                action = Intent.ACTION_MAIN
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
-        }
-        
-        Log.d("BaseIntegrationTest", "🔍 Launch intent: $intent")
-        
-        if (intent == null) {
-            Log.d("BaseIntegrationTest", "❌ CRITICAL: No launch intent found for package $packageName")
-            failWithScreenshot("No launch intent found for package $packageName", "No launch intent")
-        }
-        
-        // Use comprehensive flags to ensure clean launch
-        intent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        Log.d("BaseIntegrationTest", "🔍 Starting activity with clean launch flags: $intent")
-        
-        try {
-            context.startActivity(intent)
-            Log.d("BaseIntegrationTest", "✅ Activity started successfully")
-        } catch (e: Exception) {
-            Log.d("BaseIntegrationTest", "❌ CRITICAL: Failed to start activity: ${e.message}")
-            failWithScreenshot("Failed to start activity: ${e.message}", "Activity start failed")
-        }
-        
-        Log.d("BaseIntegrationTest", "⏳ Waiting for app to launch...")
-        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 15000)
-        Log.d("BaseIntegrationTest", "📱 App launched successfully: $appLaunched")
-        
-        if (!appLaunched) {
-            Log.d("BaseIntegrationTest", "❌ CRITICAL: App failed to launch!")
-            Log.d("BaseIntegrationTest", "🔍 Current package: ${device.currentPackageName}")
-            failWithScreenshot("App failed to launch within 15 seconds", "App launch timeout")
-        }
-        
-        delay(1500) // Let app stabilize
-        Log.d("BaseIntegrationTest", "📱 App should be stabilized now")
-        
-        // Verify app is actually in foreground after launch
-        val isInForeground = device.hasObject(By.pkg(packageName))
-        Log.d("BaseIntegrationTest", "📱 App foreground check after launch: $isInForeground")
-        Log.d("BaseIntegrationTest", "🔍 Current package after launch: ${device.currentPackageName}")
-        
-        if (!isInForeground) {
-            Log.d("BaseIntegrationTest", "⚠️ App not in foreground after launch, attempting to bring to front...")
-            // Try to bring app to foreground
-            val foregroundIntent = Intent().apply {
-                component = android.content.ComponentName(packageName, "$packageName.MainActivity")
-                action = Intent.ACTION_MAIN
-                addCategory(Intent.CATEGORY_LAUNCHER)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            context.startActivity(foregroundIntent)
-            delay(1000)
-            
-            val isNowInForeground = device.hasObject(By.pkg(packageName))
-            Log.d("BaseIntegrationTest", "📱 App foreground check after retry: $isNowInForeground")
-            
-            if (!isNowInForeground) {
-                Log.d("BaseIntegrationTest", "❌ CRITICAL: App failed to stay in foreground after launch!")
-                failWithScreenshot("App launched but failed to stay in foreground", "App not in foreground after launch")
-            }
-        }
-    }
+
     
 
     

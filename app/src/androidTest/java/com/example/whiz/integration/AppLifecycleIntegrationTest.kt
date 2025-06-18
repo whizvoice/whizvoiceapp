@@ -39,10 +39,6 @@ import com.example.whiz.BaseIntegrationTest
 @RunWith(AndroidJUnit4::class)
 class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
-    // Skip automatic app launch to avoid complex setup crashes
-    override val skipAutoAppLaunch: Boolean = true
-
-
 
     @Inject
     lateinit var voiceManager: VoiceManager  // ← Clean, testable voice coordinator
