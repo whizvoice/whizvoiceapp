@@ -12,6 +12,43 @@
 
 set -e
 
+# Trap handler to ensure debug app is always installed even on script failure
+cleanup_and_ensure_debug_installed() {
+    local exit_code=$?
+    
+    # Define log function in case it wasn't defined yet
+    if ! declare -f log_with_time > /dev/null; then
+        log_with_time() {
+            echo "[$(date '+%H:%M:%S.%3N')] $1"
+        }
+    fi
+    
+    log_with_time "🔧 Script interrupted or failed (exit code: $exit_code)"
+    
+    # Only try to install if we're not in clean mode and the script failed
+    if [[ "$CLEAN_AFTER_TESTS" != "true" ]] && [[ $exit_code -ne 0 ]]; then
+        # Check if debug app is installed
+        if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
+            log_with_time "📱 Debug app not found - running installation script..."
+            
+            # Call the dedicated install script
+            if ./install_debug_for_testing.sh 2>/dev/null; then
+                log_with_time "✅ Debug app installed successfully via install script"
+            else
+                log_with_time "❌ Install script failed - debug app may not be available"
+            fi
+        else
+            log_with_time "✅ Debug app is already installed and ready for manual testing"
+        fi
+    fi
+    
+    # Preserve the original exit code
+    exit $exit_code
+}
+
+# Set up trap to catch script exits
+trap cleanup_and_ensure_debug_installed EXIT ERR
+
 # Parse command line arguments
 CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
@@ -40,8 +77,6 @@ log_with_time() {
     echo "[$(date '+%H:%M:%S.%3N')] $1" | tee -a test_output.log
 }
 
-
-
 # Function to run command with logging and timing
 run_with_log() {
     local description="$1"
@@ -65,7 +100,6 @@ run_with_log() {
     echo "" | tee -a test_output.log
 }
 
-
 # Function to run voice tests using gradle (more reliable than direct adb)
 run_voice_tests_with_gradle() {
     local start_time=$(date +%s.%3N)
@@ -83,6 +117,7 @@ run_voice_tests_with_gradle() {
         -Pandroid.testInstrumentationRunnerArguments.class=com.example.whiz.voice.MicButtonDuringResponseTest \
         --console=plain \
         --no-daemon \
+        --no-uninstall \
         >> test_output.log 2>&1; then
         
         local end_time=$(date +%s.%3N)
@@ -322,6 +357,7 @@ run_integration_tests_with_logcat() {
     if ./gradlew connectedDebugAndroidTest \
         --console=plain \
         --no-daemon \
+        --no-uninstall \
         > "$temp_gradle_output" 2>&1; then
         
         # Filter out gradle task lines and append to test_output.log
@@ -530,5 +566,8 @@ else
 fi
 
 log_with_time "✅ Test execution completed. Check test_output.log for full details."
+
+# Disable trap before normal exit (trap will only run on abnormal exits now)
+trap - EXIT ERR
 
 exit $overall_exit_code 

@@ -50,6 +50,7 @@ class VoiceChatIntegrationTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = inputText,
+                    isInputFromVoice = false,
                     transcription = transcription,
                     isListening = isListening,
                     isInputDisabled = false,
@@ -85,6 +86,7 @@ class VoiceChatIntegrationTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = transcription,
                     isListening = isListening,
                     isInputDisabled = false,
@@ -120,6 +122,7 @@ class VoiceChatIntegrationTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = inputText,
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true,  // Disabled while responding
@@ -160,6 +163,7 @@ class VoiceChatIntegrationTest {
                     
                     ChatInputBar(
                         inputText = "",
+                        isInputFromVoice = false,
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
@@ -211,6 +215,7 @@ class VoiceChatIntegrationTest {
                     
                     ChatInputBar(
                         inputText = "",
+                        isInputFromVoice = false,
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,
@@ -267,6 +272,7 @@ class VoiceChatIntegrationTest {
                     
                     ChatInputBar(
                         inputText = "",
+                        isInputFromVoice = false,
                         transcription = "",
                         isListening = false,
                         isInputDisabled = !canAcceptTextInput, // Text input disabled when TTS reading
@@ -345,6 +351,7 @@ class VoiceChatIntegrationTest {
                     
                     ChatInputBar(
                         inputText = inputText,
+                        isInputFromVoice = false,
                         transcription = "",
                         isListening = false,
                         isInputDisabled = isWaitingForResponse,

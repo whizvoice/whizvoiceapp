@@ -94,6 +94,7 @@ fun ChatScreen(
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
+    val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
     val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
     val connectionError by viewModel.connectionError.collectAsState() // General connection errors
@@ -241,7 +242,7 @@ fun ChatScreen(
             voiceManager.setTranscriptionCallback { transcription ->
                 if (transcription.isNotBlank()) {
                     Log.d("ChatScreen", "[LOG] Voice transcription received: '$transcription'")
-                    viewModel.updateInputText(transcription)
+                    viewModel.updateInputText(transcription, fromVoice = true)
                     viewModel.sendUserInput(transcription)
                 }
             }
@@ -275,7 +276,7 @@ fun ChatScreen(
                 voiceManager.setTranscriptionCallback { transcription ->
                     if (transcription.isNotBlank()) {
                         Log.d("ChatScreen", "[LOG] Assistant transcription received: '$transcription'")
-                        viewModel.updateInputText(transcription)
+                        viewModel.updateInputText(transcription, fromVoice = true)
                         viewModel.sendUserInput(transcription)
                     }
                 }
@@ -325,6 +326,7 @@ fun ChatScreen(
             val isMicDisabled = false // Mic should always be available for user interaction
             ChatInputBar(
                 inputText = inputText,
+                isInputFromVoice = isInputFromVoice,
                 transcription = transcription,
                 isListening = isListening,
                 isInputDisabled = isTextInputDisabled,
@@ -334,8 +336,13 @@ fun ChatScreen(
                 isSpeaking = isSpeaking,
                 shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
-                onSendClick = { viewModel.sendUserInput(inputText) }, // Pass current input text explicitly
-                onInterruptClick = { viewModel.interruptResponse() }, // Pass new callback for interrupts
+                onSendClick = { 
+                    if (isResponding) {
+                        viewModel.interruptResponse()
+                    } else {
+                        viewModel.sendUserInput(inputText)
+                    }
+                },
                 onMicClick = { handleMicClick() },
                 onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
@@ -607,6 +614,7 @@ fun TypingIndicator() {
 @Composable
 fun ChatInputBar(
     inputText: String,
+    isInputFromVoice: Boolean,
     transcription: String,
     isListening: Boolean,
     isInputDisabled: Boolean, // Text input disabled state
@@ -624,9 +632,8 @@ fun ChatInputBar(
     shape: Shape = RectangleShape
 ) {
     val hasInputText = inputText.isNotBlank()
-    
-    // Check if we can interrupt (bot is responding and user has new input)
-    val canInterrupt = isResponding && hasInputText
+    val hasTypedText = hasInputText && !isInputFromVoice
+    val hasVoiceText = hasInputText && isInputFromVoice
     
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
@@ -663,13 +670,14 @@ fun ChatInputBar(
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp), // Rounded corners
                 colors = OutlinedTextFieldDefaults.colors(
-                    // Define colors for different states - no special interrupt colors
+                    // Define colors for different states - voice text appears gray
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                     disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                     cursorColor = MaterialTheme.colorScheme.primary,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    // Voice text is gray, typed text is normal color
+                    focusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                     disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     focusedContainerColor = surfaceColor,
                     unfocusedContainerColor = surfaceColor,
@@ -681,15 +689,6 @@ fun ChatInputBar(
                 trailingIcon = { // Place the icon back inside the TextField
                     // Button logic with seamless interrupt support and headphone-aware TTS behavior
                     val (icon, description, action, tint) = when {
-                        canInterrupt -> {
-                            // When bot is responding and user has input, handle as interrupt but look like normal send
-                            Tuple4(
-                                Icons.Filled.Send,
-                                "Send message", // Same description as normal send
-                                onInterruptClick,
-                                MaterialTheme.colorScheme.primary // Same color as normal send
-                            )
-                        }
                         isListening -> {
                             Tuple4(
                                 Icons.Filled.MicOff,
@@ -723,22 +722,31 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        isContinuousListeningEnabled -> {
-                            // Prioritize continuous listening mode - show mic off button even with text
-                            Tuple4(
-                                Icons.Filled.MicOff,
-                                "Turn off continuous listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.error
-                            )
-                        }
-                        hasInputText -> {
-                            // Only show send button if continuous listening is disabled
+                        hasTypedText -> {
+                            // Show send button for typed text (always needs manual send)
                             Tuple4(
                                 Icons.Filled.Send,
                                 "Send message",
                                 onSendClick,
                                 MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        hasVoiceText && !isContinuousListeningEnabled -> {
+                            // Show send button for voice text when continuous listening is OFF
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        isContinuousListeningEnabled -> {
+                            // Show mic off button only when no text is present
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
                             )
                         }
                         else -> {
@@ -752,7 +760,6 @@ fun ChatInputBar(
                     }
 
                     val isButtonEnabled = when {
-                        canInterrupt -> true // Always allow interrupts
                         isListening -> !isMicDisabled
                         shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled

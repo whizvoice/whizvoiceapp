@@ -41,6 +41,7 @@ class MicrophoneButtonStateTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -69,6 +70,7 @@ class MicrophoneButtonStateTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "I'm speaking right now...",
                     isListening = true,
                     isInputDisabled = false,
@@ -98,6 +100,7 @@ class MicrophoneButtonStateTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -129,6 +132,7 @@ class MicrophoneButtonStateTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "Hello Whiz",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -163,6 +167,7 @@ class MicrophoneButtonStateTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,

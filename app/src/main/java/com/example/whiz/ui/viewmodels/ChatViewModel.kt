@@ -92,6 +92,10 @@ class ChatViewModel @Inject constructor(
     private val _inputText = MutableStateFlow("")
     val inputText = _inputText.asStateFlow()
 
+    // Track whether current input text is from typing vs voice
+    private val _isInputFromVoice = MutableStateFlow(false)
+    val isInputFromVoice = _isInputFromVoice.asStateFlow()
+
     // Messages in the current chat
     val messages = _chatId.flatMapLatest { id ->
         if (id > 0) {
@@ -749,8 +753,8 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun updateInputText(text: String) {
-        Log.d(TAG, "[LOG] 🔥 updateInputText called. SETTING _inputText.value from '${_inputText.value}' to: '$text'")
+    fun updateInputText(text: String, fromVoice: Boolean = false) {
+        Log.d(TAG, "[LOG] 🔥 updateInputText called. SETTING _inputText.value from '${_inputText.value}' to: '$text', fromVoice: $fromVoice")
         Log.d(TAG, "[LOG] 🔥 updateInputText stack trace:", Exception("Stack trace for updateInputText"))
         
         // 🔧 Prevent setting input text back if we just cleared it due to assistant response
@@ -761,6 +765,12 @@ class ChatViewModel @Inject constructor(
         }
         
         _inputText.value = text
+        _isInputFromVoice.value = fromVoice
+        
+        // Clear voice flag when text is empty (reset state)
+        if (text.isEmpty()) {
+            _isInputFromVoice.value = false
+        }
     }
 
     fun toggleSpeechRecognition() {
@@ -872,7 +882,7 @@ class ChatViewModel @Inject constructor(
             // This ensures text is preserved even when user manually stops the microphone
             if (finalText.isNotBlank()) {
                 Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field: '$finalText'")
-            _inputText.value = finalText
+            updateInputText(finalText, fromVoice = true)
                 
                 // Only auto-send if continuous listening is still enabled
                 if (continuousListeningEnabled) {
