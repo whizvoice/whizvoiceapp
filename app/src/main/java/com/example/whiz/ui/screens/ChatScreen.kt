@@ -236,7 +236,9 @@ fun ChatScreen(
             kotlinx.coroutines.delay(500L) // Wait for UI to be ready
             
             // Always enable continuous listening for all chats (voice app default)
+            // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
             voiceManager.updateContinuousListeningEnabled(true)
+            viewModel.ensureContinuousListeningEnabled()
             
             // Set up transcription callback for chat integration
             voiceManager.setTranscriptionCallback { transcription ->
@@ -270,7 +272,9 @@ fun ChatScreen(
                 
                 // Ensure continuous listening is enabled (should already be set above for new chats)
                 Log.d("ChatScreen", "[LOG] Ensuring continuous listening for Assistant launch")
+                // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
                 voiceManager.updateContinuousListeningEnabled(true)
+                viewModel.ensureContinuousListeningEnabled()
                 
                 // Set up transcription callback if not already done
                 voiceManager.setTranscriptionCallback { transcription ->

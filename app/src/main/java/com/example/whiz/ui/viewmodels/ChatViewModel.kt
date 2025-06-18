@@ -767,6 +767,15 @@ class ChatViewModel @Inject constructor(
         _inputText.value = text
         _isInputFromVoice.value = fromVoice
         
+        // 🔧 NEW: Auto-disable continuous listening when user starts typing
+        // This ensures the send button appears when user types text
+        if (!fromVoice && text.isNotEmpty() && continuousListeningEnabled) {
+            Log.d(TAG, "[LOG] 🔥 updateInputText: User started typing - auto-disabling continuous listening")
+            continuousListeningEnabled = false
+            speechRecognitionService.continuousListeningEnabled = false
+            speechRecognitionService.stopListening()
+        }
+        
         // Clear voice flag when text is empty (reset state)
         if (text.isEmpty()) {
             _isInputFromVoice.value = false

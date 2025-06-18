@@ -234,6 +234,42 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 4: Find and click the send button
         Log.d(TAG, "🔍 Looking for send button...")
+        
+        // DEBUG: Log the current state of the input field and relevant variables
+        Log.d(TAG, "🔍 DEBUG: Current input text: '$testMessage'")
+        Log.d(TAG, "🔍 DEBUG: Input field has text: ${testMessage.isNotBlank()}")
+        
+        // Try to get the ChatViewModel state for debugging
+        try {
+            // Access the repository to check the current chat state
+            val currentMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
+            Log.d(TAG, "🔍 DEBUG: Messages in chat: ${currentMessages.size}")
+            
+            // Check if there are any unsent messages or draft state
+            val lastMessage = currentMessages.lastOrNull()
+            Log.d(TAG, "🔍 DEBUG: Last message: ${lastMessage?.content ?: "none"}")
+            
+            // Wait a bit more to ensure UI state is settled
+            delay(1000)
+            Log.d(TAG, "🔍 DEBUG: UI should be settled now, checking button state...")
+        } catch (e: Exception) {
+            Log.w(TAG, "🔍 DEBUG: Could not access chat state: ${e.message}")
+        }
+        
+        // Check what buttons are actually available
+        val allButtons = device.findObjects(
+            androidx.test.uiautomator.By.clickable(true)
+                .pkg("com.example.whiz.debug")
+        )
+        Log.d(TAG, "🔍 DEBUG: Found ${allButtons.size} clickable elements")
+        
+        // Log all button descriptions to see what's actually available
+        allButtons.forEachIndexed { index, button ->
+            val desc = button.contentDescription ?: "no description"
+            val text = button.text ?: "no text"
+            Log.d(TAG, "🔍 DEBUG: Button $index - desc: '$desc', text: '$text'")
+        }
+        
         val sendButton = device.findObject(
             androidx.test.uiautomator.UiSelector()
                 .descriptionContains("Send message")
@@ -247,7 +283,23 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ Send button clicked")
         } else {
             Log.e(TAG, "❌ Could not find send button")
-            failWithScreenshot("send_button_not_found", "Send button not found - cannot complete UI test")
+            
+            // Additional debugging: try to find any send-related buttons
+            val sendButtonAlt = device.findObject(
+                androidx.test.uiautomator.UiSelector()
+                    .description("Send message")
+                    .packageName("com.example.whiz.debug")
+            )
+            
+            if (sendButtonAlt.exists()) {
+                Log.d(TAG, "🔍 DEBUG: Found exact 'Send message' button - clicking it")
+                sendButtonAlt.click()
+                delay(1000)
+                Log.d(TAG, "✅ Send button clicked (exact match)")
+            } else {
+                Log.e(TAG, "❌ No send button found with exact or partial match")
+                failWithScreenshot("send_button_not_found", "Send button not found - cannot complete UI test")
+            }
         }
         
         // Step 5: Verify the message appears in the chat UI
