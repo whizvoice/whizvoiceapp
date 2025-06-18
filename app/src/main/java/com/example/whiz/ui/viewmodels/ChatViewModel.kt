@@ -363,10 +363,19 @@ class ChatViewModel @Inject constructor(
                             var isErrorHandled = false
                             var messageContentForChat = event.text
                             var speakThisMessage = _isVoiceResponseEnabled.value
+                            var effectiveConversationId: Long? = null // Declare outside try block
 
                             // Attempt to parse as JSON first
                             try {
                                 val jsonObject = JSONObject(event.text)
+                                
+                                // 🔧 Extract conversation_id from JSON if present (for both success and error responses)
+                                val jsonConversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                
+                                // Update event.conversationId if JSON has it but WebSocket parsing missed it
+                                effectiveConversationId = event.conversationId ?: jsonConversationId
                                 
                                 if (jsonObject.has("error") && jsonObject.has("status_code")) {
                                     val errorMsg = jsonObject.getString("error")
@@ -413,14 +422,33 @@ class ChatViewModel @Inject constructor(
                                 isErrorHandled = false
                             }
 
-                            // 🔧 Enhanced request ID validation with error handling
+                            // 🔧 Enhanced request ID validation with error handling and conversation_id sync
                             val targetChatId = try {
                                 if (event.requestId != null) {
                                     if (pendingRequests.containsKey(event.requestId)) {
-                                        val chatId = pendingRequests[event.requestId]!!
+                                        val originalChatId = pendingRequests[event.requestId]!!
                                         pendingRequests.remove(event.requestId) // Remove completed request
-                                        Log.d(TAG, "$eventLogId Request ID ${event.requestId} mapped to chat $chatId (current: ${_chatId.value})")
-                                        chatId
+                                        Log.d(TAG, "$eventLogId Request ID ${event.requestId} mapped to chat $originalChatId (current: ${_chatId.value})")
+                                        
+                                        // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
+                                        if (originalChatId == -1L && effectiveConversationId != null) {
+                                            Log.d(TAG, "$eventLogId New chat created! Server assigned conversation_id: $effectiveConversationId")
+                                            // Update local chat ID to match server-assigned ID
+                                            _chatId.value = effectiveConversationId
+                                            Log.d(TAG, "$eventLogId Updated local chat ID from $originalChatId to $effectiveConversationId")
+                                            effectiveConversationId
+                                        } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
+                                            // Handle case where local chat has temp ID but server provides real ID
+                                            Log.d(TAG, "$eventLogId Server provided conversation_id: $effectiveConversationId, local was: $originalChatId")
+                                            // For new chats, trust the server's conversation_id
+                                            if (originalChatId > 0 && _chatId.value == originalChatId) {
+                                                Log.d(TAG, "$eventLogId Syncing local chat ID to server conversation_id: $effectiveConversationId")
+                                                _chatId.value = effectiveConversationId
+                                            }
+                                            effectiveConversationId
+                                        } else {
+                                            originalChatId
+                                        }
                                     } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "$eventLogId Request ID ${event.requestId} not found in pending requests. Available: ${pendingRequests.keys}")

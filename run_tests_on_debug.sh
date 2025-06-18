@@ -25,6 +25,24 @@ cleanup_and_ensure_debug_installed() {
     
     log_with_time "🔧 Script interrupted or failed (exit code: $exit_code)"
     
+    # Pull any test screenshots that might have been captured before failure
+    if declare -f pull_test_screenshots > /dev/null; then
+        pull_test_screenshots 2>/dev/null || true
+    else
+        # Inline screenshot pulling if function not available yet
+        log_with_time "📸 Pulling test screenshots from device (cleanup)..."
+        mkdir -p test_screenshots 2>/dev/null || true
+        local screenshot_files=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | grep -v "No such file" | head -1)
+        if [[ -n "$screenshot_files" ]]; then
+            if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+                find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
+                rm -rf temp_screenshots 2>/dev/null || true
+                local local_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+                log_with_time "✅ Pulled $local_count screenshots to test_screenshots/ (cleanup)"
+            fi
+        fi
+    fi
+    
     # Only try to install if we're not in clean mode and the script failed
     if [[ "$CLEAN_AFTER_TESTS" != "true" ]] && [[ $exit_code -ne 0 ]]; then
         # Check if debug app is installed

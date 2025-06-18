@@ -63,6 +63,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     private var testChatId = 0L
     private val TAG = "MessageDisplayTest"
 
+    // Authentication is now handled automatically by BaseIntegrationTest
+    val authenticated = true // Always authenticated via BaseIntegrationTest
+
     @Before
     override fun setUpAuthentication() {
         // Call parent authentication setup first

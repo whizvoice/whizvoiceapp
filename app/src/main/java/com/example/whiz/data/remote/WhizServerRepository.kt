@@ -24,7 +24,7 @@ import kotlinx.coroutines.delay
 
 
 sealed class WebSocketEvent {
-    data class Message(val text: String, val requestId: String? = null) : WebSocketEvent()
+    data class Message(val text: String, val requestId: String? = null, val conversationId: Long? = null) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
@@ -202,11 +202,14 @@ class WhizServerRepository @Inject constructor(
                                 scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(errorMessage, requestId)) }
                                 messageHandled = true
                             }
-                            // Handle normal structured response with request_id
+                            // Handle normal structured response with request_id and conversation_id
                             else if (jsonObject.has("response")) {
                                 val responseText = jsonObject.getString("response")
-                                Log.d(TAG, "Received structured response with request_id: $requestId")
-                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId)) }
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                Log.d(TAG, "Received structured response with request_id: $requestId, conversation_id: $conversationId")
+                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId, conversationId)) }
                                 messageHandled = true
                             }
                         } catch (e: org.json.JSONException) {
