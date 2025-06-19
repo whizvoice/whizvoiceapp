@@ -61,6 +61,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     lateinit var database: WhizDatabase
 
     private var testChatId = 0L
+    private var createdServerChatId = 0L // Track the server chat ID created during test
     private val TAG = "MessageDisplayTest"
 
     // Authentication is now handled automatically by BaseIntegrationTest
@@ -161,6 +162,45 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     Log.d(TAG, "✅ Forced garbage collection")
                 } catch (e: Exception) {
                     Log.w(TAG, "⚠️ Could not force garbage collection: ${e.message}")
+                }
+                
+                // 6. Clean up test chats to prevent accumulation
+                try {
+                    // Delete the initial test chat created in setup
+                    if (testChatId > 0) {
+                        val deletedMessages = database.messageDao().deleteMessagesForChat(testChatId)
+                        val deletedChat = database.chatDao().deleteChat(testChatId)
+                        Log.d(TAG, "✅ Deleted initial test chat $testChatId ($deletedMessages messages, $deletedChat chat)")
+                    }
+                    
+                    // Delete the server chat created during the test
+                    if (createdServerChatId > 0) {
+                        val deletedMessages = database.messageDao().deleteMessagesForChat(createdServerChatId)
+                        val deletedChat = database.chatDao().deleteChat(createdServerChatId)
+                        Log.d(TAG, "✅ Deleted server test chat $createdServerChatId ($deletedMessages messages, $deletedChat chat)")
+                    }
+                    
+                    // Also clean up any test chats by searching for our test message pattern
+                    val allMessages = database.messageDao().getAllMessages()
+                    val testMessageIds = allMessages.filter { 
+                        it.content.contains("INTEGRATION_TEST_MSG_") 
+                    }.map { it.chatId }.distinct()
+                    
+                    for (chatId in testMessageIds) {
+                        if (chatId != testChatId && chatId != createdServerChatId) {
+                            try {
+                                val deletedMessages = database.messageDao().deleteMessagesForChat(chatId)
+                                val deletedChat = database.chatDao().deleteChat(chatId)
+                                Log.d(TAG, "✅ Deleted orphaned test chat $chatId ($deletedMessages messages, $deletedChat chat)")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "⚠️ Could not delete orphaned test chat $chatId: ${e.message}")
+                            }
+                        }
+                    }
+                    
+                    Log.d(TAG, "✅ Test chat cleanup completed")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not clean up test chats: ${e.message}")
                 }
                 
                 // Leave user authenticated for manual testing
@@ -824,6 +864,21 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         Log.d(TAG, "✅ Verified: New chat creation, message sending, optimistic UI, bot response, title calculation, navigation, chat persistence, re-entry, and existing chat messaging")
         if (finalBotResponse) {
             Log.d(TAG, "✅ Bonus: Bot response functionality also working")
+        }
+        
+        // Capture the server chat ID for cleanup
+        try {
+            val testIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
+            val allMessages = database.messageDao().getAllMessages()
+            val testMessage = allMessages.find { it.content.contains(testIdentifier) }
+            if (testMessage != null) {
+                createdServerChatId = testMessage.chatId
+                Log.d(TAG, "📝 Captured server chat ID for cleanup: $createdServerChatId")
+            } else {
+                Log.w(TAG, "⚠️ Could not find test message to capture chat ID")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Could not capture server chat ID: ${e.message}")
         }
         }
     }
