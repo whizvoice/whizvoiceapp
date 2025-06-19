@@ -192,11 +192,26 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         InstrumentationRegistry.getInstrumentation().targetContext.startActivity(intent)
         
-        // Wait for app to load
+        // Wait for app to load completely
         device.wait(androidx.test.uiautomator.Until.hasObject(
             androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
         ), 10000)
-        delay(3000) // Let app stabilize
+        
+        // Wait for main UI elements to appear (either New Chat button or message input)
+        val newChatLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.descContains("New Chat").pkg("com.example.whiz.debug")
+        ), 2000)
+        
+        val inputFieldLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
+        ), 2000)
+        
+        val appLoaded = newChatLoaded || inputFieldLoaded
+        
+        if (!appLoaded) {
+            Log.w(TAG, "⚠️ Main UI elements not found, waiting a bit more...")
+            delay(2000) // Fallback delay only if specific wait failed
+        }
         
         Log.d(TAG, "📱 App loaded, looking for New Chat button...")
         
@@ -210,7 +225,16 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         if (newChatButton.waitForExists(5000)) {
             Log.d(TAG, "✅ Found New Chat button, clicking...")
             newChatButton.click()
-            delay(2000) // Wait for chat screen to load
+            
+            // Wait for chat screen to load by looking for message input field
+            val chatLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
+            ), 5000)
+            
+            if (!chatLoaded) {
+                Log.w(TAG, "⚠️ Chat screen didn't load in time")
+                delay(1000) // Short fallback delay
+            }
         } else {
             Log.w(TAG, "⚠️ New Chat button not found, assuming already in chat")
         }
@@ -226,9 +250,29 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         if (messageInput.waitForExists(5000)) {
             Log.d(TAG, "✅ Found message input field, typing message...")
             messageInput.click() // Focus the input field
-            delay(500)
+            
+            // Wait for input field to be focused (cursor appears)
+            val inputFocused = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.focused(true).clazz("android.widget.EditText")
+            ), 2000)
+            
+            if (!inputFocused) {
+                delay(500) // Short fallback if focus detection fails
+            }
+            
             messageInput.setText(testMessage)
-            delay(1000)
+            
+            // Wait for text to actually appear in the field
+            val textSet = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.text(testMessage).pkg("com.example.whiz.debug")
+            ), 3000)
+            
+            if (!textSet) {
+                Log.w(TAG, "⚠️ Text didn't appear in input field, trying again...")
+                messageInput.setText(testMessage)
+                delay(500) // Fallback delay if text detection fails
+            }
+            
             Log.d(TAG, "✅ Message typed: '$testMessage'")
         } else {
             Log.e(TAG, "❌ Could not find message input field")
@@ -252,8 +296,15 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             val lastMessage = currentMessages.lastOrNull()
             Log.d(TAG, "🔍 DEBUG: Last message: ${lastMessage?.content ?: "none"}")
             
-            // Wait a bit more to ensure UI state is settled
-            delay(1000)
+            // Wait for send button to appear (should happen when text is entered)
+            val sendButtonReady = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.descContains("Send message").pkg("com.example.whiz.debug")
+            ), 3000)
+            
+            if (!sendButtonReady) {
+                Log.w(TAG, "🔍 DEBUG: Send button not ready yet, waiting a bit more...")
+                delay(1000) // Fallback delay
+            }
             Log.d(TAG, "🔍 DEBUG: UI should be settled now, checking button state...")
         } catch (e: Exception) {
             Log.w(TAG, "🔍 DEBUG: Could not access chat state: ${e.message}")
@@ -282,7 +333,17 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         if (sendButton.waitForExists(3000)) {
             Log.d(TAG, "✅ Found send button, clicking...")
             sendButton.click()
-            delay(1000) // Wait for message to be sent
+            
+            // Wait for message to be sent by checking if input field is cleared
+            val messageSent = device.wait(androidx.test.uiautomator.Until.gone(
+                androidx.test.uiautomator.By.text(testMessage).clazz("android.widget.EditText")
+            ), 3000)
+            
+            if (!messageSent) {
+                Log.w(TAG, "⚠️ Input field not cleared, message might not have sent")
+                delay(1000) // Fallback delay
+            }
+            
             Log.d(TAG, "✅ Send button clicked")
         } else {
             Log.e(TAG, "❌ Could not find send button")
@@ -297,7 +358,17 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             if (sendButtonAlt.exists()) {
                 Log.d(TAG, "🔍 DEBUG: Found exact 'Send message' button - clicking it")
                 sendButtonAlt.click()
-                delay(1000)
+                
+                // Wait for message to be sent by checking if input field is cleared
+                val messageSent = device.wait(androidx.test.uiautomator.Until.gone(
+                    androidx.test.uiautomator.By.text(testMessage).clazz("android.widget.EditText")
+                ), 3000)
+                
+                if (!messageSent) {
+                    Log.w(TAG, "⚠️ Input field not cleared after exact send button click")
+                    delay(1000) // Fallback delay
+                }
+                
                 Log.d(TAG, "✅ Send button clicked (exact match)")
             } else {
                 Log.e(TAG, "❌ No send button found with exact or partial match")
@@ -307,18 +378,27 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 5: Verify the message appears in the chat UI
         Log.d(TAG, "🔍 Verifying message appears in chat...")
-        delay(2000) // Give time for message to appear
         
-        // Look for the message text in the UI
-        val messageInChat = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .textContains(testMessage)
-                .packageName("com.example.whiz.debug")
-        )
+        // Wait for message to appear in chat UI (optimistic UI should show it immediately)
+        val messageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains(testMessage).pkg("com.example.whiz.debug")
+        ), 5000)
         
-        if (messageInChat.waitForExists(5000)) {
-            Log.d(TAG, "✅ SUCCESS: Message appears in chat UI!")
-            assertTrue("Message should appear in chat UI", messageInChat.exists())
+        if (messageAppeared) {
+            // Double-check with UiSelector for additional verification
+            val messageInChat = device.findObject(
+                androidx.test.uiautomator.UiSelector()
+                    .textContains(testMessage)
+                    .packageName("com.example.whiz.debug")
+            )
+            
+            if (messageInChat.exists()) {
+                Log.d(TAG, "✅ SUCCESS: Message appears in chat UI!")
+                assertTrue("Message should appear in chat UI", messageInChat.exists())
+            } else {
+                Log.e(TAG, "❌ FAILURE: Message detected by wait but not by UiSelector")
+                failWithScreenshot("message_detection_inconsistent", "Message wait succeeded but UiSelector failed")
+            }
         } else {
             Log.e(TAG, "❌ FAILURE: Message does not appear in chat UI")
             
