@@ -32,6 +32,9 @@ interface ChatDao {
 
     @Delete
     suspend fun deleteChat(chat: ChatEntity): Int
+
+    @Query("DELETE FROM chats WHERE id = :chatId")
+    suspend fun deleteChat(chatId: Long): Int
 }
 
 @Dao
@@ -47,6 +50,9 @@ interface MessageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(messages: List<MessageEntity>): List<Long>
+
+    @Update
+    suspend fun updateMessage(message: MessageEntity): Int
 
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteMessage(messageId: Long): Int

@@ -437,22 +437,38 @@ class ChatViewModel @Inject constructor(
                                         pendingRequests.remove(event.requestId) // Remove completed request
                                         Log.d(TAG, "$eventLogId Request ID ${event.requestId} mapped to chat $originalChatId (current: ${_chatId.value})")
                                         
-                                        // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
-                                        if (originalChatId == -1L && effectiveConversationId != null) {
-                                            Log.d(TAG, "$eventLogId New chat created! Server assigned conversation_id: $effectiveConversationId")
-                                            // Update local chat ID to match server-assigned ID
-                                            _chatId.value = effectiveConversationId
-                                            Log.d(TAG, "$eventLogId Updated local chat ID from $originalChatId to $effectiveConversationId")
-                                            effectiveConversationId
-                                        } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
-                                            // Handle case where local chat has temp ID but server provides real ID
-                                            Log.d(TAG, "$eventLogId Server provided conversation_id: $effectiveConversationId, local was: $originalChatId")
-                                            // For new chats, trust the server's conversation_id
-                                            if (originalChatId > 0 && _chatId.value == originalChatId) {
-                                                Log.d(TAG, "$eventLogId Syncing local chat ID to server conversation_id: $effectiveConversationId")
-                                                _chatId.value = effectiveConversationId
-                                            }
-                                            effectiveConversationId
+                                                                // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
+                        if (originalChatId == -1L && effectiveConversationId != null) {
+                            Log.d(TAG, "$eventLogId New chat created! Server assigned conversation_id: $effectiveConversationId")
+                            // Update local chat ID to match server-assigned ID
+                            _chatId.value = effectiveConversationId
+                            Log.d(TAG, "$eventLogId Updated local chat ID from $originalChatId to $effectiveConversationId")
+                            effectiveConversationId
+                        } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
+                            // Handle case where local chat has temp ID but server provides real ID
+                            Log.d(TAG, "$eventLogId Server provided conversation_id: $effectiveConversationId, local was: $originalChatId")
+                            // For new chats, trust the server's conversation_id and migrate local messages
+                            if (originalChatId > 0 && _chatId.value == originalChatId) {
+                                Log.d(TAG, "$eventLogId Syncing local chat ID to server conversation_id: $effectiveConversationId")
+                                
+                                // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
+                                try {
+                                    viewModelScope.launch {
+                                        Log.d(TAG, "$eventLogId Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
+                                        val migrationSuccess = repository.migrateChatMessages(originalChatId, effectiveConversationId)
+                                        if (migrationSuccess) {
+                                            Log.d(TAG, "$eventLogId Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
+                                        } else {
+                                            Log.w(TAG, "$eventLogId Failed to migrate messages from chat $originalChatId to $effectiveConversationId")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "$eventLogId Error migrating messages from chat $originalChatId to $effectiveConversationId", e)
+                                }
+                                
+                                _chatId.value = effectiveConversationId
+                            }
+                            effectiveConversationId
                                         } else {
                                             originalChatId
                                         }

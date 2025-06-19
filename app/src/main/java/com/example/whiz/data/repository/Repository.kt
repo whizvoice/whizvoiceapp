@@ -430,6 +430,49 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    /**
+     * Migrate messages from one chat to another (used when server assigns different conversation_id)
+     * This ensures optimistic local messages appear in the correct server conversation
+     */
+    suspend fun migrateChatMessages(fromChatId: Long, toChatId: Long): Boolean {
+        return try {
+            Log.d(TAG, "migrateChatMessages: migrating messages from chat $fromChatId to chat $toChatId")
+            
+            // Get all messages from the source chat
+            val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
+            Log.d(TAG, "migrateChatMessages: found ${messagesToMigrate.size} messages to migrate")
+            
+            if (messagesToMigrate.isNotEmpty()) {
+                // Update chat ID for all messages
+                messagesToMigrate.forEach { message ->
+                    val updatedMessage = message.copy(chatId = toChatId)
+                    messageDao.updateMessage(updatedMessage)
+                    Log.d(TAG, "migrateChatMessages: migrated message ${message.id} from chat $fromChatId to $toChatId")
+                }
+                
+                // Delete the old optimistic chat if it was temporary
+                if (fromChatId > 0) {
+                    try {
+                        chatDao.deleteChat(fromChatId)
+                        Log.d(TAG, "migrateChatMessages: deleted temporary chat $fromChatId")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "migrateChatMessages: could not delete temporary chat $fromChatId", e)
+                        // Not critical - continue
+                    }
+                }
+                
+                Log.d(TAG, "migrateChatMessages: successfully migrated ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId")
+                return true
+            } else {
+                Log.d(TAG, "migrateChatMessages: no messages to migrate from chat $fromChatId")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "migrateChatMessages: error migrating messages from chat $fromChatId to $toChatId", e)
+            return false
+        }
+    }
+
     // Auto-save logic - now based on API call
     suspend fun shouldPersistChat(chatId: Long): Boolean {
         val count = getMessageCountForChat(chatId)
