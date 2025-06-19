@@ -67,6 +67,12 @@ fun ChatsListScreen(
     val chats by viewModel.chats.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     
+    // Auto-refresh when returning to chat list to sync new chats created via WebSocket
+    // This ensures users see chats created in other parts of the app (like voice assistant)
+    LaunchedEffect(Unit) {
+        viewModel.refreshChats()
+    }
+    
     // SwipeRefresh state
     val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
 

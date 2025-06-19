@@ -49,6 +49,7 @@ fun AssistantOverlayUi(
 
     // Collect necessary state from ViewModel
     val inputText by viewModel.inputText.collectAsState()
+    val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val transcription by viewModel.transcriptionState.collectAsState()
     val isListening by viewModel.isListening.collectAsState()
     val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
@@ -140,6 +141,7 @@ fun AssistantOverlayUi(
             
             ChatInputBar(
                 inputText = inputText,
+                isInputFromVoice = isInputFromVoice,
                 transcription = transcription,
                 isListening = isListening,
                 isInputDisabled = isTextInputDisabled,

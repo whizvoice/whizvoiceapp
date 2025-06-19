@@ -45,7 +45,7 @@ object TestCredentialsHelper {
                         "email": "REDACTED_TEST_EMAIL",
                         "password": "REDACTED_TEST_PASSWORD",
                         "display_name": "Test User",
-                        "user_id": "test_user_123"
+                        "user_id": "REDACTED_TEST_USER_ID"
                       },
                       "test_environment": {
                         "test_auth_secret": "REDACTED_TEST_SECRET"
@@ -77,7 +77,7 @@ object TestCredentialsHelper {
                 email = "REDACTED_TEST_EMAIL",
                 password = "REDACTED_TEST_PASSWORD",
                 displayName = "Test User",
-                userId = "test_user_123",
+                userId = "REDACTED_TEST_USER_ID",
                 testAuthSecret = "REDACTED_TEST_SECRET"
             )
             

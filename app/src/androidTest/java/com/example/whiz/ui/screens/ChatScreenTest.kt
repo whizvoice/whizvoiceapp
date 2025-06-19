@@ -60,6 +60,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -88,6 +89,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "Hello, I'm speaking...",
                     isListening = true,
                     isInputDisabled = false,
@@ -115,6 +117,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = true,
@@ -144,6 +147,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = testTranscription,
                     isListening = true,
                     isInputDisabled = false,
@@ -171,6 +175,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -198,6 +203,7 @@ class ChatScreenTest {
             WhizTheme {
                 ChatInputBar(
                     inputText = "User typed message",
+                    isInputFromVoice = false,
                     transcription = "",
                     isListening = false,
                     isInputDisabled = false,
@@ -231,6 +237,7 @@ class ChatScreenTest {
                     )
                     ChatInputBar(
                         inputText = "Test message",
+                        isInputFromVoice = false,
                         transcription = "",
                         isListening = false,
                         isInputDisabled = false,

@@ -98,6 +98,11 @@ alwaysApply: false
     "id": "write_tests",
     "severity": "warning",
     "description": "Please write tests if you add new functionality"
+  },
+  {
+    "id": "avoid_hard_coded_delays",
+    "severity": "error",
+    "description": "Avoid hard-coded delays (delay(), sleep(), Thread.sleep()) wherever possible. Instead, use specific wait conditions like device.wait(Until.hasObject(...)), waitForExists(), or other conditional waits that wait for the actual dependency/condition to be ready. Only use delays as a last resort fallback with clear justification."
   }
 ]
 

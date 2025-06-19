@@ -204,32 +204,46 @@ open class AuthRepository @Inject constructor(
     // The authServerApi parameter is removed as we now use the injected authApi.
     suspend fun refreshAccessToken(): Boolean {
         val currentRefreshToken = getRefreshToken()
+        Log.d(TAG, "🔄 refreshAccessToken called. Refresh token present: ${currentRefreshToken != null}")
         if (currentRefreshToken == null) {
-            Log.w(TAG, "No refresh token available. Cannot refresh access token.")
+            Log.w(TAG, "🔄 No refresh token available. Cannot refresh access token.")
             return false
         }
 
         return try {
+            Log.d(TAG, "🔄 Making refresh token API call to server...")
             // ACTUAL API CALL using the injected authApi
             val response = authApi.refreshAccessToken(RefreshTokenRequest(currentRefreshToken))
             // Assuming successful response (2xx), Retrofit would have populated this.
             // If server returns non-2xx, Retrofit throws HttpException, caught below.
             
-            Log.i(TAG, "Access token refreshed successfully. New token: ${response.access_token.take(10)}...")
+            Log.i(TAG, "🔄 Access token refreshed successfully. New token: ${response.access_token.take(10)}...")
             // Save the new access token. The refresh token remains the same in this iteration.
             saveAuthTokensFromServer(response.access_token, currentRefreshToken)
+            Log.d(TAG, "🔄 New access token saved to preferences")
             true
         } catch (e: retrofit2.HttpException) { // Catch specific HttpException from Retrofit
-            Log.e(TAG, "HttpException during access token refresh. Code: ${e.code()}", e)
+            Log.e(TAG, "🔄 HttpException during access token refresh. Code: ${e.code()}, Message: ${e.message()}", e)
+            
+            // Try to get response body for more details
+            try {
+                val errorBody = e.response()?.errorBody()?.string()
+                if (!errorBody.isNullOrEmpty()) {
+                    Log.e(TAG, "🔄 Server error response: $errorBody")
+                }
+            } catch (bodyException: Exception) {
+                Log.e(TAG, "🔄 Could not read error response body", bodyException)
+            }
+            
             if (e.code() == 401 || e.code() == 403) { // Unauthorized or Forbidden
-                Log.w(TAG, "Refresh token rejected by server (HTTP ${e.code()}). Signing out.")
+                Log.w(TAG, "🔄 Refresh token rejected by server (HTTP ${e.code()}). Signing out.")
                 signOut() // Critical: If refresh fails due to bad refresh token, sign out user
             }
             // For other HTTP errors, we might not sign out immediately, just return false.
             // Depending on policy, could also sign out for e.g. 400 Bad Request if it means malformed refresh token.
             false
         } catch (e: Exception) { // Catch other exceptions (network, IO, etc.)
-            Log.e(TAG, "Generic exception during access token refresh", e)
+            Log.e(TAG, "🔄 Generic exception during access token refresh", e)
             // For generic errors (like no network), don't automatically sign out, just indicate refresh failed.
             false
         }

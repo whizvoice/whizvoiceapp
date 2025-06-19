@@ -160,6 +160,40 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    /**
+     * Create a local chat for optimistic UI - stores only in local database.
+     * Used when we want immediate UI feedback before server processes the chat creation.
+     * The actual server chat will be created later and synced.
+     */
+    suspend fun createChatOptimistic(title: String): Long {
+        return try {
+            Log.d(TAG, "createChatOptimistic: creating local chat with title '$title' for optimistic UI")
+            
+            // Use negative timestamp as unique negative ID for optimistic chats
+            // This makes it clear the chat hasn't been synced with server yet
+            val optimisticChatId = -System.currentTimeMillis()
+            
+            // Create local chat entity with negative ID
+            val chatEntity = ChatEntity(
+                id = optimisticChatId,
+                title = title,
+                createdAt = System.currentTimeMillis(),
+                lastMessageTime = System.currentTimeMillis()
+            )
+            
+            chatDao.insertChat(chatEntity)
+            Log.d(TAG, "createChatOptimistic: created optimistic local chat with NEGATIVE id $optimisticChatId and title '$title'")
+            
+            // Don't trigger API refresh - this is just for immediate UI
+            // The real chat will be created via server and synced later
+            
+            optimisticChatId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating optimistic local chat with title '$title'", e)
+            -1
+        }
+    }
+
     suspend fun updateChatTitle(chatId: Long, title: String) {
         try {
             Log.d(TAG, "updateChatTitle: updating chat $chatId title to '$title' via API")
@@ -225,11 +259,30 @@ class WhizRepository @Inject constructor(
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
         return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            flow {
-                Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
-                // Use deduplication helper to prevent multiple concurrent API calls
-                val messageEntities = fetchMessagesWithDeduplication(chatId)
-                emit(messageEntities)
+            Log.d(TAG, "getMessagesForChat: 📨 Flow triggered for chat $chatId (trigger: $triggerValue)")
+            
+            // 🔧 DEBUG: Log all messages in database to debug missing messages
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val allMessages = messageDao.getAllMessages()
+                    Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
+                    if (allMessages.isNotEmpty()) {
+                        Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "getMessagesForChat: Error getting all messages for debug", e)
+                }
+            }
+            
+            // 🔧 FIXED: Return local database messages immediately for optimistic UI
+            // Background sync is handled separately to avoid race conditions
+            messageDao.getMessagesForChatFlow(chatId).onEach { localMessages ->
+                Log.d(TAG, "getMessagesForChat: 📨 Emitting ${localMessages.size} local messages for chat $chatId")
+                if (localMessages.isNotEmpty()) {
+                    Log.d(TAG, "getMessagesForChat: 📨 Messages: ${localMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                } else {
+                    Log.d(TAG, "getMessagesForChat: 📨 No messages found for chat $chatId")
+                }
             }
         }.catch { e ->
             Log.e(TAG, "Error in getMessagesForChat flow", e)
@@ -284,6 +337,22 @@ class WhizRepository @Inject constructor(
         return try {
             Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only)")
             
+            // 🔧 FIXED: Ensure chat exists locally before adding optimistic message
+            // This prevents foreign key constraint failures for server-only chats
+            val existingChat = chatDao.getChatById(chatId)
+            if (existingChat == null) {
+                Log.w(TAG, "addUserMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                // Create a minimal chat entity to satisfy foreign key constraint
+                val placeholderChat = ChatEntity(
+                    id = chatId,
+                    title = "Loading...", // Will be updated when server data arrives
+                    createdAt = System.currentTimeMillis(),
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                chatDao.insertChat(placeholderChat)
+                Log.d(TAG, "addUserMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+            }
+            
             // Check if this message already exists to prevent duplicates
             val existingMessages = messageDao.getMessagesForChatFlow(chatId).first()
             val duplicateMessage = existingMessages.find { 
@@ -315,7 +384,7 @@ class WhizRepository @Inject constructor(
             
             messageId
         } catch (e: Exception) {
-            Log.e(TAG, "Error adding optimistic user message to chat $chatId", e)
+            Log.e(TAG, "Error adding optimistic user message to chat $chatId: ${e.message}", e)
             -1
         }
     }
@@ -339,6 +408,146 @@ class WhizRepository @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error adding assistant message to chat $chatId via API", e)
             -1
+        }
+    }
+
+    /**
+     * Add assistant message for optimistic UI - only stores locally, doesn't make API call.
+     * Used when we receive WebSocket responses and want immediate UI feedback.
+     */
+    suspend fun addAssistantMessageOptimistic(chatId: Long, content: String): Long {
+        return try {
+            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $chatId (local only)")
+            
+            // 🔧 Ensure chat exists locally before adding optimistic message
+            val existingChat = chatDao.getChatById(chatId)
+            if (existingChat == null) {
+                Log.w(TAG, "addAssistantMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                val placeholderChat = ChatEntity(
+                    id = chatId,
+                    title = "Loading...",
+                    createdAt = System.currentTimeMillis(),
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                chatDao.insertChat(placeholderChat)
+                Log.d(TAG, "addAssistantMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+            }
+            
+            // Create optimistic assistant message entity
+            val messageEntity = MessageEntity(
+                id = 0,
+                chatId = chatId,
+                content = content,
+                type = MessageType.ASSISTANT,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            val messageId = messageDao.insertMessage(messageEntity)
+            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId")
+            
+            messageId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding optimistic assistant message to chat $chatId: ${e.message}", e)
+            -1
+        }
+    }
+
+    /**
+     * Migrate messages from one chat to another (used when server assigns different conversation_id)
+     * This ensures optimistic local messages appear in the correct server conversation
+     */
+    suspend fun migrateChatMessages(fromChatId: Long, toChatId: Long): Boolean {
+        return try {
+            Log.d(TAG, "migrateChatMessages: 🔄 STARTING migration from chat $fromChatId to chat $toChatId")
+            
+            // 🔧 DEBUG: Check all messages in database first
+            try {
+                val allMessages = messageDao.getAllMessages()
+                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
+                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+            } catch (e: Exception) {
+                Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", e)
+            }
+            
+            // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
+            val targetChatExists = chatDao.getChatById(toChatId) != null
+            if (!targetChatExists) {
+                Log.d(TAG, "migrateChatMessages: 🏗️ Target chat $toChatId doesn't exist, creating it first")
+                
+                // Get the source chat to copy its title and metadata
+                val sourceChat = chatDao.getChatById(fromChatId)
+                if (sourceChat != null) {
+                    val targetChat = sourceChat.copy(
+                        id = toChatId,
+                        lastMessageTime = System.currentTimeMillis()
+                    )
+                    chatDao.insertChat(targetChat)
+                    Log.d(TAG, "migrateChatMessages: ✅ Created target chat $toChatId with title '${targetChat.title}'")
+                } else {
+                    // Create a default chat if source doesn't exist
+                    val defaultChat = ChatEntity(
+                        id = toChatId,
+                        title = "Chat $toChatId",
+                        createdAt = System.currentTimeMillis(),
+                        lastMessageTime = System.currentTimeMillis()
+                    )
+                    chatDao.insertChat(defaultChat)
+                    Log.d(TAG, "migrateChatMessages: ✅ Created default target chat $toChatId")
+                }
+            } else {
+                Log.d(TAG, "migrateChatMessages: ✅ Target chat $toChatId already exists")
+            }
+            
+            // Get all messages from the source chat
+            val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
+            Log.d(TAG, "migrateChatMessages: 📊 Found ${messagesToMigrate.size} messages to migrate from chat $fromChatId")
+            
+            if (messagesToMigrate.isNotEmpty()) {
+                Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+            } else {
+                Log.w(TAG, "migrateChatMessages: ⚠️ No messages found for chat $fromChatId - this might be a timing issue")
+            }
+            
+            if (messagesToMigrate.isNotEmpty()) {
+                // Update chat ID for all messages
+                messagesToMigrate.forEach { message ->
+                    try {
+                        Log.d(TAG, "migrateChatMessages: 🔄 Migrating message ${message.id} from chat $fromChatId to $toChatId")
+                        val updatedMessage = message.copy(chatId = toChatId)
+                        val updateResult = messageDao.updateMessage(updatedMessage)
+                        Log.d(TAG, "migrateChatMessages: ✅ Successfully migrated message ${message.id} (updateResult: $updateResult)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "migrateChatMessages: ❌ Error migrating individual message ${message.id}", e)
+                        throw e // Re-throw to fail the migration
+                    }
+                }
+                
+                // Delete the old optimistic chat if it was temporary (negative ID means optimistic)
+                if (fromChatId < 0) {
+                    try {
+                        chatDao.deleteChat(fromChatId)
+                        Log.d(TAG, "migrateChatMessages: deleted optimistic chat $fromChatId")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "migrateChatMessages: could not delete optimistic chat $fromChatId", e)
+                        // Not critical - continue
+                    }
+                } else if (fromChatId == -1L) {
+                    Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
+                }
+                
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId")
+                return true
+            } else {
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
+            Log.e(TAG, "migrateChatMessages: ❌ Error type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "migrateChatMessages: ❌ Error message: ${e.message}")
+            Log.e(TAG, "migrateChatMessages: ❌ Error cause: ${e.cause}")
+            e.printStackTrace()
+            return false
         }
     }
 
@@ -468,7 +677,10 @@ class WhizRepository @Inject constructor(
     }
     
     // Deduplicated conversation fetching - prevents multiple concurrent API calls
-    private suspend fun fetchConversationsWithDeduplication(forceFullSync: Boolean): List<ChatEntity> {
+    private suspend fun fetchConversationsWithDeduplication(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean = false
+    ): List<ChatEntity> {
         val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
         
         // Check if there's already an ongoing request
@@ -481,8 +693,8 @@ class WhizRepository @Inject constructor(
         // Start a new request and track it
         val deferred = CoroutineScope(Dispatchers.IO).async {
             try {
-                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request")
-                val result = getAllChatsIncremental(forceFullSync)
+                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request (aggressive: $useAggressiveSync)")
+                val result = getAllChatsIncremental(forceFullSync, useAggressiveSync)
                 Log.d(TAG, "fetchConversationsWithDeduplication: Retrieved ${result.size} conversations via $requestKey")
                 result
             } catch (e: Exception) {
@@ -503,8 +715,16 @@ class WhizRepository @Inject constructor(
     suspend fun performIncrementalSync(): List<ChatEntity> {
         Log.d(TAG, "performIncrementalSync: starting incremental sync operation")
         return try {
+            // For chat list refreshes, be more aggressive about syncing new chats
+            // If we have an active WebSocket connection, new chats might have been created
+            // Use slightly older timestamp to ensure we capture any timing gaps
+            val shouldUseAggressiveSync = true // Always use aggressive sync for chat list
+            
             // Use deduplication helper for incremental sync
-            val conversations = fetchConversationsWithDeduplication(forceFullSync = false)
+            val conversations = fetchConversationsWithDeduplication(
+                forceFullSync = false, 
+                useAggressiveSync = shouldUseAggressiveSync
+            )
             _conversations.value = conversations
             Log.d(TAG, "performIncrementalSync: completed, got ${conversations.size} conversations")
             
@@ -565,10 +785,32 @@ class WhizRepository @Inject constructor(
     }
     
     // Modified getAllChats to support incremental sync
-    suspend fun getAllChatsIncremental(forceFullSync: Boolean = false): List<ChatEntity> {
+    suspend fun getAllChatsIncremental(
+        forceFullSync: Boolean = false,
+        useAggressiveSync: Boolean = false
+    ): List<ChatEntity> {
         return try {
-            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("conversations")
-            Log.d("Repository", "getAllChatsIncremental: lastSync = $lastSync, forceFullSync = $forceFullSync")
+            val rawLastSync = getLastSyncTimestamp("conversations")
+            
+            // For aggressive sync, use an older timestamp to catch any timing gaps
+            // This helps when new chats are created via WebSocket between sync timestamps
+            val lastSync = if (forceFullSync) {
+                null
+            } else if (useAggressiveSync && rawLastSync != null) {
+                // Go back 30 seconds to catch any potential timing gaps
+                try {
+                    val instant = java.time.Instant.parse(rawLastSync)
+                    val olderInstant = instant.minusSeconds(30)
+                    olderInstant.toString()
+                } catch (e: Exception) {
+                    Log.w("Repository", "Could not parse timestamp for aggressive sync, using original: $rawLastSync")
+                    rawLastSync
+                }
+            } else {
+                rawLastSync
+            }
+            
+            Log.d("Repository", "getAllChatsIncremental: lastSync = $lastSync (raw: $rawLastSync), forceFullSync = $forceFullSync, aggressive = $useAggressiveSync")
             
             // If cache is empty and we're not forcing full sync, force it anyway to ensure we get all conversations
             val existingConversations = _conversations.value
@@ -576,7 +818,7 @@ class WhizRepository @Inject constructor(
             
             if (shouldForceFullSync && !forceFullSync) {
                 Log.d("Repository", "Cache is empty after app restart - forcing full sync to get all conversations")
-                return getAllChatsIncremental(forceFullSync = true)
+                return getAllChatsIncremental(forceFullSync = true, useAggressiveSync = useAggressiveSync)
             }
             
             val response = if (lastSync != null && !shouldForceFullSync) {

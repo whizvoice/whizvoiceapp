@@ -25,7 +25,19 @@ class TokenAuthenticator @Inject constructor(
     private val TAG = "TokenAuthenticator"
 
     override fun authenticate(route: Route?, response: Response): Request? {
-        Log.d(TAG, "authenticate called - previous request failed with code: ${response.code}")
+        Log.d(TAG, "🔑 TokenAuthenticator.authenticate called - previous request failed with code: ${response.code} for URL: ${response.request.url}")
+        Log.d(TAG, "🔑 Response message: ${response.message}")
+        Log.d(TAG, "🔑 Request headers: ${response.request.headers}")
+        
+        // Log response body if available for debugging
+        try {
+            val responseBodyString = response.peekBody(1024).string()
+            if (responseBodyString.isNotEmpty()) {
+                Log.d(TAG, "🔑 Response body: $responseBodyString")
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "🔑 Could not read response body: ${e.message}")
+        }
 
         // Get AuthRepository instance safely
         val authRepository = authRepositoryProvider.get()
@@ -56,10 +68,17 @@ class TokenAuthenticator @Inject constructor(
                 .build()
         }
 
-        Log.d(TAG, "Attempting to refresh access token...")
+        Log.d(TAG, "🔄 Attempting to refresh access token...")
         val refreshSuccessful = runBlocking {
-            // Pass the actual API service to refreshAccessToken
-            authRepository.refreshAccessToken()
+            try {
+                // Pass the actual API service to refreshAccessToken
+                val result = authRepository.refreshAccessToken()
+                Log.d(TAG, "🔄 Token refresh completed with result: $result")
+                result
+            } catch (e: Exception) {
+                Log.e(TAG, "🔄 Exception during token refresh", e)
+                false
+            }
         }
 
         if (refreshSuccessful) {
