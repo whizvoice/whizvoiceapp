@@ -100,7 +100,7 @@ class ChatViewModel @Inject constructor(
     // Messages in the current chat
     val messages = _chatId.flatMapLatest { id ->
         Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
-        if (id > 0) {
+        if (id != 0L) { // 🔧 OPTIMISTIC UI FIX: Handle both positive AND negative chat IDs
             repository.getMessagesForChat(id).onEach { messagesList ->
                 Log.d(TAG, "🔥 messages flow: Received ${messagesList.size} messages for chat $id")
                 messagesList.forEachIndexed { index, message ->
@@ -108,7 +108,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         } else {
-            Log.d(TAG, "🔥 messages flow: Returning empty list for chat ID $id")
+            Log.d(TAG, "🔥 messages flow: Returning empty list for chat ID $id (id == 0)")
             flowOf(emptyList())
         }
     }.stateIn(
@@ -470,17 +470,22 @@ class ChatViewModel @Inject constructor(
                                     }
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
+                                        // 🔑 CRITICAL FIX: Only update _chatId AFTER successful migration
+                                        Log.d(TAG, "$eventLogId 🔄 MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                                        _chatId.value = effectiveConversationId
                                     } else {
                                         Log.w(TAG, "$eventLogId ❌ MIGRATION FAILED: Failed to migrate messages from chat $originalChatId to $effectiveConversationId")
+                                        // Don't update _chatId if migration failed - keep using original chat ID
+                                        Log.w(TAG, "$eventLogId 🔄 MIGRATION: Keeping _chatId as ${_chatId.value} due to migration failure")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "$eventLogId ❌ MIGRATION ERROR: Error migrating messages from chat $originalChatId to $effectiveConversationId", e)
+                                    // Don't update _chatId if migration threw an exception
+                                    Log.e(TAG, "$eventLogId 🔄 MIGRATION: Keeping _chatId as ${_chatId.value} due to migration error")
                                 }
-                                
-                                Log.d(TAG, "$eventLogId 🔄 MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
-                                _chatId.value = effectiveConversationId
                             } else {
                                 Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: No migration needed - originalChatId: $originalChatId, currentChatId: ${_chatId.value}, effectiveConversationId: $effectiveConversationId")
+                                Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                 _chatId.value = effectiveConversationId
                             }
                             effectiveConversationId
