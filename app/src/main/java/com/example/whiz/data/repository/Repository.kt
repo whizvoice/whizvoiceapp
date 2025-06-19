@@ -169,21 +169,25 @@ class WhizRepository @Inject constructor(
         return try {
             Log.d(TAG, "createChatOptimistic: creating local chat with title '$title' for optimistic UI")
             
-            // Create local chat entity
+            // Use negative timestamp as unique negative ID for optimistic chats
+            // This makes it clear the chat hasn't been synced with server yet
+            val optimisticChatId = -System.currentTimeMillis()
+            
+            // Create local chat entity with negative ID
             val chatEntity = ChatEntity(
-                id = 0, // Auto-generate
+                id = optimisticChatId,
                 title = title,
                 createdAt = System.currentTimeMillis(),
                 lastMessageTime = System.currentTimeMillis()
             )
             
-            val chatId = chatDao.insertChat(chatEntity)
-            Log.d(TAG, "createChatOptimistic: created local chat with id $chatId and title '$title'")
+            chatDao.insertChat(chatEntity)
+            Log.d(TAG, "createChatOptimistic: created optimistic local chat with NEGATIVE id $optimisticChatId and title '$title'")
             
             // Don't trigger API refresh - this is just for immediate UI
             // The real chat will be created via server and synced later
             
-            chatId
+            optimisticChatId
         } catch (e: Exception) {
             Log.e(TAG, "Error creating optimistic local chat with title '$title'", e)
             -1
@@ -255,12 +259,30 @@ class WhizRepository @Inject constructor(
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
         return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
+            Log.d(TAG, "getMessagesForChat: 📨 Flow triggered for chat $chatId (trigger: $triggerValue)")
+            
+            // 🔧 DEBUG: Log all messages in database to debug missing messages
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val allMessages = messageDao.getAllMessages()
+                    Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
+                    if (allMessages.isNotEmpty()) {
+                        Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "getMessagesForChat: Error getting all messages for debug", e)
+                }
+            }
             
             // 🔧 FIXED: Return local database messages immediately for optimistic UI
             // Background sync is handled separately to avoid race conditions
             messageDao.getMessagesForChatFlow(chatId).onEach { localMessages ->
-                Log.d(TAG, "getMessagesForChat: Emitting ${localMessages.size} local messages for chat $chatId")
+                Log.d(TAG, "getMessagesForChat: 📨 Emitting ${localMessages.size} local messages for chat $chatId")
+                if (localMessages.isNotEmpty()) {
+                    Log.d(TAG, "getMessagesForChat: 📨 Messages: ${localMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                } else {
+                    Log.d(TAG, "getMessagesForChat: 📨 No messages found for chat $chatId")
+                }
             }
         }.catch { e ->
             Log.e(TAG, "Error in getMessagesForChat flow", e)
@@ -436,39 +458,95 @@ class WhizRepository @Inject constructor(
      */
     suspend fun migrateChatMessages(fromChatId: Long, toChatId: Long): Boolean {
         return try {
-            Log.d(TAG, "migrateChatMessages: migrating messages from chat $fromChatId to chat $toChatId")
+            Log.d(TAG, "migrateChatMessages: 🔄 STARTING migration from chat $fromChatId to chat $toChatId")
+            
+            // 🔧 DEBUG: Check all messages in database first
+            try {
+                val allMessages = messageDao.getAllMessages()
+                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
+                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+            } catch (e: Exception) {
+                Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", e)
+            }
+            
+            // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
+            val targetChatExists = chatDao.getChatById(toChatId) != null
+            if (!targetChatExists) {
+                Log.d(TAG, "migrateChatMessages: 🏗️ Target chat $toChatId doesn't exist, creating it first")
+                
+                // Get the source chat to copy its title and metadata
+                val sourceChat = chatDao.getChatById(fromChatId)
+                if (sourceChat != null) {
+                    val targetChat = sourceChat.copy(
+                        id = toChatId,
+                        lastMessageTime = System.currentTimeMillis()
+                    )
+                    chatDao.insertChat(targetChat)
+                    Log.d(TAG, "migrateChatMessages: ✅ Created target chat $toChatId with title '${targetChat.title}'")
+                } else {
+                    // Create a default chat if source doesn't exist
+                    val defaultChat = ChatEntity(
+                        id = toChatId,
+                        title = "Chat $toChatId",
+                        createdAt = System.currentTimeMillis(),
+                        lastMessageTime = System.currentTimeMillis()
+                    )
+                    chatDao.insertChat(defaultChat)
+                    Log.d(TAG, "migrateChatMessages: ✅ Created default target chat $toChatId")
+                }
+            } else {
+                Log.d(TAG, "migrateChatMessages: ✅ Target chat $toChatId already exists")
+            }
             
             // Get all messages from the source chat
             val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
-            Log.d(TAG, "migrateChatMessages: found ${messagesToMigrate.size} messages to migrate")
+            Log.d(TAG, "migrateChatMessages: 📊 Found ${messagesToMigrate.size} messages to migrate from chat $fromChatId")
+            
+            if (messagesToMigrate.isNotEmpty()) {
+                Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+            } else {
+                Log.w(TAG, "migrateChatMessages: ⚠️ No messages found for chat $fromChatId - this might be a timing issue")
+            }
             
             if (messagesToMigrate.isNotEmpty()) {
                 // Update chat ID for all messages
                 messagesToMigrate.forEach { message ->
-                    val updatedMessage = message.copy(chatId = toChatId)
-                    messageDao.updateMessage(updatedMessage)
-                    Log.d(TAG, "migrateChatMessages: migrated message ${message.id} from chat $fromChatId to $toChatId")
-                }
-                
-                // Delete the old optimistic chat if it was temporary
-                if (fromChatId > 0) {
                     try {
-                        chatDao.deleteChat(fromChatId)
-                        Log.d(TAG, "migrateChatMessages: deleted temporary chat $fromChatId")
+                        Log.d(TAG, "migrateChatMessages: 🔄 Migrating message ${message.id} from chat $fromChatId to $toChatId")
+                        val updatedMessage = message.copy(chatId = toChatId)
+                        val updateResult = messageDao.updateMessage(updatedMessage)
+                        Log.d(TAG, "migrateChatMessages: ✅ Successfully migrated message ${message.id} (updateResult: $updateResult)")
                     } catch (e: Exception) {
-                        Log.w(TAG, "migrateChatMessages: could not delete temporary chat $fromChatId", e)
-                        // Not critical - continue
+                        Log.e(TAG, "migrateChatMessages: ❌ Error migrating individual message ${message.id}", e)
+                        throw e // Re-throw to fail the migration
                     }
                 }
                 
-                Log.d(TAG, "migrateChatMessages: successfully migrated ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId")
+                // Delete the old optimistic chat if it was temporary (negative ID means optimistic)
+                if (fromChatId < 0) {
+                    try {
+                        chatDao.deleteChat(fromChatId)
+                        Log.d(TAG, "migrateChatMessages: deleted optimistic chat $fromChatId")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "migrateChatMessages: could not delete optimistic chat $fromChatId", e)
+                        // Not critical - continue
+                    }
+                } else if (fromChatId == -1L) {
+                    Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
+                }
+                
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId")
                 return true
             } else {
-                Log.d(TAG, "migrateChatMessages: no messages to migrate from chat $fromChatId")
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
                 return true
             }
         } catch (e: Exception) {
-            Log.e(TAG, "migrateChatMessages: error migrating messages from chat $fromChatId to $toChatId", e)
+            Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
+            Log.e(TAG, "migrateChatMessages: ❌ Error type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "migrateChatMessages: ❌ Error message: ${e.message}")
+            Log.e(TAG, "migrateChatMessages: ❌ Error cause: ${e.cause}")
+            e.printStackTrace()
             return false
         }
     }

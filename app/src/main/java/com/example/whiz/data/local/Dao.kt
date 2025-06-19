@@ -62,6 +62,9 @@ interface MessageDao {
 
     @Query("DELETE FROM messages")
     suspend fun deleteAllMessages(): Int
+
+    @Query("SELECT * FROM messages ORDER BY id DESC")
+    suspend fun getAllMessages(): List<MessageEntity>
 }
 
 @Database(
