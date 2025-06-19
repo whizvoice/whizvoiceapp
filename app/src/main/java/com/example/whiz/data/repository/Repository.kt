@@ -556,7 +556,10 @@ class WhizRepository @Inject constructor(
     }
     
     // Deduplicated conversation fetching - prevents multiple concurrent API calls
-    private suspend fun fetchConversationsWithDeduplication(forceFullSync: Boolean): List<ChatEntity> {
+    private suspend fun fetchConversationsWithDeduplication(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean = false
+    ): List<ChatEntity> {
         val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
         
         // Check if there's already an ongoing request
@@ -569,8 +572,8 @@ class WhizRepository @Inject constructor(
         // Start a new request and track it
         val deferred = CoroutineScope(Dispatchers.IO).async {
             try {
-                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request")
-                val result = getAllChatsIncremental(forceFullSync)
+                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request (aggressive: $useAggressiveSync)")
+                val result = getAllChatsIncremental(forceFullSync, useAggressiveSync)
                 Log.d(TAG, "fetchConversationsWithDeduplication: Retrieved ${result.size} conversations via $requestKey")
                 result
             } catch (e: Exception) {
@@ -591,8 +594,16 @@ class WhizRepository @Inject constructor(
     suspend fun performIncrementalSync(): List<ChatEntity> {
         Log.d(TAG, "performIncrementalSync: starting incremental sync operation")
         return try {
+            // For chat list refreshes, be more aggressive about syncing new chats
+            // If we have an active WebSocket connection, new chats might have been created
+            // Use slightly older timestamp to ensure we capture any timing gaps
+            val shouldUseAggressiveSync = true // Always use aggressive sync for chat list
+            
             // Use deduplication helper for incremental sync
-            val conversations = fetchConversationsWithDeduplication(forceFullSync = false)
+            val conversations = fetchConversationsWithDeduplication(
+                forceFullSync = false, 
+                useAggressiveSync = shouldUseAggressiveSync
+            )
             _conversations.value = conversations
             Log.d(TAG, "performIncrementalSync: completed, got ${conversations.size} conversations")
             
@@ -653,10 +664,32 @@ class WhizRepository @Inject constructor(
     }
     
     // Modified getAllChats to support incremental sync
-    suspend fun getAllChatsIncremental(forceFullSync: Boolean = false): List<ChatEntity> {
+    suspend fun getAllChatsIncremental(
+        forceFullSync: Boolean = false,
+        useAggressiveSync: Boolean = false
+    ): List<ChatEntity> {
         return try {
-            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("conversations")
-            Log.d("Repository", "getAllChatsIncremental: lastSync = $lastSync, forceFullSync = $forceFullSync")
+            val rawLastSync = getLastSyncTimestamp("conversations")
+            
+            // For aggressive sync, use an older timestamp to catch any timing gaps
+            // This helps when new chats are created via WebSocket between sync timestamps
+            val lastSync = if (forceFullSync) {
+                null
+            } else if (useAggressiveSync && rawLastSync != null) {
+                // Go back 30 seconds to catch any potential timing gaps
+                try {
+                    val instant = java.time.Instant.parse(rawLastSync)
+                    val olderInstant = instant.minusSeconds(30)
+                    olderInstant.toString()
+                } catch (e: Exception) {
+                    Log.w("Repository", "Could not parse timestamp for aggressive sync, using original: $rawLastSync")
+                    rawLastSync
+                }
+            } else {
+                rawLastSync
+            }
+            
+            Log.d("Repository", "getAllChatsIncremental: lastSync = $lastSync (raw: $rawLastSync), forceFullSync = $forceFullSync, aggressive = $useAggressiveSync")
             
             // If cache is empty and we're not forcing full sync, force it anyway to ensure we get all conversations
             val existingConversations = _conversations.value
@@ -664,7 +697,7 @@ class WhizRepository @Inject constructor(
             
             if (shouldForceFullSync && !forceFullSync) {
                 Log.d("Repository", "Cache is empty after app restart - forcing full sync to get all conversations")
-                return getAllChatsIncremental(forceFullSync = true)
+                return getAllChatsIncremental(forceFullSync = true, useAggressiveSync = useAggressiveSync)
             }
             
             val response = if (lastSync != null && !shouldForceFullSync) {

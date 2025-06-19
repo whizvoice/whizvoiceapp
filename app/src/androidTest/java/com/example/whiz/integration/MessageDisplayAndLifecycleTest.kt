@@ -394,7 +394,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 androidx.test.uiautomator.By.clazz("android.widget.TextView")
                     .pkg("com.example.whiz.debug")
             )
-            val messageTexts = allMessages.mapNotNull { it.text }.filter { 
+            val messageTexts = allMessages.mapNotNull { 
+                try {
+                    it.text
+                } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                    Log.w(TAG, "⚠️ Stale UI element encountered during message text extraction, skipping")
+                    null
+                }
+            }.filter { 
                 it.isNotBlank() && it.length > 10 // Filter out short UI labels
             }
             Log.d(TAG, "🔍 Found ${messageTexts.size} message-like texts in UI")
@@ -410,6 +417,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.w(TAG, "   This is acceptable - the test focuses on optimistic UI for user messages")
             Log.w(TAG, "   Bot response depends on server connectivity and may not always be available")
         }
+        
+        // The server response confirms the chat was created successfully
+        // We can now proceed with navigation - we'll sync the chat list when we get back
         
         // Step 6.5: CALCULATE EXPECTED CHAT TITLE based on production logic
         Log.d(TAG, "🔍 Calculating expected chat title based on production deriveChatTitle logic...")
@@ -467,6 +477,32 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "✅ Successfully returned to chat list")
         
+        // Step 7.5: Force a refresh to sync new chats from server
+        // Since we just created a new chat via WebSocket, we need to pull the latest
+        // chat list from the server to see our new chat
+        Log.d(TAG, "🔍 Triggering pull-to-refresh to sync new chat from server...")
+        
+        // Perform a swipe-down gesture to trigger pull-to-refresh
+        val displayWidth = device.displayWidth
+        val displayHeight = device.displayHeight
+        val centerX = displayWidth / 2
+        val startY = displayHeight / 4  // Start from top quarter
+        val endY = displayHeight / 2    // Swipe to middle
+        
+        // Perform swipe down gesture to trigger refresh
+        device.swipe(centerX, startY, centerX, endY, 10)
+        
+        // Wait for refresh to complete
+        val refreshCompleted = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
+        ), 5000) // Wait for refresh to finish
+        
+        if (refreshCompleted) {
+            Log.d(TAG, "✅ Pull-to-refresh completed - chat list should now be synced")
+        } else {
+            Log.w(TAG, "⚠️ Pull-to-refresh may not have completed, but continuing...")
+        }
+        
         // Step 8: Find and re-enter the chat using the calculated title
         Log.d(TAG, "🔍 Looking for our chat using calculated title: '$chatTitle'...")
         
@@ -484,7 +520,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             androidx.test.uiautomator.By.clazz("android.widget.TextView")
                 .pkg("com.example.whiz.debug")
         )
-        val chatTexts = allChatItems.mapNotNull { it.text }.filter { 
+        val chatTexts = allChatItems.mapNotNull { 
+            try {
+                it.text
+            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                Log.w(TAG, "⚠️ Stale UI element encountered during chat text extraction, skipping")
+                null
+            }
+        }.filter { 
             it.isNotBlank() && 
             !it.contains("New Chat") && 
             !it.contains("Settings") &&
@@ -523,7 +566,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 
                 // Debug: Let's see what chats are actually available
                 val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
-                val visibleTexts = allTextViews.mapNotNull { it.text }.filter { it.isNotBlank() && it.length > 5 }
+                val visibleTexts = allTextViews.mapNotNull { 
+                    try {
+                        it.text
+                    } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                        Log.w(TAG, "⚠️ Stale UI element encountered during visible text extraction, skipping")
+                        null
+                    }
+                }.filter { it.isNotBlank() && it.length > 5 }
                 Log.e(TAG, "🔍 Currently visible chat titles: ${visibleTexts.take(5).joinToString(", ")}")
                 
                 failWithScreenshot("chat_not_found_in_list", "Could not find our chat by expected title '$chatTitle' in the chat list - chat persistence may be broken. Available titles: ${visibleTexts.take(3).joinToString(", ")}")
@@ -607,7 +657,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             
             // Debug: Let's see what messages are actually visible
             val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
-            val visibleTexts = allTextViews.mapNotNull { it.text }.filter { it.isNotBlank() && it.length > 5 }
+            val visibleTexts = allTextViews.mapNotNull { 
+                try {
+                    it.text
+                } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                    Log.w(TAG, "⚠️ Stale UI element encountered during final text extraction, skipping")
+                    null
+                }
+            }.filter { it.isNotBlank() && it.length > 5 }
             Log.e(TAG, "🔍 Currently visible texts: ${visibleTexts.joinToString(", ")}")
             
             failWithScreenshot("first_message_lost_after_navigation", "First message is no longer visible after navigating back to chat - chat persistence is broken. Visible texts: ${visibleTexts.take(3).joinToString(", ")}")

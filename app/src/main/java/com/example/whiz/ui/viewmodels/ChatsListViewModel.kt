@@ -83,11 +83,11 @@ class ChatsListViewModel @Inject constructor(
         viewModelScope.launch {
             _isRefreshing.value = true
             try {
-                Log.d(TAG, "refreshChats: Starting pull-to-refresh incremental sync")
+                Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
                 repository.performIncrementalSync()
-                Log.d(TAG, "refreshChats: Pull-to-refresh completed successfully")
+                Log.d(TAG, "refreshChats: Incremental sync completed successfully")
             } catch (e: Exception) {
-                Log.e(TAG, "refreshChats: Error during pull-to-refresh", e)
+                Log.e(TAG, "refreshChats: Error during incremental sync", e)
                 // Error is handled by the repository and UI
             } finally {
                 _isRefreshing.value = false
