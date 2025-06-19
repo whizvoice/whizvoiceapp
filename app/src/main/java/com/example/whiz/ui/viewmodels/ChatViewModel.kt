@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.util.UUID
 import javax.inject.Inject
 
@@ -452,15 +453,16 @@ class ChatViewModel @Inject constructor(
                                 Log.d(TAG, "$eventLogId Syncing local chat ID to server conversation_id: $effectiveConversationId")
                                 
                                 // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
+                                // Use runBlocking to ensure migration completes before chat ID update
                                 try {
-                                    viewModelScope.launch {
-                                        Log.d(TAG, "$eventLogId Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
-                                        val migrationSuccess = repository.migrateChatMessages(originalChatId, effectiveConversationId)
-                                        if (migrationSuccess) {
-                                            Log.d(TAG, "$eventLogId Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
-                                        } else {
-                                            Log.w(TAG, "$eventLogId Failed to migrate messages from chat $originalChatId to $effectiveConversationId")
-                                        }
+                                    Log.d(TAG, "$eventLogId Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
+                                    val migrationSuccess = runBlocking {
+                                        repository.migrateChatMessages(originalChatId, effectiveConversationId)
+                                    }
+                                    if (migrationSuccess) {
+                                        Log.d(TAG, "$eventLogId Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
+                                    } else {
+                                        Log.w(TAG, "$eventLogId Failed to migrate messages from chat $originalChatId to $effectiveConversationId")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "$eventLogId Error migrating messages from chat $originalChatId to $effectiveConversationId", e)
