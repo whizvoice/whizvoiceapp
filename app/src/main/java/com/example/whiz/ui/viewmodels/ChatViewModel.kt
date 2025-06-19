@@ -98,9 +98,16 @@ class ChatViewModel @Inject constructor(
 
     // Messages in the current chat
     val messages = _chatId.flatMapLatest { id ->
+        Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
         if (id > 0) {
-            repository.getMessagesForChat(id)
+            repository.getMessagesForChat(id).onEach { messagesList ->
+                Log.d(TAG, "🔥 messages flow: Received ${messagesList.size} messages for chat $id")
+                messagesList.forEachIndexed { index, message ->
+                    Log.d(TAG, "🔥 messages flow: [$index] ${message.type}: ${message.content.take(50)}...")
+                }
+            }
         } else {
+            Log.d(TAG, "🔥 messages flow: Returning empty list for chat ID $id")
             flowOf(emptyList())
         }
     }.stateIn(
@@ -619,6 +626,8 @@ class ChatViewModel @Inject constructor(
         repository.addAssistantMessage(currentChatId, responseText)
 
         _isResponding.value = false // Agent has responded
+        
+        // Note: Input text clearing is handled when optimistic message appears in UI
 
         // Speak the response if enabled
         if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
@@ -970,12 +979,22 @@ class ChatViewModel @Inject constructor(
             return
         }
 
-        // 🔧 Clear input text immediately when sending message (only for non-interrupt flow)
-        Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
-        _inputText.value = ""
+        // 🔧 FIXED: Don't clear input text immediately for voice input to preserve UX
+        // Input will be cleared when bot responds (better UX for voice transcription)
+        if (!text.isBlank() && _isInputFromVoice.value) {
+            Log.d(TAG, "[LOG] 🔥 sendUserInput: Preserving voice transcription in input field for better UX: '${_inputText.value}'")
+        } else {
+            Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
+            _inputText.value = ""
+        }
 
         viewModelScope.launch {
-            var currentChatId = _chatId.value
+            // 🔧 CRITICAL FIX: Capture chat ID at the start and use it consistently
+            // This prevents race conditions where _chatId.value changes during execution
+            val originalChatId = _chatId.value
+            var currentChatId = originalChatId
+            
+            Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId")
 
             // Handle new chat creation differently for remote vs local agent
             if (currentChatId <= 0) {
@@ -998,6 +1017,8 @@ class ChatViewModel @Inject constructor(
                     // For new chats, we don't have a conversation_id yet, so pass null
                     whizServerRepository.connect(null)
                 }
+            } else {
+                Log.d(TAG, "sendUserInput: Using existing chat - originalChatId: $originalChatId, staying with: $currentChatId")
             }
 
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
@@ -1006,9 +1027,10 @@ class ChatViewModel @Inject constructor(
                 val actualChatId = if (currentChatId > 0) currentChatId else {
                     // For new chats, create a temporary local chat to show the message immediately
                     val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChat(tempTitle)
+                    val tempChatId = repository.createChatOptimistic(tempTitle)
                     _chatId.value = tempChatId
                     _chatTitle.value = tempTitle
+                    Log.d(TAG, "sendUserInput: Created optimistic local chat $tempChatId with title '$tempTitle'")
                     tempChatId
                 }
                 val localMessageId = if (configUseRemoteAgent) {
@@ -1019,6 +1041,15 @@ class ChatViewModel @Inject constructor(
                     repository.addUserMessage(actualChatId, trimmedText)
                 }
                 Log.d(TAG, "sendUserInput: Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId, agent: ${if (configUseRemoteAgent) "remote" else "local"})")
+                
+                // 🔧 FIXED: Clear input text after optimistic message is added (better UX for voice transcription)
+                // Add small delay to ensure database transaction is committed and UI can react
+                delay(50)
+                if (_isInputFromVoice.value && _inputText.value.isNotBlank()) {
+                    Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing voice transcription from input field after optimistic message added: '${_inputText.value}'")
+                    _inputText.value = ""
+                    _isInputFromVoice.value = false
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
             }
@@ -1038,9 +1069,14 @@ class ChatViewModel @Inject constructor(
                 _isResponding.value = true // Show thinking indicator
                 val requestId = java.util.UUID.randomUUID().toString()
                 currentActiveRequestId = requestId // Track the active request
-                pendingRequests[requestId] = currentChatId
                 
-                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $currentChatId with requestId: $requestId")
+                // 🔧 CRITICAL FIX: Use the updated chat ID after optimistic UI creation
+                // If optimistic UI created a new chat, _chatId.value will be the new local chat ID
+                val chatIdForWebSocket = if (_chatId.value > 0) _chatId.value else currentChatId
+                Log.d(TAG, "sendUserInput: PRE-SEND DEBUG - originalChatId: $originalChatId, currentChatId: $currentChatId, _chatId.value: ${_chatId.value}, using for WebSocket: $chatIdForWebSocket")
+                pendingRequests[requestId] = chatIdForWebSocket
+                
+                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $requestId")
                 val success = whizServerRepository.sendMessage(trimmedText, requestId)
                 
                 if (!success) {
@@ -1048,7 +1084,7 @@ class ChatViewModel @Inject constructor(
                     // The retry mechanism will handle this transparently
                     Log.d(TAG, "sendUserInput: Message queued for retry - keeping request tracking")
                 } else {
-                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $currentChatId with requestId: $requestId")
+                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $chatIdForWebSocket with requestId: $requestId")
                 }
                 
                 // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI

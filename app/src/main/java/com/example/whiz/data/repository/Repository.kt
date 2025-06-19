@@ -160,6 +160,36 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    /**
+     * Create a local chat for optimistic UI - stores only in local database.
+     * Used when we want immediate UI feedback before server processes the chat creation.
+     * The actual server chat will be created later and synced.
+     */
+    suspend fun createChatOptimistic(title: String): Long {
+        return try {
+            Log.d(TAG, "createChatOptimistic: creating local chat with title '$title' for optimistic UI")
+            
+            // Create local chat entity
+            val chatEntity = ChatEntity(
+                id = 0, // Auto-generate
+                title = title,
+                createdAt = System.currentTimeMillis(),
+                lastMessageTime = System.currentTimeMillis()
+            )
+            
+            val chatId = chatDao.insertChat(chatEntity)
+            Log.d(TAG, "createChatOptimistic: created local chat with id $chatId and title '$title'")
+            
+            // Don't trigger API refresh - this is just for immediate UI
+            // The real chat will be created via server and synced later
+            
+            chatId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating optimistic local chat with title '$title'", e)
+            -1
+        }
+    }
+
     suspend fun updateChatTitle(chatId: Long, title: String) {
         try {
             Log.d(TAG, "updateChatTitle: updating chat $chatId title to '$title' via API")
@@ -225,11 +255,12 @@ class WhizRepository @Inject constructor(
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
         return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            flow {
-                Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
-                // Use deduplication helper to prevent multiple concurrent API calls
-                val messageEntities = fetchMessagesWithDeduplication(chatId)
-                emit(messageEntities)
+            Log.d(TAG, "getMessagesForChat: Flow triggered for chat $chatId (trigger: $triggerValue)")
+            
+            // 🔧 FIXED: Return local database messages immediately for optimistic UI
+            // Background sync is handled separately to avoid race conditions
+            messageDao.getMessagesForChatFlow(chatId).onEach { localMessages ->
+                Log.d(TAG, "getMessagesForChat: Emitting ${localMessages.size} local messages for chat $chatId")
             }
         }.catch { e ->
             Log.e(TAG, "Error in getMessagesForChat flow", e)
@@ -284,6 +315,22 @@ class WhizRepository @Inject constructor(
         return try {
             Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only)")
             
+            // 🔧 FIXED: Ensure chat exists locally before adding optimistic message
+            // This prevents foreign key constraint failures for server-only chats
+            val existingChat = chatDao.getChatById(chatId)
+            if (existingChat == null) {
+                Log.w(TAG, "addUserMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                // Create a minimal chat entity to satisfy foreign key constraint
+                val placeholderChat = ChatEntity(
+                    id = chatId,
+                    title = "Loading...", // Will be updated when server data arrives
+                    createdAt = System.currentTimeMillis(),
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                chatDao.insertChat(placeholderChat)
+                Log.d(TAG, "addUserMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+            }
+            
             // Check if this message already exists to prevent duplicates
             val existingMessages = messageDao.getMessagesForChatFlow(chatId).first()
             val duplicateMessage = existingMessages.find { 
@@ -315,7 +362,7 @@ class WhizRepository @Inject constructor(
             
             messageId
         } catch (e: Exception) {
-            Log.e(TAG, "Error adding optimistic user message to chat $chatId", e)
+            Log.e(TAG, "Error adding optimistic user message to chat $chatId: ${e.message}", e)
             -1
         }
     }
