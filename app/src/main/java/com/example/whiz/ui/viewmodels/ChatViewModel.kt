@@ -476,15 +476,17 @@ class ChatViewModel @Inject constructor(
                                 return@collect
                             }
                             
+                            // 🔧 FIXED: Check if response is for current chat AFTER chat ID synchronization
                             val isResponseForCurrentChat = (targetChatId == _chatId.value)
                             
-                            // 🔧 Additional validation: only process if target chat is current chat
                             if (!isResponseForCurrentChat) {
                                 Log.w(TAG, "$eventLogId Response is for chat $targetChatId but current chat is ${_chatId.value}. Skipping processing to prevent cross-chat contamination.")
                                 // 🔧 Update responding state for current chat since we're not processing this response
                                 updateRespondingStateForCurrentChat()
                                 return@collect
                             }
+                            
+                            Log.d(TAG, "$eventLogId ✅ Response validated for current chat $targetChatId")
                             
                             Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
                             
@@ -511,12 +513,14 @@ class ChatViewModel @Inject constructor(
                                     
                                     try {
                                         viewModelScope.launch {
-                                            // Remove arbitrary delay - refresh immediately when server responds
-                                            repository.refreshMessages()
-                                            Log.d(TAG, "$eventLogId Triggered messages refresh for remote agent response")
+                                            // 🔧 FIXED: For remote agent, add bot message to local DB for immediate UI display
+                                            // This ensures the response appears immediately without waiting for API sync
+                                            Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally for immediate UI display")
+                                            val messageId = repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
+                                            Log.d(TAG, "$eventLogId Remote agent: Added optimistic assistant message $messageId to chat $targetChatId locally")
                                         }
                                     } catch (e: Exception) {
-                                        Log.e(TAG, "$eventLogId Error refreshing messages for remote agent response", e)
+                                        Log.e(TAG, "$eventLogId Error adding assistant message locally for remote agent", e)
                                     }
                                     
                                     // Only refresh conversations if a new one might have been created

@@ -389,6 +389,47 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    /**
+     * Add assistant message for optimistic UI - only stores locally, doesn't make API call.
+     * Used when we receive WebSocket responses and want immediate UI feedback.
+     */
+    suspend fun addAssistantMessageOptimistic(chatId: Long, content: String): Long {
+        return try {
+            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $chatId (local only)")
+            
+            // 🔧 Ensure chat exists locally before adding optimistic message
+            val existingChat = chatDao.getChatById(chatId)
+            if (existingChat == null) {
+                Log.w(TAG, "addAssistantMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                val placeholderChat = ChatEntity(
+                    id = chatId,
+                    title = "Loading...",
+                    createdAt = System.currentTimeMillis(),
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                chatDao.insertChat(placeholderChat)
+                Log.d(TAG, "addAssistantMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+            }
+            
+            // Create optimistic assistant message entity
+            val messageEntity = MessageEntity(
+                id = 0,
+                chatId = chatId,
+                content = content,
+                type = MessageType.ASSISTANT,
+                timestamp = System.currentTimeMillis()
+            )
+            
+            val messageId = messageDao.insertMessage(messageEntity)
+            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId")
+            
+            messageId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding optimistic assistant message to chat $chatId: ${e.message}", e)
+            -1
+        }
+    }
+
     // Auto-save logic - now based on API call
     suspend fun shouldPersistChat(chatId: Long): Boolean {
         val count = getMessageCountForChat(chatId)
