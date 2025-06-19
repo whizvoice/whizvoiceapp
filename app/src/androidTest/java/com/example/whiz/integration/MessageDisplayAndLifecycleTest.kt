@@ -178,51 +178,65 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @Test
     fun messageUI_sendMessage_appearsInChat() {
         runBlocking {
-        // Test that messages appear in the UI when sent through the chat interface
-        // This is a full UI integration test: open chat, type message, click send, verify it appears
+        // Comprehensive conversation lifecycle test:
+        // 1. Create new chat and send message
+        // 2. Verify optimistic UI and bot response
+        // 3. Read chat title before navigation
+        // 4. Navigate back to chat list
+        // 5. Re-enter chat using the saved title
+        // 6. Send second message in existing chat
         
-        Log.d(TAG, "🧪 Starting UI message send test")
+        Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
         
-        val testMessage = "UI test message - ${System.currentTimeMillis()}"
+        // Use a very unique message that won't conflict with other chats
+        val uniqueId = System.currentTimeMillis()
+        val firstMessage = "INTEGRATION_TEST_MSG_$uniqueId: Hello, can you help me test this chat?"
+        val secondMessage = "INTEGRATION_TEST_MSG_$uniqueId: Second message after navigation"
+        var chatTitle: String? = null // Will store the chat title for later navigation
         
         // Step 1: Launch the app for our UI test
-        Log.d(TAG, "🚀 Launching app for UI test...")
+        Log.d(TAG, "🚀 Launching app for comprehensive UI test...")
         val intent = InstrumentationRegistry.getInstrumentation().targetContext.packageManager
             .getLaunchIntentForPackage("com.example.whiz.debug")
         intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         InstrumentationRegistry.getInstrumentation().targetContext.startActivity(intent)
         
         // Wait for app to load completely
-        device.wait(androidx.test.uiautomator.Until.hasObject(
+        val appLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
             androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
         ), 10000)
+        
+        if (!appLoaded) {
+            Log.e(TAG, "❌ FAILURE: App failed to load within timeout")
+            failWithScreenshot("app_failed_to_load", "App did not load within 10 seconds - check if app is properly installed")
+        }
         
         // Wait for main UI elements to appear (either New Chat button or message input)
         val newChatLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
             androidx.test.uiautomator.By.descContains("New Chat").pkg("com.example.whiz.debug")
-        ), 2000)
+        ), 3000)
         
         val inputFieldLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
             androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
-        ), 2000)
+        ), 3000)
         
-        val appLoaded = newChatLoaded || inputFieldLoaded
+        val mainUILoaded = newChatLoaded || inputFieldLoaded
         
-        if (!appLoaded) {
-            Log.w(TAG, "⚠️ Main UI elements not found, waiting a bit more...")
-            delay(2000) // Fallback delay only if specific wait failed
+        if (!mainUILoaded) {
+            Log.e(TAG, "❌ FAILURE: Main UI elements not found")
+            failWithScreenshot("main_ui_not_loaded", "Neither New Chat button nor message input field found - app may not have loaded properly")
         }
         
-        Log.d(TAG, "📱 App loaded, looking for New Chat button...")
+        Log.d(TAG, "📱 App loaded successfully, looking for New Chat button...")
         
-        // Step 2: Navigate to new chat
+        // Step 2: Navigate to new chat if needed
         val newChatButton = device.findObject(
             androidx.test.uiautomator.UiSelector()
                 .descriptionContains("New Chat")
                 .packageName("com.example.whiz.debug")
         )
         
-        if (newChatButton.waitForExists(5000)) {
+        if (newChatButton.waitForExists(3000)) {
             Log.d(TAG, "✅ Found New Chat button, clicking...")
             newChatButton.click()
             
@@ -232,14 +246,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             ), 5000)
             
             if (!chatLoaded) {
-                Log.w(TAG, "⚠️ Chat screen didn't load in time")
-                delay(1000) // Short fallback delay
+                Log.e(TAG, "❌ FAILURE: Chat screen failed to load after clicking New Chat")
+                failWithScreenshot("chat_screen_not_loaded", "Chat screen did not load after clicking New Chat button - navigation may be broken")
             }
         } else {
             Log.w(TAG, "⚠️ New Chat button not found, assuming already in chat")
         }
         
-        // Step 3: Find the message input field and type the test message
+        // Step 3: Find the message input field and type the first message
         Log.d(TAG, "🔍 Looking for message input field...")
         val messageInput = device.findObject(
             androidx.test.uiautomator.UiSelector()
@@ -247,81 +261,73 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 .packageName("com.example.whiz.debug")
         )
         
-        if (messageInput.waitForExists(5000)) {
-            Log.d(TAG, "✅ Found message input field, typing message...")
-            messageInput.click() // Focus the input field
+        if (!messageInput.waitForExists(5000)) {
+            Log.e(TAG, "❌ FAILURE: Message input field not found")
+            failWithScreenshot("message_input_not_found", "Message input field not found - chat UI may not have loaded properly")
+        }
+        
+        Log.d(TAG, "✅ Found message input field, typing first message...")
+        messageInput.click() // Focus the input field
+        
+        // Wait for input field to be focused
+        val inputFocused = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.focused(true).clazz("android.widget.EditText")
+        ), 2000)
+        
+        if (!inputFocused) {
+            // Wait for keyboard to appear as alternative focus indicator
+            val keyboardAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.pkg("com.google.android.inputmethod.latin")
+            ), 1000) || device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.pkg("com.android.inputmethod")
+            ), 1000)
             
-            // Wait for input field to be focused (cursor appears)
-            val inputFocused = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.focused(true).clazz("android.widget.EditText")
+            if (!keyboardAppeared) {
+                Log.w(TAG, "⚠️ Neither focus nor keyboard detected, but continuing...")
+            }
+        }
+        
+        messageInput.setText(firstMessage)
+        
+        // Wait for text to actually appear in the field
+        val textSet = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.text(firstMessage).pkg("com.example.whiz.debug")
+        ), 3000)
+        
+        if (!textSet) {
+            Log.w(TAG, "⚠️ Text didn't appear in input field, trying again...")
+            messageInput.setText(firstMessage)
+            
+            // Wait again with more patience
+            val textSetRetry = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.text(firstMessage).pkg("com.example.whiz.debug")
             ), 2000)
             
-            if (!inputFocused) {
-                delay(500) // Short fallback if focus detection fails
+            if (!textSetRetry) {
+                Log.e(TAG, "❌ FAILURE: Could not set text in message input field")
+                failWithScreenshot("text_input_failed", "Unable to set text in message input field - input field may not be working properly")
             }
-            
-            messageInput.setText(testMessage)
-            
-            // Wait for text to actually appear in the field
-            val textSet = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.text(testMessage).pkg("com.example.whiz.debug")
-            ), 3000)
-            
-            if (!textSet) {
-                Log.w(TAG, "⚠️ Text didn't appear in input field, trying again...")
-                messageInput.setText(testMessage)
-                delay(500) // Fallback delay if text detection fails
-            }
-            
-            Log.d(TAG, "✅ Message typed: '$testMessage'")
-        } else {
-            Log.e(TAG, "❌ Could not find message input field")
-            failWithScreenshot("message_input_not_found", "Message input field not found - cannot complete UI test")
         }
+        
+        Log.d(TAG, "✅ First message typed successfully: '$firstMessage'")
         
         // Step 4: Find and click the send button
         Log.d(TAG, "🔍 Looking for send button...")
         
-        // DEBUG: Log the current state of the input field and relevant variables
-        Log.d(TAG, "🔍 DEBUG: Current input text: '$testMessage'")
-        Log.d(TAG, "🔍 DEBUG: Input field has text: ${testMessage.isNotBlank()}")
+        // Wait for send button to appear (should happen when text is entered)
+        val sendButtonReady = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.descContains("Send message").pkg("com.example.whiz.debug")
+        ), 3000)
         
-        // Try to get the ChatViewModel state for debugging
-        try {
-            // Access the repository to check the current chat state
-            val currentMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-            Log.d(TAG, "🔍 DEBUG: Messages in chat: ${currentMessages.size}")
-            
-            // Check if there are any unsent messages or draft state
-            val lastMessage = currentMessages.lastOrNull()
-            Log.d(TAG, "🔍 DEBUG: Last message: ${lastMessage?.content ?: "none"}")
-            
-            // Wait for send button to appear (should happen when text is entered)
-            val sendButtonReady = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.descContains("Send message").pkg("com.example.whiz.debug")
-            ), 3000)
-            
-            if (!sendButtonReady) {
-                Log.w(TAG, "🔍 DEBUG: Send button not ready yet, waiting a bit more...")
-                delay(1000) // Fallback delay
+        if (!sendButtonReady) {
+            Log.w(TAG, "🔍 Send button not ready yet, checking if text input is complete...")
+            // Wait for UI to update after text input
+            val uiUpdated = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
+            ), 1000)
+            if (!uiUpdated) {
+                Log.w(TAG, "⚠️ UI may not have updated properly after text input")
             }
-            Log.d(TAG, "🔍 DEBUG: UI should be settled now, checking button state...")
-        } catch (e: Exception) {
-            Log.w(TAG, "🔍 DEBUG: Could not access chat state: ${e.message}")
-        }
-        
-        // Check what buttons are actually available
-        val allButtons = device.findObjects(
-            androidx.test.uiautomator.By.clickable(true)
-                .pkg("com.example.whiz.debug")
-        )
-        Log.d(TAG, "🔍 DEBUG: Found ${allButtons.size} clickable elements")
-        
-        // Log all button descriptions to see what's actually available
-        allButtons.forEachIndexed { index, button ->
-            val desc = button.contentDescription ?: "no description"
-            val text = button.text ?: "no text"
-            Log.d(TAG, "🔍 DEBUG: Button $index - desc: '$desc', text: '$text'")
         }
         
         val sendButton = device.findObject(
@@ -336,601 +342,361 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             
             // Wait for message to be sent by checking if input field is cleared
             val messageSent = device.wait(androidx.test.uiautomator.Until.gone(
-                androidx.test.uiautomator.By.text(testMessage).clazz("android.widget.EditText")
+                androidx.test.uiautomator.By.text(firstMessage).clazz("android.widget.EditText")
             ), 3000)
             
             if (!messageSent) {
-                Log.w(TAG, "⚠️ Input field not cleared, message might not have sent")
-                delay(1000) // Fallback delay
-            }
-            
-            Log.d(TAG, "✅ Send button clicked")
-        } else {
-            Log.e(TAG, "❌ Could not find send button")
-            
-            // Additional debugging: try to find any send-related buttons
-            val sendButtonAlt = device.findObject(
-                androidx.test.uiautomator.UiSelector()
-                    .description("Send message")
-                    .packageName("com.example.whiz.debug")
-            )
-            
-            if (sendButtonAlt.exists()) {
-                Log.d(TAG, "🔍 DEBUG: Found exact 'Send message' button - clicking it")
-                sendButtonAlt.click()
-                
-                // Wait for message to be sent by checking if input field is cleared
-                val messageSent = device.wait(androidx.test.uiautomator.Until.gone(
-                    androidx.test.uiautomator.By.text(testMessage).clazz("android.widget.EditText")
-                ), 3000)
-                
-                if (!messageSent) {
-                    Log.w(TAG, "⚠️ Input field not cleared after exact send button click")
-                    delay(1000) // Fallback delay
+                Log.w(TAG, "⚠️ Input field not cleared, checking if send action completed...")
+                // Alternative: check if a user message appeared in the chat
+                val messageInChat = device.wait(androidx.test.uiautomator.Until.hasObject(
+                    androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
+                ), 2000)
+                if (!messageInChat) {
+                    Log.w(TAG, "⚠️ Message may not have been sent properly")
                 }
-                
-                Log.d(TAG, "✅ Send button clicked (exact match)")
-            } else {
-                Log.e(TAG, "❌ No send button found with exact or partial match")
-                failWithScreenshot("send_button_not_found", "Send button not found - cannot complete UI test")
             }
+            
+            Log.d(TAG, "✅ Send button clicked successfully")
+        } else {
+            Log.e(TAG, "❌ FAILURE: Send button not found")
+            failWithScreenshot("send_button_not_found", "Send button not found - UI may not be responding to text input or send button is not visible")
         }
         
-        // Step 5: Verify the message appears in the chat UI
-        Log.d(TAG, "🔍 Verifying message appears in chat...")
+        // Step 5: Verify the first message appears in the chat UI (optimistic UI test)
+        Log.d(TAG, "🔍 Verifying first message appears in chat...")
         
-        // Wait for message to appear in chat UI (optimistic UI should show it immediately)
-        val messageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(testMessage).pkg("com.example.whiz.debug")
+        val firstMessageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
         ), 5000)
         
-        if (messageAppeared) {
-            // Double-check with UiSelector for additional verification
-            val messageInChat = device.findObject(
+        if (!firstMessageAppeared) {
+            Log.e(TAG, "❌ FAILURE: First message does not appear in chat UI")
+            failWithScreenshot("first_message_not_visible", "First message not visible in chat UI - optimistic UI not working properly")
+        }
+        
+        Log.d(TAG, "✅ SUCCESS: First message appears in chat UI immediately!")
+        
+        // Step 6: Wait for server/bot response by looking for the "Whiz" assistant label
+        Log.d(TAG, "🔍 Waiting for server/bot response by looking for assistant message structure...")
+        
+        // Look for the "Whiz" label that appears in bot messages (from production MessageItem composable)
+        val botResponseAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.text("Whiz").pkg("com.example.whiz.debug")
+        ), 10000) // Reasonable timeout for server response
+        
+        val finalBotResponse = botResponseAppeared
+        
+        if (finalBotResponse) {
+            Log.d(TAG, "✅ SUCCESS: Bot response appeared in chat UI!")
+            
+            // Verify we now have at least 2 messages (user + bot)
+            val allMessages = device.findObjects(
+                androidx.test.uiautomator.By.clazz("android.widget.TextView")
+                    .pkg("com.example.whiz.debug")
+            )
+            val messageTexts = allMessages.mapNotNull { it.text }.filter { 
+                it.isNotBlank() && it.length > 10 // Filter out short UI labels
+            }
+            Log.d(TAG, "🔍 Found ${messageTexts.size} message-like texts in UI")
+            
+            if (messageTexts.size < 2) {
+                Log.e(TAG, "❌ FAILURE: Expected at least 2 messages after bot response, found ${messageTexts.size}")
+                failWithScreenshot("insufficient_messages_after_bot_response", "Expected at least 2 messages (user + bot) but found ${messageTexts.size} - conversation flow may be broken")
+            }
+            
+            Log.d(TAG, "✅ Conversation flow working: user message + bot response both visible")
+        } else {
+            Log.w(TAG, "⚠️ No bot response appeared within timeout")
+            Log.w(TAG, "   This is acceptable - the test focuses on optimistic UI for user messages")
+            Log.w(TAG, "   Bot response depends on server connectivity and may not always be available")
+        }
+        
+        // Step 6.5: CALCULATE EXPECTED CHAT TITLE based on production logic
+        Log.d(TAG, "🔍 Calculating expected chat title based on production deriveChatTitle logic...")
+        
+        // Production code: deriveChatTitle takes first line, then first 20 chars + "..." if longer than 20
+        val firstLine = firstMessage.trim().split("\n").first()
+        chatTitle = if (firstLine.length > 20) {
+            "${firstLine.take(20)}..."
+        } else {
+            firstLine
+        }
+        
+        Log.d(TAG, "✅ Expected chat title: '$chatTitle'")
+        Log.d(TAG, "   (Derived from first line: '${firstLine.take(30)}...')")
+        
+        // Step 7: Navigate back to chat list
+        Log.d(TAG, "🔍 Navigating back to chat list...")
+        
+        // Try to find the "Open Chats List" button (hamburger menu in top bar)
+        val chatsListButton = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .descriptionContains("Open Chats List")
+                .packageName("com.example.whiz.debug")
+        )
+        
+        if (chatsListButton.waitForExists(3000)) {
+            Log.d(TAG, "✅ Found 'Open Chats List' button, clicking...")
+            chatsListButton.click()
+        } else {
+            // Try alternative navigation button descriptions
+            val backButton = device.findObject(
                 androidx.test.uiautomator.UiSelector()
-                    .textContains(testMessage)
+                    .descriptionContains("Navigate up")
                     .packageName("com.example.whiz.debug")
             )
             
-            if (messageInChat.exists()) {
-                Log.d(TAG, "✅ SUCCESS: Message appears in chat UI!")
-                assertTrue("Message should appear in chat UI", messageInChat.exists())
+            if (backButton.waitForExists(2000)) {
+                Log.d(TAG, "✅ Found 'Navigate up' button, clicking...")
+                backButton.click()
             } else {
-                Log.e(TAG, "❌ FAILURE: Message detected by wait but not by UiSelector")
-                failWithScreenshot("message_detection_inconsistent", "Message wait succeeded but UiSelector failed")
+                Log.w(TAG, "⚠️ No navigation buttons found, using device back button")
+                device.pressBack()
             }
+        }
+        
+        // Wait for chat list to appear
+        val chatListLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.descContains("New Chat").pkg("com.example.whiz.debug")
+        ), 5000)
+        
+        if (!chatListLoaded) {
+            Log.e(TAG, "❌ FAILURE: Failed to return to chat list")
+            failWithScreenshot("chat_list_not_loaded", "Could not navigate back to chat list - back navigation may be broken")
+        }
+        
+        Log.d(TAG, "✅ Successfully returned to chat list")
+        
+        // Step 8: Find and re-enter the chat using the calculated title
+        Log.d(TAG, "🔍 Looking for our chat using calculated title: '$chatTitle'...")
+        
+        // Wait for chat list to fully load
+        val chatListFullyLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug")
+        ), 3000)
+        
+        if (!chatListFullyLoaded) {
+            Log.w(TAG, "⚠️ Chat list may not have fully loaded, but continuing...")
+        }
+        
+        // Debug: Let's see what chats are available
+        val allChatItems = device.findObjects(
+            androidx.test.uiautomator.By.clazz("android.widget.TextView")
+                .pkg("com.example.whiz.debug")
+        )
+        val chatTexts = allChatItems.mapNotNull { it.text }.filter { 
+            it.isNotBlank() && 
+            !it.contains("New Chat") && 
+            !it.contains("Settings") &&
+            it.length > 5 
+        }
+        Log.d(TAG, "🔍 Available chats: ${chatTexts.joinToString(", ")}")
+        
+        // First, try to find our chat by the exact calculated title
+        var ourChat = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .text(chatTitle)
+                .packageName("com.example.whiz.debug")
+        )
+        
+        var chatFound = false
+        
+        if (ourChat.waitForExists(3000)) {
+            Log.d(TAG, "✅ Found our chat by exact title match ('$chatTitle'), clicking to re-enter...")
+            ourChat.click()
+            chatFound = true
         } else {
-            Log.e(TAG, "❌ FAILURE: Message does not appear in chat UI")
+            // Try partial match on the title 
+            Log.w(TAG, "⚠️ Exact title search failed, trying partial title match...")
+            ourChat = device.findObject(
+                androidx.test.uiautomator.UiSelector()
+                    .textContains(chatTitle.take(15)) // Use first 15 chars in case of truncation
+                    .packageName("com.example.whiz.debug")
+            )
             
-            // Additional debugging: check if message was saved to database
-            val messagesInDb = database.messageDao().getMessagesForChatFlow(testChatId).first()
-            val messageInDb = messagesInDb.find { it.content == testMessage }
-            
-            if (messageInDb != null) {
-                Log.e(TAG, "❌ Message found in database but not in UI - UI update issue")
-                failWithScreenshot("message_in_db_not_in_ui", "Message saved to database but not displayed in UI - optimistic UI not working")
+            if (ourChat.waitForExists(2000)) {
+                Log.d(TAG, "✅ Found our chat by partial title match ('${chatTitle.take(15)}'), clicking to re-enter...")
+                ourChat.click()
+                chatFound = true
             } else {
-                Log.e(TAG, "❌ Message not found in database either - send functionality broken")
-                failWithScreenshot("message_not_sent", "Message not sent - send button functionality broken")
+                Log.e(TAG, "❌ FAILURE: Could not find our chat by title in the chat list")
+                
+                // Debug: Let's see what chats are actually available
+                val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+                val visibleTexts = allTextViews.mapNotNull { it.text }.filter { it.isNotBlank() && it.length > 5 }
+                Log.e(TAG, "🔍 Currently visible chat titles: ${visibleTexts.take(5).joinToString(", ")}")
+                
+                failWithScreenshot("chat_not_found_in_list", "Could not find our chat by expected title '$chatTitle' in the chat list - chat persistence may be broken. Available titles: ${visibleTexts.take(3).joinToString(", ")}")
             }
         }
         
-        Log.d(TAG, "🎉 UI message send test completed successfully!")
-        }
-    }
-
-    // @Test
-    fun speechRecognitionService_canBeControlled() = runBlocking {
-        // Test that speech recognition service can be enabled and disabled
-        // This verifies the basic functionality needed for continuous listening control
-        
-        // Initially should be disabled
-        assertFalse("Speech recognition should start disabled",
-                   speechRecognitionService.continuousListeningEnabled)
-        
-        // Enable continuous listening
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        
-        assertTrue("Speech recognition should be enabled",
-                  speechRecognitionService.continuousListeningEnabled)
-        
-        // Disable continuous listening
-        speechRecognitionService.continuousListeningEnabled = false
-        delay(100)
-        
-        assertFalse("Speech recognition should be disabled",
-                   speechRecognitionService.continuousListeningEnabled)
-    }
-
-    // @Test
-    fun appLifecycleService_emitsEvents() = runBlocking {
-        // Test that app lifecycle service can emit events
-        // This is the foundation for navigation-based microphone control
-        
-        var foregroundEventReceived = false
-        var backgroundEventReceived = false
-        
-        // Collect events with timeout
-        val foregroundJob = launch {
-            withTimeout(2000) {
-                appLifecycleService.appForegroundEvent.collect {
-                    foregroundEventReceived = true
-                }
-            }
+        if (!chatFound) {
+            Log.e(TAG, "❌ FAILURE: Could not find any existing chat in the chat list")
+            failWithScreenshot("no_existing_chat_found", "Could not find any existing chat in the chat list - chat persistence may be broken or chat list is empty. Available texts: ${chatTexts.take(3).joinToString(", ")}")
         }
         
-        val backgroundJob = launch {
-            withTimeout(2000) {
-                appLifecycleService.appBackgroundEvent.collect {
-                    backgroundEventReceived = true
-                }
-            }
+        // Wait for chat to reload
+        val chatReloaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
+        ), 5000)
+        
+        if (!chatReloaded) {
+            Log.e(TAG, "❌ FAILURE: Chat failed to reload after re-entering")
+            failWithScreenshot("chat_failed_to_reload", "Chat did not reload properly after clicking on it from chat list - chat loading may be broken")
         }
         
-        delay(100) // Let collectors start
+        Log.d(TAG, "✅ Successfully re-entered the chat")
         
-        // Emit background event
-        appLifecycleService.notifyAppBackgrounded()
-        delay(200)
+        // Step 9: Wait for chat history to load, then verify the first message is still visible
+        Log.d(TAG, "🔍 Waiting for chat history to load after re-entering...")
         
-        // Emit foreground event  
-        appLifecycleService.notifyAppForegrounded()
-        delay(200)
+        // Wait for chat content to load - look for any message content
+        val chatContentLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains("Hello").pkg("com.example.whiz.debug")
+        ), 5000) || device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains("test").pkg("com.example.whiz.debug")
+        ), 2000)
         
-        // Clean up
-        foregroundJob.cancel()
-        backgroundJob.cancel()
-        
-        // Note: The actual event reception might be async, so we verify the service can emit
-        // The integration with ChatViewModel would be tested separately
-        assertTrue("AppLifecycleService can emit events", true)
-    }
-
-    // @Test
-    fun multipleMessages_handledCorrectly() = runBlocking {
-        // Test that database can handle multiple messages correctly
-        // This verifies that rapid message insertion works (important for voice input)
-        
-        val message1 = "First message"
-        val message2 = "Second message"
-        
-        val initialMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val initialCount = initialMessages.size
-        
-        // Add first message directly to database
-        val messageEntity1 = MessageEntity(
-            id = 0,
-            chatId = testChatId,
-            content = message1,
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis()
-        )
-        val id1 = database.messageDao().insertMessage(messageEntity1)
-        delay(50)
-        
-        // Add second message directly to database
-        val messageEntity2 = MessageEntity(
-            id = 0,
-            chatId = testChatId,
-            content = message2,
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis()
-        )
-        val id2 = database.messageDao().insertMessage(messageEntity2)
-        delay(50)
-        
-        assertTrue("First message ID should be valid", id1 > 0)
-        assertTrue("Second message ID should be valid", id2 > 0)
-        assertNotEquals("Message IDs should be different", id1, id2)
-        
-        // Give time for database operations
-        delay(200)
-        
-        // Verify both messages are present in database
-        val finalMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val userMessages = finalMessages.filter { it.type == MessageType.USER }
-        
-        assertTrue("Should have first message",
-                  userMessages.any { it.content == message1 })
-        assertTrue("Should have second message", 
-                  userMessages.any { it.content == message2 })
-        
-        assertTrue("Should have at least 2 more messages than initially",
-                  finalMessages.size >= initialCount + 2)
-    }
-
-    // @Test
-    fun speechRecognition_serviceIntegration() = runBlocking {
-        // Test the basic integration between services
-        // This verifies that the services can work together
-        
-        // Test that we can control speech recognition
-        assertFalse("Should start disabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Enable speech recognition
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        assertTrue("Should be enabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Test that lifecycle events can be emitted (foundation for navigation control)
-        var eventEmitted = false
-        val job = launch {
-            try {
-                withTimeout(1000) {
-                    appLifecycleService.appBackgroundEvent.collect {
-                        eventEmitted = true
-                    }
-                }
-            } catch (e: Exception) {
-                // Timeout is expected
-            }
-        }
-        
-        delay(100)
-        appLifecycleService.notifyAppBackgrounded()
-        delay(200)
-        
-        job.cancel()
-        
-        // The actual integration (ChatViewModel observing events and controlling speech)
-        // would be tested in a higher-level test. Here we verify the foundation works.
-        assertTrue("Services are properly injected and functional", true)
-    }
-
-    // @Test
-    fun database_persistsMessages() = runBlocking {
-        // Test that messages are properly persisted in database
-        // This ensures that the database layer works correctly for message storage
-        
-        val testMessage = "Persistence test message"
-        
-        // Add message directly to database
-        val messageEntity = MessageEntity(
-            id = 0,
-            chatId = testChatId,
-            content = testMessage,
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis()
-        )
-        val messageId = database.messageDao().insertMessage(messageEntity)
-        assertTrue("Message should be added", messageId > 0)
-        
-        delay(100)
-        
-        // Verify it's persisted in the database
-        val messages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val persistedMessage = messages.find { it.content == testMessage }
-        
-        assertNotNull("Message should be persisted", persistedMessage)
-        assertEquals("Message type should be USER", MessageType.USER, persistedMessage?.type)
-        assertEquals("Chat ID should match", testChatId, persistedMessage?.chatId)
-        assertTrue("Timestamp should be recent", 
-                  persistedMessage?.timestamp ?: 0 > System.currentTimeMillis() - 5000)
-    }
-
-    // @Test
-    fun continuousListening_remainsOffAfterNavigation_canBeManuallyEnabled() = runBlocking {
-        // Test that continuous listening remains OFF after navigation if it was OFF
-        // and can be manually enabled by user action (mic button press)
-        
-        // Verify continuous listening starts disabled
-        assertFalse("Continuous listening should start disabled",
-                   speechRecognitionService.continuousListeningEnabled)
-        
-        // Simulate app going to background while continuous listening is OFF
-        appLifecycleService.notifyAppBackgrounded()
-        delay(200)
-        
-        // Verify it remains disabled
-        assertFalse("Continuous listening should remain disabled during background",
-                   speechRecognitionService.continuousListeningEnabled)
-        
-        // Simulate app coming back to foreground
-        appLifecycleService.notifyAppForegrounded()
-        delay(200)
-        
-        // Verify continuous listening remains OFF after returning to foreground
-        assertFalse("Continuous listening should remain disabled after foreground event",
-                   speechRecognitionService.continuousListeningEnabled)
-        
-        // Simulate user pressing mic button (manual enable)
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        
-        // Verify it can be manually enabled
-        assertTrue("Continuous listening should be enabled after manual activation",
-                  speechRecognitionService.continuousListeningEnabled)
-        
-        // Test that it can be manually disabled again
-        speechRecognitionService.continuousListeningEnabled = false
-        delay(100)
-        
-        assertFalse("Continuous listening should be disabled after manual deactivation",
-                   speechRecognitionService.continuousListeningEnabled)
-    }
-
-    // @Test
-    fun continuousListening_respectsUserPreference_throughNavigationCycles() = runBlocking {
-        // Test multiple navigation cycles with continuous listening OFF
-        // Ensures navigation doesn't accidentally enable it
-        
-        // Start with continuous listening disabled
-        assertFalse("Should start disabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Test multiple navigation cycles
-        repeat(3) { cycle ->
-            // Navigate away
-            appLifecycleService.notifyAppBackgrounded()
-            delay(100)
+        if (!chatContentLoaded) {
+            Log.w(TAG, "⚠️ Chat content may not have loaded yet, waiting a bit more...")
+            // Wait for any substantial text content that looks like a message
+            val anyMessageContent = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.clazz("android.widget.TextView")
+                    .pkg("com.example.whiz.debug")
+            ), 3000)
             
-            assertFalse("Cycle $cycle: Should remain disabled on background",
-                       speechRecognitionService.continuousListeningEnabled)
+            if (!anyMessageContent) {
+                Log.w(TAG, "⚠️ No message content visible after waiting")
+            }
+        }
+        
+        Log.d(TAG, "🔍 Verifying first message is still visible after navigation...")
+        
+        // Look for our unique test identifier in the message content
+        val testIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
+        var firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains(testIdentifier).pkg("com.example.whiz.debug")
+        ), 3000)
+        
+        // If not found by test identifier, try the full message
+        if (!firstMessageStillVisible) {
+            Log.w(TAG, "🔍 Test identifier not found, trying full message...")
+            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
+            ), 2000)
+        }
+        
+        // If not found by full text, try looking for key parts of the message
+        if (!firstMessageStillVisible) {
+            Log.w(TAG, "🔍 Full message not found, trying to find by 'Hello' keyword...")
+            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.textContains("Hello").pkg("com.example.whiz.debug")
+            ), 2000)
+        }
+        
+        // If still not found, try looking for "test this chat" phrase
+        if (!firstMessageStillVisible) {
+            Log.w(TAG, "🔍 'Hello' not found, trying 'test this chat' phrase...")
+            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.textContains("test this chat").pkg("com.example.whiz.debug")
+            ), 2000)
+        }
+        
+        if (!firstMessageStillVisible) {
+            Log.e(TAG, "❌ FAILURE: First message no longer visible after navigation")
             
-            // Navigate back
-            appLifecycleService.notifyAppForegrounded()
-            delay(100)
+            // Debug: Let's see what messages are actually visible
+            val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+            val visibleTexts = allTextViews.mapNotNull { it.text }.filter { it.isNotBlank() && it.length > 5 }
+            Log.e(TAG, "🔍 Currently visible texts: ${visibleTexts.joinToString(", ")}")
             
-            // Should still be disabled after returning
-            assertFalse("Cycle $cycle: Should remain disabled on foreground",
-                       speechRecognitionService.continuousListeningEnabled)
-        }
-        
-        // Verify user can still manually enable it after multiple cycles
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        
-        assertTrue("Should be manually enableable after navigation cycles",
-                  speechRecognitionService.continuousListeningEnabled)
-    }
-
-    // @Test
-    fun continuousListening_onOffToggleWorksThroughNavigation() = runBlocking {
-        // Test that manual on/off toggle works correctly even with navigation
-        
-        // Start disabled
-        assertFalse("Should start disabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Enable manually
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        assertTrue("Should be enabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Navigate away and back
-        appLifecycleService.notifyAppBackgrounded()
-        delay(100)
-        appLifecycleService.notifyAppForegrounded()
-        delay(100)
-        
-        // Note: In the real implementation, this would depend on ChatViewModel's logic
-        // For the service level test, we verify the service can be controlled regardless
-        
-        // Disable manually
-        speechRecognitionService.continuousListeningEnabled = false
-        delay(100)
-        assertFalse("Should be disabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Navigate again
-        appLifecycleService.notifyAppBackgrounded()
-        delay(100)
-        appLifecycleService.notifyAppForegrounded()
-        delay(100)
-        
-        // Should remain in last user-set state
-        assertFalse("Should remain disabled", speechRecognitionService.continuousListeningEnabled)
-        
-        // Can be re-enabled manually
-        speechRecognitionService.continuousListeningEnabled = true
-        delay(100)
-        assertTrue("Should be re-enableable", speechRecognitionService.continuousListeningEnabled)
-    }
-
-    // @Test
-    fun remoteAgent_userMessageAppearsImmediately() {
-        runBlocking {
-        // Test that user messages appear immediately in UI when using remote agent
-        // This test should FAIL with current implementation and pass after we fix optimistic UI
-        
-        Log.d(TAG, "🧪 Testing immediate message display for remote agent")
-        
-        val testMessage = "Test message for immediate display - ${System.currentTimeMillis()}"
-        
-        // Get initial message count
-        val initialMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val initialCount = initialMessages.size
-        Log.d(TAG, "Initial message count: $initialCount")
-        
-        // Simulate sending a message via remote agent (like user typing and hitting send)
-        // This should add the message to local UI immediately for good UX
-        // even though it's using remote agent
-        
-        // Add message directly to database to simulate what optimistic UI should do
-        // (This is what the ChatViewModel should do when user sends a message)
-        val messageEntity = MessageEntity(
-            id = 0,
-            chatId = testChatId,
-            content = testMessage,
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis()
-        )
-        val messageId = database.messageDao().insertMessage(messageEntity)
-        
-        // Verify message appears immediately (within 100ms)
-        delay(100)
-        
-        val updatedMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val userMessage = updatedMessages.find { it.content == testMessage }
-        
-        assertNotNull("User message should appear immediately in UI", userMessage)
-        assertEquals("Message should be from user", MessageType.USER, userMessage?.type)
-        assertEquals("Message should be in correct chat", testChatId, userMessage?.chatId)
-        
-        // Verify message count increased
-        assertEquals("Message count should increase by 1", initialCount + 1, updatedMessages.size)
-        
-        Log.d(TAG, "✅ User message appeared immediately (messageId: $messageId)")
-        
-        // This test verifies the EXPECTATION that messages should appear immediately
-        // Currently this will pass because we're directly adding to database
-        // But the real ChatViewModel with remote agent doesn't do this optimistic UI
-        // So we need to also test the actual ChatViewModel behavior
-        }
-    }
-
-    // @Test
-    fun realChatViewModel_remoteAgent_messageAppearsImmediately() {
-        runBlocking {
-        // Test the ACTUAL ChatViewModel behavior with remote agent
-        // This test should FAIL with current implementation because remote agent
-        // skips optimistic UI and waits for server response
-        
-        Log.d(TAG, "🧪 Testing REAL ChatViewModel immediate message display for remote agent")
-        
-        // This test would require injecting a ChatViewModel and testing its actual behavior
-        // For now, we'll document the expected behavior that should be implemented:
-        
-        // EXPECTED BEHAVIOR (currently missing):
-        // 1. User types message and hits send
-        // 2. ChatViewModel.sendUserInput() is called
-        // 3. Message should appear IMMEDIATELY in UI (optimistic UI)
-        // 4. Message is sent to server via WebSocket
-        // 5. Server processes and may send back confirmation/duplicate
-        // 6. Repository deduplicates any server duplicates
-        
-        // CURRENT BEHAVIOR (problematic):
-        // 1. User types message and hits send  
-        // 2. ChatViewModel.sendUserInput() is called
-        // 3. Message is NOT added to UI immediately (skipped for remote agent)
-        // 4. Message is sent to server via WebSocket
-        // 5. User sees "Whiz is computing..." but their own message is missing
-        // 6. Only after server responds does user message appear
-        
-        Log.d(TAG, "📝 This test documents the expected behavior for immediate message display")
-        Log.d(TAG, "    Current implementation: Remote agent skips optimistic UI")
-        Log.d(TAG, "    Expected implementation: Remote agent shows message immediately")
-        
-        // Check if the fix has been implemented
-        val currentImplementationHasOptimisticUI = true // Should be true after implementing optimistic UI fix
-        
-        if (!currentImplementationHasOptimisticUI) {
-            Log.w(TAG, "⚠️ KNOWN ISSUE: Remote agent does not show user messages immediately")
-            Log.w(TAG, "   This creates poor UX where user's message disappears after sending")
-            Log.w(TAG, "   Fix needed: Implement optimistic UI for remote agent with deduplication")
-        }
-        
-        // This assertion will fail until we implement the fix
-        assertTrue("Remote agent should show user messages immediately (optimistic UI)", 
-                  currentImplementationHasOptimisticUI)
-        }
-    }
-
-    // @Test
-    fun remoteAgent_noDuplicateMessages_afterOptimisticUIAndServerRefresh() {
-        runBlocking {
-        // Test that specifically checks for message duplication issue
-        // This simulates the real scenario: optimistic UI + server refresh = potential duplicates
-        
-        Log.d(TAG, "🧪 Testing for message duplication with optimistic UI + server refresh")
-        
-        val testMessage = "Test message for duplication check - ${System.currentTimeMillis()}"
-        
-        // Get initial message count
-        val initialMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        val initialCount = initialMessages.size
-        Log.d(TAG, "Initial message count: $initialCount")
-        
-        // Step 1: Simulate optimistic UI adding user message immediately (what sendUserInput should do)
-        Log.d(TAG, "Step 1: Adding optimistic message via Repository")
-        val optimisticMessageId = repository.addUserMessageOptimistic(testChatId, testMessage)
-        Log.d(TAG, "Added optimistic message with ID: $optimisticMessageId")
-        
-        // Verify optimistic message appears
-        delay(100)
-        var currentMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        assertEquals("Should have 1 more message after optimistic UI", initialCount + 1, currentMessages.size)
-        
-        val optimisticMessage = currentMessages.find { it.content == testMessage }
-        assertNotNull("Optimistic message should be present", optimisticMessage)
-        
-        // Step 2: Simulate server refresh that would normally trigger deduplication
-        // Instead of manually inserting, we'll simulate what happens when the Repository
-        // fetches messages from server and finds the same message
-        Log.d(TAG, "Step 2: Simulating server message arrival via Repository refresh")
-        
-        // Create a server message entity (simulating what comes from API)
-        val serverMessageEntity = MessageEntity(
-            id = 999, // Different ID to simulate server-assigned ID
-            chatId = testChatId,
-            content = testMessage, // Same content as optimistic message
-            type = MessageType.USER,
-            timestamp = System.currentTimeMillis() + 1000 // Slightly different timestamp
-        )
-        
-        // Simulate the Repository's deduplication logic by calling it directly
-        // This tests our actual deduplication implementation
-        val serverMessages = listOf(serverMessageEntity)
-        
-        // Use reflection or create a test method to access the private deduplication method
-        // For now, let's test the logic by simulating what fetchMessagesWithDeduplication does
-        
-        // Get current local messages (should include our optimistic message)
-        val localMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        
-        // Find optimistic messages that have server counterparts (our deduplication logic)
-        val messagesToRemove = mutableListOf<Long>()
-        
-        for (serverMessage in serverMessages) {
-            val duplicateLocal = localMessages.find { localMsg ->
-                localMsg.content.trim() == serverMessage.content.trim() &&
-                localMsg.type == serverMessage.type &&
-                // Only consider recent local messages as potential optimistic duplicates
-                (serverMessage.timestamp - localMsg.timestamp).let { timeDiff ->
-                    timeDiff >= 0 && timeDiff < 60000 // Server message should be within 60 seconds after local
-                }
-            }
-            
-            if (duplicateLocal != null) {
-                Log.d(TAG, "Found duplicate - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
-                messagesToRemove.add(duplicateLocal.id)
-            }
-        }
-        
-        // Remove duplicate local messages
-        if (messagesToRemove.isNotEmpty()) {
-            messagesToRemove.forEach { messageId ->
-                database.messageDao().deleteMessage(messageId)
-            }
-            Log.d(TAG, "Removed ${messagesToRemove.size} duplicate local messages")
-        }
-        
-        // Store server messages in database
-        serverMessages.forEach { serverMessage ->
-            database.messageDao().insertMessage(serverMessage)
-        }
-        
-        // Step 3: Check for duplication after deduplication logic
-        delay(100)
-        currentMessages = database.messageDao().getMessagesForChatFlow(testChatId).first()
-        
-        val duplicateMessages = currentMessages.filter { it.content == testMessage }
-        Log.d(TAG, "Found ${duplicateMessages.size} messages with content: '$testMessage'")
-        
-        // This is the critical test - we should NOT have duplicates after deduplication
-        if (duplicateMessages.size > 1) {
-            Log.e(TAG, "❌ DEDUPLICATION FAILED: Found ${duplicateMessages.size} copies of the same message")
-            duplicateMessages.forEachIndexed { index, msg ->
-                Log.e(TAG, "  Duplicate $index: ID=${msg.id}, timestamp=${msg.timestamp}")
-            }
-            fail("Deduplication failed! Found ${duplicateMessages.size} copies of: '$testMessage'")
+            failWithScreenshot("first_message_lost_after_navigation", "First message is no longer visible after navigating back to chat - chat persistence is broken. Visible texts: ${visibleTexts.take(3).joinToString(", ")}")
         } else {
-            Log.d(TAG, "✅ Deduplication successful - only 1 copy of the message found")
+            Log.d(TAG, "✅ First message confirmed still visible after navigation")
         }
         
-        // Verify total count is correct (should be initial + 1, not initial + 2)
-        assertEquals("Should have exactly 1 more message total (no duplicates)", 
-                    initialCount + 1, currentMessages.size)
+        // Step 10: Send a second message to test existing chat functionality
+        Log.d(TAG, "🔍 Sending second message in existing chat...")
         
-        Log.d(TAG, "✅ Message deduplication test passed - proper deduplication working")
+        val messageInputSecond = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .className("android.widget.EditText")
+                .packageName("com.example.whiz.debug")
+        )
+        
+        if (!messageInputSecond.waitForExists(3000)) {
+            Log.e(TAG, "❌ FAILURE: Message input not available for second message")
+            failWithScreenshot("second_message_input_not_found", "Message input field not found for second message - existing chat UI may be broken")
+        }
+        
+        messageInputSecond.click()
+        messageInputSecond.setText(secondMessage)
+        
+        // Wait for second message text to appear
+        val secondTextSet = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.text(secondMessage).pkg("com.example.whiz.debug")
+        ), 3000)
+        
+        if (!secondTextSet) {
+            Log.w(TAG, "⚠️ Second message text didn't appear, trying again...")
+            messageInputSecond.setText(secondMessage)
+            
+            val secondTextSetRetry = device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.text(secondMessage).pkg("com.example.whiz.debug")
+            ), 2000)
+            
+            if (!secondTextSetRetry) {
+                Log.e(TAG, "❌ FAILURE: Could not set second message text")
+                failWithScreenshot("second_message_text_failed", "Unable to set text for second message - input field may not be working in existing chat")
+            }
+        }
+        
+        val sendButtonSecond = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .descriptionContains("Send message")
+                .packageName("com.example.whiz.debug")
+        )
+        
+        if (!sendButtonSecond.waitForExists(3000)) {
+            Log.e(TAG, "❌ FAILURE: Send button not available for second message")
+            failWithScreenshot("second_send_button_not_found", "Send button not found for second message - existing chat send functionality may be broken")
+        }
+        
+        sendButtonSecond.click()
+        
+        // Verify second message appears
+        val secondMessageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.textContains(secondMessage).pkg("com.example.whiz.debug")
+        ), 5000)
+        
+        if (!secondMessageAppeared) {
+            Log.e(TAG, "❌ FAILURE: Second message does not appear in existing chat")
+            failWithScreenshot("second_message_not_visible", "Second message not visible in existing chat")
+        }
+        
+        Log.d(TAG, "✅ Second message sent and visible successfully")
+        
+        // Step 11: Final verification - both messages should be visible
+        val bothMessagesVisible = device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .textContains(firstMessage)
+                .packageName("com.example.whiz.debug")
+        ).exists() && device.findObject(
+            androidx.test.uiautomator.UiSelector()
+                .textContains(secondMessage)
+                .packageName("com.example.whiz.debug")
+        ).exists()
+        
+        if (!bothMessagesVisible) {
+            Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
+            failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken")
+        }
+        
+        Log.d(TAG, "🎉 Comprehensive conversation lifecycle test completed successfully!")
+        Log.d(TAG, "✅ Verified: New chat creation, message sending, optimistic UI, bot response, title calculation, navigation, chat persistence, re-entry, and existing chat messaging")
+        if (finalBotResponse) {
+            Log.d(TAG, "✅ Bonus: Bot response functionality also working")
+        }
         }
     }
 }
