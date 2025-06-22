@@ -664,7 +664,7 @@ discover_test_log_tags() {
         tags="$tags AndroidRuntime:E System.err:E TestRunner:* AssertionError:E RuntimeException:E ClassNotFoundException:E"
         
         # Add app-specific tags that might contain useful debugging info
-        tags="$tags ChatViewModel:D AuthViewModel:D VoiceManager:D BaseIntegrationTest:V"
+        tags="$tags ChatViewModel:D AuthViewModel:D VoiceManager:D BaseIntegrationTest:V MainActivity:D"
         
         # Add instrumentation test tags to track test execution flow
         tags="$tags Instrumentation:I InstrumentationTestRunner:I MonitoringInstrumentation:I"
@@ -679,7 +679,7 @@ discover_test_log_tags() {
         fi
     else
         # Fallback to comprehensive tags if discovery fails
-        tags="AndroidRuntime:E System.err:E TestRunner:* AssertionError:E RuntimeException:E ClassNotFoundException:E ChatViewModel:D AuthViewModel:D VoiceManager:D BaseIntegrationTest:V"
+        tags="AndroidRuntime:E System.err:E TestRunner:* AssertionError:E RuntimeException:E ClassNotFoundException:E ChatViewModel:D AuthViewModel:D VoiceManager:D BaseIntegrationTest:V MainActivity:D"
         echo "⚠️ Could not discover test tags - using comprehensive fallback tags" >> test_summary.log
     fi
     
