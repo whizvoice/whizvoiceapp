@@ -57,6 +57,11 @@ class ChatsListViewModel @Inject constructor(
         return repository.createChat(title)
     }
 
+    // Create a new chat with optimistic UI (for voice launches and immediate feedback)
+    suspend fun createNewChatOptimistic(title: String = "New Chat"): Long {
+        return repository.createChatOptimistic(title)
+    }
+
     // Delete a specific chat
     fun deleteChat(chatId: Long) {
         viewModelScope.launch {

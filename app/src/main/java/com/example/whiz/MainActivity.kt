@@ -76,7 +76,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        Log.d("MainActivity", "onCreate - Intent: $intent")
+        
+        // Enhanced intent logging to detect launch source
+        logDetailedIntentInfo(intent, "onCreate")
         
         // Check for microphone permission at startup
         checkMicrophonePermission()
@@ -108,9 +110,100 @@ class MainActivity : ComponentActivity() {
     
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        Log.d(TAG, "onNewIntent - Received Intent: $intent")
+        logDetailedIntentInfo(intent, "onNewIntent")
         setIntent(intent)
         // Don't call handleIntentNavigation here, it will be handled by LaunchedEffect
+    }
+
+    private fun logDetailedIntentInfo(intent: Intent?, source: String) {
+        Log.d(TAG, "=== INTENT ANALYSIS ($source) ===")
+        Log.d(TAG, "Basic Intent: $intent")
+        
+        intent?.let { i ->
+            // Basic intent info
+            Log.d(TAG, "Action: ${i.action}")
+            Log.d(TAG, "Categories: ${i.categories}")
+            Log.d(TAG, "Package: ${i.`package`}")
+            Log.d(TAG, "Component: ${i.component}")
+            Log.d(TAG, "Flags: ${Integer.toHexString(i.flags)}")
+            
+            // Check all extras
+            val extras = i.extras
+            if (extras != null && !extras.isEmpty) {
+                Log.d(TAG, "Intent Extras:")
+                for (key in extras.keySet()) {
+                    val value = extras.get(key)
+                    Log.d(TAG, "  $key: $value (${value?.javaClass?.simpleName})")
+                }
+            } else {
+                Log.d(TAG, "No intent extras")
+            }
+            
+            // Check referrer information
+            try {
+                val referrer = getReferrer()
+                Log.d(TAG, "Referrer: $referrer")
+            } catch (e: Exception) {
+                Log.d(TAG, "Could not get referrer: ${e.message}")
+            }
+            
+            // Check calling package/activity info
+            try {
+                val callingPackage = callingActivity?.packageName
+                val callingActivity = callingActivity?.className
+                Log.d(TAG, "Calling Package: $callingPackage")
+                Log.d(TAG, "Calling Activity: $callingActivity")
+            } catch (e: Exception) {
+                Log.d(TAG, "Could not get calling info: ${e.message}")
+            }
+            
+            // Check if this might be a voice launch
+            val isLikelyVoiceLaunch = detectVoiceLaunch()
+            Log.d(TAG, "Likely voice launch: $isLikelyVoiceLaunch")
+            
+            if (isLikelyVoiceLaunch && source == "onCreate") {
+                Log.d(TAG, "🎤 VOICE LAUNCH DETECTED - adding assistant flags")
+                // Add the assistant flags that would normally come from AssistantActivity
+                i.putExtra("FROM_ASSISTANT", true)
+                i.putExtra("ENABLE_VOICE_MODE", true) 
+                i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+            }
+        }
+        Log.d(TAG, "=== END INTENT ANALYSIS ===")
+    }
+    
+    private fun detectVoiceLaunch(): Boolean {
+        return try {
+            // PRIMARY DETECTION: Intent extras analysis (MOST RELIABLE!)
+            // Voice launches ALWAYS have tracing_intent_id, manual launches NEVER do
+            val traceId = intent?.extras?.getLong("tracing_intent_id")
+            val hasTraceId = traceId != null && traceId > 0
+            
+            // SECONDARY DETECTION: Intent flags analysis  
+            // Voice: 0x10000000, Manual: 0x10200000
+            val intentFlags = intent?.flags ?: 0
+            val hasVoiceFlags = (intentFlags and 0x10000000) != 0 && (intentFlags and 0x00200000) == 0
+            
+            // TERTIARY DETECTION: Bounds analysis
+            // Manual launches have bounds (app icon position), voice launches don't
+            val sourceBounds = intent?.sourceBounds
+            val noBounds = sourceBounds == null
+            
+            Log.d(TAG, "Voice launch detection:")
+            Log.d(TAG, "  Has trace ID: $hasTraceId (traceId: $traceId) ← PRIMARY")
+            Log.d(TAG, "  Voice flags: $hasVoiceFlags (flags: ${String.format("0x%08X", intentFlags)}) ← SECONDARY")  
+            Log.d(TAG, "  No bounds: $noBounds (bounds: $sourceBounds) ← TERTIARY")
+            
+            // Voice launch if PRIMARY indicator is present, or SECONDARY + TERTIARY both match
+            val isVoiceLaunch = hasTraceId || (hasVoiceFlags && noBounds)
+            
+            Log.d(TAG, "  FINAL DECISION: Voice launch = $isVoiceLaunch")
+            isVoiceLaunch
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting voice launch", e)
+            false
+        }
     }
 
     private fun handleIntentNavigation(intent: Intent?) {
@@ -142,9 +235,10 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG, "CREATE_NEW_CHAT_ON_START flag detected, creating new chat")
             lifecycleScope.launch {
                 try {
-                    val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
-                    Log.d(TAG, "New chat created with ID: $newChatId for CREATE_NEW_CHAT_ON_START")
-                    if (newChatId > 0) {
+                    // Use optimistic chat creation for voice launches for immediate feedback
+                    val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
+                    Log.d(TAG, "New optimistic chat created with ID: $newChatId for CREATE_NEW_CHAT_ON_START")
+                    if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
                         // Wait for NavController to be ready instead of arbitrary delay
                         navigateWhenReady("chat/$newChatId") {
                             // Pass the voice mode flag and initial transcription to the ChatScreen
