@@ -597,20 +597,101 @@ run_integration_tests_with_logcat() {
         echo "=================================================================================" >> test_summary.log
         echo "" >> test_summary.log
         
-        # Add relevant logcat excerpts for failed tests
-        echo "📱 MESSAGEDISPLAYTEST LOGS ONLY:" >> test_summary.log
+        # First, list all failing tests by extracting from gradle output
+        echo "❌ FAILING TESTS:" >> test_summary.log
+        echo "=================================================================================" >> test_summary.log
+        
+        # Extract failing test method names from gradle output
+        local failing_test_methods=$(grep -E "FAILED" test_gradle_output.log | \
+            sed -n 's/.*> \([^[]*\)\[.*FAILED.*/\1/p' | \
+            sort -u)
+        
+        if [[ -n "$failing_test_methods" ]]; then
+            echo "$failing_test_methods" | while read -r test_method; do
+                if [[ -n "$test_method" ]]; then
+                    echo "• $test_method" >> test_summary.log
+                fi
+            done
+        else
+            # Fallback: try to extract from TestRunner failed logs
+            local fallback_tests=$(grep "TestRunner.*failed:" test_logcat_output.log 2>/dev/null | \
+                sed -n 's/.*failed: \([^(]*\).*/\1/p' | \
+                sort -u | head -10)
+            if [[ -n "$fallback_tests" ]]; then
+                echo "$fallback_tests" | while read -r test_name; do
+                    echo "• $test_name" >> test_summary.log
+                done
+            else
+                echo "• No specific failing tests identified" >> test_summary.log
+            fi
+        fi
+        echo "" >> test_summary.log
+        
+        # Add relevant logcat excerpts for ONLY failed tests using original TAG approach
+        echo "📱 FAILED TEST LOGS:" >> test_summary.log
         echo "=================================================================================" >> test_summary.log
         echo "💡 Complete logcat available in: test_logcat_output.log" >> test_summary.log
         echo "" >> test_summary.log
         
         if [[ -f "test_logcat_output.log" && -s "test_logcat_output.log" ]]; then
-            # Extract only MessageDisplayTest logs
-            echo "📱 MessageDisplayTest execution logs:" >> test_summary.log
-            local message_display_logs=$(grep "MessageDisplayTest" test_logcat_output.log || echo "")
-            if [[ -n "$message_display_logs" ]]; then
-                echo "$message_display_logs" >> test_summary.log
+            # Get all discovered test tags like before
+            local discovered_tags=$(find app/src/androidTest -name "*.kt" -exec grep -ho 'val TAG = "[^"]*"' {} \; 2>/dev/null | \
+                sed 's/val TAG = "\([^"]*\)".*/\1/' | \
+                sort -u)
+            
+            # Get failing test classes from gradle output to filter tags
+            local failing_test_classes=$(grep -E "FAILED" test_gradle_output.log | \
+                sed -n 's/.*\.\([^.]*Test[^[]*\).*/\1/p' | \
+                sort -u)
+            
+            if [[ -n "$discovered_tags" && -n "$failing_test_classes" ]]; then
+                for tag in $discovered_tags; do
+                    if [[ -n "$tag" && "$tag" != "TAG" ]]; then
+                                                 # Check if this tag corresponds to a failing test class
+                         local tag_matches_failure=false
+                         for failing_class in $failing_test_classes; do
+                             # More flexible matching: check if tag is contained in class name or vice versa
+                             # Remove common suffixes for better matching
+                             local tag_base=$(echo "$tag" | sed 's/Test$//')
+                             local class_base=$(echo "$failing_class" | sed 's/IntegrationTest$//' | sed 's/AndLifecycleTest$//' | sed 's/Test$//')
+                             
+                             if [[ "$failing_class" == *"$tag"* ]] || [[ "$tag" == *"$class_base"* ]] || [[ "$tag_base" == *"$class_base"* ]] || [[ "$class_base" == *"$tag_base"* ]]; then
+                                 tag_matches_failure=true
+                                 break
+                             fi
+                         done
+                        
+                        # Only show logs for tags that match failing tests
+                        if [[ "$tag_matches_failure" == true ]]; then
+                            echo "📱 $tag execution logs:" >> test_summary.log
+                            # Look for both direct tag logs and TestRunner logs mentioning the test class
+                            local test_logs=$(grep "$tag" test_logcat_output.log || echo "")
+                            local test_runner_logs=$(grep "TestRunner.*$tag" test_logcat_output.log || echo "")
+                            # Also look for the full class name in case TAG is shortened
+                            local tag_base=$(echo "$tag" | sed 's/Test$//')  # Remove "Test" suffix if present
+                            local class_name_logs=$(grep "${tag_base}.*Test" test_logcat_output.log || echo "")
+                            
+                            if [[ -n "$test_logs" ]]; then
+                                echo "$test_logs" >> test_summary.log
+                            elif [[ -n "$test_runner_logs" ]]; then
+                                echo "$test_runner_logs" >> test_summary.log
+                            elif [[ -n "$class_name_logs" ]]; then
+                                echo "$class_name_logs" >> test_summary.log
+                            else
+                                echo "No $tag logs found" >> test_summary.log
+                            fi
+                            echo "" >> test_summary.log
+                        fi
+                    fi
+                done
             else
-                echo "No MessageDisplayTest logs found" >> test_summary.log
+                echo "No failing test tags discovered - showing generic test failure logs" >> test_summary.log
+                local test_failure_logs=$(grep -E "TestRunner.*failed|AssertionError|RuntimeException" test_logcat_output.log | head -50 || echo "")
+                if [[ -n "$test_failure_logs" ]]; then
+                    echo "$test_failure_logs" >> test_summary.log
+                else
+                    echo "No test failure logs found" >> test_summary.log
+                fi
             fi
         else
             echo "❌ No complete logcat file found: test_logcat_output.log" >> test_summary.log
