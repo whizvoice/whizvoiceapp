@@ -663,12 +663,19 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = {
-                    // Allow input change even during responses for interrupt functionality
-                    if (!isListening) onInputChange(it)
+                    // Allow manual typing to disable continuous listening, but preserve voice transcripts
+                    if (!hasVoiceText && !isListening) {
+                        // Normal typing when no voice content - this can disable continuous listening
+                        onInputChange(it)
+                    } else if (hasVoiceText && it.isEmpty()) {
+                        // Allow clearing voice transcript (user deleted all text)
+                        onInputChange(it)
+                    }
+                    // Block typing when actively listening or when trying to edit existing voice transcript
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
-                readOnly = isListening, // Cannot edit via keyboard when listening
+                readOnly = isListening, // Read-only only when actively listening (preserves live transcription)
                 enabled = true, // Always enable input field to allow interrupts
                 singleLine = false,
                 maxLines = 5,
