@@ -108,8 +108,10 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         
         device.wait(Until.hasObject(By.pkg(packageName)), 15000)
         // Wait for app to fully load instead of arbitrary delay
-        device.wait(Until.hasObject(By.textContains("My Chats").pkg(packageName).enabled(true)).or(
-                    Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName))), 10000)
+        // Try to wait for either "My Chats" or EditText (chat input) 
+        if (!device.wait(Until.hasObject(By.textContains("My Chats").pkg(packageName)), 5000)) {
+            device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 5000)
+        }
         
         try {
             // Check app state (but don't fail if not perfect)
@@ -170,7 +172,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             val maxWaitAttempts = 30 // 30 attempts * 100ms = 3 seconds max
 
             while (!speechRecognitionService.isListening.value && waitAttempts < maxWaitAttempts) {
-                delay(100)
+                Thread.sleep(100) // Keep minimal polling interval for state checking
                 waitAttempts++
                 if (waitAttempts % 10 == 0) { // Log every second
                     Log.d(TAG, "⏳ Still waiting... attempt $waitAttempts/30, isListening=${speechRecognitionService.isListening.value}, continuous=${voiceManager.isContinuousListeningEnabled.value}, speaking=${voiceManager.isSpeaking.value}")
@@ -242,14 +244,20 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // REAL USER ACTION: Background the app via home button
             Log.d(TAG, "🏠 REAL ACTION: Pressing home to background app...")
             device.pressHome()
-            delay(2000)
+            // Wait for app to actually be backgrounded instead of arbitrary delay
+            device.wait(Until.gone(By.pkg(packageName)), 5000)
             
             // In test environments, home button may not trigger full process lifecycle
             // So we manually trigger the lifecycle event to test the core logic
             Log.d(TAG, "🧪 TEST ENV: Manually triggering app backgrounded to test lifecycle code...")
             try {
                 appLifecycleService.notifyAppBackgrounded()
-                delay(1000) // Give time for the lifecycle event to propagate
+                // Wait for speech service to actually respond to backgrounding instead of arbitrary delay
+                var lifecycleWaitAttempts = 0
+                while (speechRecognitionService.isListening.value && lifecycleWaitAttempts < 10) {
+                    Thread.sleep(100)
+                    lifecycleWaitAttempts++
+                }
                 Log.d(TAG, "✅ TEST ENV: Manual backgrounding triggered - testing lifecycle logic")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error manually triggering backgrounding", e)
@@ -285,7 +293,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             var finalBackgroundListening = initialBackgroundListening
 
             while (speechRecognitionService.isListening.value && backgroundWaitAttempts < maxBackgroundWaitAttempts) {
-                delay(100)
+                Thread.sleep(100) // Keep minimal polling interval for state checking
                 backgroundWaitAttempts++
                 finalBackgroundListening = speechRecognitionService.isListening.value
                 if (backgroundWaitAttempts % 10 == 0) { // Log every second
@@ -311,7 +319,11 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             context.startActivity(foregroundIntent)
 
             device.wait(Until.hasObject(By.pkg(packageName)), 5000)
-            delay(2000)
+            // Wait for app UI to be fully interactive instead of arbitrary delay
+            // Try to wait for either EditText or "My Chats"
+            if (!device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 2500)) {
+                device.wait(Until.hasObject(By.textContains("My Chats").pkg(packageName)), 2500)
+            }
 
             // Check if app is back in foreground
             val isBackInForeground = device.hasObject(By.pkg(packageName))
