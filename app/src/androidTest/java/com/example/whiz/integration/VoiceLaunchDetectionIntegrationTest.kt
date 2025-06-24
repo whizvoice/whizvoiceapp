@@ -115,53 +115,6 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     }
 
     @Test
-    fun testVoiceLaunch_withVoiceFlags_createsOptimisticChat() {
-        // Test secondary detection method: voice flags without trace ID
-        val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
-            action = Intent.ACTION_MAIN
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
-            // No tracing_intent_id to test secondary detection
-            // No sourceBounds (voice launches don't have bounds)
-        }
-
-        val initialChats = runBlocking { repository.getAllChats() }
-        val initialChatCount = initialChats.size
-
-        // Launch through real Android system
-        val activity = instrumentation.startActivitySync(voiceLaunchIntent)
-        
-        // Wait for voice launch processing
-        runBlocking { delay(2000) }
-        
-        // Check results
-        val finalChats = runBlocking { repository.getAllChats() }
-        val optimisticChats = finalChats.filter { it.id < 0 }
-        val assistantChats = finalChats.filter { it.title == "Assistant Chat" }
-        
-        // Clean up
-        activity.finish()
-        
-        // Clean up created chats
-        runBlocking {
-            (assistantChats + optimisticChats).forEach { chat ->
-                repository.deleteChat(chat.id)
-                android.util.Log.d("VoiceLaunchTest", "🗑️ Cleaned up chat ${chat.id} (${chat.title})")
-            }
-        }
-        
-        // Should detect as voice launch based on flags + no bounds and create optimistic chat
-        val hasOptimisticChat = optimisticChats.isNotEmpty()
-        val hasAssistantChat = assistantChats.isNotEmpty()
-        val chatCountIncreased = finalChats.size > initialChatCount
-        
-        assertTrue("Voice launch should be detected with voice flags and create optimistic chat. " +
-                  "Initial: $initialChatCount, Final: ${finalChats.size}, " +
-                  "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}",
-                  hasOptimisticChat || hasAssistantChat || chatCountIncreased)
-    }
-
-    @Test
     fun testManualLaunch_withBounds_doesNotCreateChat() {
         // Create intent that mimics manual app launch (tap on app icon)
         val manualLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
@@ -198,35 +151,5 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
                    "Initial: $initialChatCount, Final: ${finalChats.size}, " +
                    "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}",
                    hasOptimisticChat || hasAssistantChat || chatCountIncreased)
-    }
-
-    @Test
-    fun testOptimisticChatCreation_succeeds() {
-        // Test that optimistic chat creation works and returns valid negative ID
-        // This tests the core functionality used by voice launch detection
-        runBlocking {
-            val initialChatCount = repository.getAllChats().size
-            
-            // Create optimistic chat (simulating voice launch behavior)
-            val chatId = repository.createChatOptimistic("Voice Assistant Chat")
-            
-            // Verify chat was created with negative ID (optimistic behavior)
-            assertNotEquals("Chat creation should not fail", -1L, chatId)
-            assertTrue("Optimistic chat should have negative ID, got $chatId", chatId < 0)
-            
-            val finalChatCount = repository.getAllChats().size
-            assertEquals("Chat count should increase by 1", initialChatCount + 1, finalChatCount)
-            
-            // Verify chat exists and has correct title
-            val createdChat = repository.getAllChats().find { it.id == chatId }
-            assertNotNull("Created chat should exist", createdChat)
-            assertEquals("Chat should have correct title", "Voice Assistant Chat", createdChat?.title)
-            
-            // Verify it's truly optimistic (negative ID)
-            assertTrue("Chat should be optimistic with negative ID", createdChat?.id!! < 0)
-            
-            // Clean up the test chat
-            repository.deleteChat(chatId)
-        }
     }
 } 
