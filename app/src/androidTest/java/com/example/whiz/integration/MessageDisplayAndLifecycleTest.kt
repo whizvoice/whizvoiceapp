@@ -60,6 +60,15 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @Inject
     lateinit var database: WhizDatabase
 
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
+    @Inject
+    lateinit var preloadManager: com.example.whiz.data.PreloadManager
+    
+    @Inject
+    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
+
     private var testChatId = 0L
     private var createdServerChatId = 0L // Track the server chat ID created during test
     private val TAG = "MessageDisplayTest"
@@ -243,8 +252,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         // Step 2: Navigate to new chat if needed
         Log.d(TAG, "📱 App loaded successfully, navigating to new chat...")
         if (!clickNewChatButtonAndWaitForChatScreen()) {
-            // Check if already in chat
-            val alreadyInChat = findMessageInputField() != null
+            // Check if already in chat by looking for message input field
+            val alreadyInChat = device.hasObject(androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg(packageName))
             if (!alreadyInChat) {
                 failWithScreenshot("new_chat_failed", "Failed to navigate to new chat and not already in chat")
             }
@@ -319,7 +328,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 7: Navigate back to chat list
         Log.d(TAG, "🔍 Navigating back to chat list...")
-        if (!navigateBackToChatsListAndWait()) {
+        if (!navigateBackToChatsListFromChat()) {
+            Log.d(TAG, "🚫 Could not navigate back to chat list")
             failWithScreenshot("chat_list_not_loaded", "Could not navigate back to chat list - back navigation may be broken")
         }
         Log.d(TAG, "✅ Successfully returned to chat list")

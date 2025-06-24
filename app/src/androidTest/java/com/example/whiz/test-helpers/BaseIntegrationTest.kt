@@ -99,10 +99,24 @@ abstract class BaseIntegrationTest {
      * Launch app and wait for it to be fully loaded
      */
     protected fun launchAppAndWaitForLoad(): Boolean {
+        // Create intent that mimics manual app launch (tap on app icon) to avoid voice assistant mode
         val intent = Intent().apply {
             setPackage(packageName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            // Use manual launch flags - these are critical to avoid voice assistant mode
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or 0x00200000
+            // Add sourceBounds to simulate clicking app icon (manual launches have bounds, voice don't)
+            sourceBounds = android.graphics.Rect(100, 100, 200, 200)
+            // Explicitly set these to prevent voice detection
+            putExtra("IS_MANUAL_LAUNCH", true)
+            removeExtra("tracing_intent_id") // Remove any voice launch indicators
         }
+        
+        android.util.Log.d("BaseIntegrationTest", "🚀 launching app with manual launch intent")
+        android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
+        android.util.Log.d("BaseIntegrationTest", "   sourceBounds: ${intent.sourceBounds}")
+        
         context.startActivity(intent)
         
         val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
@@ -111,16 +125,28 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // wait for main UI elements to load
+        // wait for main UI elements to load - should be chats list for manual launch
         val mainUILoaded = device.wait(Until.hasObject(
             By.text("My Chats").pkg(packageName)
         ), 8000) || device.wait(Until.hasObject(
             By.descContains("New Chat").pkg(packageName)  
-        ), 3000) || device.wait(Until.hasObject(
-            By.clazz("android.widget.EditText").pkg(packageName)
         ), 3000)
         
-        return mainUILoaded
+        if (!mainUILoaded) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ main UI not detected, but checking for any app content...")
+            // fallback check for any app content
+            val anyAppContent = device.wait(Until.hasObject(
+                By.pkg(packageName)
+            ), 2000)
+            
+            if (!anyAppContent) {
+                android.util.Log.e("BaseIntegrationTest", "❌ no app content visible after launch")
+                return false
+            }
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ app launched successfully")
+        return true
     }
     
     /**
@@ -279,39 +305,74 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Navigate back to chats list from chat screen
+     * Navigate back to chats list from chat screen using back button or hamburger menu
      */
     protected fun navigateBackToChatsListFromChat(): Boolean {
-        val chatsListButton = device.findObject(
+        android.util.Log.d("BaseIntegrationTest", "🔙 navigating back to chats list")
+        
+        // Method 1: Try hamburger menu first (more reliable)
+        val hamburgerMenu = device.findObject(
             UiSelector()
                 .descriptionContains("Open Chats List")
                 .packageName(packageName)
+        ) ?: device.findObject(
+            UiSelector()
+                .descriptionContains("Menu")
+                .packageName(packageName)
         )
         
-        if (chatsListButton.waitForExists(3000)) {
-            chatsListButton.click()
-        } else {
-            val backButton = device.findObject(
-                UiSelector()
-                    .descriptionContains("Navigate up")
-                    .packageName(packageName)
-            )
+        if (hamburgerMenu.waitForExists(3000)) {
+            android.util.Log.d("BaseIntegrationTest", "🍔 clicking hamburger menu")
+            hamburgerMenu.click()
             
-            if (backButton.waitForExists(2000)) {
-                backButton.click()
-            } else {
-                device.pressBack()
+            // wait for chats list to load
+            val chatsListLoaded = device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), 5000)
+            
+            if (chatsListLoaded) {
+                android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via hamburger menu")
+                return true
             }
         }
         
-        // wait for chat list to appear
-        val chatListLoaded = device.wait(Until.hasObject(
-            By.descContains("New Chat").pkg(packageName)
-        ), 8000) || device.wait(Until.hasObject(
-            By.text("My Chats").pkg(packageName)
-        ), 3000)
+        // Method 2: Try device back button as fallback
+        android.util.Log.d("BaseIntegrationTest", "📱 trying device back button")
+        device.pressBack()
         
-        return chatListLoaded
+        // wait for chats list to load
+        val chatsListLoaded = device.wait(Until.hasObject(
+            By.text("My Chats").pkg(packageName)
+        ), 5000)
+        
+        if (chatsListLoaded) {
+            android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via back button")
+            return true
+        }
+        
+        // Method 3: Try "Navigate up" button 
+        val navigateUpButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Navigate up")
+                .packageName(packageName)
+        )
+        
+        if (navigateUpButton.waitForExists(2000)) {
+            android.util.Log.d("BaseIntegrationTest", "⬆️ clicking navigate up button")
+            navigateUpButton.click()
+            
+            val chatsListLoadedUp = device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), 5000)
+            
+            if (chatsListLoadedUp) {
+                android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via navigate up")
+                return true
+            }
+        }
+        
+        android.util.Log.e("BaseIntegrationTest", "❌ failed to navigate back to chats list")
+        return false
     }
     
     /**

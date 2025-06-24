@@ -54,6 +54,12 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
 
+    @Inject
+    lateinit var preloadManager: com.example.whiz.data.PreloadManager
+    
+    @Inject
+    lateinit var repository: com.example.whiz.data.repository.WhizRepository
+
     private val TAG = "AppLifecycleTest"
 
     @Before

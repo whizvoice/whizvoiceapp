@@ -57,6 +57,15 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
     @Inject
     lateinit var authApi: AuthApi
 
+    @Inject 
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
+    @Inject
+    lateinit var preloadManager: com.example.whiz.data.PreloadManager
+    
+    @Inject
+    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
+
     // device is inherited from BaseIntegrationTest
     private val uniqueTestId = System.currentTimeMillis()
     
