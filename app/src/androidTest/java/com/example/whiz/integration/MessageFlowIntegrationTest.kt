@@ -96,38 +96,82 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         try {
             // step 1: launch app and verify we're on chats list
             android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and verifying chats list")
-            launchAppAndVerifyChatsListScreen()
+            if (!launchAppAndWaitForLoad()) {
+                failWithScreenshot("app_launch_failed", "app failed to launch or load main UI")
+            }
             
             // step 2: click new chat button
             android.util.Log.d("MessageFlowTest", "➕ step 2: clicking new chat button")
-            clickNewChatButton()
+            if (!clickNewChatButtonAndWaitForChatScreen()) {
+                failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
+            }
             
             // step 3: send first message and verify optimistic UI
             val firstMessage = "Hello! this is test message 1 - $uniqueTestId"
             android.util.Log.d("MessageFlowTest", "💬 step 3: sending first message and verifying optimistic UI")
-            sendMessageAndVerifyOptimisticUI(firstMessage)
+            if (!sendMessageAndVerifyDisplay(firstMessage)) {
+                failWithScreenshot("first_message_failed", "failed to send first message or verify optimistic UI")
+            }
             
             // step 4: confirm bot is responding (thinking indicator visible)
             android.util.Log.d("MessageFlowTest", "🤖 step 4: confirming bot is responding")
-            verifyBotIsResponding()
+            if (!waitForBotThinkingIndicator()) {
+                failWithScreenshot("bot_not_responding", "bot thinking indicator not found - bot may not be responding")
+            }
             
             // step 5: send second message while bot is responding
             val secondMessage = "second message while you're thinking - $uniqueTestId"
             android.util.Log.d("MessageFlowTest", "💬 step 5: sending second message while bot is responding")
-            sendMessageWhileBotResponding(secondMessage)
+            
+            // verify bot is still responding before sending
+            if (!isBotCurrentlyResponding()) {
+                android.util.Log.w("MessageFlowTest", "⚠️ bot may have finished responding, but continuing with test")
+            }
+            
+            if (!sendMessageAndVerifyDisplay(secondMessage)) {
+                failWithScreenshot("second_message_failed", "failed to send second message while bot responding")
+            }
             
             // step 6: wait for bot response to arrive
             android.util.Log.d("MessageFlowTest", "⏳ step 6: waiting for bot response")
-            waitForBotResponse()
+            
+            // get message count before waiting for response (for robust detection)
+            val messageCountBeforeResponse = getCurrentMessageCount()
+            android.util.Log.d("MessageFlowTest", "📊 message count before bot response: $messageCountBeforeResponse")
+            
+            if (!waitForBotThinkingToFinish()) {
+                android.util.Log.w("MessageFlowTest", "⚠️ thinking indicator still visible after timeout, checking for response anyway")
+            }
+            
+            // use both methods to detect bot response - first try styling detection, then fallback to count
+            val botResponseByStyle = waitForBotResponse(5000)
+            val botResponseByCount = if (!botResponseByStyle) {
+                waitForNewMessageToAppear(messageCountBeforeResponse, 5000)
+            } else true
+            
+            if (!botResponseByStyle && !botResponseByCount) {
+                failWithScreenshot("no_bot_response", "bot response not detected within timeout using either styling or message count detection")
+            }
+            
+            android.util.Log.d("MessageFlowTest", "✅ bot response detected (style: $botResponseByStyle, count: $botResponseByCount)")
             
             // step 7: send third message after bot response
             val thirdMessage = "third message after your response - $uniqueTestId"
             android.util.Log.d("MessageFlowTest", "💬 step 7: sending third message after bot response")
-            sendMessageAfterBotResponse(thirdMessage)
+            
+            // ensure bot is no longer responding
+            if (isBotCurrentlyResponding()) {
+                android.util.Log.w("MessageFlowTest", "⚠️ bot still appears to be responding, but sending message anyway")
+            }
+            
+            if (!sendMessageAndVerifyDisplay(thirdMessage)) {
+                failWithScreenshot("third_message_failed", "failed to send third message after bot response")
+            }
             
             // step 8: verify all messages are showing properly
             android.util.Log.d("MessageFlowTest", "✅ step 8: verifying all messages display correctly")
-            verifyAllMessagesDisplayCorrectly(listOf(firstMessage, secondMessage, thirdMessage))
+            val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
+            verifyAllMessagesDisplayCorrectly(sentMessages)
             
             // step 9: verify chat migration from optimistic to server-backed was successful
             android.util.Log.d("MessageFlowTest", "🔄 step 9: verifying chat migration success")
@@ -141,223 +185,22 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         }
     }
     
-    private fun launchAppAndVerifyChatsListScreen() {
-        // launch the app
-        val intent = Intent().apply {
-            setPackage(packageName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        }
-        context.startActivity(intent)
-        
-        // wait for app to launch
-        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
-        if (!appLaunched) {
-            failWithScreenshot("app_launch_failed", "app failed to launch within 10 seconds")
-        }
-        
-        // verify we're on chats list (look for "my chats" text or new chat button)
-        val chatsListLoaded = device.wait(Until.hasObject(
-            By.text("My Chats").pkg(packageName)
-        ), 8000) || device.wait(Until.hasObject(
-            By.descContains("New Chat").pkg(packageName)
-        ), 3000)
-        
-        if (!chatsListLoaded) {
-            failWithScreenshot("chats_list_not_loaded", "chats list screen not detected - missing 'My Chats' text or new chat button")
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ app launched and chats list verified")
-    }
-    
-    private fun clickNewChatButton() {
-        val newChatButton = device.findObject(
-            UiSelector()
-                .descriptionContains("New Chat")
-                .packageName(packageName)
-        )
-        
-        if (!newChatButton.waitForExists(5000)) {
-            failWithScreenshot("new_chat_button_not_found", "new chat button not found on chats list screen")
-        }
-        
-        newChatButton.click()
-        
-        // wait for chat screen to load by looking for message input field
-        val chatScreenLoaded = device.wait(Until.hasObject(
-            By.clazz("android.widget.EditText").pkg(packageName)
-        ), 8000)
-        
-        if (!chatScreenLoaded) {
-            failWithScreenshot("chat_screen_not_loaded", "chat screen did not load after clicking new chat button")
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ new chat button clicked and chat screen loaded")
-    }
-    
-    private fun sendMessageAndVerifyOptimisticUI(message: String) {
-        // find message input field
-        val messageInput = device.findObject(
-            UiSelector()
-                .className("android.widget.EditText")
-                .packageName(packageName)
-        )
-        
-        if (!messageInput.waitForExists(5000)) {
-            failWithScreenshot("message_input_not_found", "message input field not found")
-        }
-        
-        // click to focus and type message
-        messageInput.click()
-        messageInput.setText(message)
-        
-        // wait for text to appear in field
-        val textSet = device.wait(Until.hasObject(
-            By.text(message).pkg(packageName)
-        ), 3000)
-        
-        if (!textSet) {
-            android.util.Log.w("MessageFlowTest", "⚠️ text not visible in input field, trying again...")
-            messageInput.setText(message)
-        }
-        
-        // find and click send button
-        val sendButton = device.findObject(
-            UiSelector()
-                .descriptionContains("Send message")
-                .packageName(packageName)
-        )
-        
-        if (!sendButton.waitForExists(3000)) {
-            failWithScreenshot("send_button_not_found", "send button not found after typing message")
-        }
-        
-        sendButton.click()
-        
-        // verify optimistic UI: message appears immediately in chat
-        val messageDisplayed = device.wait(Until.hasObject(
-            By.textContains(message).pkg(packageName)
-        ), 5000)
-        
-        if (!messageDisplayed) {
-            failWithScreenshot("optimistic_message_not_displayed", "message not displayed immediately after sending - optimistic UI not working")
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ message sent and optimistic UI verified: '$message'")
-    }
-    
-    private fun verifyBotIsResponding() {
-        // look for "whiz is computing" thinking indicator
-        val thinkingIndicator = device.wait(Until.hasObject(
-            By.textContains("Whiz is computing").pkg(packageName)
-        ), 5000)
-        
-        if (!thinkingIndicator) {
-            // also check for any typical thinking/responding indicators
-            val anyThinkingIndicator = device.wait(Until.hasObject(
-                By.textContains("thinking").pkg(packageName)
-            ), 2000) || device.wait(Until.hasObject(
-                By.textContains("computing").pkg(packageName)
-            ), 2000)
-            
-            if (!anyThinkingIndicator) {
-                failWithScreenshot("bot_not_responding", "bot thinking indicator not found - bot may not be responding")
-            }
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ bot responding state confirmed")
-    }
-    
-    private fun sendMessageWhileBotResponding(message: String) {
-        // verify bot is still responding before sending
-        val stillResponding = device.hasObject(
-            By.textContains("Whiz is computing").pkg(packageName)
-        ) || device.hasObject(
-            By.textContains("thinking").pkg(packageName)
-        )
-        
-        if (!stillResponding) {
-            android.util.Log.w("MessageFlowTest", "⚠️ bot may have finished responding, but continuing with test")
-        }
-        
-        // send message using same method as before
-        sendMessageAndVerifyOptimisticUI(message)
-        
-        android.util.Log.d("MessageFlowTest", "✅ second message sent while bot responding: '$message'")
-    }
-    
-    private fun waitForBotResponse() {
-        // wait for thinking indicator to disappear (bot finished responding)
-        val thinkingGone = device.wait(Until.gone(
-            By.textContains("Whiz is computing").pkg(packageName)
-        ), 30000) // give bot 30 seconds to respond
-        
-        if (!thinkingGone) {
-            android.util.Log.w("MessageFlowTest", "⚠️ thinking indicator still visible after 30s, checking for response anyway")
-        }
-        
-        // wait for actual bot response message to appear
-        val botResponseDetected = device.wait(Until.hasObject(
-            By.textContains("understand").pkg(packageName)
-        ), 10000) || device.wait(Until.hasObject(
-            By.textContains("interesting").pkg(packageName)
-        ), 2000) || device.wait(Until.hasObject(
-            By.textContains("think").pkg(packageName)
-        ), 2000)
-        
-        if (!botResponseDetected) {
-            // check for any new message that looks like a bot response
-            val anyNewMessage = device.wait(Until.hasObject(
-                By.clazz("android.widget.TextView").pkg(packageName)
-            ), 5000)
-            
-            if (!anyNewMessage) {
-                failWithScreenshot("no_bot_response", "bot response not detected within timeout")
-            }
-        }
-        
-        android.util.Log.d("MessageFlowTest", "✅ bot response received")
-    }
-    
-    private fun sendMessageAfterBotResponse(message: String) {
-        // ensure bot is no longer responding
-        val notResponding = !device.hasObject(
-            By.textContains("Whiz is computing").pkg(packageName)
-        )
-        
-        if (!notResponding) {
-            android.util.Log.w("MessageFlowTest", "⚠️ bot still appears to be responding, but sending message anyway")
-        }
-        
-        // send the third message
-        sendMessageAndVerifyOptimisticUI(message)
-        
-        android.util.Log.d("MessageFlowTest", "✅ third message sent after bot response: '$message'")
-    }
-    
     private fun verifyAllMessagesDisplayCorrectly(sentMessages: List<String>) {
         android.util.Log.d("MessageFlowTest", "🔍 verifying all messages display correctly...")
         
         // check each sent message is visible
         sentMessages.forEachIndexed { index, message ->
-            val messageVisible = device.wait(Until.hasObject(
-                By.textContains(message.take(20)).pkg(packageName) // check first 20 chars to be safe
-            ), 3000)
-            
-            if (!messageVisible) {
+            if (!verifyMessageVisible(message)) {
                 failWithScreenshot("message_${index}_missing", "message $index not visible: '${message.take(30)}...'")
             }
-            
             android.util.Log.d("MessageFlowTest", "✅ message $index verified: '${message.take(30)}...'")
         }
         
-        // check for message duplication by counting occurrences
+        // check for message duplication
         sentMessages.forEach { message ->
-            val messageElements = device.findObjects(
-                By.textContains(message.take(15)).pkg(packageName)
-            )
-            
-            if (messageElements.size > 1) {
-                android.util.Log.w("MessageFlowTest", "⚠️ potential message duplication detected for: '${message.take(30)}...' (found ${messageElements.size} instances)")
+            val occurrences = countMessageOccurrences(message)
+            if (occurrences > 1) {
+                android.util.Log.w("MessageFlowTest", "⚠️ potential message duplication detected for: '${message.take(30)}...' (found $occurrences instances)")
                 // not failing here as there might be legitimate reasons for multiple occurrences
             }
         }

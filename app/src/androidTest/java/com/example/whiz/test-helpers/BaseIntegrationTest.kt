@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
+import androidx.test.uiautomator.UiSelector
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -24,7 +25,7 @@ import java.util.Locale
 
 /**
  * Base class for integration tests that need authentication.
- * Automatically handles test authentication setup.
+ * Automatically handles test authentication setup and provides common UI interaction methods.
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
@@ -90,8 +91,320 @@ abstract class BaseIntegrationTest {
         }
     }
     
-
+    // =============================================================================
+    // COMMON UI INTERACTION METHODS
+    // =============================================================================
     
+    /**
+     * Launch app and wait for it to be fully loaded
+     */
+    protected fun launchAppAndWaitForLoad(): Boolean {
+        val intent = Intent().apply {
+            setPackage(packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        context.startActivity(intent)
+        
+        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
+        if (!appLaunched) {
+            android.util.Log.e("BaseIntegrationTest", "❌ app failed to launch within 10 seconds")
+            return false
+        }
+        
+        // wait for main UI elements to load
+        val mainUILoaded = device.wait(Until.hasObject(
+            By.text("My Chats").pkg(packageName)
+        ), 8000) || device.wait(Until.hasObject(
+            By.descContains("New Chat").pkg(packageName)  
+        ), 3000) || device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 3000)
+        
+        return mainUILoaded
+    }
+    
+    /**
+     * Find and click the new chat button, wait for chat screen to load
+     */
+    protected fun clickNewChatButtonAndWaitForChatScreen(): Boolean {
+        val newChatButton = device.findObject(
+            UiSelector()
+                .descriptionContains("New Chat")
+                .packageName(packageName)
+        )
+        
+        if (!newChatButton.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ new chat button not found")
+            return false
+        }
+        
+        newChatButton.click()
+        
+        // wait for chat screen to load by looking for message input field
+        val chatScreenLoaded = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 8000)
+        
+        return chatScreenLoaded
+    }
+    
+    /**
+     * Find message input field, type message, and verify text appears
+     */
+    protected fun typeMessageInInputField(message: String): Boolean {
+        val messageInput = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        if (!messageInput.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ message input field not found")
+            return false
+        }
+        
+        messageInput.click()
+        messageInput.setText(message)
+        
+        // wait for text to appear in field with retry
+        var textSet = device.wait(Until.hasObject(
+            By.text(message).pkg(packageName)
+        ), 3000)
+        
+        if (!textSet) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ text not visible, retrying...")
+            messageInput.setText(message)
+            textSet = device.wait(Until.hasObject(
+                By.text(message).pkg(packageName)
+            ), 2000)
+        }
+        
+        return textSet
+    }
+    
+    /**
+     * Find and click send button, wait for message to be sent
+     */
+    protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
+        val sendButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Send message")
+                .packageName(packageName)
+        )
+        
+        if (!sendButton.waitForExists(3000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ send button not found")
+            return false
+        }
+        
+        sendButton.click()
+        
+        // verify message appears in chat (optimistic UI)
+        val messageDisplayed = device.wait(Until.hasObject(
+            By.textContains(messageText).pkg(packageName)
+        ), 5000)
+        
+        return messageDisplayed
+    }
+    
+    /**
+     * Complete message sending flow: type message, click send, verify display
+     */
+    protected fun sendMessageAndVerifyDisplay(message: String): Boolean {
+        return typeMessageInInputField(message) && clickSendButtonAndWaitForSent(message)
+    }
+    
+    /**
+     * Wait for bot thinking indicator to appear
+     */
+    protected fun waitForBotThinkingIndicator(timeoutMs: Long = 5000): Boolean {
+        return device.wait(Until.hasObject(
+            By.textContains("Whiz is computing").pkg(packageName)
+        ), timeoutMs) || device.wait(Until.hasObject(
+            By.textContains("thinking").pkg(packageName)
+        ), 2000) || device.wait(Until.hasObject(
+            By.textContains("computing").pkg(packageName)
+        ), 2000)
+    }
+    
+    /**
+     * Wait for bot thinking indicator to disappear (bot finished responding)
+     */
+    protected fun waitForBotThinkingToFinish(timeoutMs: Long = 30000): Boolean {
+        return device.wait(Until.gone(
+            By.textContains("Whiz is computing").pkg(packageName)
+        ), timeoutMs)
+    }
+    
+    /**
+     * Wait for bot response message to appear by looking for bot message styling/structure
+     */
+    protected fun waitForBotResponse(timeoutMs: Long = 10000): Boolean {
+        // Look for the "Whiz" label that appears in assistant messages
+        val whizLabelFound = device.wait(Until.hasObject(
+            By.text("Whiz").pkg(packageName)
+        ), timeoutMs)
+        
+        if (whizLabelFound) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via 'Whiz' label")
+            return true
+        }
+        
+        // Alternative: Look for assistant message container or card structure
+        // Assistant messages are left-aligned and have different styling than user messages
+        val assistantMessageFound = device.wait(Until.hasObject(
+            By.descContains("Assistant message").pkg(packageName)
+        ), 3000) || device.wait(Until.hasObject(
+            By.descContains("Bot response").pkg(packageName)
+        ), 2000)
+        
+        if (assistantMessageFound) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via assistant message container")
+            return true
+        }
+        
+        // Fallback: Look for new message content that appeared after our last user message
+        // This is less reliable but catches cases where styling detection fails
+        val anyNewMessageContent = device.wait(Until.hasObject(
+            By.clazz("android.widget.TextView").pkg(packageName)
+        ), 3000)
+        
+        if (anyNewMessageContent) {
+            android.util.Log.d("BaseIntegrationTest", "⚠️ Bot response detected via fallback (new content appeared)")
+            return true
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ No bot response detected within timeout")
+        return false
+    }
+    
+    /**
+     * Navigate back to chats list from chat screen
+     */
+    protected fun navigateBackToChatsListFromChat(): Boolean {
+        val chatsListButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Open Chats List")
+                .packageName(packageName)
+        )
+        
+        if (chatsListButton.waitForExists(3000)) {
+            chatsListButton.click()
+        } else {
+            val backButton = device.findObject(
+                UiSelector()
+                    .descriptionContains("Navigate up")
+                    .packageName(packageName)
+            )
+            
+            if (backButton.waitForExists(2000)) {
+                backButton.click()
+            } else {
+                device.pressBack()
+            }
+        }
+        
+        // wait for chat list to appear
+        val chatListLoaded = device.wait(Until.hasObject(
+            By.descContains("New Chat").pkg(packageName)
+        ), 8000) || device.wait(Until.hasObject(
+            By.text("My Chats").pkg(packageName)
+        ), 3000)
+        
+        return chatListLoaded
+    }
+    
+    /**
+     * Find chat in chats list by text content and click it
+     */
+    protected fun findAndClickChatInList(searchText: String): Boolean {
+        val chat = device.findObject(
+            UiSelector()
+                .textContains(searchText.take(15)) // use first 15 chars
+                .packageName(packageName)
+        )
+        
+        if (!chat.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ chat not found in list: '$searchText'")
+            return false
+        }
+        
+        chat.click()
+        
+        // wait for chat to reload
+        val chatReloaded = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 5000)
+        
+        return chatReloaded
+    }
+    
+    /**
+     * Verify message is visible in chat
+     */
+    protected fun verifyMessageVisible(messageText: String, timeoutMs: Long = 3000): Boolean {
+        return device.wait(Until.hasObject(
+            By.textContains(messageText.take(20)).pkg(packageName)
+        ), timeoutMs)
+    }
+    
+    /**
+     * Check if bot is currently responding (thinking indicator visible)
+     */
+    protected fun isBotCurrentlyResponding(): Boolean {
+        return device.hasObject(By.textContains("Whiz is computing").pkg(packageName)) ||
+               device.hasObject(By.textContains("thinking").pkg(packageName)) ||
+               device.hasObject(By.textContains("computing").pkg(packageName))
+    }
+    
+    /**
+     * Count how many times a message text appears (for duplicate detection)
+     */
+    protected fun countMessageOccurrences(messageText: String): Int {
+        val elements = device.findObjects(
+            By.textContains(messageText.take(15)).pkg(packageName)
+        )
+        return elements.size
+    }
+    
+    /**
+     * Wait for the message count to increase (indicating a new message appeared)
+     * This is useful for detecting bot responses without relying on specific content
+     */
+    protected fun waitForNewMessageToAppear(initialMessageCount: Int, timeoutMs: Long = 10000): Boolean {
+        val startTime = System.currentTimeMillis()
+        while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+            val currentMessageCount = device.findObjects(
+                By.clazz("android.widget.TextView").pkg(packageName)
+            ).size
+            
+            if (currentMessageCount > initialMessageCount) {
+                android.util.Log.d("BaseIntegrationTest", "✅ New message detected: count changed from $initialMessageCount to $currentMessageCount")
+                return true
+            }
+            
+            Thread.sleep(500) // check every 500ms
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ No new message appeared within timeout")
+        return false
+    }
+    
+    /**
+     * Get current count of message-like elements for comparison
+     */
+    protected fun getCurrentMessageCount(): Int {
+        return device.findObjects(
+            By.clazz("android.widget.TextView").pkg(packageName)
+        ).filter { 
+            try {
+                val text = it.text
+                text != null && text.length > 10 // filter out short UI labels
+            } catch (e: Exception) {
+                false
+            }
+        }.size
+    }
 
     
     /**
