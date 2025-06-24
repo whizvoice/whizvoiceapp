@@ -117,8 +117,6 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // Check app state (but don't fail if not perfect)
             val initialAppVisible = device.hasObject(By.pkg(packageName))
             Log.d(TAG, "📱 App initially visible: $initialAppVisible")
-
-            // delay(3000) // Let app stabilize
             
             if (!initialAppVisible) {
                 Log.e(TAG, "❌ CRITICAL: App not detected as foreground!")
@@ -383,51 +381,5 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             Log.e(TAG, "❌ Error during real navigation test", e)
             failWithScreenshot("Real navigation should trigger service behaviors: ${e.message}")
         }
-    }
-
-    // @Test
-    fun realApp_multipleLifecycleCycles_behavesCorrectly(): Unit = runBlocking {
-        Log.d(TAG, "🚀🚀🚀 STARTING TEST: realApp_multipleLifecycleCycles_behavesCorrectly 🚀🚀🚀")
-        Log.d(TAG, "🧪 Testing real app multiple lifecycle cycles")
-        
-        // Authenticate first
-        val authenticated = true // Always authenticated via BaseIntegrationTest
-        
-        delay(2000)
-        
-        // Test multiple background/foreground cycles
-        repeat(3) { cycle ->
-            Log.d(TAG, "🔄 Starting lifecycle cycle ${cycle + 1}")
-            
-            // Verify coordinator state before cycle
-            val beforeCycle = voiceManager.isContinuousListeningEnabled.value
-            Log.d(TAG, "📊 Before cycle ${cycle + 1}: continuous=$beforeCycle")
-            
-            // Background
-            device.pressHome()
-            delay(1500)
-            
-            // Check coordinator state during background
-            val duringBackground = voiceManager.isContinuousListeningEnabled.value  
-            Log.d(TAG, "📊 Cycle ${cycle + 1} background: continuous=$duringBackground")
-            
-            // Foreground
-            val foregroundIntent = context.packageManager.getLaunchIntentForPackage(packageName)!!
-            foregroundIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            context.startActivity(foregroundIntent)
-            
-            device.wait(Until.hasObject(By.pkg(packageName)), 5000)
-            delay(1500)
-            
-            // Check coordinator state after foreground
-            val afterForeground = voiceManager.isContinuousListeningEnabled.value
-            Log.d(TAG, "📊 Cycle ${cycle + 1} foreground: continuous=$afterForeground")
-            
-            // Verify app is responsive
-            val appResponsive = device.hasObject(By.pkg(packageName))
-            assertTrue("App should be responsive after cycle ${cycle + 1}", appResponsive)
-        }
-        
-        Log.d(TAG, "✅ Multiple lifecycle cycles test passed")
     }
 }

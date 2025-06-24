@@ -32,7 +32,7 @@ cleanup_and_ensure_debug_installed() {
         # Inline screenshot pulling if function not available yet
         log_with_time "📸 Pulling test screenshots from device (cleanup)..."
         mkdir -p test_screenshots 2>/dev/null || true
-        local screenshot_files=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | grep -v "No such file" | head -1)
+        local screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
         if [[ -n "$screenshot_files" ]]; then
             if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
                 find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
@@ -388,7 +388,7 @@ pull_test_screenshots() {
     mkdir -p test_screenshots
     
     # Check if device has any screenshots (more reliable check)
-    local screenshot_files=$(adb shell ls /sdcard/Download/test_screenshots/*.png 2>/dev/null | grep -v "No such file" | head -1)
+    local screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
     
     if [[ -n "$screenshot_files" ]]; then
         # Pull all screenshots from device
