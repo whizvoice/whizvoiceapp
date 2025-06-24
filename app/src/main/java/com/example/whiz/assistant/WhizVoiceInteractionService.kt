@@ -32,4 +32,27 @@ class WhizVoiceInteractionService : VoiceInteractionService() {
         // Support the standard assist action
         return setOf(Intent.ACTION_ASSIST)
     }
+    
+    override fun onLaunchVoiceAssistFromKeyguard() {
+        Log.d(TAG, "onLaunchVoiceAssistFromKeyguard - launching AssistantActivity")
+        super.onLaunchVoiceAssistFromKeyguard()
+        launchAssistantActivity()
+    }
+    
+
+    
+    private fun launchAssistantActivity() {
+        try {
+            Log.d(TAG, "Launching AssistantActivity for voice interaction")
+            val assistantIntent = Intent(this, com.example.whiz.AssistantActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("IS_ASSISTANT_LAUNCH", true)
+                putExtra("FROM_VOICE_SERVICE", true)
+            }
+            startActivity(assistantIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch AssistantActivity", e)
+        }
+    }
 }

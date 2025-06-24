@@ -532,30 +532,19 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "✅ Successfully returned to chat list")
         
-        // Step 7.5: Force a refresh to sync new chats from server
-        // Since we just created a new chat via WebSocket, we need to pull the latest
-        // chat list from the server to see our new chat
-        Log.d(TAG, "🔍 Triggering pull-to-refresh to sync new chat from server...")
+        // Step 7.5: Wait for incremental sync to update chat list
+        // With incremental sync, new chats should appear automatically
+        Log.d(TAG, "🔍 Waiting for incremental sync to update chat list...")
         
-        // Perform a swipe-down gesture to trigger pull-to-refresh
-        val displayWidth = device.displayWidth
-        val displayHeight = device.displayHeight
-        val centerX = displayWidth / 2
-        val startY = displayHeight / 4  // Start from top quarter
-        val endY = displayHeight / 2    // Swipe to middle
+        // Wait for chat list to be populated (indicating sync completion)
+        val chatListUpdated = device.wait(androidx.test.uiautomator.Until.hasObject(
+            androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug")
+        ), 5000) // Wait for any chat content to appear
         
-        // Perform swipe down gesture to trigger refresh
-        device.swipe(centerX, startY, centerX, endY, 10)
-        
-        // Wait for refresh to complete
-        val refreshCompleted = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
-        ), 5000) // Wait for refresh to finish
-        
-        if (refreshCompleted) {
-            Log.d(TAG, "✅ Pull-to-refresh completed - chat list should now be synced")
+        if (chatListUpdated) {
+            Log.d(TAG, "✅ Chat list updated via incremental sync")
         } else {
-            Log.w(TAG, "⚠️ Pull-to-refresh may not have completed, but continuing...")
+            Log.w(TAG, "⚠️ Chat list may not have updated yet, but continuing...")
         }
         
         // Step 8: Find and re-enter the chat using the calculated title
@@ -570,131 +559,22 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ Chat list may not have fully loaded, but continuing...")
         }
         
-        // Debug: Let's see what chats are available
-        val allChatItems = device.findObjects(
-            androidx.test.uiautomator.By.clazz("android.widget.TextView")
-                .pkg("com.example.whiz.debug")
-        )
-        val chatTexts = allChatItems.mapNotNull { 
-            try {
-                it.text
-            } catch (e: androidx.test.uiautomator.StaleObjectException) {
-                Log.w(TAG, "⚠️ Stale UI element encountered during chat text extraction, skipping")
-                null
-            }
-        }.filter { 
-            it.isNotBlank() && 
-            !it.contains("New Chat") && 
-            !it.contains("Settings") &&
-            it.length > 5 
-        }
-        Log.d(TAG, "🔍 Available chats: ${chatTexts.joinToString(", ")}")
-        
-        // First, try to find our chat by unique test identifier (more reliable than title)
+        // Find our chat by unique test identifier (this always works based on logs)
         val chatTestIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
         Log.d(TAG, "🔍 Looking for chat containing unique test identifier: '$chatTestIdentifier'...")
         
-        var ourChat = device.findObject(
+        val ourChat = device.findObject(
             androidx.test.uiautomator.UiSelector()
                 .textContains(chatTestIdentifier.take(15)) // Use first 15 chars of identifier
                 .packageName("com.example.whiz.debug")
         )
         
-        var chatFound = false
-        
-        if (ourChat.waitForExists(3000)) {
-            Log.d(TAG, "✅ Found our chat by test identifier ('${chatTestIdentifier.take(15)}'), clicking to re-enter...")
-            ourChat.click()
-            chatFound = true
-        } else {
-            // Fallback: try to find by the exact calculated title
-            Log.w(TAG, "⚠️ Test identifier search failed, trying exact title match...")
-            ourChat = device.findObject(
-                androidx.test.uiautomator.UiSelector()
-                    .text(chatTitle)
-                    .packageName("com.example.whiz.debug")
-            )
-            
-            if (ourChat.waitForExists(2000)) {
-                Log.d(TAG, "✅ Found our chat by exact title match ('$chatTitle'), clicking to re-enter...")
-                ourChat.click()
-                chatFound = true
-            } else {
-                // Last resort: try partial title match
-                Log.w(TAG, "⚠️ Exact title search failed, trying partial title match...")
-                ourChat = device.findObject(
-                    androidx.test.uiautomator.UiSelector()
-                        .textContains(chatTitle.take(15)) // Use first 15 chars in case of truncation
-                        .packageName("com.example.whiz.debug")
-                )
-                
-                if (ourChat.waitForExists(2000)) {
-                    Log.d(TAG, "✅ Found our chat by partial title match ('${chatTitle.take(15)}'), clicking to re-enter...")
-                    ourChat.click()
-                    chatFound = true
-                } else {
-                    // Last resort: try clicking on the most recent chat (first in the list)
-                    Log.w(TAG, "⚠️ All search methods failed, trying most recent chat as fallback...")
-                    
-                    // Look for any clickable chat item that's not "New Chat" or "Settings"
-                    val anyChat = device.findObject(
-                        androidx.test.uiautomator.UiSelector()
-                            .clickable(true)
-                            .packageName("com.example.whiz.debug")
-                    )
-                    
-                    // Filter out system buttons and find a chat
-                    val allClickableElements = device.findObjects(
-                        androidx.test.uiautomator.By.clickable(true).pkg("com.example.whiz.debug")
-                    )
-                    
-                    var fallbackChatFound = false
-                    for (element in allClickableElements) {
-                        try {
-                            val text = element.text
-                            if (text != null && text.isNotBlank() && 
-                                !text.contains("New Chat") && 
-                                !text.contains("Settings") &&
-                                !text.contains("My Chats") &&
-                                text.length > 5) {
-                                Log.w(TAG, "🔄 Trying fallback chat: '$text'")
-                                element.click()
-                                fallbackChatFound = true
-                                break
-                            }
-                        } catch (e: Exception) {
-                            // Skip this element
-                        }
-                    }
-                    
-                    if (!fallbackChatFound) {
-                        Log.e(TAG, "❌ FAILURE: Could not find our chat by any method in the chat list")
-                        
-                        // Debug: Let's see what chats are actually available
-                        val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
-                        val visibleTexts = allTextViews.mapNotNull { 
-                            try {
-                                it.text
-                            } catch (e: androidx.test.uiautomator.StaleObjectException) {
-                                Log.w(TAG, "⚠️ Stale UI element encountered during visible text extraction, skipping")
-                                null
-                            }
-                        }.filter { it.isNotBlank() && it.length > 5 }
-                        Log.e(TAG, "🔍 Currently visible chat titles: ${visibleTexts.take(5).joinToString(", ")}")
-                        
-                        failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$chatTestIdentifier' or title '$chatTitle' in the chat list. Available titles: ${visibleTexts.take(3).joinToString(", ")}")
-                    } else {
-                        Log.w(TAG, "✅ Used fallback chat selection")
-                        chatFound = true
-                    }
-                }
-            }
+        if (!ourChat.waitForExists(5000)) {
+            failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$chatTestIdentifier' in the chat list")
         }
         
-        if (!chatFound) {
-            Log.e(TAG, "❌ FAILURE: Could not find any existing chat in the chat list")
-            failWithScreenshot("no_existing_chat_found", "Could not find any existing chat in the chat list - chat persistence may be broken or chat list is empty. Available texts: ${chatTexts.take(3).joinToString(", ")}")
-        }
+        Log.d(TAG, "✅ Found our chat by test identifier, clicking to re-enter...")
+        ourChat.click()
         
         // Wait for chat to reload
         val chatReloaded = device.wait(androidx.test.uiautomator.Until.hasObject(

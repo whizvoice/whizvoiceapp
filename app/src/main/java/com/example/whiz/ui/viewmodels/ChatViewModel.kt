@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import javax.inject.Inject
 
@@ -831,15 +832,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun updateInputText(text: String, fromVoice: Boolean = false) {
-        Log.d(TAG, "[LOG] 🔥 updateInputText called. SETTING _inputText.value from '${_inputText.value}' to: '$text', fromVoice: $fromVoice")
-        Log.d(TAG, "[LOG] 🔥 updateInputText stack trace:", Exception("Stack trace for updateInputText"))
-        
-        // 🔧 Prevent setting input text back if we just cleared it due to assistant response
-        // This prevents UI recomposition from overriding our intentional clearing
-        if (_inputText.value.isEmpty() && text.isNotEmpty() && _isResponding.value) {
-            Log.d(TAG, "[LOG] 🔥 updateInputText BLOCKED: Preventing input restoration during response processing (would set to: '$text')")
-            return
-        }
+        Log.d(TAG, "[LOG] updateInputText called. Setting text from '${_inputText.value}' to: '$text', fromVoice: $fromVoice")
         
         _inputText.value = text
         _isInputFromVoice.value = fromVoice
@@ -1019,14 +1012,9 @@ class ChatViewModel @Inject constructor(
             return
         }
 
-        // 🔧 FIXED: Don't clear input text immediately for voice input to preserve UX
-        // Input will be cleared when bot responds (better UX for voice transcription)
-        if (!text.isBlank() && _isInputFromVoice.value) {
-            Log.d(TAG, "[LOG] 🔥 sendUserInput: Preserving voice transcription in input field for better UX: '${_inputText.value}'")
-        } else {
-            Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing input text immediately after sending (was: '${_inputText.value}')")
-            _inputText.value = ""
-        }
+        // Don't clear input text immediately - it will be cleared after optimistic message is added
+        // This provides consistent UX for both voice and typed input
+        Log.d(TAG, "[LOG] sendUserInput: Will clear input text after optimistic message is added (current: '${_inputText.value}')")
 
         viewModelScope.launch {
             // 🔧 CRITICAL FIX: Capture chat ID at the start and use it consistently
@@ -1087,11 +1075,25 @@ class ChatViewModel @Inject constructor(
                 }
                 Log.d(TAG, "sendUserInput: 💬 Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId, agent: ${if (configUseRemoteAgent) "remote" else "local"})")
                 
-                // 🔧 FIXED: Clear input text after optimistic message is added (better UX for voice transcription)
-                // Add small delay to ensure database transaction is committed and UI can react
-                delay(50)
-                if (_isInputFromVoice.value && _inputText.value.isNotBlank()) {
-                    Log.d(TAG, "[LOG] 🔥 sendUserInput: Clearing voice transcription from input field after optimistic message added: '${_inputText.value}'")
+                // Clear input text after optimistic message is added (consistent UX for all input types)
+                // Wait for the message to actually appear in the messages flow rather than using a fixed delay
+                try {
+                    withTimeout(1000) {
+                        // Wait for the messages to be updated with our new message
+                        messages.first { messageList ->
+                            messageList.any { message -> 
+                                message.content.trim() == trimmedText.trim() && 
+                                message.type == com.example.whiz.data.local.MessageType.USER
+                            }
+                        }
+                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow, clearing input field")
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
+                }
+                
+                if (_inputText.value.isNotBlank()) {
+                    Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
                     _inputText.value = ""
                     _isInputFromVoice.value = false
                 }

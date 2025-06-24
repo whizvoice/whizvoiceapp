@@ -59,10 +59,10 @@ class AssistantActivity : AppCompatActivity() {
                     // Add a small delay to ensure activity is fully initialized
                     delay(100)
                     
-                    Log.d(TAG, "Creating new chat...")
-                    val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
-                    Log.d(TAG, "New chat created with ID: $newChatId")
-                    if (newChatId > 0) {
+                    Log.d(TAG, "Creating new optimistic chat...")
+                    val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
+                    Log.d(TAG, "New optimistic chat created with ID: $newChatId")
+                    if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
                         // Navigate directly to the chat screen
                         val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

@@ -639,6 +639,9 @@ fun ChatInputBar(
     val hasTypedText = hasInputText && !isInputFromVoice
     val hasVoiceText = hasInputText && isInputFromVoice
     
+    // Debug logging for button logic
+    Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
+    
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
         inputText.isNotBlank() -> inputText // Always show sent message if present (grayed out when disabled)
@@ -663,12 +666,13 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = {
-                    // Allow input change even during responses for interrupt functionality
-                    if (!isListening) onInputChange(it)
+                    // Always allow input change - this enables manual typing to disable continuous listening
+                    // The updateInputText method will handle stopping voice recognition when user types
+                    onInputChange(it)
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
-                readOnly = isListening, // Cannot edit via keyboard when listening
+                readOnly = false, // Always allow text input - users can type at any time
                 enabled = true, // Always enable input field to allow interrupts
                 singleLine = false,
                 maxLines = 5,
@@ -693,6 +697,16 @@ fun ChatInputBar(
                 trailingIcon = { // Place the icon back inside the TextField
                     // Button logic with seamless interrupt support and headphone-aware TTS behavior
                     val (icon, description, action, tint) = when {
+                        hasTypedText -> {
+                            // PRIORITY: Show send button for typed text (always needs manual send)
+                            // This must come first to override listening/responding states
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
                         isListening -> {
                             Tuple4(
                                 Icons.Filled.MicOff,
@@ -726,15 +740,6 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        hasTypedText -> {
-                            // Show send button for typed text (always needs manual send)
-                            Tuple4(
-                                Icons.Filled.Send,
-                                "Send message",
-                                onSendClick,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
                         hasVoiceText && !isContinuousListeningEnabled -> {
                             // Show send button for voice text when continuous listening is OFF
                             Tuple4(
@@ -744,7 +749,7 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        isContinuousListeningEnabled -> {
+                        isContinuousListeningEnabled && !hasInputText -> {
                             // Show mic off button only when no text is present
                             Tuple4(
                                 Icons.Filled.MicOff,
@@ -762,6 +767,9 @@ fun ChatInputBar(
                             )
                         }
                     }
+                    
+                    // Debug logging for button decision
+                    Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
 
                     val isButtonEnabled = when {
                         isListening -> !isMicDisabled
