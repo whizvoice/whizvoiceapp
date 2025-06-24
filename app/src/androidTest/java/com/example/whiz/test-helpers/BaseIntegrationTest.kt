@@ -99,25 +99,30 @@ abstract class BaseIntegrationTest {
      * Launch app and wait for it to be fully loaded
      */
     protected fun launchAppAndWaitForLoad(): Boolean {
-        // Create intent that mimics manual app launch (tap on app icon) to avoid voice assistant mode
-        val intent = Intent().apply {
-            setPackage(packageName)
-            action = Intent.ACTION_MAIN
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            // Use manual launch flags - these are critical to avoid voice assistant mode
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or 0x00200000
-            // Add sourceBounds to simulate clicking app icon (manual launches have bounds, voice don't)
-            sourceBounds = android.graphics.Rect(100, 100, 200, 200)
-            // Explicitly set these to prevent voice detection
-            putExtra("IS_MANUAL_LAUNCH", true)
-            removeExtra("tracing_intent_id") // Remove any voice launch indicators
+        android.util.Log.d("BaseIntegrationTest", "🚀 launching app")
+        
+        // Use UiDevice's built-in app launching mechanism which is more reliable
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+        
+        if (intent == null) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Could not get launch intent for package $packageName")
+            return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "🚀 launching app with manual launch intent")
-        android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
-        android.util.Log.d("BaseIntegrationTest", "   sourceBounds: ${intent.sourceBounds}")
+        // Ensure it starts in a new task to avoid voice assistant mode
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         
-        context.startActivity(intent)
+        android.util.Log.d("BaseIntegrationTest", "   intent: $intent")
+        android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
+        
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Failed to start activity: ${e.message}")
+            return false
+        }
         
         val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
         if (!appLaunched) {
@@ -125,7 +130,7 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // wait for main UI elements to load - should be chats list for manual launch
+        // Wait for main UI elements to load - should be chats list for manual launch
         val mainUILoaded = device.wait(Until.hasObject(
             By.text("My Chats").pkg(packageName)
         ), 8000) || device.wait(Until.hasObject(
@@ -134,7 +139,7 @@ abstract class BaseIntegrationTest {
         
         if (!mainUILoaded) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ main UI not detected, but checking for any app content...")
-            // fallback check for any app content
+            // Fallback check for any app content
             val anyAppContent = device.wait(Until.hasObject(
                 By.pkg(packageName)
             ), 2000)

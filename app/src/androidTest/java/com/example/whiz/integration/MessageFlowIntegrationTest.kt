@@ -71,6 +71,10 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
     
     // track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
+    
+    // track optimistic chat migration
+    private var optimisticChatId: Long? = null
+    private var finalServerChatId: Long? = null
 
     @Before
     override fun setUpAuthentication() {
@@ -122,6 +126,15 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("first_message_failed", "failed to send first message or verify optimistic UI")
             }
             
+            // step 3.5: capture optimistic chat ID for migration tracking
+            android.util.Log.d("MessageFlowTest", "🔍 step 3.5: capturing optimistic chat ID")
+            optimisticChatId = getCurrentOptimisticChatId()
+            if (optimisticChatId != null) {
+                android.util.Log.d("MessageFlowTest", "✅ captured optimistic chat ID: $optimisticChatId")
+            } else {
+                android.util.Log.w("MessageFlowTest", "⚠️ could not capture optimistic chat ID - may already have migrated or not created yet")
+            }
+            
             // step 4: confirm bot is responding (thinking indicator visible)
             android.util.Log.d("MessageFlowTest", "🤖 step 4: confirming bot is responding")
             if (!waitForBotThinkingIndicator()) {
@@ -138,31 +151,34 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             if (!sendMessageAndVerifyDisplay(secondMessage)) {
+                android.util.Log.d("MessageFlowTest", "🚫 failed to send second message while bot responding")
                 failWithScreenshot("second_message_failed", "failed to send second message while bot responding")
             }
             
             // step 6: wait for bot response to arrive
             android.util.Log.d("MessageFlowTest", "⏳ step 6: waiting for bot response")
             
-            // get message count before waiting for response (for robust detection)
-            val messageCountBeforeResponse = getCurrentMessageCount()
-            android.util.Log.d("MessageFlowTest", "📊 message count before bot response: $messageCountBeforeResponse")
-            
             if (!waitForBotThinkingToFinish()) {
                 android.util.Log.w("MessageFlowTest", "⚠️ thinking indicator still visible after timeout, checking for response anyway")
             }
             
-            // use both methods to detect bot response - first try styling detection, then fallback to count
-            val botResponseByStyle = waitForBotResponse(5000)
-            val botResponseByCount = if (!botResponseByStyle) {
-                waitForNewMessageToAppear(messageCountBeforeResponse, 5000)
-            } else true
+            // use styling detection to detect bot response
+            val botResponseDetected = waitForBotResponse(5000)
             
-            if (!botResponseByStyle && !botResponseByCount) {
-                failWithScreenshot("no_bot_response", "bot response not detected within timeout using either styling or message count detection")
+            if (!botResponseDetected) {
+                failWithScreenshot("no_bot_response", "bot response not detected within timeout using styling detection")
             }
             
-            android.util.Log.d("MessageFlowTest", "✅ bot response detected (style: $botResponseByStyle, count: $botResponseByCount)")
+            android.util.Log.d("MessageFlowTest", "✅ bot response detected via styling")
+            
+            // step 6.5: check if migration from optimistic to server chat ID worked
+            android.util.Log.d("MessageFlowTest", "🔄 step 6.5: checking chat migration after bot response")
+            val migrationWorked = checkChatMigration()
+            if (migrationWorked) {
+                android.util.Log.d("MessageFlowTest", "✅ chat migration successful after bot response")
+            } else {
+                android.util.Log.w("MessageFlowTest", "⚠️ chat migration not detected yet - may still be in progress")
+            }
             
             // step 7: send third message after bot response
             val thirdMessage = "third message after your response - $uniqueTestId"
@@ -182,9 +198,9 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
             verifyAllMessagesDisplayCorrectly(sentMessages)
             
-            // step 9: verify chat migration from optimistic to server-backed was successful
-            android.util.Log.d("MessageFlowTest", "🔄 step 9: verifying chat migration success")
-            verifyChatMigrationSuccess()
+            // step 9: comprehensive final verification - no duplicates and all messages present
+            android.util.Log.d("MessageFlowTest", "🔍 step 9: final comprehensive verification - checking for duplicates and completeness")
+            verifyFinalMessageState(sentMessages)
             
             android.util.Log.d("MessageFlowTest", "🎉 comprehensive message flow test PASSED!")
             
@@ -217,8 +233,93 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d("MessageFlowTest", "✅ all messages verified without major duplication issues")
     }
     
+    private fun verifyFinalMessageState(sentMessages: List<String>) {
+        android.util.Log.d("MessageFlowTest", "🔍 comprehensive final message verification...")
+        
+        // 1. verify ALL sent messages are present
+        android.util.Log.d("MessageFlowTest", "📝 checking all ${sentMessages.size} sent messages are present...")
+        sentMessages.forEachIndexed { index, message ->
+            if (!verifyMessageVisible(message)) {
+                failWithScreenshot("final_message_${index}_missing", "FINAL CHECK: sent message $index missing: '${message.take(30)}...'")
+            }
+        }
+        android.util.Log.d("MessageFlowTest", "✅ all sent messages confirmed present")
+        
+        // 2. check for user message duplicates (strict)
+        android.util.Log.d("MessageFlowTest", "🔍 checking for user message duplicates...")
+        var duplicatesFound = false
+        sentMessages.forEach { message ->
+            val occurrences = countMessageOccurrences(message)
+            if (occurrences > 1) {
+                android.util.Log.e("MessageFlowTest", "❌ DUPLICATE USER MESSAGE: '${message.take(30)}...' appears $occurrences times")
+                duplicatesFound = true
+            }
+        }
+        
+        if (duplicatesFound) {
+            failWithScreenshot("duplicate_user_messages", "FINAL CHECK: duplicate user messages detected - optimistic UI may be broken")
+        }
+        android.util.Log.d("MessageFlowTest", "✅ no user message duplicates found")
+        
+        // 3. check for bot message duplicates
+        android.util.Log.d("MessageFlowTest", "🤖 checking for bot message duplicates...")
+        val whizLabels = device.findObjects(
+            androidx.test.uiautomator.By.text("Whiz").pkg(packageName)
+        )
+        
+        // collect all bot message content to check for duplicates
+        val botMessageContents = mutableListOf<String>()
+        whizLabels.forEach { whizLabel ->
+            try {
+                // try to find the message content near the "Whiz" label
+                val parent = whizLabel.parent
+                if (parent != null) {
+                    val textViews = parent.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView"))
+                    textViews.forEach { textView ->
+                        val text = textView.text
+                        if (text != null && text != "Whiz" && text.length > 20) {
+                            botMessageContents.add(text)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MessageFlowTest", "⚠️ error reading bot message content: ${e.message}")
+            }
+        }
+        
+        // check for bot message duplicates
+        val botDuplicates = botMessageContents.groupBy { it }.filter { it.value.size > 1 }
+        if (botDuplicates.isNotEmpty()) {
+            android.util.Log.e("MessageFlowTest", "❌ IDENTICAL BOT MESSAGE DUPLICATES FOUND:")
+            botDuplicates.forEach { (content, occurrences) ->
+                android.util.Log.e("MessageFlowTest", "   '${content.take(50)}...' appears ${occurrences.size} times")
+            }
+            failWithScreenshot("duplicate_bot_messages", "FINAL CHECK: identical bot messages detected - bot response system may be broken")
+        } else {
+            android.util.Log.d("MessageFlowTest", "✅ no bot message duplicates found")
+        }
+        
+        // 4. verify message count makes sense
+        val totalUserMessages = sentMessages.size
+        val totalBotMessages = whizLabels.size
+        android.util.Log.d("MessageFlowTest", "📊 final message count: $totalUserMessages user, $totalBotMessages bot")
+        
+        if (totalBotMessages == 0) {
+            android.util.Log.w("MessageFlowTest", "⚠️ no bot responses detected - server may be unavailable")
+        } else if (totalBotMessages > totalUserMessages) {
+            android.util.Log.w("MessageFlowTest", "⚠️ more bot messages than user messages - may indicate duplication")
+        }
+        
+        android.util.Log.d("MessageFlowTest", "✅ comprehensive final verification completed successfully")
+        android.util.Log.d("MessageFlowTest", "📊 final state: ${totalUserMessages} user messages, ${totalBotMessages} bot responses, no critical duplicates")
+    }
+    
     private suspend fun verifyChatMigrationSuccess() {
         android.util.Log.d("MessageFlowTest", "🔍 verifying chat migration from optimistic to server-backed...")
+        
+        if (optimisticChatId != null) {
+            android.util.Log.d("MessageFlowTest", "🔄 starting migration verification for optimistic chat ID: $optimisticChatId")
+        }
         
         // give migration some time to complete
         delay(2000)
@@ -234,9 +335,19 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             return
         }
         
+        finalServerChatId = testChat.id
+        
         // verify chat has positive ID (server-backed, not optimistic negative ID)
         if (testChat.id > 0) {
             android.util.Log.d("MessageFlowTest", "✅ chat migration successful: chat has positive server ID ${testChat.id}")
+            
+            // verify migration path if we captured the optimistic ID
+            if (optimisticChatId != null && optimisticChatId != testChat.id) {
+                android.util.Log.d("MessageFlowTest", "✅ migration path verified: $optimisticChatId → ${testChat.id}")
+            } else if (optimisticChatId != null && optimisticChatId == testChat.id) {
+                android.util.Log.w("MessageFlowTest", "⚠️ chat ID didn't change during migration - may have started with server ID")
+            }
+            
             createdChatIds.add(testChat.id) // track for cleanup
         } else {
             android.util.Log.w("MessageFlowTest", "⚠️ chat still has negative/optimistic ID ${testChat.id}, migration may be in progress")
@@ -250,6 +361,66 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.w("MessageFlowTest", "⚠️ fewer messages than expected in migrated chat: ${chatMessages.size}")
         }
         
+        // log migration summary
+        android.util.Log.d("MessageFlowTest", "📊 migration summary:")
+        android.util.Log.d("MessageFlowTest", "   optimistic ID: $optimisticChatId")
+        android.util.Log.d("MessageFlowTest", "   final server ID: $finalServerChatId")
+        android.util.Log.d("MessageFlowTest", "   messages in final chat: ${chatMessages.size}")
+        
         android.util.Log.d("MessageFlowTest", "✅ chat migration verification completed")
+    }
+    
+    /**
+     * Get the current optimistic chat ID (negative ID) by finding the most recent chat
+     */
+    private suspend fun getCurrentOptimisticChatId(): Long? {
+        return try {
+            val allChats = repository.getAllChats()
+            // Look for chats with negative IDs (optimistic) that contain our test identifier
+            val optimisticChat = allChats.find { chat ->
+                chat.id < 0 && (chat.title.contains("test message 1") || chat.title.contains("Hello"))
+            }
+            optimisticChat?.id
+        } catch (e: Exception) {
+            android.util.Log.w("MessageFlowTest", "failed to get optimistic chat ID", e)
+            null
+        }
+    }
+    
+    /**
+     * Check if chat migration from optimistic ID to server ID has completed
+     */
+    private suspend fun checkChatMigration(): Boolean {
+        return try {
+            val allChats = repository.getAllChats()
+            val testChat = allChats.find { chat ->
+                chat.title.contains("test message 1") || chat.title.contains("Hello")
+            }
+            
+            if (testChat == null) {
+                android.util.Log.w("MessageFlowTest", "test chat not found during migration check")
+                return false
+            }
+            
+            val currentChatId = testChat.id
+            finalServerChatId = currentChatId
+            
+            // migration is successful if:
+            // 1. we have a positive server ID (not negative optimistic ID)
+            // 2. the ID has changed from the original optimistic ID (if we captured one)
+            val hasServerID = currentChatId > 0
+            val hasChanged = optimisticChatId?.let { it != currentChatId } ?: true
+            
+            android.util.Log.d("MessageFlowTest", "migration check: optimistic=$optimisticChatId, current=$currentChatId, hasServerID=$hasServerID, hasChanged=$hasChanged")
+            
+            if (hasServerID) {
+                createdChatIds.add(currentChatId) // track for cleanup
+            }
+            
+            return hasServerID && hasChanged
+        } catch (e: Exception) {
+            android.util.Log.w("MessageFlowTest", "failed to check chat migration", e)
+            false
+        }
     }
 }
