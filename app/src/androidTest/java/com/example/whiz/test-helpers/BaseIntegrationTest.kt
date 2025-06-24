@@ -485,9 +485,18 @@ abstract class BaseIntegrationTest {
             val filepath = "$screenshotDir/$filename"
             
             android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
-            device.takeScreenshot(File(filepath))
             
-            // Screenshot will be pulled to local folder by test script after completion
+            // Use shell command to take screenshot (more reliable than device.takeScreenshot)
+            val result = device.executeShellCommand("screencap -p $filepath")
+            android.util.Log.d("BaseIntegrationTest", "📸 Screenshot command result: $result")
+            
+            // Verify screenshot was created
+            val checkResult = device.executeShellCommand("ls -la $filepath")
+            if (checkResult.contains(filename)) {
+                android.util.Log.d("BaseIntegrationTest", "✅ Screenshot confirmed saved: $filepath")
+            } else {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Screenshot may not have been saved: $checkResult")
+            }
             
             // Also dump UI hierarchy for debugging
             val allElements = device.findObjects(By.pkg(packageName))
@@ -553,6 +562,32 @@ abstract class BaseIntegrationTest {
         takeFailureScreenshot(testName, reason)
         org.junit.Assert.fail(message)
         throw AssertionError(message) // This will never be reached but satisfies Nothing return type
+    }
+    
+    /**
+     * Check if currently in chat screen (vs chats list)
+     */
+    protected fun isCurrentlyInChatScreen(): Boolean {
+        // look for chat-specific UI elements
+        val messageInput = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        val sendButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Send")
+                .packageName(packageName)
+        )
+        
+        val micButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Mic")
+                .packageName(packageName)
+        )
+        
+        return messageInput.exists() || sendButton.exists() || micButton.exists()
     }
 }
 

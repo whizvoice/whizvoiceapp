@@ -48,7 +48,6 @@ import android.content.Intent
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-@org.junit.Ignore("Integration tests disabled - device connection issues")
 class MessageFlowIntegrationTest : BaseIntegrationTest() {
 
     @Inject
@@ -107,15 +106,26 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d("MessageFlowTest", "test user: ${credentials.googleTestAccount.email}")
         
         try {
-            // step 1: launch app and verify we're on chats list
-            android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and verifying chats list")
+            // step 1: launch app and verify we're on chats list (or navigate to it if in chat)
+            android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and ensuring we're on chats list")
             if (!launchAppAndWaitForLoad()) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 1: app failed to launch or load main UI")
                 failWithScreenshot("app_launch_failed", "app failed to launch or load main UI")
+            }
+            
+            // check if we're already in a chat screen - if so, navigate back to chats list
+            if (isCurrentlyInChatScreen()) {
+                android.util.Log.d("MessageFlowTest", "🔄 app launched into chat screen, navigating back to chats list first")
+                if (!navigateBackToChatsListFromChat()) {
+                    android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 1.5: failed to navigate from chat screen to chats list")
+                    failWithScreenshot("navigate_to_chats_list_failed", "failed to navigate from chat screen to chats list")
+                }
             }
             
             // step 2: click new chat button
             android.util.Log.d("MessageFlowTest", "➕ step 2: clicking new chat button")
             if (!clickNewChatButtonAndWaitForChatScreen()) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 2: new chat button not found or chat screen failed to load")
                 failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
             }
             
@@ -123,6 +133,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             val firstMessage = "Hello! this is test message 1 - $uniqueTestId"
             android.util.Log.d("MessageFlowTest", "💬 step 3: sending first message and verifying optimistic UI")
             if (!sendMessageAndVerifyDisplay(firstMessage)) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 3: failed to send first message or verify optimistic UI")
                 failWithScreenshot("first_message_failed", "failed to send first message or verify optimistic UI")
             }
             
@@ -138,6 +149,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             // step 4: confirm bot is responding (thinking indicator visible)
             android.util.Log.d("MessageFlowTest", "🤖 step 4: confirming bot is responding")
             if (!waitForBotThinkingIndicator()) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 4: bot thinking indicator not found - bot may not be responding")
                 failWithScreenshot("bot_not_responding", "bot thinking indicator not found - bot may not be responding")
             }
             
@@ -151,7 +163,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             if (!sendMessageAndVerifyDisplay(secondMessage)) {
-                android.util.Log.d("MessageFlowTest", "🚫 failed to send second message while bot responding")
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 5: failed to send second message while bot responding")
                 failWithScreenshot("second_message_failed", "failed to send second message while bot responding")
             }
             
@@ -166,6 +178,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             val botResponseDetected = waitForBotResponse(5000)
             
             if (!botResponseDetected) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 6: bot response not detected within timeout using styling detection")
                 failWithScreenshot("no_bot_response", "bot response not detected within timeout using styling detection")
             }
             
@@ -190,6 +203,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             if (!sendMessageAndVerifyDisplay(thirdMessage)) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 7: failed to send third message after bot response")
                 failWithScreenshot("third_message_failed", "failed to send third message after bot response")
             }
             
@@ -216,6 +230,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         // check each sent message is visible
         sentMessages.forEachIndexed { index, message ->
             if (!verifyMessageVisible(message)) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 8: message $index not visible: '${message.take(30)}...'")
                 failWithScreenshot("message_${index}_missing", "message $index not visible: '${message.take(30)}...'")
             }
             android.util.Log.d("MessageFlowTest", "✅ message $index verified: '${message.take(30)}...'")
@@ -240,6 +255,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d("MessageFlowTest", "📝 checking all ${sentMessages.size} sent messages are present...")
         sentMessages.forEachIndexed { index, message ->
             if (!verifyMessageVisible(message)) {
+                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 9.1: FINAL CHECK - sent message $index missing: '${message.take(30)}...'")
                 failWithScreenshot("final_message_${index}_missing", "FINAL CHECK: sent message $index missing: '${message.take(30)}...'")
             }
         }
@@ -257,6 +273,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         }
         
         if (duplicatesFound) {
+            android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 9.2: FINAL CHECK - duplicate user messages detected - optimistic UI may be broken")
             failWithScreenshot("duplicate_user_messages", "FINAL CHECK: duplicate user messages detected - optimistic UI may be broken")
         }
         android.util.Log.d("MessageFlowTest", "✅ no user message duplicates found")
@@ -294,6 +311,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             botDuplicates.forEach { (content, occurrences) ->
                 android.util.Log.e("MessageFlowTest", "   '${content.take(50)}...' appears ${occurrences.size} times")
             }
+            android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 9.3: FINAL CHECK - identical bot messages detected - bot response system may be broken")
             failWithScreenshot("duplicate_bot_messages", "FINAL CHECK: identical bot messages detected - bot response system may be broken")
         } else {
             android.util.Log.d("MessageFlowTest", "✅ no bot message duplicates found")
@@ -423,4 +441,6 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             false
         }
     }
+
+
 }
