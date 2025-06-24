@@ -167,6 +167,9 @@ class MainActivity : ComponentActivity() {
                 i.putExtra("FROM_ASSISTANT", true)
                 i.putExtra("ENABLE_VOICE_MODE", true) 
                 i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+                // Update the activity's intent so the flags are accessible
+                setIntent(i)
+                Log.d(TAG, "🎤 Updated activity intent with voice launch flags")
             }
         }
         Log.d(TAG, "=== END INTENT ANALYSIS ===")

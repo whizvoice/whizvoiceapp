@@ -19,6 +19,7 @@ import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.BaseIntegrationTest
+import com.example.whiz.permissions.PermissionManager
 import org.junit.Assert.*
 
 /**
@@ -46,11 +47,21 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     
     @Inject
     lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
+    @Inject
+    lateinit var permissionManager: PermissionManager
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Before
     fun setUp() {
+        // Grant microphone permission for voice tests
+        android.util.Log.d(TAG, "🎙️ Granting microphone permission for voice tests")
+        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
+        
+        // Also update PermissionManager state to match
+        permissionManager.updateMicrophonePermission(true)
+        
         // Clean up any existing test chats (both negative optimistic and positive server chats)
         runBlocking {
             val chats = repository.getAllChats()
@@ -69,12 +80,13 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         /**
          * WHY THIS TEST MATTERS:
          * When Google Assistant sends just a trace ID, our app should automatically
-         * detect this as a voice launch and add the necessary flags:
-         * - FROM_ASSISTANT=true
-         * - ENABLE_VOICE_MODE=true  
-         * - CREATE_NEW_CHAT_ON_START=true
+         * detect this as a voice launch and trigger the same behavior as if the flags
+         * were explicitly set:
+         * - Navigate to a new chat (CREATE_NEW_CHAT_ON_START behavior)
+         * - Enable voice mode (ENABLE_VOICE_MODE behavior)
+         * - Enable continuous listening (FROM_ASSISTANT behavior)
          * 
-         * This tests the core voice launch detection logic.
+         * This tests that voice launch detection produces the correct end-to-end behavior.
          */
         
         // Create intent with ONLY what Google Assistant provides
@@ -86,34 +98,41 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             // No other extras - app should add them automatically
         }
 
+        val initialChats = runBlocking { repository.getAllChats() }
+        val initialChatCount = initialChats.size
+
         // Launch the activity
         val activity = instrumentation.startActivitySync(voiceLaunchIntent)
         
-        // Give the activity time to process the intent and add flags
-        device.wait(Until.hasObject(By.pkg("com.example.whiz.debug")), 3000)
+        // VERIFY: Voice launch should navigate directly to new chat screen (CREATE_NEW_CHAT_ON_START behavior)
+        // Wait longer for navigation and UI composition
+        val navigatedToChat = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
+        ), 10000) 
         
-        // VERIFY: App should have automatically added voice launch flags
-        val intent = activity.intent
-        val hasFromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
-        val hasEnableVoiceMode = intent.getBooleanExtra("ENABLE_VOICE_MODE", false)
-        val hasCreateNewChat = intent.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false)
-        
-        if (!hasFromAssistant) {
-            failWithScreenshot("voice_launch_missing_from_assistant", 
-                "Voice launch should automatically add FROM_ASSISTANT=true flag")
+        if (!navigatedToChat) {
+            // Debug: Check what's actually on screen
+            android.util.Log.d(TAG, "🔍 Navigation failed - checking what's on screen...")
+            val hasMyChats = device.hasObject(By.textContains("My Chats").pkg("com.example.whiz.debug"))
+            val hasAnyEditText = device.hasObject(By.clazz("android.widget.EditText"))
+            android.util.Log.d(TAG, "🔍 Has 'My Chats': $hasMyChats, Has any EditText: $hasAnyEditText")
+            
+            failWithScreenshot("voice_launch_no_navigation", 
+                "Voice launch should automatically navigate to new chat screen (CREATE_NEW_CHAT_ON_START behavior)")
         }
         
-        if (!hasEnableVoiceMode) {
-            failWithScreenshot("voice_launch_missing_enable_voice", 
-                "Voice launch should automatically add ENABLE_VOICE_MODE=true flag")
+        // Give voice setup time to complete
+        device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 2000)
+        
+        // VERIFY: Voice launch should enable continuous listening (FROM_ASSISTANT + ENABLE_VOICE_MODE behavior)
+        val continuousListeningEnabled = voiceManager.isContinuousListeningEnabled.value
+        
+        if (!continuousListeningEnabled) {
+            failWithScreenshot("voice_launch_no_continuous_listening", 
+                "Voice launch should automatically enable continuous listening (ENABLE_VOICE_MODE behavior)")
         }
         
-        if (!hasCreateNewChat) {
-            failWithScreenshot("voice_launch_missing_create_chat", 
-                "Voice launch should automatically add CREATE_NEW_CHAT_ON_START=true flag")
-        }
-        
-        android.util.Log.d(TAG, "✅ Voice launch automatically added all required flags")
+        android.util.Log.d(TAG, "✅ Voice launch automatically triggered correct behavior (navigation + voice mode)")
         
         // Clean up
         activity.finish()
@@ -164,14 +183,33 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         
         // VERIFY: Voice launch should enable continuous listening and be actively listening
         val continuousListeningEnabled = voiceManager.isContinuousListeningEnabled.value
-        val isCurrentlyListening = voiceManager.isListening.value
         
         if (!continuousListeningEnabled) {
             failWithScreenshot("voice_launch_no_continuous_listening", 
                 "Voice launch should enable continuous listening for hands-free interaction")
         }
         
-        if (!isCurrentlyListening) {
+        // Wait for listening to actually start (there's a delay after chat loads)
+        val listeningStarted = device.wait(Until.hasObject(By.pkg("com.example.whiz.debug")), 1000) &&
+            runBlocking {
+                var attempts = 0
+                while (attempts < 25) { // Wait up to 5 seconds
+                    val isListening = voiceManager.isListening.value
+                    val isContinuousEnabled = voiceManager.isContinuousListeningEnabled.value
+                    android.util.Log.d(TAG, "🔍 Listening check attempt $attempts: isListening=$isListening, continuousEnabled=$isContinuousEnabled")
+                    
+                    if (isListening) {
+                        android.util.Log.d(TAG, "✅ Listening detected on attempt $attempts")
+                        return@runBlocking true
+                    }
+                    kotlinx.coroutines.delay(200L)
+                    attempts++
+                }
+                android.util.Log.d(TAG, "❌ Listening never started after $attempts attempts")
+                false
+            }
+        
+        if (!listeningStarted) {
             failWithScreenshot("voice_launch_not_listening", 
                 "Voice launch should be actively listening for user input")
         }
