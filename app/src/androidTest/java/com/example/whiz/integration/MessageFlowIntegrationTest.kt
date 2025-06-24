@@ -1,4 +1,3 @@
-/*
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -81,63 +80,6 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         }
     }
 
-
-
-
-
-    @Test 
-    fun testCredentials_areLoaded() {
-        // Test that we can load test credentials
-        android.util.Log.d("MessageFlowTest", "🧪 Testing test credentials loading")
-        
-        val credentials = TestCredentialsManager.credentials
-        assert(credentials.googleTestAccount.email.isNotBlank()) { "Test email should not be blank" }
-        assert(credentials.testEnvironment.apiBaseUrl.isNotBlank()) { "API base URL should not be blank" }
-        
-        android.util.Log.d("MessageFlowTest", "✅ Test credentials loaded successfully")
-        android.util.Log.d("MessageFlowTest", "Email: ${credentials.googleTestAccount.email}")
-        android.util.Log.d("MessageFlowTest", "API URL: ${credentials.testEnvironment.apiBaseUrl}")
-        android.util.Log.d("MessageFlowTest", "Real auth: ${credentials.testEnvironment.useRealAuth}")
-    }
-
-    @Test
-    fun automatedAuthentication_completesSuccessfully(): Unit = runBlocking {
-        android.util.Log.d("MessageFlowTest", "🔐 AUTOMATED AUTHENTICATION TEST")
-        
-        // Authentication is automatically handled by BaseIntegrationTest
-        android.util.Log.d("MessageFlowTest", "✅ Automated authentication completed successfully!")
-        
-        // Verify we have all required auth components
-        val serverToken = authRepository.serverToken.first()
-        val userProfile = authRepository.userProfile.first()
-        val googleAccount = authRepository.getLastSignedInGoogleAccount()
-        
-        android.util.Log.d("MessageFlowTest", "📋 Authentication verification:")
-        android.util.Log.d("MessageFlowTest", "  Server token: ${serverToken != null}")
-        android.util.Log.d("MessageFlowTest", "  User profile: ${userProfile?.email}")
-        android.util.Log.d("MessageFlowTest", "  Google account: ${googleAccount?.email}")
-        
-        assert(serverToken != null) { "Server token should be available after authentication" }
-        assert(userProfile?.email?.contains("whizvoicetest") == true) { "User should be whizvoicetest" }
-    }
-
-    @Test
-    fun repository_createChat_withAutomatedAuth(): Unit = runBlocking {
-        android.util.Log.d("MessageFlowTest", "🧪 Testing repository functionality WITH automated authentication")
-        
-        // Authentication is automatically handled by BaseIntegrationTest
-        android.util.Log.d("MessageFlowTest", "✅ User authenticated, testing chat creation...")
-        
-        val testChatTitle = "Automated E2E Test - ${System.currentTimeMillis()}"
-        val chatId = repository.createChat(testChatTitle)
-        createdChatIds.add(chatId) // Track for cleanup
-        
-        android.util.Log.d("MessageFlowTest", "Created chat with ID: $chatId, title: $testChatTitle")
-        assert(chatId > 0) { "Chat ID should be positive, got: $chatId" }
-        
-        android.util.Log.d("MessageFlowTest", "✅ Automated authenticated repository functionality works!")
-    }
-
     @Test
     fun endToEndFlow_fullyAutomatedWorkflow(): Unit = runBlocking {
         android.util.Log.d("MessageFlowTest", "🔥 FULL E2E TEST: Completely automated workflow")
@@ -184,78 +126,5 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.e("MessageFlowTest", "Full E2E test failed", e)
             throw e
         }
-    }
-
-    @Test
-    fun realAuthentication_obtainsValidTokens(): Unit = runBlocking {
-        android.util.Log.d("MessageFlowTest", "🔐 REAL AUTHENTICATION TEST: Testing full OAuth flow")
-        
-        // Step 1: Create a fake GoogleSignInAccount for our test user
-        // Note: In a real test, this would come from actual Google OAuth flow
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val credentials = TestCredentialsManager.credentials
-        
-        try {
-            // Step 2: Test the authentication API directly with a test ID token
-            android.util.Log.d("MessageFlowTest", "🚀 Testing server authentication with test user")
-            
-            // For now, let's test the token refresh flow if we already have tokens
-            val currentServerToken = authRepository.serverToken.first()
-            android.util.Log.d("MessageFlowTest", "Current server token present: ${currentServerToken != null}")
-            
-            if (currentServerToken != null) {
-                android.util.Log.d("MessageFlowTest", "✅ Server token found: ${currentServerToken.take(10)}...")
-                
-                // Test token refresh
-                val refreshSuccess = authRepository.refreshAccessToken()
-                android.util.Log.d("MessageFlowTest", "Token refresh result: $refreshSuccess")
-            } else {
-                android.util.Log.w("MessageFlowTest", "⚠️ No server token found - user needs to be signed in first")
-                
-                // Check if Google account is available
-                val googleAccount = authRepository.getLastSignedInGoogleAccount()
-                if (googleAccount != null && googleAccount.email == credentials.googleTestAccount.email) {
-                    android.util.Log.d("MessageFlowTest", "📱 Found Google account: ${googleAccount.email}")
-                    
-                    // Get ID token for server authentication
-                    val idToken = googleAccount.idToken
-                    if (idToken != null) {
-                        android.util.Log.d("MessageFlowTest", "🎫 Got ID token, length: ${idToken.length}")
-                        
-                        // Authenticate with server
-                        try {
-                            val authResult = authApi.authenticateWithGoogle(idToken)
-                            if (authResult.isSuccess) {
-                                val authResponse = authResult.getOrThrow()
-                                android.util.Log.d("MessageFlowTest", "🎉 Server authentication successful!")
-                                android.util.Log.d("MessageFlowTest", "User: ${authResponse.user.email}")
-                                
-                                // Save tokens
-                                authRepository.saveAuthTokensFromServer(
-                                    accessToken = authResponse.accessToken,
-                                    refreshToken = authResponse.refreshToken ?: ""
-                                )
-                                android.util.Log.d("MessageFlowTest", "💾 Tokens saved successfully")
-                            } else {
-                                android.util.Log.e("MessageFlowTest", "❌ Server authentication failed: ${authResult.exceptionOrNull()}")
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("MessageFlowTest", "❌ Exception during server auth", e)
-                        }
-                    } else {
-                        android.util.Log.w("MessageFlowTest", "⚠️ No ID token available from Google account")
-                    }
-                } else {
-                    android.util.Log.w("MessageFlowTest", "⚠️ No matching Google account found for test user")
-                }
-            }
-            
-            android.util.Log.d("MessageFlowTest", "✅ Authentication test completed")
-            
-        } catch (e: Exception) {
-            android.util.Log.e("MessageFlowTest", "❌ Authentication test failed", e)
-            throw e
-        }
-    }
+   }
 }
-*/
