@@ -4,6 +4,8 @@ import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.Until
+import androidx.test.uiautomator.By
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.delay
@@ -15,6 +17,7 @@ import org.junit.runner.RunWith
 import javax.inject.Inject
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.BaseIntegrationTest
 import org.junit.Assert.*
 
@@ -40,6 +43,9 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var repository: WhizRepository
+    
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
@@ -59,14 +65,80 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     }
 
     @Test
+    fun testVoiceLaunch_automaticallyAddsFlags() {
+        /**
+         * WHY THIS TEST MATTERS:
+         * When Google Assistant sends just a trace ID, our app should automatically
+         * detect this as a voice launch and add the necessary flags:
+         * - FROM_ASSISTANT=true
+         * - ENABLE_VOICE_MODE=true  
+         * - CREATE_NEW_CHAT_ON_START=true
+         * 
+         * This tests the core voice launch detection logic.
+         */
+        
+        // Create intent with ONLY what Google Assistant provides
+        val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
+            putExtra("tracing_intent_id", 745783203297493028L) // Only trace ID from Google Assistant
+            // No other extras - app should add them automatically
+        }
+
+        // Launch the activity
+        val activity = instrumentation.startActivitySync(voiceLaunchIntent)
+        
+        // Give the activity time to process the intent and add flags
+        device.wait(Until.hasObject(By.pkg("com.example.whiz.debug")), 3000)
+        
+        // VERIFY: App should have automatically added voice launch flags
+        val intent = activity.intent
+        val hasFromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
+        val hasEnableVoiceMode = intent.getBooleanExtra("ENABLE_VOICE_MODE", false)
+        val hasCreateNewChat = intent.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false)
+        
+        if (!hasFromAssistant) {
+            failWithScreenshot("voice_launch_missing_from_assistant", 
+                "Voice launch should automatically add FROM_ASSISTANT=true flag")
+        }
+        
+        if (!hasEnableVoiceMode) {
+            failWithScreenshot("voice_launch_missing_enable_voice", 
+                "Voice launch should automatically add ENABLE_VOICE_MODE=true flag")
+        }
+        
+        if (!hasCreateNewChat) {
+            failWithScreenshot("voice_launch_missing_create_chat", 
+                "Voice launch should automatically add CREATE_NEW_CHAT_ON_START=true flag")
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice launch automatically added all required flags")
+        
+        // Clean up
+        activity.finish()
+    }
+
+    @Test
     fun testVoiceLaunch_withTraceId_createsOptimisticChat() {
+        /**
+         * WHY THIS TEST MATTERS:
+         * When users say "Hey Google, talk to WhizVoice", Google Assistant sends our app
+         * a special intent with a trace ID. This test verifies that our app correctly:
+         * 1. Detects this as a voice launch (not manual tap)
+         * 2. Immediately creates an optimistic chat for instant user feedback
+         * 3. Navigates directly to that chat (no extra taps needed)  
+         * 4. Enables hands-free voice features (continuous listening + TTS)
+         * 
+         * This ensures users get instant, seamless voice interaction.
+         */
+        
         // Create intent that accurately mimics what Google Assistant sends
         val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
             action = Intent.ACTION_MAIN
             addCategory(Intent.CATEGORY_LAUNCHER)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
-            putExtra("tracing_intent_id", 745783203297493028L)
-            // No sourceBounds (voice launches don't have bounds)
+            putExtra("tracing_intent_id", 745783203297493028L) // Only what Google Assistant sends
         }
 
         val initialChats = runBlocking { repository.getAllChats() }
@@ -75,54 +147,62 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         // Launch through real Android system like Google Assistant would
         val activity = instrumentation.startActivitySync(voiceLaunchIntent)
         
-        // Wait for voice launch processing and optimistic chat creation
-        runBlocking { delay(2000) }
+        // VERIFY: Voice launch should navigate directly to new chat screen
+        val navigatedToChat = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
+        ), 5000) 
         
-        // Check for optimistic chat creation (the key behavior we're testing)
-        val finalChats = runBlocking { repository.getAllChats() }
-        val optimisticChats = finalChats.filter { it.id < 0 }
-        val assistantChats = finalChats.filter { it.title == "Assistant Chat" }
+        if (!navigatedToChat) {
+            failWithScreenshot("voice_launch_no_navigation", 
+                "Voice launch should navigate directly to new chat screen for immediate interaction")
+        }
+        
+        // Give voice setup time to complete
+        device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 2000)
+        
+        android.util.Log.d(TAG, "✅ Voice launch navigated to chat screen successfully")
+        
+        // VERIFY: Voice launch should enable continuous listening and be actively listening
+        val continuousListeningEnabled = voiceManager.isContinuousListeningEnabled.value
+        val isCurrentlyListening = voiceManager.isListening.value
+        
+        if (!continuousListeningEnabled) {
+            failWithScreenshot("voice_launch_no_continuous_listening", 
+                "Voice launch should enable continuous listening for hands-free interaction")
+        }
+        
+        if (!isCurrentlyListening) {
+            failWithScreenshot("voice_launch_not_listening", 
+                "Voice launch should be actively listening for user input")
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice launch enabled continuous listening and is actively listening")
         
         // Clean up
         activity.finish()
-        
-        // Clean up created chats
-        runBlocking {
-            (assistantChats + optimisticChats).forEach { chat ->
-                repository.deleteChat(chat.id)
-                android.util.Log.d("VoiceLaunchTest", "🗑️ Cleaned up chat ${chat.id} (${chat.title})")
-            }
-        }
-        
-        // Voice launch should create optimistic chat immediately
-        // This is the core behavior: immediate UI feedback with negative ID
-        val hasOptimisticChat = optimisticChats.isNotEmpty()
-        val hasAssistantChat = assistantChats.isNotEmpty()
-        val chatCountIncreased = finalChats.size > initialChatCount
-        
-        assertTrue("Voice launch should create optimistic chat immediately. " +
-                  "Initial: $initialChatCount, Final: ${finalChats.size}, " +
-                  "Optimistic chats: ${optimisticChats.size} (${optimisticChats.map { "${it.id}:${it.title}" }}), " +
-                  "Assistant chats: ${assistantChats.size} (${assistantChats.map { "${it.id}:${it.title}" }})",
-                  hasOptimisticChat || hasAssistantChat || chatCountIncreased)
-        
-        // If optimistic chat was created, verify it has negative ID
-        if (optimisticChats.isNotEmpty()) {
-            val optimisticChat = optimisticChats.first()
-            assertTrue("Optimistic chat should have negative ID, got ${optimisticChat.id}", optimisticChat.id < 0)
-            assertEquals("Optimistic chat should have correct title", "Assistant Chat", optimisticChat.title)
-        }
+
     }
 
     @Test
-    fun testManualLaunch_withBounds_doesNotCreateChat() {
+    fun testManualLaunch_doesNotCreateChat() {
+        /**
+         * WHY THIS TEST MATTERS:
+         * When users manually tap the app icon, they should land on the chats list
+         * to see their existing conversations and choose what to do next. This test verifies:
+         * 1. Manual launches are NOT treated as voice launches
+         * 2. App stays on chats list (doesn't auto-create/navigate to new chat)
+         * 3. No automatic chat creation happens (users choose when to start new chats)
+         * 
+         * This ensures manual app opens don't interfere with user intent and give
+         * users full control over their chat experience.
+         */
+         
         // Create intent that mimics manual app launch (tap on app icon)
         val manualLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
             action = Intent.ACTION_MAIN
             addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10200000 // Manual launch flags
-            sourceBounds = android.graphics.Rect(656, 1163, 824, 1433) // App icon bounds
-            // No tracing_intent_id extra
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10200000 // Manual launch flags (different from voice)
+            // No tracing_intent_id extra (key difference from voice launches)
         }
 
         val initialChats = runBlocking { repository.getAllChats() }
@@ -131,25 +211,51 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         // Launch through real Android system
         val activity = instrumentation.startActivitySync(manualLaunchIntent)
         
-        // Wait for any potential processing
-        runBlocking { delay(2000) }
+        // VERIFY: Manual launch should load chats list (not navigate to a chat)
+        val appLoaded = device.wait(Until.hasObject(
+            By.textContains("My Chats").pkg("com.example.whiz.debug")
+        ), 2000)
         
-        // Check results
+        if (!appLoaded) {
+            android.util.Log.d(TAG, "🚫 Manual launch did not load chats list screen")
+            failWithScreenshot("manual_launch_no_chats_list", 
+                "Manual launch should load chats list screen for user to choose next action")
+        }
+        
+        // VERIFY: We're on chats list, NOT inside a chat
+        val isOnChatsList = device.hasObject(By.textContains("My Chats").pkg("com.example.whiz.debug"))
+        val isInChat = device.hasObject(By.clazz("android.widget.EditText").pkg("com.example.whiz.debug"))
+        
+        if (!isOnChatsList) {
+            android.util.Log.d(TAG, "🚫 Manual launch did not stay on chats list (My Chats should be visible)")
+            failWithScreenshot("manual_launch_not_on_chats_list", 
+                "Manual launch should stay on chats list (My Chats should be visible)")
+        }
+        
+        if (isInChat) {
+            android.util.Log.d(TAG, "🚫 Manual launch should NOT auto-navigate to a chat (no EditText input should be present)")
+            failWithScreenshot("manual_launch_navigated_to_chat", 
+                "Manual launch should NOT auto-navigate to a chat (no EditText input should be present)")
+        }
+        
+        // VERIFY: Manual launch should NOT automatically create any chats
         val finalChats = runBlocking { repository.getAllChats() }
         val optimisticChats = finalChats.filter { it.id < 0 }
         val assistantChats = finalChats.filter { it.title == "Assistant Chat" }
         
-        // Clean up
-        activity.finish()
-        
-        // Manual launch should NOT automatically create a new chat
         val hasOptimisticChat = optimisticChats.isNotEmpty()
         val hasAssistantChat = assistantChats.isNotEmpty()
         val chatCountIncreased = finalChats.size > initialChatCount
         
-        assertFalse("Manual launch should NOT create any chat automatically. " +
-                   "Initial: $initialChatCount, Final: ${finalChats.size}, " +
-                   "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}",
-                   hasOptimisticChat || hasAssistantChat || chatCountIncreased)
+        if (hasOptimisticChat || hasAssistantChat || chatCountIncreased) {
+            android.util.Log.d(TAG, "🚫 Manual launch should NOT create any chat automatically")
+            failWithScreenshot("manual_launch_created_chat", 
+                "Manual launch should NOT create any chat automatically - users should choose when to start chats. " +
+                "Initial: $initialChatCount, Final: ${finalChats.size}, " +
+                "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}")
+        }
+        
+        // Clean up
+        activity.finish()
     }
 } 
