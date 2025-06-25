@@ -203,15 +203,74 @@ jobs:
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
             ./gradlew connectedDebugAndroidTest --stacktrace --continue
 
-      - name: Pull screenshots from emulator
+            echo "📸 Immediately pulling failure screenshots (while emulator is still running)..."
+            echo "🔍 Checking multiple screenshot locations..."
+
+            # Check main screenshots directory
+            echo "📁 Checking /sdcard/Pictures/:"
+            adb shell ls -la /sdcard/Pictures/ || echo "No /sdcard/Pictures/ directory found"
+
+            # Check root sdcard directory too
+            echo "📁 Checking /sdcard/ for any PNG files:"
+            adb shell ls -la /sdcard/*.png 2>/dev/null || echo "No PNG files in /sdcard/"
+
+            # Check if any screenshots exist anywhere
+            echo "📁 Searching for all PNG files on device:"
+            adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found anywhere on device"
+
+            # Create local directory for screenshots
+            mkdir -p test-failure-screenshots
+
+            # Try to pull from Pictures directory
+            adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
+
+            # Try to pull any PNG files from root sdcard
+            adb shell ls /sdcard/*.png 2>/dev/null | while read file; do
+              if [ ! -z "$file" ]; then
+                echo "📥 Pulling file: $file"
+                adb pull "$file" ./test-failure-screenshots/ || echo "Failed to pull $file"
+              fi
+            done
+
+            echo "📱 Screenshot files found locally:"
+            ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
+            find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
+
+      - name: Pull screenshots from emulator (backup)
         if: always()
         run: |
           echo "📸 Pulling failure screenshots from emulator..."
-          adb shell ls -la /sdcard/Pictures/ || echo "No screenshots directory found"
+          echo "🔍 Checking multiple screenshot locations..."
+
+          # Check main screenshots directory
+          echo "📁 Checking /sdcard/Pictures/:"
+          adb shell ls -la /sdcard/Pictures/ || echo "No /sdcard/Pictures/ directory found"
+
+          # Check root sdcard directory too
+          echo "📁 Checking /sdcard/ for any PNG files:"
+          adb shell ls -la /sdcard/*.png 2>/dev/null || echo "No PNG files in /sdcard/"
+
+          # Check if any screenshots exist anywhere
+          echo "📁 Searching for all PNG files on device:"
+          adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found anywhere on device"
+
+          # Create local directory for screenshots
           mkdir -p test-failure-screenshots
-          adb pull /sdcard/Pictures/ ./test-failure-screenshots/ || echo "No screenshots to pull"
-          echo "📱 Screenshot files found:"
+
+          # Try to pull from Pictures directory
+          adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
+
+          # Try to pull any PNG files from root sdcard
+          adb shell ls /sdcard/*.png 2>/dev/null | while read file; do
+            if [ ! -z "$file" ]; then
+              echo "📥 Pulling file: $file"
+              adb pull "$file" ./test-failure-screenshots/ || echo "Failed to pull $file"
+            fi
+          done
+
+          echo "📱 Final screenshot files found locally:"
           ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
+          find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
 
       - name: Upload test failure screenshots
         uses: actions/upload-artifact@v4

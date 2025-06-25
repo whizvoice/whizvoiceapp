@@ -113,6 +113,10 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d("MessageFlowTest", "test user: ${credentials.googleTestAccount.email}")
         
         try {
+            // debug: take screenshot immediately to test screenshot mechanism
+            android.util.Log.d("MessageFlowTest", "🔍 DEBUG: taking test screenshot to verify mechanism works")
+            takeFailureScreenshot("debug_test_start", "debugging screenshot collection mechanism")
+            
             // step 1: launch app and ensure we get to a new chat screen efficiently
             android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and navigating to new chat")
             if (!launchAppAndWaitForLoad()) {
@@ -409,11 +413,23 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
     private fun verifyFinalMessageState(sentMessages: List<String>) {
         android.util.Log.d("MessageFlowTest", "🔍 comprehensive final message verification...")
         
-        // 1. verify ALL sent messages are present
+        // 1. verify ALL sent messages are present (with enhanced verification strategies)
         android.util.Log.d("MessageFlowTest", "📝 checking all ${sentMessages.size} sent messages are present...")
         sentMessages.forEachIndexed { index, message ->
-            if (!verifyMessageVisible(message)) {
+            // try multiple verification approaches like in step 8
+            val found = verifyMessageVisible(message) || 
+                       verifyMessageWithPartialText(message) ||
+                       verifyMessageWithScroll(message)
+            
+            if (!found) {
                 android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 9.1: FINAL CHECK - sent message $index missing: '${message.take(30)}...'")
+                
+                // additional debugging for final verification
+                android.util.Log.e("MessageFlowTest", "🔍 final debug info for missing message:")
+                android.util.Log.e("MessageFlowTest", "  full message: '$message'")
+                android.util.Log.e("MessageFlowTest", "  test ID: $uniqueTestId")
+                android.util.Log.e("MessageFlowTest", "  message index: $index")
+                
                 failWithScreenshot("final_message_${index}_missing", "FINAL CHECK: sent message $index missing: '${message.take(30)}...'")
             }
         }

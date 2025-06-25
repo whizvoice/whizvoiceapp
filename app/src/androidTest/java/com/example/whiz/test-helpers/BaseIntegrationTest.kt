@@ -541,17 +541,39 @@ abstract class BaseIntegrationTest {
             val filepath = "$screenshotDir/$filename"
             
             android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
+            android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory: $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📸 Screenshot filename: $filename")
+            android.util.Log.d("BaseIntegrationTest", "📍 Screenshot full path: $filepath")
+            
+            // ensure screenshot directory exists
+            val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create directory result: $mkdirResult")
             
             // Use shell command to take screenshot (more reliable than device.takeScreenshot)
             val result = device.executeShellCommand("screencap -p $filepath")
             android.util.Log.d("BaseIntegrationTest", "📸 Screenshot command result: $result")
             
-            // Verify screenshot was created
+            // Verify screenshot was created with more detailed checking
             val checkResult = device.executeShellCommand("ls -la $filepath")
+            android.util.Log.d("BaseIntegrationTest", "🔍 File check result: $checkResult")
+            
             if (checkResult.contains(filename)) {
                 android.util.Log.d("BaseIntegrationTest", "✅ Screenshot confirmed saved: $filepath")
+                
+                // also check file size to ensure it's not empty
+                val fileSizeResult = device.executeShellCommand("stat -c%s $filepath 2>/dev/null || echo 'stat failed'")
+                android.util.Log.d("BaseIntegrationTest", "📏 Screenshot file size: $fileSizeResult bytes")
             } else {
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Screenshot may not have been saved: $checkResult")
+                
+                // try alternative screenshot location
+                val altPath = "/sdcard/$filename"
+                android.util.Log.d("BaseIntegrationTest", "🔄 Trying alternative path: $altPath")
+                val altResult = device.executeShellCommand("screencap -p $altPath")
+                android.util.Log.d("BaseIntegrationTest", "📸 Alternative screenshot result: $altResult")
+                
+                val altCheck = device.executeShellCommand("ls -la $altPath")
+                android.util.Log.d("BaseIntegrationTest", "🔍 Alternative file check: $altCheck")
             }
             
             // Also dump UI hierarchy for debugging
