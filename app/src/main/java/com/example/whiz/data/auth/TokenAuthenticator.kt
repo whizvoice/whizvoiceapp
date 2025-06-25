@@ -51,9 +51,16 @@ class TokenAuthenticator @Inject constructor(
         
         // Limit the number of retries to prevent infinite loops if refresh keeps failing
         if (responseCount(response) >= 2) {
-            Log.w(TAG, "Authentication retried too many times. Not retrying.")
-            // Optionally: Trigger sign-out here if multiple refresh attempts fail
-            // runBlocking { authRepository.signOut() } // Consider the implications
+            Log.w(TAG, "🔑 Authentication retried too many times. Signing out user.")
+            // Trigger sign-out here if multiple refresh attempts fail
+            runBlocking { 
+                try {
+                    authRepository.signOut()
+                    Log.d(TAG, "🔑 User signed out due to repeated authentication failures")
+                } catch (e: Exception) {
+                    Log.e(TAG, "🔑 Error during automatic sign-out", e)
+                }
+            }
             return null
         }
 
@@ -88,8 +95,16 @@ class TokenAuthenticator @Inject constructor(
                 .header("Authorization", "Bearer $newAccessToken")
                 .build()
         } else {
-            Log.w(TAG, "Token refresh failed. Not retrying original request.")
-            // Token refresh failed (e.g., refresh token invalid), AuthRepository.refreshAccessToken should have handled sign-out.
+            Log.w(TAG, "🔑 Token refresh failed. Signing out user due to invalid tokens.")
+            // Token refresh failed (e.g., refresh token invalid), sign out the user
+            runBlocking { 
+                try {
+                    authRepository.signOut()
+                    Log.d(TAG, "🔑 User signed out due to token refresh failure")
+                } catch (e: Exception) {
+                    Log.e(TAG, "🔑 Error during automatic sign-out after refresh failure", e)
+                }
+            }
             return null
         }
     }

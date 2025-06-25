@@ -1,5 +1,6 @@
 package com.example.whiz.ui.navigation
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -47,6 +48,28 @@ fun WhizNavHost(
     // Check if we're coming from assistant
     val fromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false
     val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
+
+    // Monitor authentication state and navigate to login if user becomes unauthenticated
+    LaunchedEffect(isAuthenticated) {
+        Log.d("WhizNavHost", "🔐 Authentication state changed: isAuthenticated = $isAuthenticated")
+        val currentRoute = navController.currentDestination?.route
+        Log.d("WhizNavHost", "🔐 Current route: $currentRoute")
+        
+        if (!isAuthenticated) {
+            // Only navigate to login if we're not already there
+            if (currentRoute != Screen.Login.route) {
+                Log.d("WhizNavHost", "🔐 Authentication lost, navigating to login screen (from $currentRoute)")
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(0) { inclusive = true } // Clear entire back stack
+                    launchSingleTop = true
+                }
+            } else {
+                Log.d("WhizNavHost", "🔐 Already on login screen, no navigation needed")
+            }
+        } else {
+            Log.d("WhizNavHost", "🔐 User is authenticated, staying on current screen: $currentRoute")
+        }
+    }
 
     // Custom extension to preload data before navigating
     fun NavHostController.preloadAndNavigate(route: String) {
