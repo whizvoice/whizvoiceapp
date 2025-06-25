@@ -106,27 +106,36 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d("MessageFlowTest", "test user: ${credentials.googleTestAccount.email}")
         
         try {
-            // step 1: launch app and verify we're on chats list (or navigate to it if in chat)
-            android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and ensuring we're on chats list")
+            // step 1: launch app and ensure we get to a new chat screen efficiently
+            android.util.Log.d("MessageFlowTest", "📱 step 1: launching app and navigating to new chat")
             if (!launchAppAndWaitForLoad()) {
                 android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 1: app failed to launch or load main UI")
                 failWithScreenshot("app_launch_failed", "app failed to launch or load main UI")
             }
             
-            // check if we're already in a chat screen - if so, navigate back to chats list
+            // step 2: navigate to new chat (handling both chats list and existing chat scenarios)
+            android.util.Log.d("MessageFlowTest", "➕ step 2: navigating to new chat")
+            
             if (isCurrentlyInChatScreen()) {
-                android.util.Log.d("MessageFlowTest", "🔄 app launched into chat screen, navigating back to chats list first")
+                // if we're already in a chat, navigate back to chats list first, then create new chat
+                android.util.Log.d("MessageFlowTest", "🔄 currently in chat screen, going back to chats list first")
                 if (!navigateBackToChatsListFromChat()) {
-                    android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 1.5: failed to navigate from chat screen to chats list")
+                    android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 2a: failed to navigate from chat screen to chats list")
                     failWithScreenshot("navigate_to_chats_list_failed", "failed to navigate from chat screen to chats list")
                 }
-            }
-            
-            // step 2: click new chat button
-            android.util.Log.d("MessageFlowTest", "➕ step 2: clicking new chat button")
-            if (!clickNewChatButtonAndWaitForChatScreen()) {
-                android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 2: new chat button not found or chat screen failed to load")
-                failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
+                
+                // now click new chat button
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 2b: new chat button not found or chat screen failed to load")
+                    failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
+                }
+            } else {
+                // we're on chats list, directly click new chat button
+                android.util.Log.d("MessageFlowTest", "📋 on chats list, clicking new chat button directly")
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    android.util.Log.e("MessageFlowTest", "❌ FAILURE at step 2: new chat button not found or chat screen failed to load")
+                    failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
+                }
             }
             
             // step 3: send first message and verify optimistic UI

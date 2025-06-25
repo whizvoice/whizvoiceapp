@@ -406,12 +406,46 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Verify message is visible in chat
+     * Verify message is visible in chat (with scrolling to find messages that may be off-screen)
      */
     protected fun verifyMessageVisible(messageText: String, timeoutMs: Long = 3000): Boolean {
-        return device.wait(Until.hasObject(
-            By.textContains(messageText.take(20)).pkg(packageName)
-        ), timeoutMs)
+        val searchText = messageText.take(20)
+        
+        // first try to find the message without scrolling
+        if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Message found without scrolling: '${searchText}...'")
+            return true
+        }
+        
+        // if not found, try scrolling up to find older messages
+        android.util.Log.d("BaseIntegrationTest", "🔍 Message not visible, trying to scroll up to find: '${searchText}...'")
+        
+                 // try scrolling up a few times to find the message
+        repeat(3) { attempt ->
+            try {
+                // use swipe gesture to scroll up in the chat area
+                val height = device.displayHeight
+                val width = device.displayWidth
+                
+                // swipe from middle-bottom to middle-top to scroll up
+                device.swipe(width/2, height*2/3, width/2, height/3, 10)
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt ${attempt + 1})")
+                
+                // give UI time to update after scroll
+                Thread.sleep(800)
+                
+                // check if message is now visible
+                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling up: '${searchText}...'")
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during scroll attempt ${attempt + 1}: ${e.message}")
+            }
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ Message not found even after scrolling: '${searchText}...'")
+        return false
     }
     
     /**
