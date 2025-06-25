@@ -420,8 +420,8 @@ abstract class BaseIntegrationTest {
         // if not found, try scrolling up to find older messages
         android.util.Log.d("BaseIntegrationTest", "🔍 Message not visible, trying to scroll up to find: '${searchText}...'")
         
-                 // try scrolling up a few times to find the message
-        repeat(3) { attempt ->
+        // try scrolling up a few times to find the message
+        repeat(5) { attempt ->
             try {
                 // use swipe gesture to scroll up in the chat area
                 val height = device.displayHeight
@@ -431,8 +431,8 @@ abstract class BaseIntegrationTest {
                 device.swipe(width/2, height*2/3, width/2, height/3, 10)
                 android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt ${attempt + 1})")
                 
-                // give UI time to update after scroll
-                Thread.sleep(800)
+                                 // give UI more time to update after scroll (CI environments can be slower)
+                Thread.sleep(getCIAwareDelay(1200))
                 
                 // check if message is now visible
                 if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
@@ -441,6 +441,28 @@ abstract class BaseIntegrationTest {
                 }
             } catch (e: Exception) {
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Error during scroll attempt ${attempt + 1}: ${e.message}")
+            }
+        }
+        
+        // try scrolling down too (in case we overshot)
+        android.util.Log.d("BaseIntegrationTest", "🔍 Trying to scroll down to find: '${searchText}...'")
+        repeat(3) { attempt ->
+            try {
+                val height = device.displayHeight
+                val width = device.displayWidth
+                
+                // swipe from middle-top to middle-bottom to scroll down
+                device.swipe(width/2, height/3, width/2, height*2/3, 10)
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped down to scroll (attempt ${attempt + 1})")
+                
+                                 Thread.sleep(getCIAwareDelay(1200))
+                
+                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling down: '${searchText}...'")
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during down scroll attempt ${attempt + 1}: ${e.message}")
             }
         }
         
@@ -622,6 +644,37 @@ abstract class BaseIntegrationTest {
         )
         
         return messageInput.exists() || sendButton.exists() || micButton.exists()
+    }
+
+    companion object {
+        const val packageName = "com.example.whiz"
+        const val screenshotDir = "/sdcard/Pictures"
+        
+        // detect if running in CI environment (GitHub Actions)
+        private val isRunningInCI: Boolean by lazy {
+            System.getenv("CI") == "true" || 
+            System.getenv("GITHUB_ACTIONS") == "true" ||
+            System.getProperty("ci.environment") == "true"
+        }
+        
+        // CI-aware timing multiplier
+        private val timingMultiplier: Float by lazy {
+            if (isRunningInCI) 3.0f else 1.0f
+        }
+        
+        /**
+         * Get CI-aware timeout with multiplier for slower environments
+         */
+        fun getCIAwareTimeout(baseTimeoutMs: Long): Long {
+            return (baseTimeoutMs * timingMultiplier).toLong()
+        }
+        
+        /**
+         * Get CI-aware delay with multiplier for slower environments  
+         */
+        fun getCIAwareDelay(baseDelayMs: Long): Long {
+            return (baseDelayMs * timingMultiplier).toLong()
+        }
     }
 }
 

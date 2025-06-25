@@ -203,6 +203,24 @@ jobs:
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
             ./gradlew connectedDebugAndroidTest --stacktrace --continue
 
+      - name: Pull screenshots from emulator
+        if: always()
+        run: |
+          echo "📸 Pulling failure screenshots from emulator..."
+          adb shell ls -la /sdcard/Pictures/ || echo "No screenshots directory found"
+          mkdir -p test-failure-screenshots
+          adb pull /sdcard/Pictures/ ./test-failure-screenshots/ || echo "No screenshots to pull"
+          echo "📱 Screenshot files found:"
+          ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
+
+      - name: Upload test failure screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-failure-screenshots-api${{ matrix.api-level }}
+          path: test-failure-screenshots/
+          retention-days: 30
+
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1
         if: success() || failure()
