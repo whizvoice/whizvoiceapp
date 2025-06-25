@@ -559,9 +559,12 @@ abstract class BaseIntegrationTest {
             val testRead = device.executeShellCommand("cat /sdcard/test.txt")
             android.util.Log.d("BaseIntegrationTest", "👀 Test read result: $testRead")
             
-            // ensure screenshot directory exists
+            // ensure screenshot directories exist (both regular and CI-accessible)
             val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "📁 Create directory result: $mkdirResult")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create regular directory result: $mkdirResult")
+            
+            val mkdirCiResult = device.executeShellCommand("mkdir -p $ciScreenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create CI directory result: $mkdirCiResult")
             
             // check if directory was actually created
             val dirCheckResult = device.executeShellCommand("ls -la $screenshotDir")
@@ -600,14 +603,23 @@ abstract class BaseIntegrationTest {
                              android.util.Log.d("BaseIntegrationTest", "📸 UiAutomator check: $check4")
                          } catch (e: Exception) {
                              android.util.Log.e("BaseIntegrationTest", "📸 UiAutomator method failed: ${e.message}")
-                         }
-                     }
-                 }
-             }
-             
-             // Verify screenshot was created with more detailed checking
-             val checkResult = device.executeShellCommand("ls -la $filepath")
-             android.util.Log.d("BaseIntegrationTest", "🔍 File check result: $checkResult")
+                                                   }
+                      }
+                  }
+              }
+              
+              // also save to CI-accessible location
+              val ciFilepath = "$ciScreenshotDir/$filename"
+              android.util.Log.d("BaseIntegrationTest", "📸 Saving copy to CI location: $ciFilepath")
+              val ciCopyResult = device.executeShellCommand("screencap -p $ciFilepath")
+              android.util.Log.d("BaseIntegrationTest", "📸 CI copy result: $ciCopyResult")
+              
+              val ciCheckResult = device.executeShellCommand("ls -la $ciFilepath")
+              android.util.Log.d("BaseIntegrationTest", "🔍 CI file check: $ciCheckResult")
+              
+              // Verify screenshot was created with more detailed checking
+              val checkResult = device.executeShellCommand("ls -la $filepath")
+              android.util.Log.d("BaseIntegrationTest", "🔍 File check result: $checkResult")
             
             if (checkResult.contains(filename)) {
                 android.util.Log.d("BaseIntegrationTest", "✅ Screenshot confirmed saved: $filepath")
@@ -723,6 +735,9 @@ abstract class BaseIntegrationTest {
     companion object {
         const val packageName = "com.example.whiz"
         const val screenshotDir = "/sdcard/Pictures"
+        
+        // also save to a location that's more accessible for CI
+        const val ciScreenshotDir = "/data/local/tmp/screenshots"
         
         // detect if running in CI environment (GitHub Actions)
         private val isRunningInCI: Boolean by lazy {

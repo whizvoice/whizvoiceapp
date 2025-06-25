@@ -206,6 +206,10 @@ jobs:
             echo "📸 Immediately pulling failure screenshots (while emulator is still running)..."
             echo "🔍 Checking multiple screenshot locations..."
 
+            # Check CI-accessible directory first (most likely to have screenshots)
+            echo "📁 Checking /data/local/tmp/screenshots/:"
+            adb shell ls -la /data/local/tmp/screenshots/ || echo "No CI screenshots directory found"
+
             # Check main screenshots directory
             echo "📁 Checking /sdcard/Pictures/:"
             adb shell ls -la /sdcard/Pictures/ || echo "No /sdcard/Pictures/ directory found"
@@ -216,10 +220,14 @@ jobs:
 
             # Check if any screenshots exist anywhere
             echo "📁 Searching for all PNG files on device:"
-            adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found anywhere on device"
+            adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found in /sdcard/"
+            adb shell find /data/local/tmp -name "*.png" 2>/dev/null || echo "No PNG files found in /data/local/tmp/"
 
             # Create local directory for screenshots
             mkdir -p test-failure-screenshots
+
+            # Try to pull from CI directory first
+            adb pull /data/local/tmp/screenshots/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from CI screenshots directory"
 
             # Try to pull from Pictures directory
             adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
