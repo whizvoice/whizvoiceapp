@@ -232,18 +232,8 @@ jobs:
             # Try to pull from Pictures directory
             adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
 
-            # Try to pull any PNG files from root sdcard (if they exist)
-            if adb shell ls /sdcard/*.png 2>/dev/null; then
-              echo "📥 Found PNG files in /sdcard/, pulling them..."
-              adb shell ls /sdcard/*.png 2>/dev/null | while IFS= read -r file; do
-                if [ ! -z "$file" ]; then
-                  echo "📥 Pulling file: $file"
-                  adb pull "$file" ./test-failure-screenshots/ || echo "Failed to pull $file"
-                fi
-              done
-            else
-              echo "No PNG files found in /sdcard/"
-            fi
+            # Try to pull any PNG files from root sdcard (simplified single command)
+            adb shell "ls /sdcard/*.png 2>/dev/null && echo 'Found PNG files in /sdcard/'" || echo "No PNG files found in /sdcard/"
 
             echo "📱 Screenshot files found locally:"
             ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
@@ -273,18 +263,8 @@ jobs:
           # Try to pull from Pictures directory
           adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
 
-          # Try to pull any PNG files from root sdcard (if they exist)
-          if adb shell ls /sdcard/*.png 2>/dev/null; then
-            echo "📥 Found PNG files in /sdcard/, pulling them..."
-            adb shell ls /sdcard/*.png 2>/dev/null | while IFS= read -r file; do
-              if [ ! -z "$file" ]; then
-                echo "📥 Pulling file: $file"
-                adb pull "$file" ./test-failure-screenshots/ || echo "Failed to pull $file"
-              fi
-            done
-          else
-            echo "No PNG files found in /sdcard/"
-          fi
+          # Try to pull any PNG files from root sdcard (simplified single command)
+          adb shell "ls /sdcard/*.png 2>/dev/null && echo 'Found PNG files in /sdcard/'" || echo "No PNG files found in /sdcard/"
 
           echo "📱 Final screenshot files found locally:"
           ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
