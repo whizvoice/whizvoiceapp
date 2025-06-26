@@ -191,6 +191,20 @@ abstract class BaseIntegrationTest {
         
         if (!messageInput.waitForExists(5000)) {
             android.util.Log.e("BaseIntegrationTest", "❌ message input field not found")
+            
+            // debug: dump all EditText elements
+            val allEditTexts = device.findObjects(By.clazz("android.widget.EditText"))
+            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allEditTexts.size} EditText elements")
+            allEditTexts.forEachIndexed { i, element ->
+                try {
+                    val bounds = element.visibleBounds
+                    val hint = element.hint
+                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: hint='$hint', bounds=$bounds")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: error reading properties")
+                }
+            }
+            
             return false
         }
         
@@ -225,6 +239,21 @@ abstract class BaseIntegrationTest {
         
         if (!sendButton.waitForExists(3000)) {
             android.util.Log.e("BaseIntegrationTest", "❌ send button not found")
+            
+            // debug: check for any buttons or clickable elements
+            val allButtons = device.findObjects(By.clickable(true).pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allButtons.size} clickable elements")
+            allButtons.take(10).forEachIndexed { i, element ->
+                try {
+                    val desc = element.contentDescription
+                    val text = element.text
+                    val className = element.className
+                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: desc='$desc', text='$text', class='$className'")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: error reading properties")
+                }
+            }
+            
             return false
         }
         
@@ -242,7 +271,39 @@ abstract class BaseIntegrationTest {
      * Complete message sending flow: type message, click send, verify display
      */
     protected fun sendMessageAndVerifyDisplay(message: String): Boolean {
-        return typeMessageInInputField(message) && clickSendButtonAndWaitForSent(message)
+        android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: '${message.take(30)}...'")
+        
+        // step 1: type message
+        val typingSuccess = typeMessageInInputField(message)
+        if (!typingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: typeMessageInInputField returned false")
+            
+            // debug: check current screen state
+            val currentScreenElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 current screen has ${currentScreenElements.size} elements")
+            
+            // check for common UI elements
+            val hasEditText = device.hasObject(By.clazz("android.widget.EditText").pkg(packageName))
+            val hasLoginButton = device.hasObject(By.textContains("Sign in").pkg(packageName))
+            val hasChatTitle = device.hasObject(By.text("Chat").pkg(packageName))
+            val hasChatsListTitle = device.hasObject(By.text("My Chats").pkg(packageName))
+            
+            android.util.Log.d("BaseIntegrationTest", "🔍 screen state: hasEditText=$hasEditText, hasLoginButton=$hasLoginButton, hasChatTitle=$hasChatTitle, hasChatsListTitle=$hasChatsListTitle")
+            
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ message typed successfully")
+        
+        // step 2: click send and wait
+        val sendingSuccess = clickSendButtonAndWaitForSent(message)
+        if (!sendingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: clickSendButtonAndWaitForSent returned false")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ message sent and displayed successfully")
+        return true
     }
     
     /**
