@@ -481,11 +481,34 @@ abstract class BaseIntegrationTest {
     
     /**
      * Count how many times a message text appears (for duplicate detection)
+     * 🔧 FIX: Use longer, more specific search to avoid false positives from chat titles
      */
     protected fun countMessageOccurrences(messageText: String): Int {
+        // Use longer search text (30 chars instead of 15) to avoid matching truncated chat titles
+        val searchText = messageText.take(30)
         val elements = device.findObjects(
-            By.textContains(messageText.take(15)).pkg(packageName)
+            By.textContains(searchText).pkg(packageName)
         )
+        
+        // 🔍 DIAGNOSTIC: Log details about what UI elements are found
+        if (elements.size > 1) {
+            android.util.Log.w("BaseIntegrationTest", "🔍 DUPLICATE DIAGNOSTIC: Found ${elements.size} UI elements containing '$searchText'")
+            elements.forEachIndexed { index, element ->
+                try {
+                    val fullText = element.text
+                    val className = element.className
+                    val bounds = element.visibleBounds
+                    
+                    android.util.Log.w("BaseIntegrationTest", "🔍 Element $index:")
+                    android.util.Log.w("BaseIntegrationTest", "  Text: '$fullText'")
+                    android.util.Log.w("BaseIntegrationTest", "  Class: $className")
+                    android.util.Log.w("BaseIntegrationTest", "  Bounds: $bounds")
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "🔍 Element $index: Error reading properties - ${e.message}")
+                }
+            }
+        }
+        
         return elements.size
     }
     

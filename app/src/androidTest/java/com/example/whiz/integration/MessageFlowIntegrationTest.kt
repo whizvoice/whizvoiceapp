@@ -264,8 +264,11 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
             verifyAllMessagesDisplayCorrectly(sentMessages)
             
-            // step 9: comprehensive final verification - no duplicates and all messages present
-            android.util.Log.d(TAG, "🔍 step 9: final comprehensive verification - checking for duplicates and completeness")
+            // step 9: wait for chat migration to complete, then do comprehensive final verification
+            android.util.Log.d(TAG, "🔍 step 9a: waiting for chat migration to complete...")
+            waitForChatMigrationCompletion()
+            
+            android.util.Log.d(TAG, "🔍 step 9b: final comprehensive verification - checking for duplicates and completeness")
             verifyFinalMessageState(sentMessages)
             
             android.util.Log.d(TAG, "🎉 comprehensive message flow test PASSED!")
@@ -617,6 +620,125 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             android.util.Log.w(TAG, "failed to check chat migration", e)
             false
+        }
+    }
+
+    /**
+     * Wait for chat migration to complete by polling specific conditions
+     * instead of using arbitrary delays
+     */
+    private suspend fun waitForChatMigrationCompletion() {
+        android.util.Log.d(TAG, "⏳ waiting for chat migration to complete...")
+        
+        val startTime = System.currentTimeMillis()
+        val maxWaitTime = 15000L // 15 seconds max wait
+        var attempts = 0
+        
+        while (System.currentTimeMillis() - startTime < maxWaitTime) {
+            attempts++
+            android.util.Log.d(TAG, "🔍 migration check attempt $attempts...")
+            
+            try {
+                // Check 1: Chat has positive server ID
+                val migrationComplete = checkChatMigration()
+                if (migrationComplete) {
+                    android.util.Log.d(TAG, "✅ chat migration completed successfully")
+                    
+                    // Check 2: All messages are associated with the positive chat ID
+                    val allMessagesAssociated = checkAllMessagesAssociated()
+                    if (allMessagesAssociated) {
+                        android.util.Log.d(TAG, "✅ all messages associated with migrated chat")
+                        
+                        // Check 3: UI has settled (no more rapid state changes)
+                        val uiSettled = checkUISettled()
+                        if (uiSettled) {
+                            android.util.Log.d(TAG, "✅ UI has settled after migration")
+                            android.util.Log.d(TAG, "🎉 chat migration fully completed in ${attempts} attempts (${System.currentTimeMillis() - startTime}ms)")
+                            return
+                        }
+                    }
+                }
+                
+                android.util.Log.d(TAG, "⏳ migration not yet complete, waiting...")
+                delay(500) // Short delay before next check
+                
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "error during migration check attempt $attempts: ${e.message}")
+                delay(500)
+            }
+        }
+        
+        android.util.Log.w(TAG, "⚠️ migration wait timeout after ${maxWaitTime}ms and $attempts attempts")
+        android.util.Log.w(TAG, "⚠️ proceeding with test but duplicates may be detected during migration window")
+    }
+    
+    /**
+     * Check if all test messages are associated with the final positive chat ID
+     */
+    private suspend fun checkAllMessagesAssociated(): Boolean {
+        return try {
+            if (finalServerChatId == null || finalServerChatId!! <= 0) {
+                return false
+            }
+            
+            val chatMessages = repository.getMessagesForChat(finalServerChatId!!).first()
+            val userMessages = chatMessages.filter { it.type == com.example.whiz.data.local.MessageType.USER }
+            
+            android.util.Log.d(TAG, "🔍 checking message association: ${userMessages.size} user messages in chat $finalServerChatId")
+            
+            // Should have at least our 3 test messages
+            val hasExpectedMessages = userMessages.size >= 3
+            
+            // All messages should have positive chat ID
+            val allHavePositiveId = userMessages.all { it.chatId > 0 }
+            
+            android.util.Log.d(TAG, "📊 message association check: hasExpected=$hasExpectedMessages, allPositive=$allHavePositiveId")
+            
+            return hasExpectedMessages && allHavePositiveId
+            
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "error checking message association: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Check if UI has settled (no rapid changes that indicate ongoing migration)
+     */
+    private suspend fun checkUISettled(): Boolean {
+        return try {
+            // Take two snapshots of message count with a short delay
+            val count1 = countTotalVisibleMessages()
+            delay(200)
+            val count2 = countTotalVisibleMessages()
+            
+            // UI is settled if message count is stable
+            val isStable = count1 == count2 && count1 > 0
+            
+            android.util.Log.d(TAG, "📊 UI stability check: count1=$count1, count2=$count2, stable=$isStable")
+            
+            return isStable
+            
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "error checking UI stability: ${e.message}")
+            true // assume settled if we can't check
+        }
+    }
+    
+    /**
+     * Count total visible messages in the chat (for stability checking)
+     */
+    private fun countTotalVisibleMessages(): Int {
+        return try {
+            val messageElements = device.findObjects(
+                By.clazz("android.widget.TextView").pkg(packageName)
+            ).filter { element ->
+                val text = element.text
+                text != null && text.length > 10 && !text.contains("Whiz") // filter out labels
+            }
+            messageElements.size
+        } catch (e: Exception) {
+            0
         }
     }
 
