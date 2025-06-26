@@ -384,6 +384,17 @@ read_test_credentials() {
 pull_test_screenshots() {
     log_with_time "📸 Pulling test screenshots from device..."
     
+    # Check if device is still connected first
+    if ! adb devices | grep -q "device$"; then
+        log_with_time "⚠️  Device not connected - trying to reconnect..."
+        adb reconnect >/dev/null 2>&1 || true
+        sleep 2
+        if ! adb devices | grep -q "device$"; then
+            log_with_time "❌ Device offline - cannot pull screenshots"
+            return 1
+        fi
+    fi
+    
     # Ensure test_screenshots directory exists (already cleaned before tests)
     mkdir -p test_screenshots
     
@@ -555,6 +566,10 @@ run_integration_tests_with_logcat() {
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_summary_only "❌ Integration Tests failed in ${duration}s (exit code: $exit_code)"
+        
+        # Pull failure screenshots immediately while device is still connected
+        log_summary_only "📸 Pulling failure screenshots immediately (device may go offline in CI)..."
+        pull_test_screenshots
         
         # Add failure info and enhanced failure details to test_summary.log
         echo "❌ Integration Tests failed in ${duration}s (exit code: $exit_code)" >> test_summary.log
@@ -878,8 +893,10 @@ run_integration_tests_with_logcat
 integration_exit_code=$?
 set -e  # Re-enable exit on error
 
-# Pull screenshots from device to local folder after all tests complete
-pull_test_screenshots
+# Pull screenshots from device to local folder after all tests complete (fallback for success cases)
+if ! pull_test_screenshots; then
+    log_summary_only "⚠️  Final screenshot pull failed (device may be offline in CI) - failure screenshots should have been pulled immediately"
+fi
 
 overall_exit_code=$((unit_exit_code + integration_exit_code))
 
