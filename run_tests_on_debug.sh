@@ -384,34 +384,75 @@ read_test_credentials() {
 pull_test_screenshots() {
     log_with_time "📸 Pulling test screenshots from device..."
     
+    # Check if device is still connected first
+    if ! adb devices | grep -q "device$"; then
+        log_with_time "⚠️  Device not connected - trying to reconnect..."
+        adb reconnect >/dev/null 2>&1 || true
+        sleep 2
+        if ! adb devices | grep -q "device$"; then
+            log_with_time "❌ Device offline - cannot pull screenshots"
+            return 1
+        fi
+    fi
+    
     # Ensure test_screenshots directory exists (already cleaned before tests)
     mkdir -p test_screenshots
     
-    # Check if device has any screenshots (more reliable check)
-    local screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
+    local total_pulled=0
     
-    if [[ -n "$screenshot_files" ]]; then
-        # Pull all screenshots from device
+    # Check primary location: /sdcard/Download/test_screenshots/
+    local primary_screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
+    
+    if [[ -n "$primary_screenshot_files" ]]; then
+        log_with_time "📱 Found screenshots in primary location: /sdcard/Download/test_screenshots/"
         if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
             # Move screenshots from temp folder to final location (find all .png files)
             find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
             rm -rf temp_screenshots
-            local local_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
-            log_with_time "✅ Successfully pulled $local_count screenshots to test_screenshots/"
-            
-            # List the screenshots that were pulled
-            if [[ "$local_count" -gt 0 ]]; then
-                log_with_time "📋 Screenshots captured:"
-                for screenshot in test_screenshots/*.png; do
-                    if [[ -f "$screenshot" ]]; then
-                        local filename=$(basename "$screenshot")
-                        log_with_time "   • $filename"
-                    fi
-                done
-            fi
+            local primary_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+            total_pulled=$((total_pulled + primary_count))
+            log_with_time "✅ Pulled $primary_count screenshots from primary location"
         else
-            log_with_time "⚠️  Failed to pull screenshots from device"
+            log_with_time "⚠️  Failed to pull screenshots from primary location"
         fi
+    fi
+    
+    # Check CI location: /data/local/tmp/screenshots/
+    local ci_screenshot_files=$(adb shell "ls /data/local/tmp/screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
+    
+    if [[ -n "$ci_screenshot_files" ]]; then
+        log_with_time "📱 Found screenshots in CI location: /data/local/tmp/screenshots/"
+        if adb pull /data/local/tmp/screenshots/ temp_ci_screenshots/ >/dev/null 2>&1; then
+            # Move screenshots from temp folder to final location, avoiding duplicates
+            find temp_ci_screenshots -name "*.png" | while read -r screenshot; do
+                local filename=$(basename "$screenshot")
+                if [[ ! -f "test_screenshots/$filename" ]]; then
+                    mv "$screenshot" test_screenshots/ 2>/dev/null || true
+                    total_pulled=$((total_pulled + 1))
+                fi
+            done
+            rm -rf temp_ci_screenshots
+            local ci_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+            log_with_time "✅ Pulled additional screenshots from CI location (total now: $ci_count)"
+        else
+            log_with_time "⚠️  Failed to pull screenshots from CI location"
+        fi
+    fi
+    
+    # Final count and listing
+    local final_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
+    
+    if [[ "$final_count" -gt 0 ]]; then
+        log_with_time "✅ Successfully pulled $final_count total screenshots to test_screenshots/"
+        
+        # List the screenshots that were pulled
+        log_with_time "📋 Screenshots captured:"
+        for screenshot in test_screenshots/*.png; do
+            if [[ -f "$screenshot" ]]; then
+                local filename=$(basename "$screenshot")
+                log_with_time "   • $filename"
+            fi
+        done
     else
         log_with_time "📸 No screenshots found on device (no test failures with screenshots)"
     fi
@@ -525,6 +566,10 @@ run_integration_tests_with_logcat() {
         local end_time=$(date +%s.%3N)
         local duration=$(echo "$end_time - $start_time" | bc)
         log_summary_only "❌ Integration Tests failed in ${duration}s (exit code: $exit_code)"
+        
+        # Pull failure screenshots immediately while device is still connected
+        log_summary_only "📸 Pulling failure screenshots immediately (device may go offline in CI)..."
+        pull_test_screenshots
         
         # Add failure info and enhanced failure details to test_summary.log
         echo "❌ Integration Tests failed in ${duration}s (exit code: $exit_code)" >> test_summary.log
@@ -848,8 +893,10 @@ run_integration_tests_with_logcat
 integration_exit_code=$?
 set -e  # Re-enable exit on error
 
-# Pull screenshots from device to local folder after all tests complete
-pull_test_screenshots
+# Pull screenshots from device to local folder after all tests complete (fallback for success cases)
+if ! pull_test_screenshots; then
+    log_summary_only "⚠️  Final screenshot pull failed (device may be offline in CI) - failure screenshots should have been pulled immediately"
+fi
 
 overall_exit_code=$((unit_exit_code + integration_exit_code))
 

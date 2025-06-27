@@ -45,7 +45,9 @@ class AuthViewModel @Inject constructor(
         authRepository.userProfile,
         authRepository.serverToken
     ) { userProfile, serverToken ->
-        userProfile != null && !serverToken.isNullOrBlank()
+        val isAuth = userProfile != null && !serverToken.isNullOrBlank()
+        Log.d(TAG, "🔐 isAuthenticated computation: userProfile=${userProfile?.email}, serverToken=${serverToken?.take(10)}..., result=$isAuth")
+        isAuth
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

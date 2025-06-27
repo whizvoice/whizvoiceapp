@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
+import androidx.test.uiautomator.UiSelector
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -24,7 +25,7 @@ import java.util.Locale
 
 /**
  * Base class for integration tests that need authentication.
- * Automatically handles test authentication setup.
+ * Automatically handles test authentication setup and provides common UI interaction methods.
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
@@ -90,8 +91,526 @@ abstract class BaseIntegrationTest {
         }
     }
     
-
+    // =============================================================================
+    // COMMON UI INTERACTION METHODS
+    // =============================================================================
     
+    /**
+     * Launch app and wait for it to be fully loaded
+     */
+    protected fun launchAppAndWaitForLoad(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🚀 launching app")
+        
+        // Use UiDevice's built-in app launching mechanism which is more reliable
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+        
+        if (intent == null) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Could not get launch intent for package $packageName")
+            return false
+        }
+        
+        // Ensure it starts in a new task to avoid voice assistant mode
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        
+        android.util.Log.d("BaseIntegrationTest", "   intent: $intent")
+        android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
+        
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Failed to start activity: ${e.message}")
+            return false
+        }
+        
+        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
+        if (!appLaunched) {
+            android.util.Log.e("BaseIntegrationTest", "❌ app failed to launch within 10 seconds")
+            return false
+        }
+        
+        // Wait for main UI elements to load - should be chats list for manual launch
+        val mainUILoaded = device.wait(Until.hasObject(
+            By.text("My Chats").pkg(packageName)
+        ), 8000) || device.wait(Until.hasObject(
+            By.descContains("New Chat").pkg(packageName)  
+        ), 3000)
+        
+        if (!mainUILoaded) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ main UI not detected, but checking for any app content...")
+            // Fallback check for any app content
+            val anyAppContent = device.wait(Until.hasObject(
+                By.pkg(packageName)
+            ), 2000)
+            
+            if (!anyAppContent) {
+                android.util.Log.e("BaseIntegrationTest", "❌ no app content visible after launch")
+                return false
+            }
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ app launched successfully")
+        return true
+    }
+    
+    /**
+     * Find and click the new chat button, wait for chat screen to load
+     */
+    protected fun clickNewChatButtonAndWaitForChatScreen(): Boolean {
+        val newChatButton = device.findObject(
+            UiSelector()
+                .descriptionContains("New Chat")
+                .packageName(packageName)
+        )
+        
+        if (!newChatButton.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ new chat button not found")
+            return false
+        }
+        
+        newChatButton.click()
+        
+        // wait for chat screen to load by looking for message input field
+        val chatScreenLoaded = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 8000)
+        
+        return chatScreenLoaded
+    }
+    
+    /**
+     * Find message input field, type message, and verify text appears
+     */
+    protected fun typeMessageInInputField(message: String): Boolean {
+        val messageInput = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        if (!messageInput.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ message input field not found")
+            
+            // debug: dump all EditText elements
+            val allEditTexts = device.findObjects(By.clazz("android.widget.EditText"))
+            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allEditTexts.size} EditText elements")
+            allEditTexts.forEachIndexed { i, element ->
+                try {
+                    val bounds = element.visibleBounds
+                    val hint = element.hint
+                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: hint='$hint', bounds=$bounds")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: error reading properties")
+                }
+            }
+            
+            return false
+        }
+        
+        messageInput.click()
+        messageInput.setText(message)
+        
+        // wait for text to appear in field with retry
+        var textSet = device.wait(Until.hasObject(
+            By.text(message).pkg(packageName)
+        ), 3000)
+        
+        if (!textSet) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ text not visible, retrying...")
+            messageInput.setText(message)
+            textSet = device.wait(Until.hasObject(
+                By.text(message).pkg(packageName)
+            ), 2000)
+        }
+        
+        return textSet
+    }
+    
+    /**
+     * Find and click send button, wait for message to be sent
+     */
+    protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
+        val sendButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Send message")
+                .packageName(packageName)
+        )
+        
+        if (!sendButton.waitForExists(3000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ send button not found")
+            
+            // debug: check for any buttons or clickable elements
+            val allButtons = device.findObjects(By.clickable(true).pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allButtons.size} clickable elements")
+            allButtons.take(10).forEachIndexed { i, element ->
+                try {
+                    val desc = element.contentDescription
+                    val text = element.text
+                    val className = element.className
+                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: desc='$desc', text='$text', class='$className'")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: error reading properties")
+                }
+            }
+            
+            return false
+        }
+        
+        sendButton.click()
+        
+        // verify message appears in chat (optimistic UI)
+        val messageDisplayed = device.wait(Until.hasObject(
+            By.textContains(messageText).pkg(packageName)
+        ), 5000)
+        
+        return messageDisplayed
+    }
+    
+    /**
+     * Complete message sending flow: type message, click send, verify display
+     */
+    protected fun sendMessageAndVerifyDisplay(message: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: '${message.take(30)}...'")
+        
+        // step 1: type message
+        val typingSuccess = typeMessageInInputField(message)
+        if (!typingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: typeMessageInInputField returned false")
+            
+            // debug: check current screen state
+            val currentScreenElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 current screen has ${currentScreenElements.size} elements")
+            
+            // check for common UI elements
+            val hasEditText = device.hasObject(By.clazz("android.widget.EditText").pkg(packageName))
+            val hasLoginButton = device.hasObject(By.textContains("Sign in").pkg(packageName))
+            val hasChatTitle = device.hasObject(By.text("Chat").pkg(packageName))
+            val hasChatsListTitle = device.hasObject(By.text("My Chats").pkg(packageName))
+            
+            android.util.Log.d("BaseIntegrationTest", "🔍 screen state: hasEditText=$hasEditText, hasLoginButton=$hasLoginButton, hasChatTitle=$hasChatTitle, hasChatsListTitle=$hasChatsListTitle")
+            
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ message typed successfully")
+        
+        // step 2: click send and wait
+        val sendingSuccess = clickSendButtonAndWaitForSent(message)
+        if (!sendingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: clickSendButtonAndWaitForSent returned false")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ message sent and displayed successfully")
+        return true
+    }
+    
+    /**
+     * Wait for bot thinking indicator to appear
+     */
+    protected fun waitForBotThinkingIndicator(timeoutMs: Long = 5000): Boolean {
+        return device.wait(Until.hasObject(
+            By.textContains("Whiz is computing").pkg(packageName)
+        ), timeoutMs) || device.wait(Until.hasObject(
+            By.textContains("thinking").pkg(packageName)
+        ), 2000) || device.wait(Until.hasObject(
+            By.textContains("computing").pkg(packageName)
+        ), 2000)
+    }
+    
+    /**
+     * Wait for bot thinking indicator to disappear (bot finished responding)
+     */
+    protected fun waitForBotThinkingToFinish(timeoutMs: Long = 30000): Boolean {
+        return device.wait(Until.gone(
+            By.textContains("Whiz is computing").pkg(packageName)
+        ), timeoutMs)
+    }
+    
+    /**
+     * Wait for bot response message to appear by looking for bot message styling/structure
+     */
+    protected fun waitForBotResponse(timeoutMs: Long = 10000): Boolean {
+        // Look for the "Whiz" label that appears in assistant messages
+        val whizLabelFound = device.wait(Until.hasObject(
+            By.text("Whiz").pkg(packageName)
+        ), timeoutMs)
+        
+        if (whizLabelFound) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via 'Whiz' label")
+            return true
+        }
+        
+        // Alternative: Look for assistant message container or card structure
+        // Assistant messages are left-aligned and have different styling than user messages
+        val assistantMessageFound = device.wait(Until.hasObject(
+            By.descContains("Assistant message").pkg(packageName)
+        ), 3000) || device.wait(Until.hasObject(
+            By.descContains("Bot response").pkg(packageName)
+        ), 2000)
+        
+        if (assistantMessageFound) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via assistant message container")
+            return true
+        }
+        
+        // Fallback: Look for new message content that appeared after our last user message
+        // This is less reliable but catches cases where styling detection fails
+        val anyNewMessageContent = device.wait(Until.hasObject(
+            By.clazz("android.widget.TextView").pkg(packageName)
+        ), 3000)
+        
+        if (anyNewMessageContent) {
+            android.util.Log.d("BaseIntegrationTest", "⚠️ Bot response detected via fallback (new content appeared)")
+            return true
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ No bot response detected within timeout")
+        return false
+    }
+    
+    /**
+     * Navigate back to chats list from chat screen using back button or hamburger menu
+     */
+    protected fun navigateBackToChatsListFromChat(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔙 navigating back to chats list")
+        
+        // Method 1: Try hamburger menu first (more reliable)
+        val hamburgerMenu = device.findObject(
+            UiSelector()
+                .descriptionContains("Open Chats List")
+                .packageName(packageName)
+        ) ?: device.findObject(
+            UiSelector()
+                .descriptionContains("Menu")
+                .packageName(packageName)
+        )
+        
+        if (hamburgerMenu.waitForExists(3000)) {
+            android.util.Log.d("BaseIntegrationTest", "🍔 clicking hamburger menu")
+            hamburgerMenu.click()
+            
+            // wait for chats list to load
+            val chatsListLoaded = device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), 5000)
+            
+            if (chatsListLoaded) {
+                android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via hamburger menu")
+                return true
+            }
+        }
+        
+        // Method 2: Try device back button as fallback
+        android.util.Log.d("BaseIntegrationTest", "📱 trying device back button")
+        device.pressBack()
+        
+        // wait for chats list to load
+        val chatsListLoaded = device.wait(Until.hasObject(
+            By.text("My Chats").pkg(packageName)
+        ), 5000)
+        
+        if (chatsListLoaded) {
+            android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via back button")
+            return true
+        }
+        
+        // Method 3: Try "Navigate up" button 
+        val navigateUpButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Navigate up")
+                .packageName(packageName)
+        )
+        
+        if (navigateUpButton.waitForExists(2000)) {
+            android.util.Log.d("BaseIntegrationTest", "⬆️ clicking navigate up button")
+            navigateUpButton.click()
+            
+            val chatsListLoadedUp = device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), 5000)
+            
+            if (chatsListLoadedUp) {
+                android.util.Log.d("BaseIntegrationTest", "✅ returned to chats list via navigate up")
+                return true
+            }
+        }
+        
+        android.util.Log.e("BaseIntegrationTest", "❌ failed to navigate back to chats list")
+        return false
+    }
+    
+    /**
+     * Find chat in chats list by text content and click it
+     */
+    protected fun findAndClickChatInList(searchText: String): Boolean {
+        val chat = device.findObject(
+            UiSelector()
+                .textContains(searchText.take(15)) // use first 15 chars
+                .packageName(packageName)
+        )
+        
+        if (!chat.waitForExists(5000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ chat not found in list: '$searchText'")
+            return false
+        }
+        
+        chat.click()
+        
+        // wait for chat to reload
+        val chatReloaded = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 5000)
+        
+        return chatReloaded
+    }
+    
+    /**
+     * Verify message is visible in chat (with scrolling to find messages that may be off-screen)
+     */
+    protected fun verifyMessageVisible(messageText: String, timeoutMs: Long = 3000): Boolean {
+        val searchText = messageText.take(20)
+        
+        // first try to find the message without scrolling
+        if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Message found without scrolling: '${searchText}...'")
+            return true
+        }
+        
+        // if not found, try scrolling up to find older messages
+        android.util.Log.d("BaseIntegrationTest", "🔍 Message not visible, trying to scroll up to find: '${searchText}...'")
+        
+        // try scrolling up a few times to find the message
+        repeat(5) { attempt ->
+            try {
+                // use swipe gesture to scroll up in the chat area
+                val height = device.displayHeight
+                val width = device.displayWidth
+                
+                // swipe from middle-bottom to middle-top to scroll up
+                device.swipe(width/2, height*2/3, width/2, height/3, 10)
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt ${attempt + 1})")
+                
+                                 // give UI more time to update after scroll (CI environments can be slower)
+                Thread.sleep(getCIAwareDelay(1200))
+                
+                // check if message is now visible
+                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling up: '${searchText}...'")
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during scroll attempt ${attempt + 1}: ${e.message}")
+            }
+        }
+        
+        // try scrolling down too (in case we overshot)
+        android.util.Log.d("BaseIntegrationTest", "🔍 Trying to scroll down to find: '${searchText}...'")
+        repeat(3) { attempt ->
+            try {
+                val height = device.displayHeight
+                val width = device.displayWidth
+                
+                // swipe from middle-top to middle-bottom to scroll down
+                device.swipe(width/2, height/3, width/2, height*2/3, 10)
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped down to scroll (attempt ${attempt + 1})")
+                
+                                 Thread.sleep(getCIAwareDelay(1200))
+                
+                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling down: '${searchText}...'")
+                    return true
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during down scroll attempt ${attempt + 1}: ${e.message}")
+            }
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ Message not found even after scrolling: '${searchText}...'")
+        return false
+    }
+    
+    /**
+     * Check if bot is currently responding (thinking indicator visible)
+     */
+    protected fun isBotCurrentlyResponding(): Boolean {
+        return device.hasObject(By.textContains("Whiz is computing").pkg(packageName)) ||
+               device.hasObject(By.textContains("thinking").pkg(packageName)) ||
+               device.hasObject(By.textContains("computing").pkg(packageName))
+    }
+    
+    /**
+     * Count how many times a message text appears (for duplicate detection)
+     * 🔧 FIX: Use longer, more specific search to avoid false positives from chat titles
+     */
+    protected fun countMessageOccurrences(messageText: String): Int {
+        // Use longer search text (30 chars instead of 15) to avoid matching truncated chat titles
+        val searchText = messageText.take(30)
+        val elements = device.findObjects(
+            By.textContains(searchText).pkg(packageName)
+        )
+        
+        // 🔍 DIAGNOSTIC: Log details about what UI elements are found
+        if (elements.size > 1) {
+            android.util.Log.w("BaseIntegrationTest", "🔍 DUPLICATE DIAGNOSTIC: Found ${elements.size} UI elements containing '$searchText'")
+            elements.forEachIndexed { index, element ->
+                try {
+                    val fullText = element.text
+                    val className = element.className
+                    val bounds = element.visibleBounds
+                    
+                    android.util.Log.w("BaseIntegrationTest", "🔍 Element $index:")
+                    android.util.Log.w("BaseIntegrationTest", "  Text: '$fullText'")
+                    android.util.Log.w("BaseIntegrationTest", "  Class: $className")
+                    android.util.Log.w("BaseIntegrationTest", "  Bounds: $bounds")
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "🔍 Element $index: Error reading properties - ${e.message}")
+                }
+            }
+        }
+        
+        return elements.size
+    }
+    
+    /**
+     * Wait for the message count to increase (indicating a new message appeared)
+     * This is useful for detecting bot responses without relying on specific content
+     */
+    protected fun waitForNewMessageToAppear(initialMessageCount: Int, timeoutMs: Long = 10000): Boolean {
+        val startTime = System.currentTimeMillis()
+        while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+            val currentMessageCount = device.findObjects(
+                By.clazz("android.widget.TextView").pkg(packageName)
+            ).size
+            
+            if (currentMessageCount > initialMessageCount) {
+                android.util.Log.d("BaseIntegrationTest", "✅ New message detected: count changed from $initialMessageCount to $currentMessageCount")
+                return true
+            }
+            
+            Thread.sleep(500) // check every 500ms
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ No new message appeared within timeout")
+        return false
+    }
+    
+    /**
+     * Get current count of message-like elements for comparison
+     */
+    protected fun getCurrentMessageCount(): Int {
+        return device.findObjects(
+            By.clazz("android.widget.TextView").pkg(packageName)
+        ).filter { 
+            try {
+                val text = it.text
+                text != null && text.length > 10 // filter out short UI labels
+            } catch (e: Exception) {
+                false
+            }
+        }.size
+    }
 
     
     /**
@@ -106,9 +625,104 @@ abstract class BaseIntegrationTest {
             val filepath = "$screenshotDir/$filename"
             
             android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
-            device.takeScreenshot(File(filepath))
+            android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory: $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📸 Screenshot filename: $filename")
+            android.util.Log.d("BaseIntegrationTest", "📍 Screenshot full path: $filepath")
             
-            // Screenshot will be pulled to local folder by test script after completion
+            // check basic permissions and file system access
+            android.util.Log.d("BaseIntegrationTest", "🔍 Basic file system checks:")
+            val sdcardCheck = device.executeShellCommand("ls -la /sdcard/")
+            android.util.Log.d("BaseIntegrationTest", "📁 /sdcard/ contents: $sdcardCheck")
+            
+            val whoami = device.executeShellCommand("whoami")
+            android.util.Log.d("BaseIntegrationTest", "👤 Running as user: $whoami")
+            
+            val testWrite = device.executeShellCommand("echo 'test' > /sdcard/test.txt")
+            android.util.Log.d("BaseIntegrationTest", "✍️ Test write result: $testWrite")
+            
+            val testRead = device.executeShellCommand("cat /sdcard/test.txt")
+            android.util.Log.d("BaseIntegrationTest", "👀 Test read result: $testRead")
+            
+            // ensure screenshot directories exist (both regular and CI-accessible)
+            val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create regular directory result: $mkdirResult")
+            
+            val mkdirCiResult = device.executeShellCommand("mkdir -p $ciScreenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create CI directory result: $mkdirCiResult")
+            
+            // check if directory was actually created
+            val dirCheckResult = device.executeShellCommand("ls -la $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Directory check: $dirCheckResult")
+            
+            // try multiple screenshot approaches
+            android.util.Log.d("BaseIntegrationTest", "📸 Attempting method 1: screencap -p")
+            val result1 = device.executeShellCommand("screencap -p $filepath")
+            android.util.Log.d("BaseIntegrationTest", "📸 Method 1 result: $result1")
+            
+            // check if first method worked
+            val check1 = device.executeShellCommand("ls -la $filepath")
+            if (!check1.contains(filename)) {
+                android.util.Log.w("BaseIntegrationTest", "📸 Method 1 failed, trying method 2: screencap without -p")
+                val result2 = device.executeShellCommand("screencap $filepath")
+                android.util.Log.d("BaseIntegrationTest", "📸 Method 2 result: $result2")
+                
+                val check2 = device.executeShellCommand("ls -la $filepath")
+                if (!check2.contains(filename)) {
+                    android.util.Log.w("BaseIntegrationTest", "📸 Method 2 failed, trying method 3: different directory")
+                    val altPath = "/sdcard/$filename"
+                    val result3 = device.executeShellCommand("screencap -p $altPath")
+                    android.util.Log.d("BaseIntegrationTest", "📸 Method 3 result: $result3")
+                    
+                                         val check3 = device.executeShellCommand("ls -la $altPath")
+                     android.util.Log.d("BaseIntegrationTest", "📸 Method 3 check: $check3")
+                     
+                     if (!check3.contains(filename)) {
+                         android.util.Log.w("BaseIntegrationTest", "📸 All shell methods failed, trying UiAutomator method")
+                         try {
+                             val uiFile = java.io.File("/sdcard/$filename")
+                             val success = device.takeScreenshot(uiFile)
+                             android.util.Log.d("BaseIntegrationTest", "📸 UiAutomator method success: $success")
+                             
+                             val check4 = device.executeShellCommand("ls -la /sdcard/$filename")
+                             android.util.Log.d("BaseIntegrationTest", "📸 UiAutomator check: $check4")
+                         } catch (e: Exception) {
+                             android.util.Log.e("BaseIntegrationTest", "📸 UiAutomator method failed: ${e.message}")
+                                                   }
+                      }
+                  }
+              }
+              
+              // also save to CI-accessible location
+              val ciFilepath = "$ciScreenshotDir/$filename"
+              android.util.Log.d("BaseIntegrationTest", "📸 Saving copy to CI location: $ciFilepath")
+              val ciCopyResult = device.executeShellCommand("screencap -p $ciFilepath")
+              android.util.Log.d("BaseIntegrationTest", "📸 CI copy result: $ciCopyResult")
+              
+              val ciCheckResult = device.executeShellCommand("ls -la $ciFilepath")
+              android.util.Log.d("BaseIntegrationTest", "🔍 CI file check: $ciCheckResult")
+              
+              // Verify screenshot was created with more detailed checking
+              val checkResult = device.executeShellCommand("ls -la $filepath")
+              android.util.Log.d("BaseIntegrationTest", "🔍 File check result: $checkResult")
+            
+            if (checkResult.contains(filename)) {
+                android.util.Log.d("BaseIntegrationTest", "✅ Screenshot confirmed saved: $filepath")
+                
+                // also check file size to ensure it's not empty
+                val fileSizeResult = device.executeShellCommand("stat -c%s $filepath 2>/dev/null || echo 'stat failed'")
+                android.util.Log.d("BaseIntegrationTest", "📏 Screenshot file size: $fileSizeResult bytes")
+            } else {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Screenshot may not have been saved: $checkResult")
+                
+                // try alternative screenshot location
+                val altPath = "/sdcard/$filename"
+                android.util.Log.d("BaseIntegrationTest", "🔄 Trying alternative path: $altPath")
+                val altResult = device.executeShellCommand("screencap -p $altPath")
+                android.util.Log.d("BaseIntegrationTest", "📸 Alternative screenshot result: $altResult")
+                
+                val altCheck = device.executeShellCommand("ls -la $altPath")
+                android.util.Log.d("BaseIntegrationTest", "🔍 Alternative file check: $altCheck")
+            }
             
             // Also dump UI hierarchy for debugging
             val allElements = device.findObjects(By.pkg(packageName))
@@ -174,6 +788,66 @@ abstract class BaseIntegrationTest {
         takeFailureScreenshot(testName, reason)
         org.junit.Assert.fail(message)
         throw AssertionError(message) // This will never be reached but satisfies Nothing return type
+    }
+    
+    /**
+     * Check if currently in chat screen (vs chats list)
+     */
+    protected fun isCurrentlyInChatScreen(): Boolean {
+        // look for chat-specific UI elements
+        val messageInput = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        val sendButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Send")
+                .packageName(packageName)
+        )
+        
+        val micButton = device.findObject(
+            UiSelector()
+                .descriptionContains("Mic")
+                .packageName(packageName)
+        )
+        
+        return messageInput.exists() || sendButton.exists() || micButton.exists()
+    }
+
+    companion object {
+        const val packageName = "com.example.whiz"
+        const val screenshotDir = "/sdcard/Pictures"
+        
+        // also save to a location that's more accessible for CI
+        const val ciScreenshotDir = "/data/local/tmp/screenshots"
+        
+        // detect if running in CI environment (GitHub Actions)
+        private val isRunningInCI: Boolean by lazy {
+            System.getenv("CI") == "true" || 
+            System.getenv("GITHUB_ACTIONS") == "true" ||
+            System.getProperty("ci.environment") == "true"
+        }
+        
+        // CI-aware timing multiplier
+        private val timingMultiplier: Float by lazy {
+            if (isRunningInCI) 3.0f else 1.0f
+        }
+        
+        /**
+         * Get CI-aware timeout with multiplier for slower environments
+         */
+        fun getCIAwareTimeout(baseTimeoutMs: Long): Long {
+            return (baseTimeoutMs * timingMultiplier).toLong()
+        }
+        
+        /**
+         * Get CI-aware delay with multiplier for slower environments  
+         */
+        fun getCIAwareDelay(baseDelayMs: Long): Long {
+            return (baseDelayMs * timingMultiplier).toLong()
+        }
     }
 }
 

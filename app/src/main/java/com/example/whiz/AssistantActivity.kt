@@ -4,21 +4,8 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
-import com.example.whiz.ui.screens.AssistantOverlayUi
-import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -30,7 +17,7 @@ class AssistantActivity : AppCompatActivity() {
 
     private val TAG = "AssistantActivity"
     private val chatsListViewModel: ChatsListViewModel by viewModels()
-    private var isHandlingAssistantLaunch = false
+    private var isHandlingLaunch = false
     private var isFinishing = false
     
     @Inject
@@ -38,64 +25,68 @@ class AssistantActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         Log.d(TAG, "onCreate - Intent: $intent")
-
-        // Set the app icon in the action bar
-        supportActionBar?.apply {
-            setDisplayShowHomeEnabled(true)
-            setIcon(R.drawable.whiz_icon)
-        }
 
         val isAssistantLaunch = intent.getBooleanExtra("IS_ASSISTANT_LAUNCH", false)
         val enableVoiceMode = intent.getBooleanExtra("ENABLE_VOICE_MODE", false)
         val transcription = intent.getStringExtra("TRANSCRIPTION")
         Log.d(TAG, "IS_ASSISTANT_LAUNCH: $isAssistantLaunch, ENABLE_VOICE_MODE: $enableVoiceMode, TRANSCRIPTION: $transcription")
 
-        if (isAssistantLaunch && !isHandlingAssistantLaunch && !isFinishing) {
-            isHandlingAssistantLaunch = true
+        // Always redirect to MainActivity with appropriate settings - no overlay mode needed
+        if (!isHandlingLaunch && !isFinishing) {
+            isHandlingLaunch = true
             lifecycleScope.launch {
                 try {
                     // Add a small delay to ensure activity is fully initialized
                     delay(100)
                     
-                    Log.d(TAG, "Creating new optimistic chat...")
-                    val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
-                    Log.d(TAG, "New optimistic chat created with ID: $newChatId")
-                    if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
-                        // Navigate directly to the chat screen
-                        val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                            putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
-                            putExtra("FROM_ASSISTANT", true)
-                            putExtra("FORCE_NAVIGATION", true)
-                            putExtra("ENABLE_VOICE_MODE", true)
-                            // Add transcription if available
-                            transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
-                        }
-                        Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
-                        if (!isFinishing) {
-                            isFinishing = true
-                            startActivity(intent)
-                            finish()
+                    if (isAssistantLaunch) {
+                        Log.d(TAG, "Creating new optimistic chat for assistant launch...")
+                        val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
+                        Log.d(TAG, "New optimistic chat created with ID: $newChatId")
+                        if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
+                            // Navigate directly to the chat screen
+                            val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
+                                putExtra("FROM_ASSISTANT", true)
+                                putExtra("FORCE_NAVIGATION", true)
+                                putExtra("ENABLE_VOICE_MODE", true)
+                                // Add transcription if available
+                                transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                            }
+                            Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
+                            startMainActivityAndFinish(intent)
+                        } else {
+                            Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
+                            // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
+                            val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                putExtra("FROM_ASSISTANT", true)
+                                putExtra("ENABLE_VOICE_MODE", true)
+                                putExtra("CREATE_NEW_CHAT_ON_START", true)
+                                // Add transcription if available
+                                transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                            }
+                            Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                            startMainActivityAndFinish(intent)
                         }
                     } else {
-                        Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
-                        // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
+                        // Non-assistant launch - still redirect to MainActivity but without special voice settings
+                        Log.d(TAG, "Non-assistant launch, redirecting to MainActivity")
                         val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                            putExtra("FROM_ASSISTANT", true)
-                            putExtra("ENABLE_VOICE_MODE", true)
-                            putExtra("CREATE_NEW_CHAT_ON_START", true)
-                            // Add transcription if available
-                            transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                            // Pass through any transcription that might exist
+                            transcription?.let { 
+                                putExtra("INITIAL_TRANSCRIPTION", it)
+                                putExtra("CREATE_NEW_CHAT_ON_START", true) // If we have transcription, create a chat
+                            }
+                            if (enableVoiceMode) {
+                                putExtra("ENABLE_VOICE_MODE", true)
+                            }
                         }
-                        Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
-                        if (!isFinishing) {
-                            isFinishing = true
-                            startActivity(intent)
-                            finish()
-                        }
+                        Log.d(TAG, "Starting MainActivity for non-assistant launch")
+                        startMainActivityAndFinish(intent)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error creating new chat or starting MainActivity: ", e)
@@ -104,31 +95,17 @@ class AssistantActivity : AppCompatActivity() {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     }
                     Log.d(TAG, "Error occurred, falling back to home screen")
-                    startActivity(intent)
-                    isFinishing = true
-                    finish()
+                    startMainActivityAndFinish(intent)
                 }
             }
-        } else {
-            // Standard display of AssistantOverlayUi if not an assistant launch
-            Log.d(TAG, "Displaying standard AssistantOverlayUi")
-            setContent {
-                WhizTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = Color.Transparent
-                    ) {
-                        AssistantOverlayUi(
-                            voiceManager = voiceManager,
-                            onDismiss = { 
-                                Log.d(TAG, "AssistantOverlayUi dismissed")
-                                isFinishing = true
-                                finish() 
-                            }
-                        )
-                    }
-                }
-            }
+        }
+    }
+    
+    private fun startMainActivityAndFinish(intent: Intent) {
+        if (!isFinishing) {
+            isFinishing = true
+            startActivity(intent)
+            finish()
         }
     }
 
@@ -136,12 +113,12 @@ class AssistantActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         Log.d(TAG, "onNewIntent - Received Intent: $intent")
         setIntent(intent)
-        // If we get a new intent while handling the assistant launch, ignore it
-        if (!isHandlingAssistantLaunch && !isFinishing) {
+        // If we get a new intent while handling the launch, ignore it to prevent loops
+        if (!isHandlingLaunch && !isFinishing) {
             Log.d(TAG, "Recreating activity due to new intent")
             recreate()
         } else {
-            Log.d(TAG, "Ignoring new intent - isHandlingAssistantLaunch: $isHandlingAssistantLaunch, isFinishing: $isFinishing")
+            Log.d(TAG, "Ignoring new intent - isHandlingLaunch: $isHandlingLaunch, isFinishing: $isFinishing")
         }
     }
 
@@ -152,8 +129,8 @@ class AssistantActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "onDestroy - isHandlingAssistantLaunch: $isHandlingAssistantLaunch, isFinishing: $isFinishing")
-        isHandlingAssistantLaunch = false
+        Log.d(TAG, "onDestroy - isHandlingLaunch: $isHandlingLaunch, isFinishing: $isFinishing")
+        isHandlingLaunch = false
         isFinishing = false
     }
 }

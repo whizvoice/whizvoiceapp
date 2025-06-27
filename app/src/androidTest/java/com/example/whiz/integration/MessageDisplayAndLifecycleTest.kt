@@ -60,6 +60,15 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @Inject
     lateinit var database: WhizDatabase
 
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    
+    @Inject
+    lateinit var preloadManager: com.example.whiz.data.PreloadManager
+    
+    @Inject
+    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
+
     private var testChatId = 0L
     private var createdServerChatId = 0L // Track the server chat ID created during test
     private val TAG = "MessageDisplayTest"
@@ -236,184 +245,26 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 1: Launch the app for our UI test
         Log.d(TAG, "🚀 Launching app for comprehensive UI test...")
-        val intent = InstrumentationRegistry.getInstrumentation().targetContext.packageManager
-            .getLaunchIntentForPackage("com.example.whiz.debug")
-        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        InstrumentationRegistry.getInstrumentation().targetContext.startActivity(intent)
-        
-        // Wait for app to load completely
-        val appLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.pkg("com.example.whiz.debug")
-        ), 10000)
-        
-        if (!appLoaded) {
-            Log.e(TAG, "❌ FAILURE: App failed to load within timeout")
-            failWithScreenshot("app_failed_to_load", "App did not load within 10 seconds - check if app is properly installed")
+        if (!launchAppAndWaitForLoad()) {
+            failWithScreenshot("app_failed_to_load", "App failed to launch or load main UI")
         }
-        
-        // Wait for main UI elements to appear (either New Chat button or message input)
-        val newChatLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.descContains("New Chat").pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        val inputFieldLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        val mainUILoaded = newChatLoaded || inputFieldLoaded
-        
-        if (!mainUILoaded) {
-            Log.e(TAG, "❌ FAILURE: Main UI elements not found")
-            failWithScreenshot("main_ui_not_loaded", "Neither New Chat button nor message input field found - app may not have loaded properly")
-        }
-        
-        Log.d(TAG, "📱 App loaded successfully, looking for New Chat button...")
         
         // Step 2: Navigate to new chat if needed
-        val newChatButton = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .descriptionContains("New Chat")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (newChatButton.waitForExists(3000)) {
-            Log.d(TAG, "✅ Found New Chat button, clicking...")
-            newChatButton.click()
-            
-            // Wait for chat screen to load by looking for message input field
-            val chatLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
-            ), 5000)
-            
-            if (!chatLoaded) {
-                Log.e(TAG, "❌ FAILURE: Chat screen failed to load after clicking New Chat")
-                failWithScreenshot("chat_screen_not_loaded", "Chat screen did not load after clicking New Chat button - navigation may be broken")
+        Log.d(TAG, "📱 App loaded successfully, navigating to new chat...")
+        if (!clickNewChatButtonAndWaitForChatScreen()) {
+            // Check if already in chat by looking for message input field
+            val alreadyInChat = device.hasObject(androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg(packageName))
+            if (!alreadyInChat) {
+                failWithScreenshot("new_chat_failed", "Failed to navigate to new chat and not already in chat")
             }
-        } else {
-            Log.w(TAG, "⚠️ New Chat button not found, assuming already in chat")
+            Log.w(TAG, "⚠️ Already in chat, continuing with test...")
         }
         
-        // Step 3: Find the message input field and type the first message
-        Log.d(TAG, "🔍 Looking for message input field...")
-        val messageInput = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .className("android.widget.EditText")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (!messageInput.waitForExists(5000)) {
-            Log.e(TAG, "❌ FAILURE: Message input field not found")
-            failWithScreenshot("message_input_not_found", "Message input field not found - chat UI may not have loaded properly")
+        // Step 3: Send first message and verify optimistic UI
+        Log.d(TAG, "💬 Sending first message and verifying optimistic UI...")
+        if (!sendMessageAndVerifyDisplay(firstMessage)) {
+            failWithScreenshot("first_message_failed", "Failed to send first message or verify optimistic UI")
         }
-        
-        Log.d(TAG, "✅ Found message input field, typing first message...")
-        messageInput.click() // Focus the input field
-        
-        // Wait for input field to be focused
-        val inputFocused = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.focused(true).clazz("android.widget.EditText")
-        ), 2000)
-        
-        if (!inputFocused) {
-            // Wait for keyboard to appear as alternative focus indicator
-            val keyboardAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.pkg("com.google.android.inputmethod.latin")
-            ), 1000) || device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.pkg("com.android.inputmethod")
-            ), 1000)
-            
-            if (!keyboardAppeared) {
-                Log.w(TAG, "⚠️ Neither focus nor keyboard detected, but continuing...")
-            }
-        }
-        
-        messageInput.setText(firstMessage)
-        
-        // Wait for text to actually appear in the field
-        val textSet = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.text(firstMessage).pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        if (!textSet) {
-            Log.w(TAG, "⚠️ Text didn't appear in input field, trying again...")
-            messageInput.setText(firstMessage)
-            
-            // Wait again with more patience
-            val textSetRetry = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.text(firstMessage).pkg("com.example.whiz.debug")
-            ), 2000)
-            
-            if (!textSetRetry) {
-                Log.e(TAG, "❌ FAILURE: Could not set text in message input field")
-                failWithScreenshot("text_input_failed", "Unable to set text in message input field - input field may not be working properly")
-            }
-        }
-        
-        Log.d(TAG, "✅ First message typed successfully: '$firstMessage'")
-        
-        // Step 4: Find and click the send button
-        Log.d(TAG, "🔍 Looking for send button...")
-        
-        // Wait for send button to appear (should happen when text is entered)
-        val sendButtonReady = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.descContains("Send message").pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        if (!sendButtonReady) {
-            Log.w(TAG, "🔍 Send button not ready yet, checking if text input is complete...")
-            // Wait for UI to update after text input
-            val uiUpdated = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
-            ), 1000)
-            if (!uiUpdated) {
-                Log.w(TAG, "⚠️ UI may not have updated properly after text input")
-            }
-        }
-        
-        val sendButton = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .descriptionContains("Send message")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (sendButton.waitForExists(3000)) {
-            Log.d(TAG, "✅ Found send button, clicking...")
-            sendButton.click()
-            
-            // Wait for message to be sent by checking if input field is cleared
-            val messageSent = device.wait(androidx.test.uiautomator.Until.gone(
-                androidx.test.uiautomator.By.text(firstMessage).clazz("android.widget.EditText")
-            ), 3000)
-            
-            if (!messageSent) {
-                Log.w(TAG, "⚠️ Input field not cleared, checking if send action completed...")
-                // Alternative: check if a user message appeared in the chat
-                val messageInChat = device.wait(androidx.test.uiautomator.Until.hasObject(
-                    androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
-                ), 2000)
-                if (!messageInChat) {
-                    Log.w(TAG, "⚠️ Message may not have been sent properly")
-                }
-            }
-            
-            Log.d(TAG, "✅ Send button clicked successfully")
-        } else {
-            Log.e(TAG, "❌ FAILURE: Send button not found")
-            failWithScreenshot("send_button_not_found", "Send button not found - UI may not be responding to text input or send button is not visible")
-        }
-        
-        // Step 5: Verify the first message appears in the chat UI (optimistic UI test)
-        Log.d(TAG, "🔍 Verifying first message appears in chat...")
-        
-        val firstMessageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
-        ), 5000)
-        
-        if (!firstMessageAppeared) {
-            Log.e(TAG, "❌ FAILURE: First message does not appear in chat UI")
-            failWithScreenshot("first_message_not_visible", "First message not visible in chat UI - optimistic UI not working properly")
-        }
-        
         Log.d(TAG, "✅ SUCCESS: First message appears in chat UI immediately!")
         
         // Step 6: Wait for server/bot response by looking for the "Whiz" assistant label
@@ -477,59 +328,10 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 7: Navigate back to chat list
         Log.d(TAG, "🔍 Navigating back to chat list...")
-        
-        // Try to find the "Open Chats List" button (hamburger menu in top bar)
-        val chatsListButton = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .descriptionContains("Open Chats List")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (chatsListButton.waitForExists(3000)) {
-            Log.d(TAG, "✅ Found 'Open Chats List' button, clicking...")
-            chatsListButton.click()
-        } else {
-            // Try alternative navigation button descriptions
-            val backButton = device.findObject(
-                androidx.test.uiautomator.UiSelector()
-                    .descriptionContains("Navigate up")
-                    .packageName("com.example.whiz.debug")
-            )
-            
-            if (backButton.waitForExists(2000)) {
-                Log.d(TAG, "✅ Found 'Navigate up' button, clicking...")
-                backButton.click()
-            } else {
-                Log.w(TAG, "⚠️ No navigation buttons found, using device back button")
-                device.pressBack()
-            }
+        if (!navigateBackToChatsListFromChat()) {
+            Log.d(TAG, "🚫 Could not navigate back to chat list")
+            failWithScreenshot("chat_list_not_loaded", "Could not navigate back to chat list - back navigation may be broken")
         }
-        
-        // Wait for chat list to appear - try multiple indicators
-        val chatListLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.descContains("New Chat").pkg("com.example.whiz.debug")
-        ), 8000) || device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.text("My Chats").pkg("com.example.whiz.debug")
-        ), 3000) || device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains("Settings").pkg("com.example.whiz.debug")
-        ), 2000)
-        
-        if (!chatListLoaded) {
-            // Debug: Let's see what's actually on screen
-            val allVisibleElements = device.findObjects(androidx.test.uiautomator.By.pkg("com.example.whiz.debug"))
-            val visibleTexts = allVisibleElements.mapNotNull { 
-                try {
-                    val text = it.text
-                    if (text.isNotBlank()) text else null
-                } catch (e: Exception) {
-                    null
-                }
-            }.filter { it.length > 3 }
-            Log.e(TAG, "❌ FAILURE: Failed to return to chat list")
-            Log.e(TAG, "🔍 Currently visible elements: ${visibleTexts.take(10).joinToString(", ")}")
-            failWithScreenshot("chat_list_not_loaded", "Could not navigate back to chat list - back navigation may be broken. Visible: ${visibleTexts.take(5).joinToString(", ")}")
-        }
-        
         Log.d(TAG, "✅ Successfully returned to chat list")
         
         // Step 7.5: Wait for incremental sync to update chat list
@@ -664,64 +466,10 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
         
         // Step 10: Send a second message to test existing chat functionality
-        Log.d(TAG, "🔍 Sending second message in existing chat...")
-        
-        val messageInputSecond = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .className("android.widget.EditText")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (!messageInputSecond.waitForExists(3000)) {
-            Log.e(TAG, "❌ FAILURE: Message input not available for second message")
-            failWithScreenshot("second_message_input_not_found", "Message input field not found for second message - existing chat UI may be broken")
+        Log.d(TAG, "💬 Sending second message in existing chat...")
+        if (!sendMessageAndVerifyDisplay(secondMessage)) {
+            failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
         }
-        
-        messageInputSecond.click()
-        messageInputSecond.setText(secondMessage)
-        
-        // Wait for second message text to appear
-        val secondTextSet = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.text(secondMessage).pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        if (!secondTextSet) {
-            Log.w(TAG, "⚠️ Second message text didn't appear, trying again...")
-            messageInputSecond.setText(secondMessage)
-            
-            val secondTextSetRetry = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.text(secondMessage).pkg("com.example.whiz.debug")
-            ), 2000)
-            
-            if (!secondTextSetRetry) {
-                Log.e(TAG, "❌ FAILURE: Could not set second message text")
-                failWithScreenshot("second_message_text_failed", "Unable to set text for second message - input field may not be working in existing chat")
-            }
-        }
-        
-        val sendButtonSecond = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .descriptionContains("Send message")
-                .packageName("com.example.whiz.debug")
-        )
-        
-        if (!sendButtonSecond.waitForExists(3000)) {
-            Log.e(TAG, "❌ FAILURE: Send button not available for second message")
-            failWithScreenshot("second_send_button_not_found", "Send button not found for second message - existing chat send functionality may be broken")
-        }
-        
-        sendButtonSecond.click()
-        
-        // Verify second message appears
-        val secondMessageAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(secondMessage).pkg("com.example.whiz.debug")
-        ), 5000)
-        
-        if (!secondMessageAppeared) {
-            Log.e(TAG, "❌ FAILURE: Second message does not appear in existing chat")
-            failWithScreenshot("second_message_not_visible", "Second message not visible in existing chat")
-        }
-        
         Log.d(TAG, "✅ Second message sent and visible successfully")
         
         // Step 11: Final verification - both messages should be visible

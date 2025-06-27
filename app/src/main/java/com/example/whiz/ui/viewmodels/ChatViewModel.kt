@@ -98,7 +98,7 @@ class ChatViewModel @Inject constructor(
     private val _isInputFromVoice = MutableStateFlow(false)
     val isInputFromVoice = _isInputFromVoice.asStateFlow()
 
-    // Messages in the current chat
+    // Messages in the current chat with deduplication to handle optimistic UI transitions
     val messages = _chatId.flatMapLatest { id ->
         Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
         if (id != 0L) { // 🔧 OPTIMISTIC UI FIX: Handle both positive AND negative chat IDs
@@ -107,6 +107,17 @@ class ChatViewModel @Inject constructor(
                 messagesList.forEachIndexed { index, message ->
                     Log.d(TAG, "🔥 messages flow: [$index] ${message.type}: ${message.content.take(50)}...")
                 }
+            }.map { messagesList ->
+                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on content + timestamp + type
+                val deduplicatedMessages = messagesList.distinctBy { message ->
+                    // Create unique key from content, timestamp, and type to prevent optimistic UI duplicates
+                    Triple(message.content.trim(), message.timestamp, message.type)
+                }
+                if (deduplicatedMessages.size != messagesList.size) {
+                    Log.w(TAG, "🔧 DEDUPLICATION: Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
+                    Log.d(TAG, "🔧 DEDUPLICATION: Original ${messagesList.size} -> Deduplicated ${deduplicatedMessages.size}")
+                }
+                deduplicatedMessages
             }
         } else {
             Log.d(TAG, "🔥 messages flow: Returning empty list for chat ID $id (id == 0)")

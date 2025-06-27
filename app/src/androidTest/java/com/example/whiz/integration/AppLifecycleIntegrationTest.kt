@@ -54,6 +54,12 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
 
+    @Inject
+    lateinit var preloadManager: com.example.whiz.data.PreloadManager
+    
+    @Inject
+    lateinit var repository: com.example.whiz.data.repository.WhizRepository
+
     private val TAG = "AppLifecycleTest"
 
     @Before
@@ -140,25 +146,11 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ CORRECT: Manual launch went to chats list as expected")
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 
-                val newChatButton = device.findObject(By.desc("New Chat").pkg(packageName))
-                if (newChatButton != null) {
-                    Log.d(TAG, "✅ Found FAB with exact 'New Chat' description")
-                    Log.d(TAG, "🔘 Clicking New Chat button...")
-                    newChatButton.click()
-                    // Wait for chat screen to load instead of arbitrary delay
-                    device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 5000)
-                    
-                    // Verify we actually navigated by checking if we're still on the chats list
-                    val stillOnChatsList = device.hasObject(By.text("My Chats").pkg(packageName))
-                    if (stillOnChatsList) {
-                        Log.e(TAG, "❌ CRITICAL: Still on 'My Chats' page after clicking - navigation failed!")
-                        failWithScreenshot("Clicked New Chat button but still on My Chats page - navigation failed")
-                    }
-                    
-                    Log.d(TAG, "✅ Successfully navigated to New Chat page")
-                } else {
+                Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
                     failWithScreenshot("Test was unable to find New Chat button and not already in chat")
                 }
+                Log.d(TAG, "✅ Successfully navigated to New Chat page")
             }
             
             // Simulate entering a chat page using VoiceManager

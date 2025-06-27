@@ -27,7 +27,6 @@ import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
-import com.example.whiz.ui.screens.AssistantOverlayUi
 import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.AndroidEntryPoint
