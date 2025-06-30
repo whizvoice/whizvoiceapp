@@ -163,44 +163,61 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             )
             Log.d(TAG, "✅ No duplicate messages detected")
             
-            // Step 5: Wait for potential bot response and verify placement
-            Log.d(TAG, "⏳ Waiting for potential bot response...")
+            // Step 5: Wait for bot thinking indicator and response using BaseIntegrationTest methods
+            Log.d(TAG, "⏳ Waiting for bot thinking indicator...")
+            val thinkingStarted = waitForBotThinkingIndicator(5000)
             var botResponseReceived = false
             
-            withTimeout(TEST_TIMEOUT) {
-                var attempts = 0
-                while (attempts < 50) { // Max 50 attempts (5 seconds)
-                    val allMessages = repository.getMessagesForChat(chatId).first()
-                    val assistantMessages = allMessages.filter { it.type == MessageType.ASSISTANT }
+            if (thinkingStarted) {
+                Log.d(TAG, "🤖 'Whiz is computing' indicator detected!")
+                
+                // Wait for bot to finish thinking
+                Log.d(TAG, "⏳ Waiting for bot to finish computing...")
+                val thinkingFinished = waitForBotThinkingToFinish(TEST_TIMEOUT)
+                
+                if (thinkingFinished) {
+                    Log.d(TAG, "🤖 Bot finished computing!")
                     
-                    if (assistantMessages.isNotEmpty()) {
-                        Log.d(TAG, "🤖 Bot response detected!")
+                    // Wait for actual bot response to appear
+                    Log.d(TAG, "⏳ Waiting for bot response to appear...")
+                    val responseAppeared = waitForBotResponse(5000)
+                    
+                    if (responseAppeared) {
+                        Log.d(TAG, "🤖 Bot response detected in UI!")
                         botResponseReceived = true
                         
-                        // Verify bot response placement
-                        val sortedMessages = allMessages.sortedBy { it.timestamp }
-                        val lastUserMessage = sortedMessages.filter { it.type == MessageType.USER }.lastOrNull()
-                        val firstBotResponse = assistantMessages.first()
+                        // Verify bot response in repository data
+                        val allMessages = repository.getMessagesForChat(chatId).first()
+                        val assistantMessages = allMessages.filter { it.type == MessageType.ASSISTANT }
                         
-                        if (lastUserMessage != null) {
-                            assertTrue(
-                                "Bot response should come after the last user message",
-                                firstBotResponse.timestamp >= lastUserMessage.timestamp
-                            )
-                            Log.d(TAG, "✅ Bot response correctly placed after user messages")
+                        if (assistantMessages.isNotEmpty()) {
+                            // Verify bot response placement
+                            val sortedMessages = allMessages.sortedBy { it.timestamp }
+                            val lastUserMessage = sortedMessages.filter { it.type == MessageType.USER }.lastOrNull()
+                            val firstBotResponse = assistantMessages.first()
+                            
+                            if (lastUserMessage != null) {
+                                assertTrue(
+                                    "Bot response should come after the last user message",
+                                    firstBotResponse.timestamp >= lastUserMessage.timestamp
+                                )
+                                Log.d(TAG, "✅ Bot response correctly placed after user messages")
+                            }
+                            
+                            // Check that bot response doesn't create duplicates
+                            val finalUserMessages = allMessages.filter { it.type == MessageType.USER }
+                            assertEquals("User message count should remain unchanged after bot response", MESSAGE_COUNT, finalUserMessages.size)
+                            
+                            Log.d(TAG, "✅ Bot response verification completed")
                         }
-                        
-                        // Check that bot response doesn't create duplicates
-                        val finalAllMessages = repository.getMessagesForChat(chatId).first()
-                        val finalUserMessages = finalAllMessages.filter { it.type == MessageType.USER }
-                        assertEquals("User message count should remain unchanged after bot response", MESSAGE_COUNT, finalUserMessages.size)
-                        
-                        break
+                    } else {
+                        Log.w(TAG, "⚠️ Bot response not detected in UI after thinking finished")
                     }
-                    
-                    attempts++
-                    delay(100)
+                } else {
+                    Log.w(TAG, "⚠️ Bot thinking indicator didn't disappear within timeout")
                 }
+            } else {
+                Log.w(TAG, "⚠️ No 'Whiz is computing' indicator detected")
             }
             
             if (!botResponseReceived) {
