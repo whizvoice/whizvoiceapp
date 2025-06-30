@@ -35,7 +35,6 @@ import com.example.whiz.data.local.MessageType
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-@org.junit.Ignore("Integration tests disabled - device connection issues")
 class ChatViewModelIntegrationTest : BaseIntegrationTest() {
 
     @Inject
@@ -77,7 +76,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
     }
 
     @Test
-    fun rapidMessageFlow_maintainsOrderingAndDetectsDuplicates() = runTest {
+    fun rapidMessageFlow_maintainsOrderingAndDetectsDuplicates() {
         Log.d(TAG, "🚀 Testing rapid message sending with ordering and duplication detection")
         
         try {
