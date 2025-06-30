@@ -1,4 +1,3 @@
-/*
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -24,14 +23,14 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.After
 import android.util.Log
+import com.example.whiz.data.local.MessageType
 
 /**
- * Integration tests for business logic covering the exact issues found in production:
- * 1. WebSocket request ID tracking and orphaned response handling scenarios
- * 2. Speech recognition state management during server responses
- * 3. Message flow and duplication detection
- * 
- * These tests verify the core business logic that was causing the production issues.
+ * Integration tests for business logic covering message ordering and duplication:
+ * 1. Send multiple messages rapidly and verify correct ordering
+ * 2. Verify messages appear immediately (optimistic UI)
+ * 3. Check bot response placement and message synchronization
+ * 4. Detect and prevent message duplication
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
@@ -39,8 +38,6 @@ import android.util.Log
 @org.junit.Ignore("Integration tests disabled - device connection issues")
 class ChatViewModelIntegrationTest : BaseIntegrationTest() {
 
-
-    
     @Inject
     lateinit var repository: WhizRepository
     
@@ -49,7 +46,8 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
 
     companion object {
         private const val TAG = "ChatViewModelIntegrationTest"
-        private const val TEST_TIMEOUT = 10000L // 10 seconds
+        private const val TEST_TIMEOUT = 15000L // 15 seconds
+        private const val MESSAGE_COUNT = 5
     }
     
     // Track chats created during tests for cleanup
@@ -79,138 +77,162 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
     }
 
     @Test
-    fun repository_createChat_withValidData_succeeds() = runTest {
-        Log.d(TAG, "🔥 Testing repository chat creation (core business logic)")
-        
-        // Authentication is automatically handled by BaseIntegrationTest
-        
-        // This test verifies the core repository functionality works
-        // which is essential for the message flow that was failing
-        
-        val testChatTitle = "Integration test chat - ${System.currentTimeMillis()}"
+    fun rapidMessageFlow_maintainsOrderingAndDetectsDuplicates() = runTest {
+        Log.d(TAG, "🚀 Testing rapid message sending with ordering and duplication detection")
         
         try {
-            Log.d(TAG, "📤 Creating chat with title: $testChatTitle")
-            val chatId = repository.createChat(testChatTitle)
-            createdChatIds.add(chatId) // Track for cleanup
-            
-            assertTrue("Chat ID should be positive", chatId > 0)
-            Log.d(TAG, "✅ Chat created successfully with ID: $chatId")
-            
-            // Test adding a message to the chat - this is where duplication could occur
-            val testMessage = "Test message for integration"
-            val messageId = repository.addUserMessage(chatId, testMessage)
-            
-            assertTrue("Message ID should be positive", messageId > 0)
-            Log.d(TAG, "✅ Message added successfully with ID: $messageId")
-            
-            // Add a small delay then check for message duplication
-            delay(500)
-            
-            // This is where we would detect message duplication in a full flow test
-            Log.d(TAG, "📝 Message flow test completed - checking for duplication patterns...")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Repository test failed", e)
-            throw e
-        }
-        
-        Log.d(TAG, "✅ Repository integration test completed")
-    }
-
-    @Test
-    fun speechRecognitionService_stateManagement_worksCorrectly() = runTest {
-        Log.d(TAG, "🎤 Testing speech recognition service state management")
-        
-        // This test verifies the core speech recognition logic
-        // that was involved in the mic button issues
-        
-        Log.d(TAG, "🔊 Testing initial speech recognition state")
-        val initialState = speechRecognitionService.continuousListeningEnabled
-        
-        // Test enabling/disabling continuous listening
-        speechRecognitionService.continuousListeningEnabled = true
-        assertTrue("Should be able to enable continuous listening",
-                  speechRecognitionService.continuousListeningEnabled)
-        
-        speechRecognitionService.continuousListeningEnabled = false
-        assertFalse("Should be able to disable continuous listening",
-                   speechRecognitionService.continuousListeningEnabled)
-        
-        Log.d(TAG, "✅ Speech recognition state management test completed")
-    }
-
-    @Test
-    fun dataValidation_handlesEdgeCases_correctly() = runTest {
-        Log.d(TAG, "🔍 Testing data validation edge cases")
-        
-        // Authentication is automatically handled by BaseIntegrationTest
-        // No need to check authentication manually
-        
-        // Test the business logic validation that was missing
-        // and caused some of the production issues
-        
-        // Test chat title validation
-        val testTitles = listOf(
-            "",
-            "   ",
-            "Valid Chat Title",
-            "Very long title that should be handled gracefully by the system without breaking",
-            "Title with special chars @#$%"
-        )
-        
-        testTitles.forEach { title ->
-            try {
-                if (title.trim().isNotBlank()) {
-                    val chatId = repository.createChat(title)
-                    createdChatIds.add(chatId) // Track for cleanup
-                    assertTrue("Valid title should create chat", chatId > 0)
-                    Log.d(TAG, "✅ Chat created with title: '$title' -> ID: $chatId")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Title validation issue with: '$title'", e)
-            }
-        }
-        
-        Log.d(TAG, "✅ Data validation test completed")
-    }
-    
-    @Test
-    fun messageFlow_detectsDuplicationPatterns() = runTest {
-        Log.d(TAG, "🔍 Testing message flow for duplication patterns (production bug detection)")
-        
-        // Authentication is automatically handled by BaseIntegrationTest
-        // No need to check authentication manually
-        
-        // This test specifically looks for the message duplication pattern
-        // that was happening in production
-        
-        try {
-            val testChatTitle = "Message Duplication Test - ${System.currentTimeMillis()}"
+            val uniqueTestId = System.currentTimeMillis()
+            val testChatTitle = "Rapid Message Test - $uniqueTestId"
             val chatId = repository.createChat(testChatTitle)
             createdChatIds.add(chatId)
             
             assertTrue("Chat should be created successfully", chatId > 0)
-            Log.d(TAG, "Created test chat for duplication detection: $chatId")
+            Log.d(TAG, "✅ Created test chat: $chatId")
             
-            // Simulate the exact pattern that causes duplication:
-            // 1. Add message optimistically (client-side)
-            val testMessage = "Test message for duplication detection"
-            val messageId1 = repository.addUserMessage(chatId, testMessage)
-            Log.d(TAG, "Added message optimistically: $messageId1")
+            // Step 1: Send 5 messages rapidly
+            val sentMessages = mutableListOf<String>()
+            val messageTimestamps = mutableListOf<Long>()
             
-            // 2. Small delay to simulate network timing
-            delay(100)
+            Log.d(TAG, "📨 Sending $MESSAGE_COUNT messages rapidly...")
+            for (i in 1..MESSAGE_COUNT) {
+                val timestamp = System.currentTimeMillis()
+                val message = "Message $i - Rapid Test $uniqueTestId - $timestamp"
+                
+                val messageId = repository.addUserMessage(chatId, message)
+                assertTrue("Message should be added successfully", messageId > 0)
+                
+                sentMessages.add(message)
+                messageTimestamps.add(timestamp)
+                
+                Log.d(TAG, "📤 Sent message $i: ID=$messageId, Content='${message.take(30)}...'")
+                
+                // Small delay between messages to test rapid succession but allow for ordering
+                delay(50)
+            }
             
-            // 3. Refresh messages (simulates server sync)
-            // This is where duplicates would appear if the bug exists
-            // In a more complete test, we'd mock the WebSocket flow
+            // Step 2: Wait for optimistic messages to appear and verify immediate display
+            Log.d(TAG, "⏳ Waiting for optimistic messages to appear...")
+            withTimeout(TEST_TIMEOUT) {
+                var attempts = 0
+                while (attempts < 30) { // Max 30 attempts (3 seconds)
+                    val messages = repository.getMessagesForChat(chatId).first()
+                    val userMessages = messages.filter { it.type == MessageType.USER }
+                    
+                    if (userMessages.size >= MESSAGE_COUNT) {
+                        Log.d(TAG, "✅ All $MESSAGE_COUNT messages appeared optimistically")
+                        break
+                    }
+                    
+                    attempts++
+                    delay(100)
+                }
+                
+                // Verify all messages are present
+                val messages = repository.getMessagesForChat(chatId).first()
+                val userMessages = messages.filter { it.type == MessageType.USER }
+                assertEquals("Should have exactly $MESSAGE_COUNT user messages", MESSAGE_COUNT, userMessages.size)
+            }
             
-            Log.d(TAG, "✅ Message duplication pattern test completed")
+            // Step 3: Verify message ordering (messages should be in timestamp order)
+            Log.d(TAG, "🔍 Verifying message ordering...")
+            val messages = repository.getMessagesForChat(chatId).first()
+            val userMessages = messages.filter { it.type == MessageType.USER }.sortedBy { it.timestamp }
+            
+            // Check that messages are in the correct order based on content
+            for (i in 0 until MESSAGE_COUNT) {
+                val expectedMessageStart = "Message ${i + 1} - Rapid Test"
+                val actualMessage = userMessages[i].content
+                
+                assertTrue(
+                    "Message $i should contain expected content. Expected: '$expectedMessageStart', Actual: '${actualMessage.take(50)}'",
+                    actualMessage.contains(expectedMessageStart)
+                )
+                
+                Log.d(TAG, "✅ Message ${i + 1} in correct position: '${actualMessage.take(30)}...'")
+            }
+            
+            // Step 4: Check for duplicates
+            Log.d(TAG, "🔍 Checking for duplicate messages...")
+            val allMessageContents = userMessages.map { it.content }
+            val uniqueContents = allMessageContents.toSet()
+            
+            assertEquals(
+                "Should have no duplicate messages. All contents: ${allMessageContents.map { it.take(20) }}",
+                MESSAGE_COUNT,
+                uniqueContents.size
+            )
+            Log.d(TAG, "✅ No duplicate messages detected")
+            
+            // Step 5: Wait for potential bot response and verify placement
+            Log.d(TAG, "⏳ Waiting for potential bot response...")
+            var botResponseReceived = false
+            
+            withTimeout(TEST_TIMEOUT) {
+                var attempts = 0
+                while (attempts < 50) { // Max 50 attempts (5 seconds)
+                    val allMessages = repository.getMessagesForChat(chatId).first()
+                    val assistantMessages = allMessages.filter { it.type == MessageType.ASSISTANT }
+                    
+                    if (assistantMessages.isNotEmpty()) {
+                        Log.d(TAG, "🤖 Bot response detected!")
+                        botResponseReceived = true
+                        
+                        // Verify bot response placement
+                        val sortedMessages = allMessages.sortedBy { it.timestamp }
+                        val lastUserMessage = sortedMessages.filter { it.type == MessageType.USER }.lastOrNull()
+                        val firstBotResponse = assistantMessages.first()
+                        
+                        if (lastUserMessage != null) {
+                            assertTrue(
+                                "Bot response should come after the last user message",
+                                firstBotResponse.timestamp >= lastUserMessage.timestamp
+                            )
+                            Log.d(TAG, "✅ Bot response correctly placed after user messages")
+                        }
+                        
+                        // Check that bot response doesn't create duplicates
+                        val finalAllMessages = repository.getMessagesForChat(chatId).first()
+                        val finalUserMessages = finalAllMessages.filter { it.type == MessageType.USER }
+                        assertEquals("User message count should remain unchanged after bot response", MESSAGE_COUNT, finalUserMessages.size)
+                        
+                        break
+                    }
+                    
+                    attempts++
+                    delay(100)
+                }
+            }
+            
+            if (!botResponseReceived) {
+                Log.w(TAG, "⚠️ No bot response received within timeout - this is acceptable for testing")
+                Log.w(TAG, "   The test focuses on message ordering and duplication prevention")
+            }
+            
+            // Step 6: Final verification of message synchronization
+            Log.d(TAG, "🔍 Final verification of message state...")
+            val finalMessages = repository.getMessagesForChat(chatId).first()
+            val finalUserMessages = finalMessages.filter { it.type == MessageType.USER }
+            
+            // Verify all original messages are still present and in order
+            assertEquals("Final user message count should be $MESSAGE_COUNT", MESSAGE_COUNT, finalUserMessages.size)
+            
+            // Verify ordering is maintained
+            for (i in 0 until MESSAGE_COUNT - 1) {
+                assertTrue(
+                    "Messages should be in timestamp order",
+                    finalUserMessages[i].timestamp <= finalUserMessages[i + 1].timestamp
+                )
+            }
+            
+            Log.d(TAG, "✅ Message synchronization and ordering verification completed")
+            Log.d(TAG, "📊 Final message summary:")
+            Log.d(TAG, "   User messages: ${finalUserMessages.size}")
+            Log.d(TAG, "   Assistant messages: ${finalMessages.filter { it.type == MessageType.ASSISTANT }.size}")
+            Log.d(TAG, "   Total messages: ${finalMessages.size}")
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Message duplication test failed", e)
+            Log.e(TAG, "❌ Rapid message flow test failed", e)
             throw e
         }
     }
-} */
+}
