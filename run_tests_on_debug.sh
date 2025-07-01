@@ -32,9 +32,9 @@ cleanup_and_ensure_debug_installed() {
         # Inline screenshot pulling if function not available yet
         log_with_time "📸 Pulling test screenshots from device (cleanup)..."
         mkdir -p test_screenshots 2>/dev/null || true
-        local screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
+        local screenshot_files=$(adb shell "ls /sdcard/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
         if [[ -n "$screenshot_files" ]]; then
-            if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+            if adb pull /sdcard/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
                 find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
                 rm -rf temp_screenshots 2>/dev/null || true
                 local local_count=$(ls -1 test_screenshots/*.png 2>/dev/null | wc -l | tr -d ' ')
@@ -90,6 +90,11 @@ done
 # Clear previous log files
 > test_gradle_output.log
 > test_logcat_output.log
+
+# Clean screenshots from previous test runs (but preserve all screenshots within this run)
+echo "[$(date '+%H:%M:%S.%3N')] 🧹 Cleaning screenshots from previous test runs..."
+rm -rf test_screenshots/* 2>/dev/null || true
+mkdir -p test_screenshots
 
 # Function to log with timestamp
 log_with_time() {
@@ -400,12 +405,12 @@ pull_test_screenshots() {
     
     local total_pulled=0
     
-    # Check primary location: /sdcard/Download/test_screenshots/
-    local primary_screenshot_files=$(adb shell "ls /sdcard/Download/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
+    # Check primary location: /sdcard/test_screenshots/ (dedicated test screenshot directory)
+    local primary_screenshot_files=$(adb shell "ls /sdcard/test_screenshots/*.png" 2>/dev/null | grep -v "No such file" | head -1)
     
     if [[ -n "$primary_screenshot_files" ]]; then
-        log_with_time "📱 Found screenshots in primary location: /sdcard/Download/test_screenshots/"
-        if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+        log_with_time "📱 Found test screenshots in primary location: /sdcard/test_screenshots/"
+        if adb pull /sdcard/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
             # Move screenshots from temp folder to final location (find all .png files)
             find temp_screenshots -name "*.png" -exec mv {} test_screenshots/ \; 2>/dev/null || true
             rm -rf temp_screenshots
@@ -872,20 +877,19 @@ else
     set -e  # Re-enable exit on error
 fi
 
-# Clean app state and screenshots before integration tests
-log_with_time "🧹 Cleaning app state and old screenshots before integration tests..."
+# Clean app state and device screenshots before integration tests
+log_with_time "🧹 Cleaning app state and device screenshots before integration tests..."
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 
-# Clean old screenshots from local directory
-rm -rf test_screenshots/* 2>/dev/null || true
-mkdir -p test_screenshots
-
-# Clean old screenshots from device
-adb shell rm -rf /sdcard/Download/test_screenshots/* 2>/dev/null || true
-adb shell mkdir -p /sdcard/Download/test_screenshots 2>/dev/null || true
+# Clean old screenshots from device (local screenshots already cleaned at script start)
+# BaseIntegrationTest saves screenshots to /sdcard/test_screenshots/ (primary location)
+adb shell 'rm -rf /sdcard/test_screenshots/*' 2>/dev/null || true
+adb shell 'mkdir -p /sdcard/test_screenshots' 2>/dev/null || true
+adb shell 'rm -rf /data/local/tmp/screenshots/*' 2>/dev/null || true
+adb shell 'mkdir -p /data/local/tmp/screenshots' 2>/dev/null || true
 
 sleep 2
-log_with_time "✅ App state and screenshots cleaned"
+log_with_time "✅ App state and device screenshots cleaned"
 
 # Run integration tests with logcat capture (don't exit on failure)
 set +e  # Temporarily disable exit on error

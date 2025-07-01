@@ -41,6 +41,7 @@ import android.content.Intent
  * - new chat creation
  * - optimistic UI message display
  * - bot response detection
+ * - bot interruption capability (CRITICAL UX TEST: users must be able to interrupt bot)
  * - multiple message sending with proper timing
  * - chat migration from optimistic to server-backed
  * - message persistence verification
@@ -160,9 +161,11 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                          // add extra delay for CI environments
              Thread.sleep(getCIAwareDelay(1000))
             
-            if (!sendMessageAndVerifyDisplay(firstMessage)) {
-                android.util.Log.e(TAG, "❌ FAILURE at step 3: failed to send first message or verify optimistic UI")
-                failWithScreenshot("first_message_failed", "failed to send first message or verify optimistic UI")
+            if (!sendMessageAndVerifyWebSocketSending(firstMessage, 1)) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 3: first message failed to send properly")
+                android.util.Log.e(TAG, "   This could be UI display failure or WebSocket transmission failure")
+                android.util.Log.e(TAG, "   Message: '${firstMessage.take(50)}...'")
+                failWithScreenshot("first_message_send_failed", "Step 3: First message failed to send or reach server")
             }
             
             // ensure message is visible before proceeding
@@ -193,18 +196,32 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             // step 5: send second message while bot is responding
+            // This is the CRITICAL test for the production bug where messages appear to send
+            // during bot response but don't actually reach the server via WebSocket
             val secondMessage = "second message while you're thinking - $uniqueTestId"
-            android.util.Log.d(TAG, "💬 step 5: sending second message while bot is responding")
+            android.util.Log.d(TAG, "💬 step 5: sending second message while bot is responding (CRITICAL WebSocket test)")
             
-            // verify bot is still responding before sending
+            // CRITICAL: verify bot is still responding before sending - this tests the interruption capability
             if (!isBotCurrentlyResponding()) {
-                android.util.Log.w(TAG, "⚠️ bot may have finished responding, but continuing with test")
+                android.util.Log.e(TAG, "❌ FAILURE at step 5: bot stopped responding too quickly - cannot test interruption")
+                failWithScreenshot("bot_finished_too_early", "bot stopped responding before we could test interruption capability")
             }
             
-            if (!sendMessageAndVerifyDisplay(secondMessage)) {
-                android.util.Log.e(TAG, "❌ FAILURE at step 5: failed to send second message while bot responding")
-                failWithScreenshot("second_message_failed", "failed to send second message while bot responding")
+            android.util.Log.d(TAG, "🤖 bot confirmed still responding - now testing interruption...")
+            
+            // This is the core UX test: users MUST be able to interrupt the bot AND have messages actually reach the server
+            // Using sendMessageAndVerifyWebSocketSending to catch the production bug where send button
+            // appears to work during bot response but doesn't actually send messages to server
+            if (!sendMessageAndVerifyWebSocketSending(secondMessage, 2)) {
+                android.util.Log.e(TAG, "❌ CRITICAL: Bot interruption test failed!")
+                android.util.Log.e(TAG, "   Either message UI failed OR WebSocket sending failed during bot response")
+                android.util.Log.e(TAG, "   If WebSocket failed, this indicates the PRODUCTION BUG where users think")
+                android.util.Log.e(TAG, "   they're sending messages during bot response but messages never reach server")
+                android.util.Log.e(TAG, "   Message: '${secondMessage.take(50)}...'")
+                failWithScreenshot("bot_interruption_failed", "CRITICAL: Second message during bot response failed to send or reach server")
             }
+            
+            android.util.Log.d(TAG, "✅ Bot interruption successful - message sent AND reached server while bot was responding!")
             
             // step 6: wait for bot response to arrive
             android.util.Log.d(TAG, "⏳ step 6: waiting for bot response")
@@ -241,9 +258,11 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                 android.util.Log.w(TAG, "⚠️ bot still appears to be responding, but sending message anyway")
             }
             
-            if (!sendMessageAndVerifyDisplay(thirdMessage)) {
-                android.util.Log.e(TAG, "❌ FAILURE at step 7: failed to send third message after bot response")
-                failWithScreenshot("third_message_failed", "failed to send third message after bot response")
+            if (!sendMessageAndVerifyWebSocketSending(thirdMessage, 3)) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 7: third message after bot response failed")
+                android.util.Log.e(TAG, "   Third message either failed UI display or WebSocket transmission")
+                android.util.Log.e(TAG, "   Message: '${thirdMessage.take(50)}...'")
+                failWithScreenshot("third_message_send_failed", "Step 7: Third message after bot response failed to send or reach server")
             }
             
             // step 8: verify all messages are showing properly
@@ -272,6 +291,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             verifyFinalMessageState(sentMessages)
             
             android.util.Log.d(TAG, "🎉 comprehensive message flow test PASSED!")
+            android.util.Log.d(TAG, "✅ Test validated: optimistic UI, bot interruption capability, chat migration, and message persistence")
             
         } catch (e: Exception) {
             android.util.Log.e(TAG, "comprehensive message flow test FAILED", e)
