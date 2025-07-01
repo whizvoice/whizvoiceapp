@@ -1135,7 +1135,7 @@ class ChatViewModel @Inject constructor(
                 pendingRequests[requestId] = chatIdForWebSocket
                 
                 Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $requestId")
-                val success = whizServerRepository.sendMessage(trimmedText, requestId)
+                val success = whizServerRepository.sendMessage(trimmedText, requestId, chatIdForWebSocket)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
@@ -1349,7 +1349,7 @@ class ChatViewModel @Inject constructor(
                 val requestId = java.util.UUID.randomUUID().toString()
                 currentActiveRequestId = requestId // Track the active request
                 pendingRequests[requestId] = _chatId.value
-                val success = whizServerRepository.sendMessage(textToSend, requestId)
+                val success = whizServerRepository.sendMessage(textToSend, requestId, _chatId.value)
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
                     // The retry mechanism will handle this transparently
@@ -1615,7 +1615,7 @@ class ChatViewModel @Inject constructor(
         currentActiveRequestId = requestId
         
         // Send the interrupt message (backend will automatically cancel active requests)
-        val success = whizServerRepository.sendInterruptMessage(trimmedText, requestId)
+        val success = whizServerRepository.sendInterruptMessage(trimmedText, requestId, _chatId.value)
         
         if (success) {
             // Track this new request
@@ -1647,7 +1647,7 @@ class ChatViewModel @Inject constructor(
     fun canInterrupt(): Boolean {
         return configUseRemoteAgent && 
                _isResponding.value && 
-               _chatId.value > 0  // Allow interrupts even when disconnected - optimistic UI will handle it
+               _chatId.value != 0L  // ✅ FIXED: Allow both positive (server) and negative (optimistic) chat IDs
     }
 
     /**

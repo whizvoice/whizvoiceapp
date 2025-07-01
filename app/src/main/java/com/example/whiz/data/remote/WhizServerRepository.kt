@@ -39,6 +39,8 @@ data class PendingMessage(
     val message: String,
     val requestId: String,
     val conversationId: Long?,
+    val clientConversationId: Long? = null,
+    val clientMessageId: String? = null,
     val retryCount: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
 )
@@ -305,15 +307,18 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendMessage(message: String, requestId: String): Boolean {
+    fun sendMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !isManuallyDisconnected) {
-                // Send structured JSON with request ID
+                // Send structured JSON with request ID and optional client context
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
                     put("request_id", requestId)
                     put("type", "message")
+                    // Add client context for optimistic ID mapping
+                    clientConversationId?.let { put("client_conversation_id", it) }
+                    clientMessageId?.let { put("client_message_id", it) }
                 }
                 val jsonMessage = messageJson.toString()
                 Log.d(TAG, "Sending structured message: $jsonMessage")
@@ -325,12 +330,12 @@ class WhizServerRepository @Inject constructor(
                     true
                 } else {
                     Log.w(TAG, "WebSocket.send() returned false - queueing message for retry")
-                    queueMessageForRetry(message, requestId, currentConversationId)
+                    queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                     false
                 }
             } else {
                 Log.w(TAG, "Cannot send message, WebSocket is not connected - queueing message for retry")
-                queueMessageForRetry(message, requestId, currentConversationId)
+                queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                 // Attempt to reconnect
                 if (!isManuallyDisconnected) {
                     val conversationId = currentConversationId
@@ -343,14 +348,14 @@ class WhizServerRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending message - queueing for retry", e)
-            queueMessageForRetry(message, requestId, currentConversationId)
+            queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
             false
         }
     }
 
-    private fun queueMessageForRetry(message: String, requestId: String, conversationId: Long?) {
+    private fun queueMessageForRetry(message: String, requestId: String, conversationId: Long?, clientConversationId: Long? = null, clientMessageId: String? = null) {
         Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId")
-        val pendingMessage = PendingMessage(message, requestId, conversationId)
+        val pendingMessage = PendingMessage(message, requestId, conversationId, clientConversationId, clientMessageId)
         
         // Remove any existing message with the same requestId to avoid duplicates
         messageRetryQueue.removeAll { it.requestId == requestId }
@@ -388,6 +393,9 @@ class WhizServerRepository @Inject constructor(
                     put("message", pendingMessage.message)
                     put("request_id", pendingMessage.requestId)
                     put("type", "message")
+                    // Include client context for optimistic ID mapping
+                    pendingMessage.clientConversationId?.let { put("client_conversation_id", it) }
+                    pendingMessage.clientMessageId?.let { put("client_message_id", it) }
                 }
                 val jsonMessage = messageJson.toString()
                 
@@ -452,10 +460,10 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendInterruptMessage(message: String, requestId: String): Boolean {
+    fun sendInterruptMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
         // This is the same as sendMessage since the backend automatically handles interrupts
         // when a new message arrives while there are active requests
-        return sendMessage(message, requestId)
+        return sendMessage(message, requestId, clientConversationId, clientMessageId)
     }
 
     fun disconnect() {
