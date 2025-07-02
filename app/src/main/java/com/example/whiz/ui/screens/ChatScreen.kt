@@ -102,6 +102,8 @@ fun ChatScreen(
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
+    
+
 
     // Voice state from VoiceManager (clean separation)
     val isListening by voiceManager.isListening.collectAsState()
@@ -329,8 +331,7 @@ fun ChatScreen(
             // Only disable mic during TTS when no headphones (to prevent audio feedback)
             val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
             
-            // Debug logging for production bug investigation
-            Log.d("ChatScreen", "🔍 INPUT STATE DEBUG: isTextInputDisabled=$isTextInputDisabled, isMicDisabled=$isMicDisabled, isResponding=$isResponding, isSpeaking=$isSpeaking")
+
             ChatInputBar(
                 inputText = inputText,
                 isInputFromVoice = isInputFromVoice,
@@ -370,13 +371,14 @@ fun ChatScreen(
             }
 
             // Typing Indicator - Show only when responding (agent thinking), not when speaking
+            // Position just above the input bar
             AnimatedVisibility(
                 visible = isResponding && !isSpeaking,
                 enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
                 exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 80.dp) // Increased padding to avoid covering input field
+                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp) // Very close to input bar
             ) {
                 TypingIndicator()
             }
@@ -696,6 +698,8 @@ fun ChatInputBar(
     }
     
     val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    
+
 
     Surface(
         color = surfaceColor,
@@ -711,10 +715,10 @@ fun ChatInputBar(
         ) {
             OutlinedTextField(
                 value = displayValue,
-                onValueChange = {
+                onValueChange = { newValue ->
                     // Always allow input change - this enables manual typing to disable continuous listening
                     // The updateInputText method will handle stopping voice recognition when user types
-                    onInputChange(it)
+                    onInputChange(newValue)
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
