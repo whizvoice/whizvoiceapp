@@ -356,22 +356,28 @@ fun ChatScreen(
             )
         }
     ) { paddingValues ->
-        // 🔧 PRODUCTION BUG FIX: Eliminate ALL layout containers that could intercept touch events
-        // Use the simplest possible approach - just the MessagesList directly
+        // 🔧 PRODUCTION BUG FIX: Ensure content NEVER extends into bottomBar area
+        // The issue is invisible touch event interception, not visual layout
         
-        // Display messages or placeholder - no containers, no overlays
-        if (messages.isEmpty() && !isResponding && !isSpeaking) {
-            EmptyChatPlaceholder()
-        } else {
-            MessagesList(
-                messages = messages,
-                listState = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                showTypingIndicator = isResponding && !isSpeaking
-            )
+        // Create a constrained content area that explicitly stays within Scaffold bounds
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // Respect Scaffold padding (keeps content away from bottomBar)
+        ) {
+            // Display messages or placeholder within the constrained area
+            if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                EmptyChatPlaceholder()
+            } else {
+                MessagesList(
+                    messages = messages,
+                    listState = listState,
+                    modifier = Modifier
+                        .weight(1f) // Take remaining space but don't overflow
+                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                    showTypingIndicator = isResponding && !isSpeaking
+                )
+            }
         }
     }
 
@@ -496,7 +502,7 @@ fun MessagesList(
     
     LazyColumn(
         state = listState,
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(), // Only fill width, not height - prevents overlay
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -582,7 +588,7 @@ fun MessageItem(message: MessageEntity) {
 @Composable
 fun EmptyChatPlaceholder() {
     Box(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
