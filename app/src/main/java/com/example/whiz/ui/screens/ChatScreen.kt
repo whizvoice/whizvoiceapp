@@ -827,10 +827,11 @@ fun ChatInputBar(
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
 
                     val isButtonEnabled = when {
+                        hasTypedText -> true  // Send button for typed text is ALWAYS enabled
+                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
                         isListening -> !isMicDisabled
                         shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled
-                        hasInputText -> !isInputDisabled
                         else -> !isMicDisabled
                     }
                     
