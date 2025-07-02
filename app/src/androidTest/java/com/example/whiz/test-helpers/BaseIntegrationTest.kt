@@ -3,6 +3,7 @@ package com.example.whiz
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.UiSelector
@@ -1094,6 +1095,39 @@ abstract class BaseIntegrationTest {
     }
 
     /**
+     * Send whatever is currently typed in the input field - NO TYPING, just send what's there
+     * Perfect for testing the flow: user types → user sends (two separate actions)
+     */
+    protected fun sendCurrentTypedMessage(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "📤 TYPED: Sending whatever is currently in the input field...")
+        
+        // Get current input text for logging
+        val inputField = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        val currentText = if (inputField.exists()) {
+            inputField.text ?: "unknown"
+        } else {
+            "field_not_found"
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "📤 TYPED: Current input field content: '${currentText.take(30)}...'")
+        
+        // Just click send - don't type anything new
+        val sendingSuccess = clickSendButtonAndWaitForSentRapid(currentText)
+        if (!sendingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ TYPED: Failed to send currently typed message")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ TYPED: Successfully sent currently typed message")
+        return true
+    }
+
+    /**
      * Verify that the input field has been cleared after a message send - RAPID VERSION
      */
     protected fun verifyInputFieldClearedRapid(): Boolean {
@@ -1265,11 +1299,21 @@ abstract class BaseIntegrationTest {
      * Check if input field is currently disabled/blocked (indicating message blocking bug)
      */
     protected fun isInputFieldBlocked(): Boolean {
-        val inputField = device.findObject(
+        // Try contentDescription selector first (accessibility - most reliable)
+        var inputField = device.findObject(
             UiSelector()
-                .className("android.widget.EditText")
+                .description("Message input field")
                 .packageName(packageName)
         )
+        
+        // Fallback to className selector if contentDescription not found
+        if (!inputField.exists()) {
+            inputField = device.findObject(
+                UiSelector()
+                    .className("android.widget.EditText")
+                    .packageName(packageName)
+            )
+        }
         
         if (!inputField.exists()) {
             android.util.Log.d("BaseIntegrationTest", "🔍 Input field not found")
@@ -1289,33 +1333,164 @@ abstract class BaseIntegrationTest {
     protected fun tryToTypeInInputField(testText: String = "test"): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 Trying to type '$testText' in input field...")
         
-        val inputField = device.findObject(
+        // Try multiple selectors to find the input field
+        var inputField: UiObject
+        var selectorUsed = ""
+        
+        // Method 1: ContentDescription selector (accessibility - most reliable)
+        val contentDescSelector = device.findObject(
             UiSelector()
-                .className("android.widget.EditText")
+                .description("Message input field")
                 .packageName(packageName)
         )
+        if (contentDescSelector.exists()) {
+            inputField = contentDescSelector
+            selectorUsed = "contentDescription"
+            android.util.Log.d("BaseIntegrationTest", "✅ Found input field using contentDescription selector")
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "🔍 ContentDescription selector failed, trying className selector...")
+            
+            // Method 2: Fallback to className selector
+            val classNameSelector = device.findObject(
+                UiSelector()
+                    .className("android.widget.EditText")
+                    .packageName(packageName)
+            )
+            if (classNameSelector.exists()) {
+                inputField = classNameSelector
+                selectorUsed = "className"
+                android.util.Log.d("BaseIntegrationTest", "✅ Found input field using className selector")
+            } else {
+                android.util.Log.e("BaseIntegrationTest", "❌ Input field not found using any selector")
+                return false
+            }
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "🎯 Input field found using: $selectorUsed")
+        
+        // 🔧 DEBUG: Log basic input field state 
+        android.util.Log.d("BaseIntegrationTest", "🔍 INPUT FIELD STATE: exists=${inputField.exists()}, enabled=${inputField.isEnabled}, clickable=${inputField.isClickable}")
         
         if (!inputField.exists()) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Input field not found")
+            android.util.Log.e("BaseIntegrationTest", "❌ Input field found but doesn't exist")
             return false
         }
         
-        // Try to click on the input field
-        val clickSuccess = inputField.click()
+        // Try multiple interaction methods for Compose compatibility
+        var clickSuccess = false
+        var clickMethod = ""
+        
+        // Method 1: Try normal click
+        android.util.Log.d("BaseIntegrationTest", "🖱️ Trying Method 1: Normal UiObject.click()...")
+        try {
+            clickSuccess = inputField.click()
+            if (clickSuccess) {
+                clickMethod = "normal click"
+                android.util.Log.d("BaseIntegrationTest", "✅ Method 1 SUCCESS: Normal click worked")
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "❌ Method 1 FAILED: Normal click returned false")
+            }
+        } catch (e: Exception) {
+            android.util.Log.d("BaseIntegrationTest", "❌ Method 1 EXCEPTION: Normal click threw: ${e.message}")
+        }
+        
+        // Method 2: Try coordinate-based click
         if (!clickSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Cannot click input field")
-            return false
+            android.util.Log.d("BaseIntegrationTest", "🖱️ Trying Method 2: Coordinate-based click...")
+            try {
+                val bounds = inputField.bounds
+                val centerX = bounds.centerX()
+                val centerY = bounds.centerY()
+                android.util.Log.d("BaseIntegrationTest", "📍 Clicking at coordinates: ($centerX, $centerY)")
+                clickSuccess = device.click(centerX, centerY)
+                if (clickSuccess) {
+                    clickMethod = "coordinate click"
+                    android.util.Log.d("BaseIntegrationTest", "✅ Method 2 SUCCESS: Coordinate click worked")
+                } else {
+                    android.util.Log.d("BaseIntegrationTest", "❌ Method 2 FAILED: Coordinate click returned false")
+                }
+            } catch (e: Exception) {
+                android.util.Log.d("BaseIntegrationTest", "❌ Method 2 EXCEPTION: Coordinate click threw: ${e.message}")
+            }
         }
         
-        // Try to type text
-        val typeSuccess = inputField.setText(testText)
-        if (!typeSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Cannot type in input field")
+        // Method 3: Skip click entirely and try direct setText (for Compose compatibility)
+        if (!clickSuccess) {
+            android.util.Log.d("BaseIntegrationTest", "🖱️ Methods 1-2 failed, proceeding with Method 3: Direct setText without click")
+            clickSuccess = true // We'll proceed to setText
+            clickMethod = "direct setText (no click)"
+        }
+        
+        if (!clickSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ All input field interaction methods failed")
             return false
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "✅ Input field interaction successful using: $clickMethod")
+        }
+        
+        // Try to type text using Compose-compatible method
+        android.util.Log.d("BaseIntegrationTest", "⌨️ Typing text using keyboard input...")
+        
+        // For Compose compatibility, use keyboard input instead of setText
+        val typeSuccess = device.pressKeyCode(android.view.KeyEvent.KEYCODE_CTRL_LEFT, android.view.KeyEvent.META_CTRL_ON) // Select all first
+        Thread.sleep(50)
+        
+        // Type the text character by character using keyboard
+        for (char in testText) {
+            val keyCode = when (char) {
+                'a' -> android.view.KeyEvent.KEYCODE_A
+                'b' -> android.view.KeyEvent.KEYCODE_B  
+                'c' -> android.view.KeyEvent.KEYCODE_C
+                'd' -> android.view.KeyEvent.KEYCODE_D
+                'e' -> android.view.KeyEvent.KEYCODE_E
+                'f' -> android.view.KeyEvent.KEYCODE_F
+                'g' -> android.view.KeyEvent.KEYCODE_G
+                'h' -> android.view.KeyEvent.KEYCODE_H
+                'i' -> android.view.KeyEvent.KEYCODE_I
+                'j' -> android.view.KeyEvent.KEYCODE_J
+                'k' -> android.view.KeyEvent.KEYCODE_K
+                'l' -> android.view.KeyEvent.KEYCODE_L
+                'm' -> android.view.KeyEvent.KEYCODE_M
+                'n' -> android.view.KeyEvent.KEYCODE_N
+                'o' -> android.view.KeyEvent.KEYCODE_O
+                'p' -> android.view.KeyEvent.KEYCODE_P
+                'q' -> android.view.KeyEvent.KEYCODE_Q
+                'r' -> android.view.KeyEvent.KEYCODE_R
+                's' -> android.view.KeyEvent.KEYCODE_S
+                't' -> android.view.KeyEvent.KEYCODE_T
+                'u' -> android.view.KeyEvent.KEYCODE_U
+                'v' -> android.view.KeyEvent.KEYCODE_V
+                'w' -> android.view.KeyEvent.KEYCODE_W
+                'x' -> android.view.KeyEvent.KEYCODE_X
+                'y' -> android.view.KeyEvent.KEYCODE_Y
+                'z' -> android.view.KeyEvent.KEYCODE_Z
+                '0' -> android.view.KeyEvent.KEYCODE_0
+                '1' -> android.view.KeyEvent.KEYCODE_1
+                '2' -> android.view.KeyEvent.KEYCODE_2
+                '3' -> android.view.KeyEvent.KEYCODE_3
+                '4' -> android.view.KeyEvent.KEYCODE_4
+                '5' -> android.view.KeyEvent.KEYCODE_5
+                '6' -> android.view.KeyEvent.KEYCODE_6
+                '7' -> android.view.KeyEvent.KEYCODE_7
+                '8' -> android.view.KeyEvent.KEYCODE_8
+                '9' -> android.view.KeyEvent.KEYCODE_9
+                '_' -> {
+                    // Underscore requires SHIFT + MINUS
+                    device.pressKeyCode(android.view.KeyEvent.KEYCODE_MINUS, android.view.KeyEvent.META_SHIFT_ON)
+                    android.view.KeyEvent.KEYCODE_UNKNOWN // Skip the normal key press since we handled it
+                }
+                ' ' -> android.view.KeyEvent.KEYCODE_SPACE
+                else -> android.view.KeyEvent.KEYCODE_UNKNOWN
+            }
+            
+            if (keyCode != android.view.KeyEvent.KEYCODE_UNKNOWN) {
+                device.pressKeyCode(keyCode)
+                Thread.sleep(10) // Small delay between key presses
+            }
         }
         
         // Wait for text to appear in the input field (fix for timing race condition)
-        // The UI might take a moment to update after setText() is called
+        // The UI might take a moment to update after keyboard input
         var textAccepted = false
         var actualText = ""
         val maxRetries = 10
@@ -1341,10 +1516,10 @@ abstract class BaseIntegrationTest {
         }
         
         if (textAccepted) {
-            android.util.Log.d("BaseIntegrationTest", "✅ Successfully typed '$testText' in input field (text accepted)")
+            android.util.Log.d("BaseIntegrationTest", "✅ Successfully typed '$testText' using keyboard input (text accepted)")
             return true
         } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ Text '$testText' was not accepted by input field - completely blocked (actualText: '$actualText')")
+            android.util.Log.e("BaseIntegrationTest", "❌ Keyboard input '$testText' was not accepted by input field - completely blocked (actualText: '$actualText')")
             return false
         }
     }

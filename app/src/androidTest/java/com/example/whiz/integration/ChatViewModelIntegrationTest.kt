@@ -203,32 +203,54 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             val interruptMessageCount = MESSAGE_COUNT - 1 // 4 more messages
             
             // BUG DETECTION PHASE: Try to send rapid messages and FAIL if blocked
-            for (i in 1..interruptMessageCount) {
-                val interruptMessage = "Interrupt message $i while bot thinking - test $uniqueTestId"
+            // Phase 1: Test 2 TYPED messages (user types, then sends - realistic user flow)
+            for (i in 1..2) {
+                val interruptMessage = "hi $i"
                 
-                Log.d(TAG, "🔍 Before sending message $i: Testing if typing works during bot response...")
+                Log.d(TAG, "⌨️ TYPED MESSAGE $i: Testing keyboard typing during bot response...")
                 
-                // Try to type in input field - if this fails during bot response, that's the bug
-                if (!tryToTypeInInputField("typing_test_$i")) {
+                // Type the actual message using keyboard input (realistic user behavior)
+                // If this fails during bot response, that's the production bug we're testing for
+                if (!tryToTypeInInputField(interruptMessage)) {
                     Log.e(TAG, "🚨 PRODUCTION BUG DETECTED: Cannot type in input field while bot is responding!")
                     Log.e(TAG, "   This is the exact bug we're testing for - users cannot type messages while bot is thinking")
                     failWithScreenshot("message_blocking_bug_detected", "PRODUCTION BUG: Cannot type in input field during bot response")
                     return@runBlocking
                 }
                 
-                Log.d(TAG, "✅ Typing works! Now sending message $i with 50ms timeouts: '${interruptMessage.take(30)}...'")
+                Log.d(TAG, "✅ TYPED: Message $i typed successfully, now sending...")
+                
+                // Send whatever is currently typed (two-step user flow: type → send)
+                if (!sendCurrentTypedMessage()) {
+                    Log.e(TAG, "❌ TYPED: Failed to send typed message $i")
+                    failWithScreenshot("typed_send_${i}_failed", "Failed to send typed message $i")
+                    return@runBlocking
+                }
+                
+                sentMessages.add(interruptMessage)
+                Log.d(TAG, "✅ TYPED MESSAGE $i sent successfully via keyboard + send button")
+                
+                // Brief pause between typed messages (realistic user behavior)
+                Thread.sleep(100)
+            }
+            
+            // Phase 2: Test 3 QUICK messages (rapid type+send combo - power user flow)
+            for (i in 3..interruptMessageCount) {
+                val interruptMessage = "hi $i"
+                
+                Log.d(TAG, "⚡ QUICK MESSAGE $i: Testing rapid type+send during bot response...")
                 
                 // Send message with rapid 50ms timeouts for true interruption testing
                 if (!sendMessageAndVerifyDisplayRapid(interruptMessage)) {
-                    Log.e(TAG, "❌ Rapid message $i failed to appear in UI with 50ms timeout!")
+                    Log.e(TAG, "❌ QUICK: Rapid message $i failed to appear in UI with 50ms timeout!")
                     failWithScreenshot("rapid_message_${i}_ui_failed", "Rapid message $i failed to appear in UI with 50ms timeout")
                     return@runBlocking
                 }
                 
                 sentMessages.add(interruptMessage)
-                Log.d(TAG, "✅ Rapid message $i appeared in UI with 50ms timeout")
+                Log.d(TAG, "✅ QUICK MESSAGE $i sent successfully via rapid type+send")
                 
-                // NO DELAY - true rapid fire testing
+                // NO DELAY - true rapid fire testing for quick messages
             }
             
             Log.d(TAG, "🚀 RAPID PHASE COMPLETE: All ${interruptMessageCount} interrupt messages sent rapidly!")
@@ -363,11 +385,14 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ Final UI verification completed successfully!")
             Log.d(TAG, "📊 Test summary:")
             Log.d(TAG, "   ✅ Sent 1 initial message to trigger bot response")
-            Log.d(TAG, "   ✅ Successfully interrupted bot with ${MESSAGE_COUNT - 1} additional messages")
+            Log.d(TAG, "   ✅ Successfully interrupted bot with ${MESSAGE_COUNT - 1} additional messages:")
+            Log.d(TAG, "      ⌨️ 2 TYPED messages (keyboard input + send button)")
+            Log.d(TAG, "      ⚡ 2 QUICK messages (rapid type+send combo)")
             Log.d(TAG, "   ✅ All messages appeared immediately (optimistic UI)")
             Log.d(TAG, "   ✅ No duplicate messages detected")
             Log.d(TAG, "   ✅ Messages preserved after bot response")
             Log.d(TAG, "   ✅ Bot interruption test completed successfully")
+            Log.d(TAG, "   🎯 Validated both realistic user flows: deliberate typing + rapid messaging")
             
         } catch (e: Exception) {
                 Log.e(TAG, "❌ Bot interruption test failed", e)

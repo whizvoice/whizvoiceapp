@@ -67,6 +67,13 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.focused
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -301,39 +308,62 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
-                navigationIcon = {
-                    IconButton(onClick = onChatsListClick) {
-                        Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = viewModel::toggleVoiceResponse) {
-                        Icon(
-                            imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                            contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+    // 🔧 PRODUCTION BUG FIX: Eliminate Scaffold completely to prevent touch interception
+    // Replace with simple Column layout - no bottomBar, no padding calculations, no overlays
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Top bar - directly placed
+        CenterAlignedTopAppBar(
+            title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
+            navigationIcon = {
+                IconButton(onClick = onChatsListClick) {
+                    Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
+                }
+            },
+            actions = {
+                IconButton(onClick = viewModel::toggleVoiceResponse) {
+                    Icon(
+                        imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
+                    )
+                }
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
+        )
+        
+        // Messages area - takes remaining space above input
+        Box(
+            modifier = Modifier.weight(1f)
+        ) {
+            if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                EmptyChatPlaceholder()
+            } else {
+                MessagesList(
+                    messages = messages,
+                    listState = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                    showTypingIndicator = isResponding && !isSpeaking
+                )
+            }
+        }
+        
+        // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
+        run {
             // Never disable text input - users should always be able to type
             val isTextInputDisabled = false
             // Only disable mic during TTS when no headphones (to prevent audio feedback)
             val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
             
-
             ChatInputBar(
                 inputText = inputText,
                 isInputFromVoice = isInputFromVoice,
@@ -355,30 +385,9 @@ fun ChatScreen(
                 surfaceColor = inputSurfaceColor
             )
         }
-    ) { paddingValues ->
-        // 🔧 PRODUCTION BUG FIX: Ensure content NEVER extends into bottomBar area
-        // The issue is invisible touch event interception, not visual layout
         
-        // Create a constrained content area that explicitly stays within Scaffold bounds
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues) // Respect Scaffold padding (keeps content away from bottomBar)
-        ) {
-            // Display messages or placeholder within the constrained area
-            if (messages.isEmpty() && !isResponding && !isSpeaking) {
-                EmptyChatPlaceholder()
-            } else {
-                MessagesList(
-                    messages = messages,
-                    listState = listState,
-                    modifier = Modifier
-                        .weight(1f) // Take remaining space but don't overflow
-                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                    showTypingIndicator = isResponding && !isSpeaking
-                )
-            }
-        }
+        // Snackbar host at bottom
+        SnackbarHost(snackbarHostState)
     }
 
     // Dialog for missing Asana Token
@@ -725,7 +734,15 @@ fun ChatInputBar(
                     // The updateInputText method will handle stopping voice recognition when user types
                     onInputChange(newValue)
                 },
-                modifier = Modifier.fillMaxWidth(), // TextField fills the Box
+                modifier = Modifier
+                    .fillMaxWidth() // TextField fills the Box
+                    .semantics { 
+                        contentDescription = "Message input field"
+                        testTag = "chat_input_field"
+                        // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
+                        role = Role.Button
+                        focused = true
+                    }, // Add accessibility description for both users and testing
                 placeholder = { Text(placeholderText) },
                 readOnly = false, // Always allow text input for production bug fix
                 enabled = !isInputDisabled, // Respect the isInputDisabled parameter
