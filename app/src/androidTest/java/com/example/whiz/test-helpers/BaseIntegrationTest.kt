@@ -228,7 +228,7 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Find and click send button, wait for message to be sent
+     * Find and click send button, wait for message to be sent - NORMAL VERSION for initial loading
      */
     protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 looking for send button with exact content description 'Send message'...")
@@ -240,51 +240,19 @@ abstract class BaseIntegrationTest {
                 .packageName(packageName)
         )
         
-        if (!sendButton.waitForExists(5000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ PRODUCTION BUG: Send button with description 'Send message' not found!")
-            android.util.Log.e("BaseIntegrationTest", "   This indicates the send button UI is broken or the message input didn't create typed text")
-            
-            // debug: check for any buttons or clickable elements to help diagnose the issue
-            val allButtons = device.findObjects(By.clickable(true).pkg(packageName))
-            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allButtons.size} clickable elements for debugging:")
-            allButtons.take(15).forEachIndexed { i, element ->
-                try {
-                    val desc = element.contentDescription ?: "no desc"
-                    val text = element.text ?: "no text"
-                    val className = element.className ?: "no class"
-                    val bounds = element.visibleBounds
-                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: desc='$desc', text='$text', class='$className', bounds=$bounds")
-                } catch (e: Exception) {
-                    android.util.Log.d("BaseIntegrationTest", "  Clickable $i: error reading properties")
-                }
-            }
-            
-            // Also check if there's any text in the input field
-            val inputField = device.findObject(UiSelector().className("android.widget.EditText").packageName(packageName))
-            if (inputField.exists()) {
-                try {
-                    val inputText = inputField.text
-                    android.util.Log.d("BaseIntegrationTest", "🔍 Input field text: '$inputText'")
-                    android.util.Log.d("BaseIntegrationTest", "🔍 Input field exists: ${inputField.exists()}, enabled: ${inputField.isEnabled}, focused: ${inputField.isFocused}")
-                } catch (e: Exception) {
-                    android.util.Log.d("BaseIntegrationTest", "🔍 Error reading input field properties: ${e.message}")
-                }
-            } else {
-                android.util.Log.d("BaseIntegrationTest", "🔍 No EditText input field found")
-            }
-            
-            // FAIL THE TEST - don't try workarounds
+        if (!sendButton.waitForExists(1000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Send button with description 'Send message' not found!")
             return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "✅ found send button with correct description 'Send message'")
+        android.util.Log.d("BaseIntegrationTest", "✅ found send button")
         android.util.Log.d("BaseIntegrationTest", "📤 clicking send button...")
         sendButton.click()
         
-        // verify message appears in chat (optimistic UI)
+        // verify message appears in chat (optimistic UI) - normal timeout for loading
         val messageDisplayed = device.wait(Until.hasObject(
             By.textContains(messageText).pkg(packageName)
-        ), 5000)
+        ), 1000)
         
         if (messageDisplayed) {
             android.util.Log.d("BaseIntegrationTest", "✅ message sent and displayed successfully")
@@ -296,7 +264,7 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Complete message sending flow: type message, click send, verify display
+     * Complete message sending flow: type message, click send, verify display - NORMAL VERSION
      */
     protected fun sendMessageAndVerifyDisplay(message: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: '${message.take(30)}...'")
@@ -304,34 +272,51 @@ abstract class BaseIntegrationTest {
         // step 1: type message
         val typingSuccess = typeMessageInInputField(message)
         if (!typingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: typeMessageInInputField returned false")
-            
-            // debug: check current screen state
-            val currentScreenElements = device.findObjects(By.pkg(packageName))
-            android.util.Log.d("BaseIntegrationTest", "🔍 current screen has ${currentScreenElements.size} elements")
-            
-            // check for common UI elements
-            val hasEditText = device.hasObject(By.clazz("android.widget.EditText").pkg(packageName))
-            val hasLoginButton = device.hasObject(By.textContains("Sign in").pkg(packageName))
-            val hasChatTitle = device.hasObject(By.text("Chat").pkg(packageName))
-            val hasChatsListTitle = device.hasObject(By.text("My Chats").pkg(packageName))
-            
-            android.util.Log.d("BaseIntegrationTest", "🔍 screen state: hasEditText=$hasEditText, hasLoginButton=$hasLoginButton, hasChatTitle=$hasChatTitle, hasChatsListTitle=$hasChatsListTitle")
-            
+            android.util.Log.e("BaseIntegrationTest", "❌ typeMessageInInputField returned false")
             return false
         }
         
         android.util.Log.d("BaseIntegrationTest", "✅ message typed successfully")
         
-        // step 2: click send and wait
+        // step 2: click send and wait - NORMAL
         val sendingSuccess = clickSendButtonAndWaitForSent(message)
         if (!sendingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ FAILED: clickSendButtonAndWaitForSent returned false")
+            android.util.Log.e("BaseIntegrationTest", "❌ clickSendButtonAndWaitForSent returned false")
             return false
         }
         
         android.util.Log.d("BaseIntegrationTest", "✅ message sent and displayed successfully")
         return true
+    }
+    
+    /**
+     * Verify that the input field has been cleared after a message send - NORMAL VERSION
+     */
+    protected fun verifyInputFieldCleared(): Boolean {
+        try {
+            val inputField = device.findObject(
+                UiSelector()
+                    .className("android.widget.EditText")
+                    .packageName(packageName)
+            )
+            
+            if (!inputField.exists()) {
+                android.util.Log.d("BaseIntegrationTest", "❌ Input field not found - WebSocket verification failed")
+                return false
+            }
+            
+            val inputText = inputField.text ?: ""
+            if (inputText.isEmpty() || inputText.isBlank()) {
+                android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared - WebSocket send successful")
+                return true
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "❌ Input field still contains text: '${inputText.take(30)}...' - WebSocket send failed")
+                return false
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "❌ Error checking input field: ${e.message}")
+            return false
+        }
     }
     
     /**
@@ -354,7 +339,7 @@ abstract class BaseIntegrationTest {
         // Step 2: Verify that WebSocket sending actually occurred
         // We check this by verifying the input field was properly cleared 
         // Real WebSocket sends clear the input field; fake optimistic-only sends leave text
-        val inputFieldCleared = verifyInputFieldCleared(3000)
+        val inputFieldCleared = verifyInputFieldCleared()
         
         if (!inputFieldCleared) {
             android.util.Log.e("BaseIntegrationTest", "❌ Message $messageNumber appeared in UI but WebSocket send failed (input field not cleared)")
@@ -364,66 +349,6 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Message $messageNumber sent successfully via WebSocket and displayed in UI")
         return true
-    }
-    
-    /**
-     * Verify that the input field has been cleared after a message send
-     * Real WebSocket sends clear the input field as part of the optimistic message flow
-     * Failed sends leave the text in the input field
-     * 
-     * @return true if input field was cleared (indicating successful WebSocket send), false otherwise
-     */
-    private fun verifyInputFieldCleared(timeoutMs: Long): Boolean {
-        val startTime = System.currentTimeMillis()
-        
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            try {
-                val inputField = device.findObject(
-                    UiSelector()
-                        .className("android.widget.EditText")
-                        .packageName(packageName)
-                )
-                
-                if (inputField.exists()) {
-                    val inputText = inputField.text ?: ""
-                    if (inputText.isEmpty() || inputText.isBlank()) {
-                        android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared - WebSocket send successful")
-                        return true
-                    }
-                    // Only log every 500ms to reduce noise
-                    if ((System.currentTimeMillis() - startTime) % 500 < 100) {
-                        android.util.Log.d("BaseIntegrationTest", "⏳ Input field still contains text - waiting for WebSocket clear...")
-                    }
-                } else {
-                    android.util.Log.d("BaseIntegrationTest", "⚠️ Input field not found - assuming cleared")
-                    return true
-                }
-                
-                Thread.sleep(100)
-            } catch (e: Exception) {
-                android.util.Log.w("BaseIntegrationTest", "Error checking input field: ${e.message}")
-                Thread.sleep(100)
-            }
-        }
-        
-        // Final check - if we reach here, input field was not cleared
-        try {
-            val inputField = device.findObject(
-                UiSelector()
-                    .className("android.widget.EditText")
-                    .packageName(packageName)
-            )
-            
-            if (inputField.exists()) {
-                val finalText = inputField.text ?: ""
-                android.util.Log.d("BaseIntegrationTest", "❌ Input field still contains text after ${timeoutMs}ms: '${finalText.take(30)}...'")
-                return false
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "Error in final input field check: ${e.message}")
-        }
-        
-        return false
     }
     
     /**
@@ -601,8 +526,12 @@ abstract class BaseIntegrationTest {
         // if not found, try scrolling up to find older messages
         android.util.Log.d("BaseIntegrationTest", "🔍 Message not visible, trying to scroll up to find: '${searchText}...'")
         
-        // try scrolling up a few times to find the message
-        repeat(5) { attempt ->
+        // Smart scrolling: stop when we reach the top or find the message
+        var lastContentSnapshot = getVisibleContentSnapshot()
+        var scrollAttempts = 0
+        val maxScrollAttempts = 15 // Safety limit to prevent infinite loops
+        
+        while (scrollAttempts < maxScrollAttempts) {
             try {
                 // use swipe gesture to scroll up in the chat area
                 val height = device.displayHeight
@@ -610,45 +539,96 @@ abstract class BaseIntegrationTest {
                 
                 // swipe from middle-bottom to middle-top to scroll up
                 device.swipe(width/2, height*2/3, width/2, height/3, 10)
-                android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt ${attempt + 1})")
+                scrollAttempts++
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt $scrollAttempts)")
                 
-                                 // give UI more time to update after scroll (CI environments can be slower)
+                // give UI more time to update after scroll (CI environments can be slower)
                 Thread.sleep(getCIAwareDelay(1200))
                 
                 // check if message is now visible
                 if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
-                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling up: '${searchText}...'")
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling up (attempt $scrollAttempts): '${searchText}...'")
                     return true
                 }
+                
+                // Check if we've reached the top by comparing content
+                val currentContentSnapshot = getVisibleContentSnapshot()
+                if (currentContentSnapshot == lastContentSnapshot) {
+                    android.util.Log.d("BaseIntegrationTest", "🔝 Reached top of chat (no new content after scroll attempt $scrollAttempts)")
+                    break
+                }
+                lastContentSnapshot = currentContentSnapshot
+                
             } catch (e: Exception) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during scroll attempt ${attempt + 1}: ${e.message}")
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during scroll attempt $scrollAttempts: ${e.message}")
+                break
             }
+        }
+        
+        if (scrollAttempts >= maxScrollAttempts) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Stopped scrolling after reaching max attempts ($maxScrollAttempts)")
         }
         
         // try scrolling down too (in case we overshot)
         android.util.Log.d("BaseIntegrationTest", "🔍 Trying to scroll down to find: '${searchText}...'")
-        repeat(3) { attempt ->
+        lastContentSnapshot = getVisibleContentSnapshot()
+        var downScrollAttempts = 0
+        val maxDownScrolls = 5 // Fewer down scrolls since we just came from the top
+        
+        while (downScrollAttempts < maxDownScrolls) {
             try {
                 val height = device.displayHeight
                 val width = device.displayWidth
                 
                 // swipe from middle-top to middle-bottom to scroll down
                 device.swipe(width/2, height/3, width/2, height*2/3, 10)
-                android.util.Log.d("BaseIntegrationTest", "📜 Swiped down to scroll (attempt ${attempt + 1})")
+                downScrollAttempts++
+                android.util.Log.d("BaseIntegrationTest", "📜 Swiped down to scroll (attempt $downScrollAttempts)")
                 
-                                 Thread.sleep(getCIAwareDelay(1200))
+                Thread.sleep(getCIAwareDelay(1200))
                 
                 if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
-                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling down: '${searchText}...'")
+                    android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling down (attempt $downScrollAttempts): '${searchText}...'")
                     return true
                 }
+                
+                // Check if we've reached the bottom
+                val currentContentSnapshot = getVisibleContentSnapshot()
+                if (currentContentSnapshot == lastContentSnapshot) {
+                    android.util.Log.d("BaseIntegrationTest", "🔻 Reached bottom of chat (no new content after down scroll attempt $downScrollAttempts)")
+                    break
+                }
+                lastContentSnapshot = currentContentSnapshot
+                
             } catch (e: Exception) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during down scroll attempt ${attempt + 1}: ${e.message}")
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error during down scroll attempt $downScrollAttempts: ${e.message}")
+                break
             }
         }
         
-        android.util.Log.w("BaseIntegrationTest", "❌ Message not found even after scrolling: '${searchText}...'")
+        android.util.Log.w("BaseIntegrationTest", "❌ Message not found even after intelligent scrolling (${scrollAttempts} up, ${downScrollAttempts} down): '${searchText}...'")
         return false
+    }
+    
+    /**
+     * Get a snapshot of currently visible content to detect when scrolling reaches top/bottom
+     */
+    private fun getVisibleContentSnapshot(): Set<String> {
+        return try {
+            device.findObjects(
+                By.clazz("android.widget.TextView").pkg(packageName)
+            ).mapNotNull { 
+                try {
+                    val text = it.text
+                    if (text != null && text.length > 5) text else null
+                } catch (e: Exception) {
+                    null
+                }
+            }.toSet()
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error getting content snapshot: ${e.message}")
+            emptySet()
+        }
     }
     
     /**
@@ -934,6 +914,212 @@ abstract class BaseIntegrationTest {
         )
         
         return messageInput.exists() || sendButton.exists() || micButton.exists()
+    }
+
+    /**
+     * Find and click send button, wait for message to be sent - RAPID VERSION for interruption testing
+     */
+    protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: looking for send button with exact content description 'Send message'...")
+        
+        // Use exact content description from production code (ChatScreen.kt line 748)
+        val sendButton = device.findObject(
+            UiSelector()
+                .description("Send message")  // Exact match from production code
+                .packageName(packageName)
+        )
+        
+        if (!sendButton.waitForExists(50)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button with description 'Send message' not found!")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: found send button")
+        android.util.Log.d("BaseIntegrationTest", "📤 RAPID: clicking send button...")
+        sendButton.click()
+        
+        // verify message appears in chat (optimistic UI) - should be instant
+        val messageDisplayed = device.wait(Until.hasObject(
+            By.textContains(messageText).pkg(packageName)
+        ), 50)
+        
+        if (messageDisplayed) {
+            android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed instantly")
+        } else {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: message not displayed after clicking send button")
+        }
+        
+        return messageDisplayed
+    }
+
+    /**
+     * Complete message sending flow: type message, click send, verify display - RAPID VERSION
+     */
+    protected fun sendMessageAndVerifyDisplayRapid(message: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "📝 RAPID: attempting to send message: '${message.take(30)}...'")
+        
+        // step 1: type message
+        val typingSuccess = typeMessageInInputField(message)
+        if (!typingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: typeMessageInInputField returned false")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message typed successfully")
+        
+        // step 2: click send and wait - RAPID
+        val sendingSuccess = clickSendButtonAndWaitForSentRapid(message)
+        if (!sendingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: clickSendButtonAndWaitForSentRapid returned false")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed successfully")
+        return true
+    }
+
+    /**
+     * Verify that the input field has been cleared after a message send - RAPID VERSION
+     */
+    protected fun verifyInputFieldClearedRapid(): Boolean {
+        try {
+            val inputField = device.findObject(
+                UiSelector()
+                    .className("android.widget.EditText")
+                    .packageName(packageName)
+            )
+            
+            if (!inputField.exists()) {
+                android.util.Log.d("BaseIntegrationTest", "❌ RAPID: Input field not found - WebSocket verification failed")
+                return false
+            }
+            
+            val inputText = inputField.text ?: ""
+            if (inputText.isEmpty() || inputText.isBlank()) {
+                android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Input field cleared - WebSocket send successful")
+                return true
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "❌ RAPID: Input field still contains text: '${inputText.take(30)}...' - WebSocket send failed")
+                return false
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "❌ RAPID: Error checking input field: ${e.message}")
+            return false
+        }
+    }
+
+    /**
+     * Verify message is visible in chat - RAPID VERSION with NO scrolling
+     * For rapid interruption testing - messages should appear immediately
+     */
+    protected fun verifyMessageVisibleRapid(messageText: String): Boolean {
+        val searchText = messageText.take(20)
+        
+        // RAPID: Only check what's currently visible, no scrolling
+        val messageVisible = device.hasObject(By.textContains(searchText).pkg(packageName))
+        
+        if (messageVisible) {
+            android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Message found immediately: '${searchText}...'")
+        } else {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Message not visible immediately: '${searchText}...'")
+        }
+        
+        return messageVisible
+    }
+
+    /**
+     * Check if input field is currently disabled/blocked (indicating message blocking bug)
+     */
+    protected fun isInputFieldBlocked(): Boolean {
+        val inputField = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        if (!inputField.exists()) {
+            android.util.Log.d("BaseIntegrationTest", "🔍 Input field not found")
+            return true // If input field doesn't exist, consider it blocked
+        }
+        
+        val isEnabled = inputField.isEnabled
+        val isFocusable = inputField.isFocusable
+        android.util.Log.d("BaseIntegrationTest", "🔍 Input field enabled: $isEnabled, focusable: $isFocusable")
+        return !isEnabled || !isFocusable
+    }
+
+    /**
+     * Try to type text in the input field and return if it worked
+     * This directly tests if typing is allowed during bot response
+     */
+    protected fun tryToTypeInInputField(testText: String = "test"): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔍 Trying to type '$testText' in input field...")
+        
+        val inputField = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        if (!inputField.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Input field not found")
+            return false
+        }
+        
+        // Try to click on the input field
+        val clickSuccess = inputField.click()
+        if (!clickSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Cannot click input field")
+            return false
+        }
+        
+        // Try to type text
+        val typeSuccess = inputField.setText(testText)
+        if (!typeSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Cannot type in input field")
+            return false
+        }
+        
+        // Check if text was accepted (either visually or internally)
+        val actualText = inputField.text ?: ""
+        val textAccepted = actualText.contains(testText)
+        
+        if (textAccepted) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Successfully typed '$testText' in input field (text accepted)")
+            return true
+        } else {
+            android.util.Log.e("BaseIntegrationTest", "❌ Text '$testText' was not accepted by input field - completely blocked")
+            return false
+        }
+    }
+
+    /**
+     * Try to find and click the send button after typing text
+     */
+    protected fun tryToClickSendButton(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔍 Looking for send button...")
+        
+        val sendButton = device.findObject(
+            UiSelector()
+                .description("Send message")
+                .packageName(packageName)
+        )
+        
+        if (!sendButton.waitForExists(50)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Send button not found")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ Send button found, trying to click...")
+        val clickSuccess = sendButton.click()
+        
+        if (clickSuccess) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Successfully clicked send button")
+        } else {
+            android.util.Log.e("BaseIntegrationTest", "❌ Could not click send button")
+        }
+        
+        return clickSuccess
     }
 
     companion object {

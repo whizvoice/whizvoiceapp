@@ -538,7 +538,7 @@ class ChatViewModel @Inject constructor(
                             
                             Log.d(TAG, "$eventLogId PRE-CALL addAssistantMessage. Target Chat ID: $targetChatId, Current Chat ID: ${_chatId.value}, Request ID: ${event.requestId}, Is Current Chat: $isResponseForCurrentChat")
                             
-                            if (targetChatId > 0) {
+                            if (targetChatId != 0L) {
                                 // Only save assistant message to local DB if NOT using remote agent
                                 // Remote agent (WebSocket server) handles message persistence
                                 if (!configUseRemoteAgent) {
@@ -585,7 +585,7 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }
                             } else {
-                                Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because target chatId is not > 0 (Value: $targetChatId)")
+                                Log.w(TAG, "$eventLogId SKIPPED addAssistantMessage because target chatId is 0 (Value: $targetChatId)")
                             }
 
                             // TTS and UI updates (only for current chat)
@@ -600,7 +600,7 @@ class ChatViewModel @Inject constructor(
                                                 speakThisMessage && 
                                                 messageContentForChat.isNotBlank() &&
                                                 isResponseForCurrentChat && 
-                                                targetChatId > 0 && // Only speak for real chats, not new chat creation
+                                                targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
                                                 targetChatId == _chatId.value // Double-check current chat
                                 
                                 Log.d(TAG, "$eventLogId TTS Decision: shouldSpeak=$shouldSpeak, voiceEnabled=${_isVoiceResponseEnabled.value}, ttsInit=${_isTTSInitialized.value}, speakFlag=$speakThisMessage, isForCurrentChat=$isResponseForCurrentChat, targetChat=$targetChatId, currentChat=${_chatId.value}")
@@ -999,29 +999,12 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun sendUserInput(text: String = _inputText.value, isInterrupt: Boolean = false) {
+    fun sendUserInput(text: String = _inputText.value) {
         val trimmedText = text.trim()
         if (trimmedText.isBlank()) return
         
-        // Check if this should be treated as an interrupt (bot is responding and we have new input)
-        val shouldInterrupt = !isInterrupt && _isResponding.value && canInterrupt()
-        
-        if (shouldInterrupt) {
-            Log.d(TAG, "sendUserInput: Auto-detecting interrupt condition, routing to sendInterruptMessage")
-            sendInterruptMessage(trimmedText)
-            return // 🔧 Return immediately - sendInterruptMessage handles everything
-        }
-        
-        if (isInterrupt && canInterrupt()) {
-            sendInterruptMessage(text)
-            return // 🔧 Return immediately - sendInterruptMessage handles everything
-        }
-        
-        // Only block sending if responding AND this is not an interrupt scenario
-        if (_isResponding.value && !shouldInterrupt) {
-            Log.d(TAG, "sendUserInput: Blocked - bot is responding and this is not an interrupt")
-            return
-        }
+        // Always send messages - server will handle interrupts automatically based on its state
+        Log.d(TAG, "sendUserInput: Sending message (server will handle any needed interrupts)")  
 
         // Don't clear input text immediately - it will be cleared after optimistic message is added
         // This provides consistent UX for both voice and typed input
@@ -1563,110 +1546,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Send an interrupt message while there's an active request
-     */
-    fun sendInterruptMessage(message: String) {
-        val trimmedText = message.trim()
-        if (trimmedText.isBlank()) {
-            Log.w(TAG, "sendInterruptMessage: Attempted to send blank interrupt message")
-            return
-        }
 
-        if (!configUseRemoteAgent) {
-            Log.w(TAG, "sendInterruptMessage: Interrupts only supported with remote agent")
-            return
-        }
 
-        Log.d(TAG, "sendInterruptMessage: Sending interrupt message: '$trimmedText'")
-        
-        // 🔧 OPTIMISTIC UI: Always show interrupt messages immediately for good UX
-        // Server will handle deduplication if needed
-        val currentChatId = _chatId.value
-        viewModelScope.launch {
-            try {
-                val actualChatId = if (currentChatId > 0) currentChatId else {
-                    // For new chats, create a temporary local chat to show the message immediately
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChat(tempTitle)
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                    tempChatId
-                }
-                val localMessageId = if (configUseRemoteAgent) {
-                    // For remote agent: use optimistic UI (local only, no API call)
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText)
-                } else {
-                    // For local agent: use regular method (creates via API)
-                    repository.addUserMessage(actualChatId, trimmedText)
-                }
-                Log.d(TAG, "sendInterruptMessage: Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "sendInterruptMessage: Failed to add local user message", e)
-            }
-        }
-        
-        // Clear input text immediately after sending interrupt (like normal sendUserInput)
-        Log.d(TAG, "[LOG] 🔥 sendInterruptMessage: Clearing input text immediately after sending (was: '${_inputText.value}')")
-        _inputText.value = ""
-        
-        // Generate new request ID for the interrupt
-        val requestId = java.util.UUID.randomUUID().toString()
-        currentActiveRequestId = requestId
-        
-        // Send the interrupt message (backend will automatically cancel active requests)
-        val success = whizServerRepository.sendInterruptMessage(trimmedText, requestId, _chatId.value)
-        
-        if (success) {
-            // Track this new request
-            pendingRequests[requestId] = _chatId.value
-            Log.d(TAG, "sendInterruptMessage: Interrupt sent successfully with requestId: $requestId")
-            
-            // Update UI state
-            _isResponding.value = true
-            
-        } else {
-            currentActiveRequestId = null
-            Log.d(TAG, "sendInterruptMessage: Interrupt queued for retry - message already visible in UI")
-        }
-        
-        // Trigger UI refresh to reconcile with server messages (will deduplicate automatically)
-        try {
-            viewModelScope.launch {
-                repository.refreshMessages()
-                Log.d(TAG, "sendInterruptMessage: Triggered messages refresh for server reconciliation")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "sendInterruptMessage: Error triggering messages refresh", e)
-        }
-    }
 
     /**
-     * Check if there are any active requests that can be interrupted
-     */
-    fun canInterrupt(): Boolean {
-        return configUseRemoteAgent && 
-               _isResponding.value && 
-               _chatId.value != 0L  // ✅ FIXED: Allow both positive (server) and negative (optimistic) chat IDs
-    }
-
-    /**
-     * Interrupt the current response with the current input text
+     * Send the current input text (server will handle interruption if needed)
      */
     fun interruptResponse() {
         val currentInput = _inputText.value
         if (currentInput.isBlank()) {
-            Log.w(TAG, "interruptResponse: No input text to send as interrupt")
+            Log.w(TAG, "interruptResponse: No input text to send")
             return
         }
         
-        if (!canInterrupt()) {
-            Log.w(TAG, "interruptResponse: Cannot interrupt - conditions not met")
-            return
-        }
-        
-        Log.d(TAG, "interruptResponse: Interrupting with message: '$currentInput'")
-        sendUserInput(currentInput, isInterrupt = true)
+        Log.d(TAG, "interruptResponse: Sending message: '$currentInput'")
+        sendUserInput(currentInput)
     }
 
     private fun initializeTTS() {
