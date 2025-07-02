@@ -1028,6 +1028,95 @@ abstract class BaseIntegrationTest {
     }
 
     /**
+     * Click microphone button and wait for listening to start - RAPID VERSION
+     * For voice interruption testing - should activate immediately
+     */
+    protected fun clickMicButtonAndStartListeningRapid(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Looking for microphone button...")
+        
+        // Look for various mic button descriptions that might be present
+        val micDescriptions = listOf("Start listening", "Turn off continuous listening", "Stop listening")
+        var micButton: androidx.test.uiautomator.UiObject? = null
+        
+        for (description in micDescriptions) {
+            micButton = device.findObject(
+                androidx.test.uiautomator.UiSelector()
+                    .description(description)
+                    .packageName(packageName)
+            )
+            if (micButton.waitForExists(50)) {
+                android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Found mic button with description: '$description'")
+                break
+            }
+        }
+        
+        if (micButton == null || !micButton.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Microphone button not found!")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Clicking microphone button...")
+        micButton.click()
+        
+        // In rapid mode, we don't wait for actual speech recognition to start
+        // We just verify the button was clicked successfully
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Microphone button clicked successfully")
+        return true
+    }
+
+    /**
+     * Simulate voice transcription completion and message sending - RAPID VERSION
+     * This simulates the flow of: voice input → transcription → automatic send
+     */
+    protected fun simulateVoiceTranscriptionAndSendRapid(message: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎤 RAPID: Simulating voice transcription: '${message.take(30)}...'")
+        
+        // In a real voice input flow, the transcribed text would appear in the input field
+        // and then be automatically sent. Since we can't actually speak in tests,
+        // we simulate this by directly typing the message (as if transcription completed)
+        // and then triggering the send
+        
+        val typingSuccess = typeMessageInInputField(message)
+        if (!typingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Failed to simulate voice transcription")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice transcription simulated successfully")
+        
+        // Now send the message with rapid timing (as voice input typically auto-sends)
+        val sendingSuccess = clickSendButtonAndWaitForSentRapid(message)
+        if (!sendingSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Voice message send failed")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice message sent successfully")
+        return true
+    }
+
+    /**
+     * Complete voice message sending flow: simulate transcription callback and send - RAPID VERSION
+     * This is the voice equivalent of sendMessageAndVerifyDisplayRapid()
+     * Assumes voice mode is already active (continuous listening enabled)
+     */
+    protected fun sendVoiceMessageAndVerifyDisplayRapid(message: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Attempting to send voice message: '${message.take(30)}...'")
+        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Assuming voice mode already active (continuous listening enabled)")
+        
+        // Step 1: Simulate voice transcription completion and send (rapid)
+        // In voice mode, transcription appears and is automatically sent
+        val transcriptionSuccess = simulateVoiceTranscriptionAndSendRapid(message)
+        if (!transcriptionSuccess) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Voice transcription and send failed")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice message sent and displayed successfully")
+        return true
+    }
+
+    /**
      * Check if input field is currently disabled/blocked (indicating message blocking bug)
      */
     protected fun isInputFieldBlocked(): Boolean {

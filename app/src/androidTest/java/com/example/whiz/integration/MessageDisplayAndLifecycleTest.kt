@@ -465,12 +465,12 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ First message confirmed still visible after navigation")
         }
         
-        // Step 10: Send a second message to test existing chat functionality
-        Log.d(TAG, "💬 Sending second message in existing chat...")
-        if (!sendMessageAndVerifyDisplay(secondMessage)) {
+        // Step 10: Send a second message to test existing chat functionality - using RAPID method
+        Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
+        if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
             failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
         }
-        Log.d(TAG, "✅ Second message sent and visible successfully")
+        Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
         
         // Step 11: Final verification - both messages should be visible
         Log.d(TAG, "🔍 Final verification: checking if both messages are visible...")
