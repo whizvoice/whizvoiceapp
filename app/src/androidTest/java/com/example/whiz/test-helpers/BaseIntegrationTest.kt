@@ -1204,15 +1204,22 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // Check if text was accepted (either visually or internally)
-        val actualText = inputField.text ?: ""
+        // Get fresh reference to input field to avoid stale cached state
+        val freshInputField = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        // Check if text was accepted with fresh UI state
+        val actualText = freshInputField.text ?: ""
         val textAccepted = actualText.contains(testText)
         
         if (textAccepted) {
             android.util.Log.d("BaseIntegrationTest", "✅ Successfully typed '$testText' in input field (text accepted)")
             return true
         } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ Text '$testText' was not accepted by input field - completely blocked")
+            android.util.Log.e("BaseIntegrationTest", "❌ Text '$testText' was not accepted by input field - completely blocked (actualText: '$actualText')")
             return false
         }
     }

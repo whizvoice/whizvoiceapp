@@ -328,6 +328,9 @@ fun ChatScreen(
             val isTextInputDisabled = false
             // Only disable mic during TTS when no headphones (to prevent audio feedback)
             val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
+            
+            // Debug logging for production bug investigation
+            Log.d("ChatScreen", "🔍 INPUT STATE DEBUG: isTextInputDisabled=$isTextInputDisabled, isMicDisabled=$isMicDisabled, isResponding=$isResponding, isSpeaking=$isSpeaking")
             ChatInputBar(
                 inputText = inputText,
                 isInputFromVoice = isInputFromVoice,
@@ -373,7 +376,7 @@ fun ChatScreen(
                 exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 8.dp) // Position above input bar area
+                    .padding(start = 16.dp, end = 16.dp, bottom = 80.dp) // Increased padding to avoid covering input field
             ) {
                 TypingIndicator()
             }
@@ -683,6 +686,7 @@ fun ChatInputBar(
     // Debug logging for button logic and input state
     Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
     Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
+    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: TextField will be enabled=${!isInputDisabled}, isInputDisabled=$isInputDisabled")
     
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
@@ -714,7 +718,7 @@ fun ChatInputBar(
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
-                readOnly = false, // Allow text input when enabled
+                readOnly = false, // Always allow text input for production bug fix
                 enabled = !isInputDisabled, // Respect the isInputDisabled parameter
                 singleLine = false,
                 maxLines = 5,
