@@ -1204,16 +1204,31 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // Get fresh reference to input field to avoid stale cached state
-        val freshInputField = device.findObject(
-            UiSelector()
-                .className("android.widget.EditText")
-                .packageName(packageName)
-        )
+        // Wait for text to appear in the input field (fix for timing race condition)
+        // The UI might take a moment to update after setText() is called
+        var textAccepted = false
+        var actualText = ""
+        val maxRetries = 10
+        var retries = 0
         
-        // Check if text was accepted with fresh UI state
-        val actualText = freshInputField.text ?: ""
-        val textAccepted = actualText.contains(testText)
+        while (retries < maxRetries && !textAccepted) {
+            // Get fresh reference to input field to avoid stale cached state
+            val freshInputField = device.findObject(
+                UiSelector()
+                    .className("android.widget.EditText")
+                    .packageName(packageName)
+            )
+            
+            // Check if text was accepted with fresh UI state
+            actualText = freshInputField.text ?: ""
+            textAccepted = actualText.contains(testText)
+            
+            if (!textAccepted) {
+                retries++
+                Thread.sleep(50) // Wait 50ms before retrying
+                android.util.Log.d("BaseIntegrationTest", "🔄 Waiting for text to appear... retry $retries/$maxRetries (current text: '$actualText')")
+            }
+        }
         
         if (textAccepted) {
             android.util.Log.d("BaseIntegrationTest", "✅ Successfully typed '$testText' in input field (text accepted)")

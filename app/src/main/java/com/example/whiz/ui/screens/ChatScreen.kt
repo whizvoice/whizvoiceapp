@@ -55,8 +55,10 @@ import android.util.Log
 import androidx.navigation.NavHostController
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -359,6 +361,12 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(paddingValues) // Apply padding from Scaffold
                 .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent) // Subtle speaking indicator
+                // 🔧 PRODUCTION BUG FIX: Prevent this Box from consuming touch events meant for bottomBar
+                // The Box was intercepting clicks to the input field during bot responses, creating invisible overlays
+                .pointerInput(Unit) {
+                    // Consume no touch events - let all touches pass through to underlying components
+                    // This ensures the bottomBar (ChatInputBar) can receive clicks even during isResponding=true
+                }
         ) {
             // Display messages or placeholder
             if (messages.isEmpty() && !isResponding && !isSpeaking) { // Show placeholder only if truly empty and idle
