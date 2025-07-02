@@ -384,7 +384,7 @@ abstract class BaseIntegrationTest {
         
         if (whizLabelFound) {
             android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via 'Whiz' label")
-            return true
+            return validateBotResponseContent()
         }
         
         // Alternative: Look for assistant message container or card structure
@@ -397,7 +397,7 @@ abstract class BaseIntegrationTest {
         
         if (assistantMessageFound) {
             android.util.Log.d("BaseIntegrationTest", "✅ Bot response detected via assistant message container")
-            return true
+            return validateBotResponseContent()
         }
         
         // Fallback: Look for new message content that appeared after our last user message
@@ -408,11 +408,121 @@ abstract class BaseIntegrationTest {
         
         if (anyNewMessageContent) {
             android.util.Log.d("BaseIntegrationTest", "⚠️ Bot response detected via fallback (new content appeared)")
-            return true
+            return validateBotResponseContent()
         }
         
         android.util.Log.w("BaseIntegrationTest", "❌ No bot response detected within timeout")
         return false
+    }
+
+    /**
+     * Validate that bot response content is valid and not a server error
+     */
+    protected fun validateBotResponseContent(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔍 Validating bot response content...")
+        
+        // Find all "Whiz" labels (bot messages)
+        val whizLabels = device.findObjects(By.text("Whiz").pkg(packageName))
+        
+        if (whizLabels.isEmpty()) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ No 'Whiz' labels found for content validation")
+            return true // Don't fail if we can't find the label - might be styling issue
+        }
+        
+        // Check the most recent bot message content
+        val mostRecentWhizLabel = whizLabels.lastOrNull()
+        if (mostRecentWhizLabel != null) {
+            try {
+                val parent = mostRecentWhizLabel.parent
+                if (parent != null) {
+                    val textViews = parent.findObjects(By.clazz("android.widget.TextView"))
+                    for (textView in textViews) {
+                        val text = textView.text
+                        if (text != null && text != "Whiz" && text.length > 10) {
+                            android.util.Log.d("BaseIntegrationTest", "🔍 Checking bot response content: '${text.take(50)}...'")
+                            
+                            // Check for server error indicators
+                            if (text.contains("Server Error", ignoreCase = true) ||
+                                text.contains("Internal Server Error", ignoreCase = true) ||
+                                text.contains("503 Service Unavailable", ignoreCase = true) ||
+                                text.contains("500 Internal Server Error", ignoreCase = true) ||
+                                text.contains("Connection refused", ignoreCase = true) ||
+                                text.contains("Network error", ignoreCase = true) ||
+                                text.contains("Failed to connect", ignoreCase = true) ||
+                                text.contains("Timeout", ignoreCase = true)) {
+                                
+                                android.util.Log.e("BaseIntegrationTest", "❌ Bot response contains server error: '${text.take(100)}...'")
+                                android.util.Log.e("BaseIntegrationTest", "   This indicates the server is not responding properly")
+                                return false
+                            }
+                            
+                            android.util.Log.d("BaseIntegrationTest", "✅ Bot response content is valid (no server errors detected)")
+                            return true
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error validating bot response content: ${e.message}")
+                return true // Don't fail on validation errors - could be UI timing issue
+            }
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ Bot response validation completed (no content found to validate)")
+        return true
+    }
+
+    /**
+     * Check all bot responses in the current chat to ensure none contain server errors
+     * Can be called explicitly by tests that want comprehensive server error validation
+     */
+    protected fun validateAllBotResponsesForServerErrors(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔍 Validating ALL bot responses for server errors...")
+        
+        val whizLabels = device.findObjects(By.text("Whiz").pkg(packageName))
+        
+        if (whizLabels.isEmpty()) {
+            android.util.Log.d("BaseIntegrationTest", "ℹ️ No bot responses found to validate")
+            return true
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${whizLabels.size} bot response(s) to validate")
+        
+        for (i in whizLabels.indices) {
+            val whizLabel = whizLabels[i]
+            try {
+                val parent = whizLabel.parent
+                if (parent != null) {
+                    val textViews = parent.findObjects(By.clazz("android.widget.TextView"))
+                    for (textView in textViews) {
+                        val text = textView.text
+                        if (text != null && text != "Whiz" && text.length > 10) {
+                            android.util.Log.d("BaseIntegrationTest", "🔍 Checking bot response ${i+1} content: '${text.take(50)}...'")
+                            
+                            // Check for server error indicators
+                            if (text.contains("Server Error", ignoreCase = true) ||
+                                text.contains("Internal Server Error", ignoreCase = true) ||
+                                text.contains("503 Service Unavailable", ignoreCase = true) ||
+                                text.contains("500 Internal Server Error", ignoreCase = true) ||
+                                text.contains("Connection refused", ignoreCase = true) ||
+                                text.contains("Network error", ignoreCase = true) ||
+                                text.contains("Failed to connect", ignoreCase = true) ||
+                                text.contains("Timeout", ignoreCase = true)) {
+                                
+                                android.util.Log.e("BaseIntegrationTest", "❌ Bot response ${i+1} contains server error: '${text.take(100)}...'")
+                                android.util.Log.e("BaseIntegrationTest", "   Server is not responding properly - test should be skipped or server fixed")
+                                return false
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error validating bot response ${i+1}: ${e.message}")
+                continue // Continue checking other responses
+            }
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ All ${whizLabels.size} bot response(s) validated - no server errors detected")
+        return true
     }
     
     /**

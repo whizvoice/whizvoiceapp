@@ -356,40 +356,22 @@ fun ChatScreen(
             )
         }
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues) // Apply padding from Scaffold
-                .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent) // Subtle speaking indicator
-                // 🔧 PRODUCTION BUG FIX: Prevent this Box from consuming touch events meant for bottomBar
-                // The Box was intercepting clicks to the input field during bot responses, creating invisible overlays
-                .pointerInput(Unit) {
-                    // Consume no touch events - let all touches pass through to underlying components
-                    // This ensures the bottomBar (ChatInputBar) can receive clicks even during isResponding=true
-                }
-        ) {
-            // Display messages or placeholder
-            if (messages.isEmpty() && !isResponding && !isSpeaking) { // Show placeholder only if truly empty and idle
-                EmptyChatPlaceholder()
-            } else {
-                MessagesList(
-                    messages = messages,
-                    listState = listState
-                )
-            }
-
-            // Typing Indicator - Show only when responding (agent thinking), not when speaking
-            // Position just above the input bar
-            AnimatedVisibility(
-                visible = isResponding && !isSpeaking,
-                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
-                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+        // 🔧 PRODUCTION BUG FIX: Eliminate ALL layout containers that could intercept touch events
+        // Use the simplest possible approach - just the MessagesList directly
+        
+        // Display messages or placeholder - no containers, no overlays
+        if (messages.isEmpty() && !isResponding && !isSpeaking) {
+            EmptyChatPlaceholder()
+        } else {
+            MessagesList(
+                messages = messages,
+                listState = listState,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp) // Very close to input bar
-            ) {
-                TypingIndicator()
-            }
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                showTypingIndicator = isResponding && !isSpeaking
+            )
         }
     }
 
@@ -468,7 +450,9 @@ fun ChatScreen(
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
-    listState: androidx.compose.foundation.lazy.LazyListState
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier,
+    showTypingIndicator: Boolean = false
 ) {
     // 🔧 DEDUPLICATION FIX: Remove duplicate messages during chat ID migration race condition
     // The test countMessageOccurrences() uses UI Automator to scan screen text - during optimistic
@@ -512,10 +496,9 @@ fun MessagesList(
     
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
-        // reverseLayout = true // Keep false for messages appearing at the bottom
     ) {
         items(deduplicatedMessages, key = { message -> 
             // 🔧 SAFETY FIX: Create unique key from content+timestamp to prevent any LazyColumn duplication
@@ -524,6 +507,14 @@ fun MessagesList(
         }) { message ->
             MessageItem(message = message)
         }
+        
+        // Show typing indicator as a message when bot is responding
+        if (showTypingIndicator) {
+            item(key = "typing_indicator") {
+                TypingIndicator()
+            }
+        }
+        
         // Add a spacer at the bottom for breathing room above input bar
         item { Spacer(modifier = Modifier.height(8.dp)) }
     }

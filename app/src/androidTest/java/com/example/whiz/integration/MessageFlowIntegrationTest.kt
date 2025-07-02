@@ -492,6 +492,15 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.w(TAG, "⚠️ more bot messages than user messages - may indicate duplication")
         }
         
+        // 5. Final validation: ensure no bot responses contain server errors
+        android.util.Log.d(TAG, "🔍 final check: validating bot responses don't contain server errors...")
+        if (!validateAllBotResponsesForServerErrors()) {
+            android.util.Log.e(TAG, "❌ FAILURE at step 9.5: FINAL CHECK - bot responses contain server errors")
+            failWithScreenshot("bot_server_errors_detected", "FINAL CHECK: Bot responses contain server errors - server may be down or misconfigured")
+        } else {
+            android.util.Log.d(TAG, "✅ all bot responses validated - no server errors")
+        }
+        
         android.util.Log.d(TAG, "✅ comprehensive final verification completed successfully")
         android.util.Log.d(TAG, "📊 final state: ${totalUserMessages} user messages, ${totalBotMessages} bot responses, no critical duplicates")
     }
@@ -1131,6 +1140,15 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.w(TAG, "⚠️ no bot responses detected to VOICE messages - server may be unavailable")
         } else if (totalBotMessages > totalUserVoiceMessages) {
             android.util.Log.w(TAG, "⚠️ more bot messages than user VOICE messages - may indicate duplication")
+        }
+        
+        // 5. Final validation for VOICE: ensure no bot responses contain server errors
+        android.util.Log.d(TAG, "🔍 final VOICE check: validating bot responses don't contain server errors...")
+        if (!validateAllBotResponsesForServerErrors()) {
+            android.util.Log.e(TAG, "❌ FAILURE at VOICE step 9.5: FINAL CHECK - bot responses to VOICE contain server errors")
+            failWithScreenshot("voice_bot_server_errors_detected", "FINAL VOICE CHECK: Bot responses to VOICE contain server errors - server may be down or misconfigured")
+        } else {
+            android.util.Log.d(TAG, "✅ all bot responses to VOICE validated - no server errors")
         }
         
         android.util.Log.d(TAG, "✅ comprehensive final VOICE verification completed successfully")

@@ -354,6 +354,12 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 }
             }
             
+            // Final check: validate all bot responses are not server errors
+            Log.d(TAG, "🔍 Final check: validating bot responses don't contain server errors...")
+            if (!validateAllBotResponsesForServerErrors()) {
+                failWithScreenshot("bot_server_errors_detected", "Final check: Bot responses contain server errors - server may be down or misconfigured")
+            }
+            
             Log.d(TAG, "✅ Final UI verification completed successfully!")
             Log.d(TAG, "📊 Test summary:")
             Log.d(TAG, "   ✅ Sent 1 initial message to trigger bot response")
