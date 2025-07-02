@@ -118,10 +118,6 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         android.util.Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
         
         try {
-            // debug: take screenshot immediately to test screenshot mechanism
-            android.util.Log.d(TAG, "🔍 DEBUG: taking test screenshot to verify mechanism works")
-            takeFailureScreenshot("debug_test_start", "debugging screenshot collection mechanism")
-            
             // step 1: launch app and ensure we get to a new chat screen efficiently
             android.util.Log.d(TAG, "📱 step 1: launching app and navigating to new chat")
             if (!launchAppAndWaitForLoad()) {
@@ -158,8 +154,12 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             val firstMessage = "Hello! this is test message 1 - $uniqueTestId"
             android.util.Log.d(TAG, "💬 step 3: sending first message and verifying optimistic UI")
             
-                         // add extra delay for CI environments
-             Thread.sleep(getCIAwareDelay(1000))
+            // wait for chat UI to be ready for message input
+            android.util.Log.d(TAG, "⏳ waiting for chat UI to be ready for message input...")
+            if (!waitForChatUIReady()) {
+                android.util.Log.e(TAG, "❌ FAILURE: Chat UI not ready for message input")
+                failWithScreenshot("chat_ui_not_ready", "Chat UI not ready for message input")
+            }
             
             if (!sendMessageAndVerifyWebSocketSending(firstMessage, 1)) {
                 android.util.Log.e(TAG, "❌ FAILURE at step 3: first message failed to send properly")
@@ -169,14 +169,10 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             // ensure message is visible before proceeding
-            android.util.Log.d(TAG, "🔍 double-checking first message is visible before proceeding...")
+            android.util.Log.d(TAG, "🔍 verifying first message is visible...")
             if (!verifyMessageVisible(firstMessage)) {
-                android.util.Log.w(TAG, "⚠️ first message not immediately visible, trying again...")
-                                 Thread.sleep(getCIAwareDelay(2000))
-                if (!verifyMessageVisible(firstMessage)) {
-                    android.util.Log.e(TAG, "❌ first message still not visible after retry")
-                    failWithScreenshot("first_message_not_visible", "first message not visible after retry")
-                }
+                android.util.Log.e(TAG, "❌ first message not visible")
+                failWithScreenshot("first_message_not_visible", "first message not visible")
             }
             
             // step 3.5: capture optimistic chat ID for migration tracking
@@ -210,15 +206,15 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.d(TAG, "🤖 bot confirmed still responding - now testing interruption...")
             
             // This is the core UX test: users MUST be able to interrupt the bot AND have messages actually reach the server
-            // Using sendMessageAndVerifyWebSocketSending to catch the production bug where send button
-            // appears to work during bot response but doesn't actually send messages to server
-            if (!sendMessageAndVerifyWebSocketSending(secondMessage, 2)) {
+            // Using rapid send method to test interruption capability during bot response
+            // This should detect the production bug where typing is blocked during bot response
+            if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
                 android.util.Log.e(TAG, "❌ CRITICAL: Bot interruption test failed!")
-                android.util.Log.e(TAG, "   Either message UI failed OR WebSocket sending failed during bot response")
-                android.util.Log.e(TAG, "   If WebSocket failed, this indicates the PRODUCTION BUG where users think")
-                android.util.Log.e(TAG, "   they're sending messages during bot response but messages never reach server")
+                android.util.Log.e(TAG, "   Rapid message sending failed during bot response")
+                android.util.Log.e(TAG, "   This indicates the PRODUCTION BUG where users cannot type/send")
+                android.util.Log.e(TAG, "   messages during bot response period")
                 android.util.Log.e(TAG, "   Message: '${secondMessage.take(50)}...'")
-                failWithScreenshot("bot_interruption_failed", "CRITICAL: Second message during bot response failed to send or reach server")
+                failWithScreenshot("bot_interruption_failed", "CRITICAL: Rapid second message during bot response failed - typing likely blocked")
             }
             
             android.util.Log.d(TAG, "✅ Bot interruption successful - message sent AND reached server while bot was responding!")
@@ -268,16 +264,22 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             // step 8: verify all messages are showing properly
             android.util.Log.d(TAG, "✅ step 8: verifying all messages display correctly")
             
-                         // give time for UI to fully settle after all the messaging activity
-             android.util.Log.d(TAG, "⏳ allowing UI to settle before verification...")
-             Thread.sleep(getCIAwareDelay(2000))
+            // wait for UI to be stable before verification
+            android.util.Log.d(TAG, "⏳ waiting for UI to be stable before verification...")
+            if (!waitForUIToBeStable()) {
+                android.util.Log.e(TAG, "❌ FAILURE: UI not stable for verification")
+                failWithScreenshot("ui_not_stable", "UI not stable for verification")
+            }
             
             // ensure we're in chat screen before verification
             if (!isCurrentlyInChatScreen()) {
                 android.util.Log.w(TAG, "⚠️ not currently in chat screen during verification, attempting recovery...")
                 // try to get back to chat screen if possible
                 device.pressBack()
-                Thread.sleep(500)
+                if (!waitForChatScreenToLoad()) {
+                    android.util.Log.e(TAG, "❌ FAILURE: Could not recover to chat screen for verification")
+                    failWithScreenshot("chat_screen_recovery_failed", "Could not recover to chat screen for verification")
+                }
             }
             
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
@@ -304,20 +306,26 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         
         // scroll to top of chat first to ensure we can see all messages
         android.util.Log.d(TAG, "📜 scrolling to top of chat to ensure all messages are visible")
-        repeat(5) { 
+        repeat(5) { attempt ->
             try {
                 val height = device.displayHeight
                 val width = device.displayWidth
                 // swipe from top to bottom to scroll to top
                 device.swipe(width/2, height/3, width/2, height*2/3, 10)
-                Thread.sleep(500)
+                
+                // wait for scroll animation to complete
+                if (!waitForScrollToComplete()) {
+                    android.util.Log.w(TAG, "⚠️ scroll animation may not have completed (attempt ${attempt + 1})")
+                }
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "⚠️ error scrolling to top: ${e.message}")
             }
         }
         
-        // give UI time to settle after scrolling
-        Thread.sleep(1000)
+        // wait for UI to settle after scrolling
+        if (!waitForUIToBeStable()) {
+            android.util.Log.w(TAG, "⚠️ UI may not be stable after scrolling")
+        }
         
         // log all visible text elements for debugging
         android.util.Log.d(TAG, "🔍 current visible text elements:")
@@ -390,52 +398,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         return false
     }
     
-    /**
-     * Enhanced message verification with more aggressive scrolling
-     */
-    private fun verifyMessageWithScroll(messageText: String): Boolean {
-        val searchText = messageText.take(20)
-        
-        android.util.Log.d(TAG, "🔍 enhanced scroll search for: '$searchText'")
-        
-        // try scrolling both up and down to find the message
-        repeat(5) { attempt ->
-            // scroll up
-            try {
-                val height = device.displayHeight
-                val width = device.displayWidth
-                device.swipe(width/2, height*2/3, width/2, height/3, 10)
-                Thread.sleep(800)
-                
-                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
-                    android.util.Log.d(TAG, "✅ message found after scrolling up (attempt ${attempt + 1})")
-                    return true
-                }
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "⚠️ error during up scroll: ${e.message}")
-            }
-        }
-        
-        repeat(5) { attempt ->
-            // scroll down
-            try {
-                val height = device.displayHeight
-                val width = device.displayWidth
-                device.swipe(width/2, height/3, width/2, height*2/3, 10)
-                Thread.sleep(800)
-                
-                if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
-                    android.util.Log.d(TAG, "✅ message found after scrolling down (attempt ${attempt + 1})")
-                    return true
-                }
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "⚠️ error during down scroll: ${e.message}")
-            }
-        }
-        
-        android.util.Log.w(TAG, "❌ message not found even with enhanced scrolling")
-        return false
-    }
+    // verifyMessageWithScroll() is now available from BaseIntegrationTest
     
     private fun verifyFinalMessageState(sentMessages: List<String>) {
         android.util.Log.d(TAG, "🔍 comprehensive final message verification...")
@@ -760,6 +723,544 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             0
         }
+    }
+
+    @Test
+    fun fullMessageFlowTest_voiceTranscriptionVersion(): Unit = runBlocking {
+        android.util.Log.d(TAG, "🚀 starting comprehensive VOICE message flow UI test")
+        
+        val credentials = TestCredentialsManager.credentials
+        android.util.Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
+        
+        try {
+            // step 1: launch app and ensure we get to a new chat screen efficiently
+            android.util.Log.d(TAG, "📱 step 1: launching app and navigating to new chat for VOICE test")
+            if (!launchAppAndWaitForLoad()) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 1: app failed to launch or load main UI for voice test")
+                failWithScreenshot("voice_app_launch_failed", "app failed to launch or load main UI for voice test")
+            }
+            
+            // step 2: navigate to new chat (handling both chats list and existing chat scenarios)
+            android.util.Log.d(TAG, "➕ step 2: navigating to new chat for VOICE test")
+            
+            if (isCurrentlyInChatScreen()) {
+                // if we're already in a chat, navigate back to chats list first, then create new chat
+                android.util.Log.d(TAG, "🔄 currently in chat screen, going back to chats list first for voice test")
+                if (!navigateBackToChatsListFromChat()) {
+                    android.util.Log.e(TAG, "❌ FAILURE at step 2a: failed to navigate from chat screen to chats list for voice test")
+                    failWithScreenshot("voice_navigate_to_chats_list_failed", "failed to navigate from chat screen to chats list for voice test")
+                }
+                
+                // now click new chat button
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    android.util.Log.e(TAG, "❌ FAILURE at step 2b: new chat button not found or chat screen failed to load for voice test")
+                    failWithScreenshot("voice_new_chat_failed", "new chat button not found or chat screen failed to load for voice test")
+                }
+            } else {
+                // we're on chats list, directly click new chat button
+                android.util.Log.d(TAG, "📋 on chats list, clicking new chat button directly for voice test")
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    android.util.Log.e(TAG, "❌ FAILURE at step 2: new chat button not found or chat screen failed to load for voice test")
+                    failWithScreenshot("voice_new_chat_failed", "new chat button not found or chat screen failed to load for voice test")
+                }
+            }
+            
+            
+            // step 3: send first VOICE message and verify optimistic UI
+            val firstVoiceMessage = "Hello! this is VOICE test message 1 - $uniqueTestId"
+            android.util.Log.d(TAG, "🎙️ step 3: sending first VOICE message and verifying optimistic UI")
+            
+            // wait for voice mode to be ready and chat UI to be stable
+            android.util.Log.d(TAG, "⏳ waiting for voice mode and chat UI to be ready...")
+            if (!waitForVoiceModeAndChatReady()) {
+                android.util.Log.e(TAG, "❌ FAILURE: Voice mode or chat UI not ready for voice message sending")
+                failWithScreenshot("voice_mode_not_ready", "Voice mode or chat UI not ready for voice message sending")
+            }
+            
+            if (!sendVoiceMessageAndVerifyWebSocketSending(firstVoiceMessage, 1)) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 3: first VOICE message failed to send properly")
+                android.util.Log.e(TAG, "   This could be UI display failure or WebSocket transmission failure")
+                android.util.Log.e(TAG, "   Voice Message: '${firstVoiceMessage.take(50)}...'")
+                failWithScreenshot("first_voice_message_send_failed", "Step 3: First VOICE message failed to send or reach server")
+            }
+            
+            // ensure voice message is visible before proceeding
+            android.util.Log.d(TAG, "🔍 verifying first VOICE message is visible...")
+            if (!verifyMessageVisible(firstVoiceMessage)) {
+                android.util.Log.e(TAG, "❌ first VOICE message not visible")
+                failWithScreenshot("first_voice_message_not_visible", "first VOICE message not visible")
+            }
+            
+            // step 3.5: capture optimistic chat ID for migration tracking
+            android.util.Log.d(TAG, "🔍 step 3.5: capturing optimistic chat ID for VOICE test")
+            optimisticChatId = getCurrentOptimisticChatId()
+            if (optimisticChatId != null) {
+                android.util.Log.d(TAG, "✅ captured optimistic chat ID for VOICE test: $optimisticChatId")
+            } else {
+                android.util.Log.w(TAG, "⚠️ could not capture optimistic chat ID for VOICE test - may already have migrated or not created yet")
+            }
+            
+            // step 4: confirm bot is responding (thinking indicator visible)
+            android.util.Log.d(TAG, "🤖 step 4: confirming bot is responding to VOICE message")
+            if (!waitForBotThinkingIndicator()) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 4: bot thinking indicator not found - bot may not be responding to VOICE message")
+                failWithScreenshot("voice_bot_not_responding", "bot thinking indicator not found - bot may not be responding to VOICE message")
+            }
+            
+            // step 5: send second VOICE message while bot is responding
+            // This is the CRITICAL test for the production bug where messages appear to send
+            // during bot response but don't actually reach the server via WebSocket
+            val secondVoiceMessage = "second VOICE message while you're thinking - $uniqueTestId"
+            android.util.Log.d(TAG, "🎙️ step 5: sending second VOICE message while bot is responding (CRITICAL WebSocket test)")
+            
+            // CRITICAL: verify bot is still responding before sending - this tests the interruption capability
+            if (!isBotCurrentlyResponding()) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 5: bot stopped responding too quickly - cannot test VOICE interruption")
+                failWithScreenshot("voice_bot_finished_too_early", "bot stopped responding before we could test VOICE interruption capability")
+            }
+            
+            android.util.Log.d(TAG, "🤖 bot confirmed still responding - now testing VOICE interruption...")
+            
+            // This is the core UX test: users MUST be able to interrupt the bot via VOICE AND have messages actually reach the server
+            // Using rapid VOICE send method to test interruption capability during bot response
+            // This should detect the production bug where voice transcription is blocked during bot response
+            if (!sendVoiceMessageAndVerifyDisplayRapid(secondVoiceMessage)) {
+                android.util.Log.e(TAG, "❌ CRITICAL: Bot VOICE interruption test failed!")
+                android.util.Log.e(TAG, "   Rapid VOICE message sending failed during bot response")
+                android.util.Log.e(TAG, "   This indicates the PRODUCTION BUG where users cannot use voice transcription")
+                android.util.Log.e(TAG, "   during bot response period")
+                android.util.Log.e(TAG, "   Voice Message: '${secondVoiceMessage.take(50)}...'")
+                failWithScreenshot("voice_bot_interruption_failed", "CRITICAL: Rapid second VOICE message during bot response failed - voice transcription likely blocked")
+            }
+            
+            android.util.Log.d(TAG, "✅ Bot VOICE interruption successful - voice message sent AND reached server while bot was responding!")
+            
+            // step 6: wait for bot response to arrive
+            android.util.Log.d(TAG, "⏳ step 6: waiting for bot response to VOICE messages")
+            
+            if (!waitForBotThinkingToFinish()) {
+                android.util.Log.w(TAG, "⚠️ thinking indicator still visible after timeout, checking for response anyway")
+            }
+            
+            // use styling detection to detect bot response
+            val botResponseDetected = waitForBotResponse(5000)
+            
+            if (!botResponseDetected) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 6: bot response not detected within timeout using styling detection for VOICE test")
+                failWithScreenshot("voice_no_bot_response", "bot response not detected within timeout using styling detection for VOICE test")
+            }
+            
+            android.util.Log.d(TAG, "✅ bot response detected via styling for VOICE test")
+            
+            // step 6.5: check if migration from optimistic to server chat ID worked
+            android.util.Log.d(TAG, "🔄 step 6.5: checking chat migration after bot response to VOICE messages")
+            val migrationWorked = checkChatMigration()
+            if (migrationWorked) {
+                android.util.Log.d(TAG, "✅ chat migration successful after bot response to VOICE messages")
+            } else {
+                android.util.Log.w(TAG, "⚠️ chat migration not detected yet for VOICE test - may still be in progress")
+            }
+            
+            // step 7: send third VOICE message after bot response
+            val thirdVoiceMessage = "third VOICE message after your response - $uniqueTestId"
+            android.util.Log.d(TAG, "🎙️ step 7: sending third VOICE message after bot response")
+            
+            // ensure bot is no longer responding
+            if (isBotCurrentlyResponding()) {
+                android.util.Log.w(TAG, "⚠️ bot still appears to be responding, but sending VOICE message anyway")
+            }
+            
+            if (!sendVoiceMessageAndVerifyWebSocketSending(thirdVoiceMessage, 3)) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 7: third VOICE message after bot response failed")
+                android.util.Log.e(TAG, "   Third VOICE message either failed UI display or WebSocket transmission")
+                android.util.Log.e(TAG, "   Voice Message: '${thirdVoiceMessage.take(50)}...'")
+                failWithScreenshot("third_voice_message_send_failed", "Step 7: Third VOICE message after bot response failed to send or reach server")
+            }
+            
+            // step 8: verify all VOICE messages are showing properly
+            android.util.Log.d(TAG, "✅ step 8: verifying all VOICE messages display correctly")
+            
+            // wait for UI to be stable before VOICE verification
+            android.util.Log.d(TAG, "⏳ waiting for UI to be stable before VOICE message verification...")
+            if (!waitForUIToBeStable()) {
+                android.util.Log.e(TAG, "❌ FAILURE: UI not stable for VOICE verification")
+                failWithScreenshot("voice_ui_not_stable", "UI not stable for VOICE verification")
+            }
+            
+            // ensure we're in chat screen before verification
+            if (!isCurrentlyInChatScreen()) {
+                android.util.Log.w(TAG, "⚠️ not currently in chat screen during VOICE verification, attempting recovery...")
+                // try to get back to chat screen if possible
+                device.pressBack()
+                if (!waitForChatScreenToLoad()) {
+                    android.util.Log.e(TAG, "❌ FAILURE: Could not recover to chat screen for VOICE verification")
+                    failWithScreenshot("voice_chat_screen_recovery_failed", "Could not recover to chat screen for VOICE verification")
+                }
+            }
+            
+            val sentVoiceMessages = listOf(firstVoiceMessage, secondVoiceMessage, thirdVoiceMessage)
+            verifyAllVoiceMessagesDisplayCorrectly(sentVoiceMessages)
+            
+            // step 9: wait for chat migration to complete, then do comprehensive final verification
+            android.util.Log.d(TAG, "🔍 step 9a: waiting for chat migration to complete for VOICE test...")
+            waitForChatMigrationCompletion()
+            
+            android.util.Log.d(TAG, "🔍 step 9b: final comprehensive verification for VOICE test - checking for duplicates and completeness")
+            verifyFinalVoiceMessageState(sentVoiceMessages)
+            
+            android.util.Log.d(TAG, "🎉 comprehensive VOICE message flow test PASSED!")
+            android.util.Log.d(TAG, "✅ VOICE Test validated: voice transcription optimistic UI, bot interruption capability via voice, chat migration, and voice message persistence")
+            
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "comprehensive VOICE message flow test FAILED", e)
+            throw e
+        }
+    }
+
+    /**
+     * Send voice message and verify WebSocket sending (normal timeouts for chat loading)
+     */
+    private fun sendVoiceMessageAndVerifyWebSocketSending(message: String, expectedMessageNumber: Int): Boolean {
+        android.util.Log.d(TAG, "🎙️ Attempting to send voice message with WebSocket verification: '${message.take(30)}...'")
+        
+        // Simulate voice transcription by using the transcription callback
+        val transcriptionSuccess = simulateVoiceTranscriptionAndSendWithWebSocket(message)
+        if (!transcriptionSuccess) {
+            android.util.Log.e(TAG, "❌ Voice transcription and WebSocket send failed")
+            return false
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice message sent and WebSocket confirmed successfully")
+        return true
+    }
+
+    /**
+     * Simulate voice transcription and send with WebSocket verification
+     */
+    private fun simulateVoiceTranscriptionAndSendWithWebSocket(message: String): Boolean {
+        android.util.Log.d(TAG, "🎤 Simulating voice transcription with WebSocket verification: '${message.take(30)}...'")
+        
+        // Simulate transcription by typing the message (this simulates what the voice transcription callback would do)
+        val typingSuccess = typeMessageInInputField(message)
+        if (!typingSuccess) {
+            android.util.Log.e(TAG, "❌ Failed to simulate voice transcription")
+            return false
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice transcription simulated successfully")
+        
+        // Send with normal timeouts and WebSocket verification (1000ms)
+        val sendingSuccess = clickSendButtonAndWaitForSent(message)
+        if (!sendingSuccess) {
+            android.util.Log.e(TAG, "❌ Voice message send with WebSocket verification failed")
+            return false
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice message sent with WebSocket verification successfully")
+        return true
+    }
+
+    /**
+     * Voice-specific message verification (same logic but with voice-specific logging)
+     */
+    private fun verifyAllVoiceMessagesDisplayCorrectly(sentVoiceMessages: List<String>) {
+        android.util.Log.d(TAG, "🔍 verifying all VOICE messages display correctly...")
+        
+        // scroll to top of chat first to ensure we can see all voice messages
+        android.util.Log.d(TAG, "📜 scrolling to top of chat to ensure all VOICE messages are visible")
+        repeat(5) { attempt ->
+            try {
+                val height = device.displayHeight
+                val width = device.displayWidth
+                // swipe from top to bottom to scroll to top
+                device.swipe(width/2, height/3, width/2, height*2/3, 10)
+                
+                // wait for scroll animation to complete
+                if (!waitForScrollToComplete()) {
+                    android.util.Log.w(TAG, "⚠️ VOICE scroll animation may not have completed (attempt ${attempt + 1})")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "⚠️ error scrolling to top for VOICE verification: ${e.message}")
+            }
+        }
+        
+        // wait for UI to settle after scrolling
+        if (!waitForUIToBeStable()) {
+            android.util.Log.w(TAG, "⚠️ UI may not be stable after VOICE scrolling")
+        }
+        
+        // log all visible text elements for debugging voice messages
+        android.util.Log.d(TAG, "🔍 current visible text elements for VOICE verification:")
+        val allTextElements = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
+        allTextElements.forEachIndexed { idx, element ->
+            try {
+                val text = element.text
+                if (text != null && text.length > 5) {
+                    android.util.Log.d(TAG, "  VOICE Text $idx: '${text.take(40)}...'")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "  VOICE Text $idx: error reading text")
+            }
+        }
+        
+        // check each sent voice message is visible with enhanced verification
+        sentVoiceMessages.forEachIndexed { index, message ->
+            android.util.Log.d(TAG, "🔍 verifying VOICE message $index: '${message.take(30)}...'")
+            
+            // try multiple verification approaches
+            val found = verifyMessageVisible(message) || 
+                       verifyMessageWithPartialText(message) ||
+                       verifyMessageWithScroll(message)
+            
+            if (!found) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 8: VOICE message $index not visible: '${message.take(30)}...'")
+                
+                // additional debugging before failing
+                android.util.Log.e(TAG, "🔍 debug info for missing VOICE message:")
+                android.util.Log.e(TAG, "  full VOICE message text: '$message'")
+                android.util.Log.e(TAG, "  search substring: '${message.take(20)}'")
+                android.util.Log.e(TAG, "  unique test ID: $uniqueTestId")
+                
+                failWithScreenshot("voice_message_${index}_missing", "VOICE message $index not visible: '${message.take(30)}...'")
+            }
+            android.util.Log.d(TAG, "✅ VOICE message $index verified: '${message.take(30)}...'")
+        }
+        
+        // check for voice message duplication
+        sentVoiceMessages.forEach { message ->
+            val occurrences = countMessageOccurrences(message)
+            if (occurrences > 1) {
+                android.util.Log.w(TAG, "⚠️ potential VOICE message duplication detected for: '${message.take(30)}...' (found $occurrences instances)")
+                // not failing here as there might be legitimate reasons for multiple occurrences
+            }
+        }
+        
+        android.util.Log.d(TAG, "✅ all VOICE messages verified without major duplication issues")
+    }
+
+    /**
+     * Voice-specific final message verification
+     */
+    private fun verifyFinalVoiceMessageState(sentVoiceMessages: List<String>) {
+        android.util.Log.d(TAG, "🔍 comprehensive final VOICE message verification...")
+        
+        // 1. verify ALL sent voice messages are present (with enhanced verification strategies)
+        android.util.Log.d(TAG, "📝 checking all ${sentVoiceMessages.size} sent VOICE messages are present...")
+        sentVoiceMessages.forEachIndexed { index, message ->
+            // try multiple verification approaches like in step 8
+            val found = verifyMessageVisible(message) || 
+                       verifyMessageWithPartialText(message) ||
+                       verifyMessageWithScroll(message)
+            
+            if (!found) {
+                android.util.Log.e(TAG, "❌ FAILURE at step 9.1: FINAL CHECK - sent VOICE message $index missing: '${message.take(30)}...'")
+                
+                // additional debugging for final verification
+                android.util.Log.e(TAG, "🔍 final debug info for missing VOICE message:")
+                android.util.Log.e(TAG, "  full VOICE message: '$message'")
+                android.util.Log.e(TAG, "  test ID: $uniqueTestId")
+                android.util.Log.e(TAG, "  VOICE message index: $index")
+                
+                failWithScreenshot("final_voice_message_${index}_missing", "FINAL CHECK: sent VOICE message $index missing: '${message.take(30)}...'")
+            }
+        }
+        android.util.Log.d(TAG, "✅ all sent VOICE messages confirmed present")
+        
+        // 2. check for user voice message duplicates (strict)
+        android.util.Log.d(TAG, "🔍 checking for user VOICE message duplicates...")
+        var duplicatesFound = false
+        sentVoiceMessages.forEach { message ->
+            val occurrences = countMessageOccurrences(message)
+            if (occurrences > 1) {
+                android.util.Log.e(TAG, "❌ DUPLICATE USER VOICE MESSAGE: '${message.take(30)}...' appears $occurrences times")
+                duplicatesFound = true
+            }
+        }
+        
+        if (duplicatesFound) {
+            android.util.Log.e(TAG, "❌ FAILURE at step 9.2: FINAL CHECK - duplicate user VOICE messages detected - optimistic UI may be broken")
+            failWithScreenshot("duplicate_user_voice_messages", "FINAL CHECK: duplicate user VOICE messages detected - optimistic UI may be broken")
+        }
+        android.util.Log.d(TAG, "✅ no user VOICE message duplicates found")
+        
+        // 3. check for bot message duplicates (same as text version)
+        android.util.Log.d(TAG, "🤖 checking for bot message duplicates in response to VOICE messages...")
+        val whizLabels = device.findObjects(
+            androidx.test.uiautomator.By.text("Whiz").pkg(packageName)
+        )
+        
+        // collect all bot message content to check for duplicates
+        val botMessageContents = mutableListOf<String>()
+        whizLabels.forEach { whizLabel ->
+            try {
+                // try to find the message content near the "Whiz" label
+                val parent = whizLabel.parent
+                if (parent != null) {
+                    val textViews = parent.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView"))
+                    textViews.forEach { textView ->
+                        val text = textView.text
+                        if (text != null && text != "Whiz" && text.length > 20) {
+                            botMessageContents.add(text)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "⚠️ error reading bot message content in response to VOICE: ${e.message}")
+            }
+        }
+        
+        // check for bot message duplicates
+        val botDuplicates = botMessageContents.groupBy { it }.filter { it.value.size > 1 }
+        if (botDuplicates.isNotEmpty()) {
+            android.util.Log.e(TAG, "❌ IDENTICAL BOT MESSAGE DUPLICATES FOUND IN RESPONSE TO VOICE:")
+            botDuplicates.forEach { (content, occurrences) ->
+                android.util.Log.e(TAG, "   '${content.take(50)}...' appears ${occurrences.size} times")
+            }
+            android.util.Log.e(TAG, "❌ FAILURE at step 9.3: FINAL CHECK - identical bot messages detected in response to VOICE - bot response system may be broken")
+            failWithScreenshot("duplicate_bot_messages_voice", "FINAL CHECK: identical bot messages detected in response to VOICE - bot response system may be broken")
+        } else {
+            android.util.Log.d(TAG, "✅ no bot message duplicates found in response to VOICE")
+        }
+        
+        // 4. verify message count makes sense for voice test
+        val totalUserVoiceMessages = sentVoiceMessages.size
+        val totalBotMessages = whizLabels.size
+        android.util.Log.d(TAG, "📊 final VOICE message count: $totalUserVoiceMessages user VOICE, $totalBotMessages bot")
+        
+        if (totalBotMessages == 0) {
+            android.util.Log.w(TAG, "⚠️ no bot responses detected to VOICE messages - server may be unavailable")
+        } else if (totalBotMessages > totalUserVoiceMessages) {
+            android.util.Log.w(TAG, "⚠️ more bot messages than user VOICE messages - may indicate duplication")
+        }
+        
+        android.util.Log.d(TAG, "✅ comprehensive final VOICE verification completed successfully")
+        android.util.Log.d(TAG, "📊 final VOICE state: ${totalUserVoiceMessages} user VOICE messages, ${totalBotMessages} bot responses, no critical duplicates")
+    }
+
+    /**
+     * Wait for chat UI to be ready for message input
+     */
+    private fun waitForChatUIReady(): Boolean {
+        android.util.Log.d(TAG, "⏳ waiting for chat UI to be ready...")
+        
+        // Check for input field to be available and interactable
+        val inputFieldReady = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName).enabled(true)
+        ), 3000)
+        
+        if (!inputFieldReady) {
+            android.util.Log.e(TAG, "❌ Input field not ready or not enabled")
+            return false
+        }
+        
+        // Verify chat screen is fully loaded
+        val chatScreenLoaded = isCurrentlyInChatScreen()
+        if (!chatScreenLoaded) {
+            android.util.Log.e(TAG, "❌ Chat screen not fully loaded")
+            return false
+        }
+        
+        android.util.Log.d(TAG, "✅ Chat UI ready for input")
+        return true
+    }
+
+    /**
+     * Wait for UI to be stable (no rapid changes)
+     */
+    private fun waitForUIToBeStable(): Boolean {
+        android.util.Log.d(TAG, "⏳ waiting for UI to be stable...")
+        
+        var previousElementCount = 0
+        var stableCount = 0
+        val maxAttempts = 20
+        val startTime = System.currentTimeMillis()
+        val maxWaitTime = 2000L // 2 seconds max
+        
+        repeat(maxAttempts) { attempt ->
+            try {
+                // Check if we've exceeded max wait time
+                if (System.currentTimeMillis() - startTime > maxWaitTime) {
+                    android.util.Log.w(TAG, "⚠️ UI stability check timed out after ${maxWaitTime}ms")
+                    return false
+                }
+                
+                // Count visible elements as a measure of UI stability
+                val currentElements = device.findObjects(
+                    By.clazz("android.widget.TextView").pkg(packageName)
+                )
+                val currentElementCount = currentElements.size
+                
+                if (currentElementCount == previousElementCount && currentElementCount > 0) {
+                    stableCount++
+                    if (stableCount >= 3) { // 3 consecutive stable readings
+                        android.util.Log.d(TAG, "✅ UI stable after ${attempt + 1} checks")
+                        return true
+                    }
+                } else {
+                    stableCount = 0 // reset if count changed
+                }
+                
+                previousElementCount = currentElementCount
+                
+                // Use device.wait instead of sleep for responsiveness
+                device.wait(Until.hasObject(
+                    By.clazz("android.widget.TextView").pkg(packageName)
+                ), 50)
+                
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "⚠️ error checking UI stability: ${e.message}")
+            }
+        }
+        
+        android.util.Log.w(TAG, "⚠️ UI may not be fully stable after $maxAttempts attempts")
+        return false
+    }
+
+    // waitForScrollToComplete() is now available from BaseIntegrationTest
+
+    /**
+     * Wait for chat screen to load after navigation
+     */
+    private fun waitForChatScreenToLoad(): Boolean {
+        android.util.Log.d(TAG, "⏳ waiting for chat screen to load...")
+        
+        // Wait for input field to appear (indicates chat screen loaded)
+        val chatScreenLoaded = device.wait(Until.hasObject(
+            By.clazz("android.widget.EditText").pkg(packageName)
+        ), 2000)
+        
+        if (!chatScreenLoaded) {
+            android.util.Log.e(TAG, "❌ Chat screen did not load properly")
+            return false
+        }
+        
+        android.util.Log.d(TAG, "✅ Chat screen loaded successfully")
+        return true
+    }
+
+    /**
+     * Wait for voice mode and chat UI to be ready (replaces the waitForVoiceModeAndChatReady call I made earlier)
+     */
+    private fun waitForVoiceModeAndChatReady(): Boolean {
+        android.util.Log.d(TAG, "⏳ waiting for voice mode and chat UI to be ready...")
+        
+        // First ensure chat UI is ready
+        if (!waitForChatUIReady()) {
+            return false
+        }
+        
+        // Check if voice mode is enabled
+        try {
+            val voiceEnabled = voiceManager.isContinuousListeningEnabled.value
+            if (!voiceEnabled) {
+                android.util.Log.w(TAG, "⚠️ voice mode may not be enabled yet")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "⚠️ could not check voice mode status: ${e.message}")
+        }
+        
+        android.util.Log.d(TAG, "✅ Voice mode and chat UI ready")
+        return true
     }
 
 

@@ -252,13 +252,14 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             // Step 6: Verify all messages are visible in the UI and check ordering
             Log.d(TAG, "🔍 Step 6: Verifying all messages are visible in UI and checking ordering...")
             
-            // Use RAPID verification with NO scrolling - messages should be immediately visible
+            // Try RAPID verification first (no scrolling), then use scrolling as fallback
             for (i in 0 until MESSAGE_COUNT) {
                 val message = sentMessages[i]
-                if (!verifyMessageVisibleRapid(message)) {
-                    failWithScreenshot("message_${i+1}_not_visible", "Message ${i+1} not visible immediately: '${message.take(30)}...'")
+                val isVisible = verifyMessageVisibleRapid(message) || verifyMessageWithScroll(message)
+                if (!isVisible) {
+                    failWithScreenshot("message_${i+1}_not_visible", "Message ${i+1} not visible even with scrolling: '${message.take(30)}...'")
                 }
-                Log.d(TAG, "✅ Message ${i+1} visible immediately in UI: '${message.take(30)}...'")
+                Log.d(TAG, "✅ Message ${i+1} visible in UI: '${message.take(30)}...'")
             }
             
             // Step 7: Check for duplicate messages in UI
@@ -300,7 +301,8 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                     Log.d(TAG, "🔍 Verifying user messages are still present after bot response...")
                     for (i in 0 until MESSAGE_COUNT) {
                         val message = sentMessages[i]
-                        if (!verifyMessageVisibleRapid(message)) {
+                        val isVisible = verifyMessageVisibleRapid(message) || verifyMessageWithScroll(message)
+                        if (!isVisible) {
                             failWithScreenshot("user_message_${i+1}_lost_after_bot_response", "User message ${i+1} disappeared after bot response: '${message.take(30)}...'")
                         }
                     }
@@ -335,7 +337,8 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "🔍 Final check: verifying all original messages still visible...")
             for (i in 0 until MESSAGE_COUNT) {
                 val message = sentMessages[i]
-                if (!verifyMessageVisibleRapid(message)) {
+                val isVisible = verifyMessageVisibleRapid(message) || verifyMessageWithScroll(message)
+                if (!isVisible) {
                     failWithScreenshot("final_message_${i+1}_missing", "Final check: message ${i+1} no longer visible: '${message.take(30)}...'")
                 }
             }

@@ -324,10 +324,10 @@ fun ChatScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // Disable text input when responding or speaking
-            val isTextInputDisabled = isResponding || isSpeaking
-            // FIXED: Don't disable mic during TTS - allow interruption
-            val isMicDisabled = false // Mic should always be available for user interaction
+            // Never disable text input - users should always be able to type
+            val isTextInputDisabled = false
+            // Only disable mic during TTS when no headphones (to prevent audio feedback)
+            val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
             ChatInputBar(
                 inputText = inputText,
                 isInputFromVoice = isInputFromVoice,
@@ -341,11 +341,8 @@ fun ChatScreen(
                 shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { 
-                    if (isResponding) {
-                        viewModel.interruptResponse()
-                    } else {
-                        viewModel.sendUserInput(inputText)
-                    }
+                    // Always send regular messages - let server handle interruption logic
+                    viewModel.sendUserInput(inputText)
                 },
                 onMicClick = { handleMicClick() },
                 onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
@@ -683,8 +680,9 @@ fun ChatInputBar(
     val hasTypedText = hasInputText && !isInputFromVoice
     val hasVoiceText = hasInputText && isInputFromVoice
     
-    // Debug logging for button logic
+    // Debug logging for button logic and input state
     Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
+    Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
     
     // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
     val displayValue = when {
@@ -716,8 +714,8 @@ fun ChatInputBar(
                 },
                 modifier = Modifier.fillMaxWidth(), // TextField fills the Box
                 placeholder = { Text(placeholderText) },
-                readOnly = false, // Always allow text input - users can type at any time
-                enabled = true, // Always enable input field to allow interrupts
+                readOnly = false, // Allow text input when enabled
+                enabled = !isInputDisabled, // Respect the isInputDisabled parameter
                 singleLine = false,
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp), // Rounded corners

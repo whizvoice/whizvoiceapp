@@ -542,8 +542,10 @@ abstract class BaseIntegrationTest {
                 scrollAttempts++
                 android.util.Log.d("BaseIntegrationTest", "📜 Swiped up to scroll (attempt $scrollAttempts)")
                 
-                // give UI more time to update after scroll (CI environments can be slower)
-                Thread.sleep(getCIAwareDelay(1200))
+                // wait for scroll animation to complete using dependency-based wait
+                if (!waitForScrollToComplete()) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Scroll animation may not have completed properly (attempt $scrollAttempts)")
+                }
                 
                 // check if message is now visible
                 if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
@@ -585,7 +587,10 @@ abstract class BaseIntegrationTest {
                 downScrollAttempts++
                 android.util.Log.d("BaseIntegrationTest", "📜 Swiped down to scroll (attempt $downScrollAttempts)")
                 
-                Thread.sleep(getCIAwareDelay(1200))
+                // wait for scroll animation to complete using dependency-based wait
+                if (!waitForScrollToComplete()) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Down scroll animation may not have completed properly (attempt $downScrollAttempts)")
+                }
                 
                 if (device.hasObject(By.textContains(searchText).pkg(packageName))) {
                     android.util.Log.d("BaseIntegrationTest", "✅ Message found after scrolling down (attempt $downScrollAttempts): '${searchText}...'")
@@ -1025,6 +1030,36 @@ abstract class BaseIntegrationTest {
         }
         
         return messageVisible
+    }
+
+    /**
+     * Enhanced message verification with smart scrolling (alias for verifyMessageVisible)
+     * Shared between ChatViewModelIntegrationTest and MessageFlowIntegrationTest
+     * Uses intelligent scrolling that stops when screen content doesn't change
+     */
+    protected fun verifyMessageWithScroll(messageText: String): Boolean {
+        // Use the existing smart scrolling function that knows when to stop
+        return verifyMessageVisible(messageText)
+    }
+
+    /**
+     * Wait for scroll animation to complete - shared helper method
+     */
+    protected fun waitForScrollToComplete(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for scroll animation to complete...")
+        
+        // Wait for UI to be responsive after scroll - UI Automator waits for accessibility events
+        val scrollComplete = device.wait(Until.hasObject(
+            By.clazz("android.widget.TextView").pkg(packageName)
+        ), 500)
+        
+        if (!scrollComplete) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Scroll may not have completed properly")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ Scroll animation completed")
+        return true
     }
 
     /**

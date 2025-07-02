@@ -112,42 +112,6 @@ class VoiceChatIntegrationTest {
     }
 
     @Test
-    fun chatInputBar_waitingForResponse_inputDisabled() {
-        // Test ChatInputBar while waiting for bot response
-        val isResponding = true
-        val inputText = "Hello Whiz"  // Previously submitted message
-        val isContinuousListening = true
-        
-        composeTestRule.setContent {
-            WhizTheme {
-                ChatInputBar(
-                    inputText = inputText,
-                    isInputFromVoice = false,
-                    transcription = "",
-                    isListening = false,
-                    isInputDisabled = true,  // Disabled while responding
-                    isMicDisabled = false,   // Mic can still be used to turn off continuous listening
-                    isResponding = isResponding,
-                    isContinuousListeningEnabled = isContinuousListening,
-                    isSpeaking = false,
-                    shouldShowMicDuringTTS = false,
-                    onInputChange = {},
-                    onSendClick = {},
-                    onInterruptClick = {},
-                    onMicClick = {},
-                    onMicClickDuringTTS = {},
-                    surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
-                )
-            }
-        }
-        
-        // Verify waiting state
-        assert(isResponding == true)
-        assert(inputText.isNotBlank()) // Shows submitted message
-        composeTestRule.onNodeWithText(inputText).assertIsDisplayed()
-    }
-
-    @Test
     fun chatInputBar_voiceActivatedMode_ttsEnabled() {
         // Test ChatInputBar in voice-activated mode (OK Google activation)
         composeTestRule.setContent {
