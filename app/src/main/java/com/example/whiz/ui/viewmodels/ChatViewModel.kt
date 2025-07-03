@@ -482,7 +482,10 @@ class ChatViewModel @Inject constructor(
                                     }
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
-                                        // 🔑 CRITICAL FIX: Only update _chatId AFTER successful migration
+                                        
+
+                                        
+                                        // �� CRITICAL FIX: Only update _chatId AFTER successful migration
                                         Log.d(TAG, "$eventLogId 🔄 MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                         _chatId.value = effectiveConversationId
                                     } else {

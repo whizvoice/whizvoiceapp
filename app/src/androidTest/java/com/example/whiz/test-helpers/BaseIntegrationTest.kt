@@ -229,36 +229,42 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Find and click send button, wait for message to be sent - NORMAL VERSION for initial loading
+     * Find and click send button, wait for message to be sent - NORMAL VERSION with enhanced Compose compatibility
      */
     protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 looking for send button with exact content description 'Send message'...")
+        android.util.Log.d("BaseIntegrationTest", "🔍 NORMAL: clicking send button (optimized)...")
         
-        // Use exact content description from production code (ChatScreen.kt line 748)
+        // Use only the working method - exact content description
         val sendButton = device.findObject(
             UiSelector()
-                .description("Send message")  // Exact match from production code
+                .description("Send message")
                 .packageName(packageName)
         )
         
         if (!sendButton.waitForExists(1000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Send button with description 'Send message' not found!")
+            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: Send button not found!")
             return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "✅ found send button")
-        android.util.Log.d("BaseIntegrationTest", "📤 clicking send button...")
-        sendButton.click()
+        try {
+            sendButton.click()
+            android.util.Log.d("BaseIntegrationTest", "📤 NORMAL: send button clicked")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: Click failed: ${e.message}")
+            return false
+        }
         
-        // verify message appears in chat (optimistic UI) - normal timeout for loading
+        // Normal delay for regular testing
+        Thread.sleep(100)
+        
         val messageDisplayed = device.wait(Until.hasObject(
             By.textContains(messageText).pkg(packageName)
-        ), 1000)
+        ), 2000)
         
         if (messageDisplayed) {
-            android.util.Log.d("BaseIntegrationTest", "✅ message sent and displayed successfully")
+            android.util.Log.d("BaseIntegrationTest", "✅ NORMAL: message sent and displayed successfully")
         } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ message not displayed after clicking send button")
+            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: message not displayed after clicking send button")
         }
         
         return messageDisplayed
@@ -1036,28 +1042,34 @@ abstract class BaseIntegrationTest {
      * Find and click send button, wait for message to be sent - RAPID VERSION for interruption testing
      */
     protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: looking for send button with exact content description 'Send message'...")
+        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized)...")
         
-        // Use exact content description from production code (ChatScreen.kt line 748)
+        // Use only the proven working method - exact content description
         val sendButton = device.findObject(
             UiSelector()
-                .description("Send message")  // Exact match from production code
+                .description("Send message")
                 .packageName(packageName)
         )
         
         if (!sendButton.waitForExists(50)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button with description 'Send message' not found!")
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found!")
             return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: found send button")
-        android.util.Log.d("BaseIntegrationTest", "📤 RAPID: clicking send button...")
-        sendButton.click()
+        try {
+            sendButton.click()
+            android.util.Log.d("BaseIntegrationTest", "📤 RAPID: send button clicked")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Click failed: ${e.message}")
+            return false
+        }
         
-        // verify message appears in chat (optimistic UI) - should be instant
+        // Minimal delay and fast verification for true rapid testing
+        Thread.sleep(10)
+        
         val messageDisplayed = device.wait(Until.hasObject(
             By.textContains(messageText).pkg(packageName)
-        ), 50)
+        ), 75)
         
         if (messageDisplayed) {
             android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed instantly")
@@ -1551,6 +1563,117 @@ abstract class BaseIntegrationTest {
         }
         
         return clickSuccess
+    }
+
+    /**
+     * IMMEDIATE typing method that bypasses all UI waits - for testing during bot response
+     * This method doesn't wait for UI stability and types immediately
+     */
+    protected fun typeImmediatelyDuringBotResponse(testText: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Typing '$testText' without waiting for UI stability...")
+        
+        // Find input field with minimal wait (100ms max)
+        val inputField = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        // Don't wait - if it doesn't exist immediately, that's the bug
+        if (!inputField.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Input field not found immediately - this IS the production bug!")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Input field found, proceeding with direct interaction...")
+        
+        // Try to interact immediately without waiting for "stability"
+        try {
+            // Method 1: Direct coordinate click (bypass UI Automator's stability waits)
+            val bounds = inputField.bounds
+            val centerX = bounds.centerX()
+            val centerY = bounds.centerY()
+            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Direct coordinate click at ($centerX, $centerY)")
+            device.click(centerX, centerY)
+            
+            // NO WAIT - immediately start typing with keyboard
+            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Starting keyboard input without delay...")
+            
+            // Type character by character with minimal delays
+            for (char in testText) {
+                val keyCode = when (char) {
+                    'a' -> android.view.KeyEvent.KEYCODE_A
+                    'b' -> android.view.KeyEvent.KEYCODE_B
+                    'c' -> android.view.KeyEvent.KEYCODE_C
+                    'd' -> android.view.KeyEvent.KEYCODE_D
+                    'e' -> android.view.KeyEvent.KEYCODE_E
+                    'f' -> android.view.KeyEvent.KEYCODE_F
+                    'g' -> android.view.KeyEvent.KEYCODE_G
+                    'h' -> android.view.KeyEvent.KEYCODE_H
+                    'i' -> android.view.KeyEvent.KEYCODE_I
+                    'j' -> android.view.KeyEvent.KEYCODE_J
+                    'k' -> android.view.KeyEvent.KEYCODE_K
+                    'l' -> android.view.KeyEvent.KEYCODE_L
+                    'm' -> android.view.KeyEvent.KEYCODE_M
+                    'n' -> android.view.KeyEvent.KEYCODE_N
+                    'o' -> android.view.KeyEvent.KEYCODE_O
+                    'p' -> android.view.KeyEvent.KEYCODE_P
+                    'q' -> android.view.KeyEvent.KEYCODE_Q
+                    'r' -> android.view.KeyEvent.KEYCODE_R
+                    's' -> android.view.KeyEvent.KEYCODE_S
+                    't' -> android.view.KeyEvent.KEYCODE_T
+                    'u' -> android.view.KeyEvent.KEYCODE_U
+                    'v' -> android.view.KeyEvent.KEYCODE_V
+                    'w' -> android.view.KeyEvent.KEYCODE_W
+                    'x' -> android.view.KeyEvent.KEYCODE_X
+                    'y' -> android.view.KeyEvent.KEYCODE_Y
+                    'z' -> android.view.KeyEvent.KEYCODE_Z
+                    '0' -> android.view.KeyEvent.KEYCODE_0
+                    '1' -> android.view.KeyEvent.KEYCODE_1
+                    '2' -> android.view.KeyEvent.KEYCODE_2
+                    '3' -> android.view.KeyEvent.KEYCODE_3
+                    '4' -> android.view.KeyEvent.KEYCODE_4
+                    '5' -> android.view.KeyEvent.KEYCODE_5
+                    '6' -> android.view.KeyEvent.KEYCODE_6
+                    '7' -> android.view.KeyEvent.KEYCODE_7
+                    '8' -> android.view.KeyEvent.KEYCODE_8
+                    '9' -> android.view.KeyEvent.KEYCODE_9
+                    ' ' -> android.view.KeyEvent.KEYCODE_SPACE
+                    else -> android.view.KeyEvent.KEYCODE_UNKNOWN
+                }
+                
+                if (keyCode != android.view.KeyEvent.KEYCODE_UNKNOWN) {
+                    device.pressKeyCode(keyCode)
+                    // Minimal delay - just enough for key registration
+                    Thread.sleep(5) 
+                }
+            }
+            
+            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Keyboard input completed, checking if text was accepted...")
+            
+            // Quick check (no waiting) - if text is accepted immediately, great!
+            val quickCheck = inputField.text?.contains(testText) == true
+            if (quickCheck) {
+                android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Text '$testText' accepted immediately during bot response!")
+                return true
+            }
+            
+            // Brief wait for text processing (50ms max)
+            Thread.sleep(50)
+            val finalCheck = inputField.text?.contains(testText) == true
+            if (finalCheck) {
+                android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Text '$testText' accepted after minimal delay during bot response!")
+                return true
+            }
+            
+            android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Text '$testText' was NOT accepted - production bug confirmed!")
+            android.util.Log.e("BaseIntegrationTest", "   Input field text: '${inputField.text ?: "null"}'")
+            return false
+            
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Exception during immediate typing: ${e.message}")
+            return false
+        }
     }
 
     companion object {

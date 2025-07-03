@@ -196,9 +196,12 @@ fun ChatScreen(
 
     // Scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) { // Trigger scroll based on message count change
-        if (messages.isNotEmpty()) {
+        if (messages.isNotEmpty() && messages.size > 0) {
             delay(100L) // Allow layout
-            listState.animateScrollToItem(messages.size - 1)
+            val targetIndex = messages.size - 1
+            if (targetIndex >= 0) { // Extra safety check to prevent crash
+                listState.animateScrollToItem(targetIndex)
+            }
         }
     }
 
@@ -854,7 +857,16 @@ fun ChatInputBar(
                     
                     IconButton(
                         onClick = action,
-                        enabled = isButtonEnabled
+                        enabled = isButtonEnabled,
+                        modifier = Modifier.semantics { 
+                            contentDescription = description
+                            testTag = when {
+                                hasTypedText -> "send_button"
+                                hasVoiceText -> "send_button"
+                                isListening -> "mic_off_button"
+                                else -> "mic_button"
+                            }
+                        }
                     ) {
                         Icon(
                             imageVector = icon,

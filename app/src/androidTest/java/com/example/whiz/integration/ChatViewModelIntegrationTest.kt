@@ -175,27 +175,14 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             sentMessages.add(firstMessage)
             Log.d(TAG, "✅ Initial message sent with normal timeouts - chat loaded successfully")
             
-            // Step 3: Wait for bot to start responding
-            Log.d(TAG, "⏳ Step 4: Waiting for bot to start responding...")
-            Log.d(TAG, "🔍 Debug: Looking for 'Whiz is computing' indicator...")
+            // Step 3: Start interruption immediately (no waiting for visual indicators)
+            Log.d(TAG, "🚀 Step 4: Starting interruption IMMEDIATELY after initial message...")
+            Log.d(TAG, "🎯 Testing real-time interruption capability - no wait for thinking indicator")
             
-            // Give more time for bot to start responding (network might be slow)
-            val botStartedThinking = waitForBotThinkingIndicator(15000)
-            if (!botStartedThinking) {
-                Log.w(TAG, "⚠️ Bot didn't start thinking - this might be a server issue or bot is offline")
-                Log.w(TAG, "   For interruption testing, we'll simulate the scenario by proceeding anyway")
-                Log.w(TAG, "   The core UX test is whether messages can be sent rapidly, regardless of bot state")
-                
-                // Take screenshot to see current state
-                takeFailureScreenshot("bot_not_responding_debug", "Bot didn't start thinking - continuing test anyway")
-                
-                // Continue with rapid message testing even without bot response
-                Log.d(TAG, "🔄 Continuing with rapid message test without waiting for bot...")
-            } else {
-                Log.d(TAG, "🤖 Bot started thinking! Now testing message interruption...")
-            }
+            // Brief pause to let the initial message trigger server processing
+            Thread.sleep(200) // Minimal delay for WebSocket send
             
-            Log.d(TAG, "🤖 Bot started thinking! Now testing message interruption...")
+            Log.d(TAG, "🤖 Bot likely processing initial message - now testing immediate interruption!")
             
             // Step 4: While bot is responding, rapidly send interruption messages
             // This tests the core UX issue: users should be able to interrupt the bot
@@ -207,11 +194,11 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             for (i in 1..2) {
                 val interruptMessage = "hi $i"
                 
-                Log.d(TAG, "⌨️ TYPED MESSAGE $i: Testing keyboard typing during bot response...")
+                Log.d(TAG, "⌨️ TYPED MESSAGE $i: Testing IMMEDIATE keyboard typing during bot response...")
                 
-                // Type the actual message using keyboard input (realistic user behavior)
-                // If this fails during bot response, that's the production bug we're testing for
-                if (!tryToTypeInInputField(interruptMessage)) {
+                // Type IMMEDIATELY without waiting for UI stability - this tests the real production bug
+                // If this fails during bot response, that's the exact bug we're testing for
+                if (!typeImmediatelyDuringBotResponse(interruptMessage)) {
                     Log.e(TAG, "🚨 PRODUCTION BUG DETECTED: Cannot type in input field while bot is responding!")
                     Log.e(TAG, "   This is the exact bug we're testing for - users cannot type messages while bot is thinking")
                     failWithScreenshot("message_blocking_bug_detected", "PRODUCTION BUG: Cannot type in input field during bot response")
