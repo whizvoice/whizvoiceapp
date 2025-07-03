@@ -70,18 +70,28 @@ trap cleanup_and_ensure_debug_installed EXIT ERR
 # Parse command line arguments
 CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
+SINGLE_TEST=""
 
-for arg in "$@"; do
-    case $arg in
+while [[ $# -gt 0 ]]; do
+    case $1 in
         --clean)
             CLEAN_AFTER_TESTS=true
+            shift
             ;;
         --skip-unit)
             SKIP_UNIT_TESTS=true
+            shift
+            ;;
+        --test)
+            SINGLE_TEST="$2"
+            shift 2
             ;;
         *)
-            echo "Unknown option: $arg"
-            echo "Usage: $0 [--clean] [--skip-unit]"
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--clean] [--skip-unit] [--test <test_class_or_method>]"
+            echo "Examples:"
+            echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
+            echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
             exit 1
             ;;
     esac
@@ -472,7 +482,11 @@ run_integration_tests_with_logcat() {
     echo "" >> test_summary.log
     echo "=================================================================================" >> test_summary.log
     echo "📋 INTEGRATION TEST EXECUTION" >> test_summary.log  
-    echo "Command: ./gradlew connectedDebugAndroidTest" >> test_summary.log
+    if [[ -n "$SINGLE_TEST" ]]; then
+        echo "Command: ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST" >> test_summary.log
+    else
+        echo "Command: ./gradlew connectedDebugAndroidTest" >> test_summary.log
+    fi
     echo "Started: $(date +'%H:%M:%S.%3N')" >> test_summary.log
     echo "=================================================================================" >> test_summary.log
     
@@ -509,7 +523,13 @@ run_integration_tests_with_logcat() {
     fi
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
-    if ./gradlew connectedDebugAndroidTest --console=plain --no-daemon >> test_gradle_output.log 2>&1; then
+    local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
+    if [[ -n "$SINGLE_TEST" ]]; then
+        gradle_command="$gradle_command -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST"
+        echo "🎯 Running single test: $SINGLE_TEST" >> test_summary.log
+    fi
+    
+    if $gradle_command >> test_gradle_output.log 2>&1; then
         # Stop logcat capture
         kill $logcat_pid 2>/dev/null || true
         sleep 1
