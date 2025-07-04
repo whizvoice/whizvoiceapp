@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.UiSelector
@@ -727,8 +728,15 @@ abstract class BaseIntegrationTest {
     protected fun collectAllMessages(): List<Pair<String, String>> {
         android.util.Log.d("BaseIntegrationTest", "📋 Starting complete message collection...")
         
-        val allMessages = mutableListOf<Pair<String, String>>() // (message, timestamp)
+        val allMessages = mutableListOf<Pair<String, String>>() // (message, position)
         val seenMessageKeys = mutableSetOf<String>() // To avoid false duplicates during scrolling
+        
+        // DEBUG: Log starting position
+        val startingMessages = collectMessagesFromCurrentScreen()
+        android.util.Log.d("BaseIntegrationTest", "📍 STARTING POSITION: Found ${startingMessages.size} messages before scrolling")
+        startingMessages.forEachIndexed { index, (message, position) ->
+            android.util.Log.d("BaseIntegrationTest", "  Start $index: '$message' at $position")
+        }
         
         // Start from current position (bottom of chat) and scroll UP to collect all messages
         val height = device.displayHeight
@@ -741,45 +749,62 @@ abstract class BaseIntegrationTest {
         var scrollAttempt = 0
         val maxScrolls = 30
         
-        while (scrollAttempt < maxScrolls && consecutiveNoNewMessages < 5 && consecutiveNoScrollMovement < 2) {
+        while (scrollAttempt < maxScrolls && consecutiveNoNewMessages < 5 && consecutiveNoScrollMovement < 4) {
+            android.util.Log.d("BaseIntegrationTest", "📜 === SCROLL ATTEMPT $scrollAttempt ===")
+            android.util.Log.d("BaseIntegrationTest", "📊 Current totals: ${allMessages.size} messages collected, ${consecutiveNoNewMessages} consecutive no-new-messages, ${consecutiveNoScrollMovement} consecutive no-movement")
+            
             // Collect messages from current screen
             val currentMessages = collectMessagesFromCurrentScreen()
+            android.util.Log.d("BaseIntegrationTest", "📱 Found ${currentMessages.size} messages on current screen (scroll attempt $scrollAttempt)")
+            
             var foundNewMessage = false
             
-            for ((message, timestamp) in currentMessages) {
-                val messageKey = "$message|$timestamp" // Unique key for deduplication
+            for ((message, position) in currentMessages) {
+                val messageKey = "$message|$position" // Position-based deduplication
                 
                 if (!seenMessageKeys.contains(messageKey)) {
-                    // New unique message found
+                    // New unique message found (by position)
                     seenMessageKeys.add(messageKey)
-                    allMessages.add(Pair(message, timestamp))
+                    allMessages.add(Pair(message, position))
                     foundNewMessage = true
-                    android.util.Log.d("BaseIntegrationTest", "📝 New message: '$message' at $timestamp")
+                    android.util.Log.d("BaseIntegrationTest", "📝 NEW MESSAGE #${allMessages.size}: '$message' at $position")
                 } else {
-                    // Check for real duplicates (same message appearing multiple times in chat)
-                    val existingCount = allMessages.count { it.first == message && it.second == timestamp }
-                    if (existingCount > 1) {
-                        android.util.Log.w("BaseIntegrationTest", "🚨 REAL DUPLICATE detected: '$message' at $timestamp appears $existingCount times!")
-                    }
+                    // This message at this position already seen - true duplicate
+                    android.util.Log.d("BaseIntegrationTest", "🔄 Already seen: '$message' at $position")
                 }
             }
             
             if (foundNewMessage) {
                 consecutiveNoNewMessages = 0
                 consecutiveNoScrollMovement = 0
+                android.util.Log.d("BaseIntegrationTest", "✅ Found new messages this round - resetting counters")
             } else {
                 consecutiveNoNewMessages++
+                android.util.Log.d("BaseIntegrationTest", "⚠️ No new messages this round - consecutiveNoNewMessages now $consecutiveNoNewMessages")
             }
+            
+            android.util.Log.d("BaseIntegrationTest", "📊 After processing this screen: ${allMessages.size} total messages accumulated")
             
             // Capture all visible messages before scrolling for better scroll detection
             val messagesBefore = collectMessagesFromCurrentScreen()
+            android.util.Log.d("BaseIntegrationTest", "📍 About to scroll - ${messagesBefore.size} messages visible before scroll")
             
             // Scroll UP to see older messages (swipe DOWN to scroll UP)
-            device.swipe(width/2, height/3, width/2, height*2/3, 30)
-            Thread.sleep(500)
+            // Try multiple swipe approaches to handle different UI states
+            val swipeX = width / 2
+            
+            if (consecutiveNoScrollMovement == 0) {
+                // First attempts: normal scrolling
+                android.util.Log.d("BaseIntegrationTest", "📜 STRATEGY 1: Using normal scroll (most common)")
+                val swipeStartY = height / 4
+                val swipeEndY = height * 3 / 4
+                device.swipe(swipeX, swipeStartY, swipeX, swipeEndY, 30)
+                Thread.sleep(400)
+            }
             
             // Capture all visible messages after scrolling
             val messagesAfter = collectMessagesFromCurrentScreen()
+            android.util.Log.d("BaseIntegrationTest", "📍 After scroll - ${messagesAfter.size} messages visible")
             
             // Check if the visible messages changed (i.e., we actually scrolled)
             val actuallyScrolled = messagesBefore != messagesAfter
@@ -788,20 +813,51 @@ abstract class BaseIntegrationTest {
                 consecutiveNoScrollMovement++
                 android.util.Log.d("BaseIntegrationTest", "⬆️ No scroll movement detected - screen unchanged (attempt $consecutiveNoScrollMovement)")
                 android.util.Log.d("BaseIntegrationTest", "   Messages before: ${messagesBefore.size}, Messages after: ${messagesAfter.size}")
+                
+                // DEBUG: Show what messages we're comparing
+                android.util.Log.d("BaseIntegrationTest", "   BEFORE scroll messages:")
+                messagesBefore.forEachIndexed { index, (msg, pos) ->
+                    android.util.Log.d("BaseIntegrationTest", "     Before $index: '${msg.take(30)}...' at $pos")
+                }
+                android.util.Log.d("BaseIntegrationTest", "   AFTER scroll messages:")
+                messagesAfter.forEachIndexed { index, (msg, pos) ->
+                    android.util.Log.d("BaseIntegrationTest", "     After $index: '${msg.take(30)}...' at $pos")
+                }
+                
+                if (consecutiveNoScrollMovement >= 2) {
+                    android.util.Log.d("BaseIntegrationTest", "🛑 Reached scroll movement limit - stopping collection")
+                }
             } else {
                 consecutiveNoScrollMovement = 0
                 android.util.Log.d("BaseIntegrationTest", "📜 Scrolled successfully: ${messagesBefore.size} -> ${messagesAfter.size} messages")
+                
+                // DEBUG: Show what changed
+                android.util.Log.d("BaseIntegrationTest", "   New messages appeared after scroll:")
+                messagesAfter.forEachIndexed { index, (msg, pos) ->
+                    if (!messagesBefore.contains(Pair(msg, pos))) {
+                        android.util.Log.d("BaseIntegrationTest", "     NEW: '${msg.take(30)}...' at $pos")
+                    }
+                }
             }
             
             scrollAttempt++
+            android.util.Log.d("BaseIntegrationTest", "📜 === END SCROLL ATTEMPT $scrollAttempt ===")
         }
         
-        android.util.Log.d("BaseIntegrationTest", "📋 Message collection complete: ${allMessages.size} unique messages found (scrolls: $scrollAttempt, no-movement: $consecutiveNoScrollMovement)")
+        android.util.Log.d("BaseIntegrationTest", "🏁 === COLLECTION COMPLETE ===")
+        android.util.Log.d("BaseIntegrationTest", "📋 Message collection complete: ${allMessages.size} unique messages found")
+        android.util.Log.d("BaseIntegrationTest", "📊 Final stats: $scrollAttempt scroll attempts, $consecutiveNoScrollMovement consecutive no-movement, $consecutiveNoNewMessages consecutive no-new-messages")
+        android.util.Log.d("BaseIntegrationTest", "📊 Stopping reasons:")
+        android.util.Log.d("BaseIntegrationTest", "   - Max scrolls ($maxScrolls): ${scrollAttempt >= maxScrolls}")
+        android.util.Log.d("BaseIntegrationTest", "   - No new messages (5): ${consecutiveNoNewMessages >= 5}")
+        android.util.Log.d("BaseIntegrationTest", "   - No scroll movement (4): ${consecutiveNoScrollMovement >= 4}")
         
         // Log all collected messages for debugging
-        allMessages.forEachIndexed { index, (message, timestamp) ->
-            android.util.Log.d("BaseIntegrationTest", "📄 Message ${index + 1}: '$message' at $timestamp")
+        android.util.Log.d("BaseIntegrationTest", "📄 === FINAL MESSAGE LIST ===")
+        allMessages.forEachIndexed { index, (message, position) ->
+            android.util.Log.d("BaseIntegrationTest", "📄 Final #${index + 1}: '$message' at $position")
         }
+        android.util.Log.d("BaseIntegrationTest", "📄 === END MESSAGE LIST ===")
         
         return allMessages.toList()
     }
@@ -809,10 +865,113 @@ abstract class BaseIntegrationTest {
 
 
     /**
-     * Extract ALL messages and timestamps from current screen view with better message identification
+     * Extract ALL messages and timestamps from current screen view using content descriptions
      */
     private fun collectMessagesFromCurrentScreen(): List<Pair<String, String>> {
-        android.util.Log.d("BaseIntegrationTest", "📱 Collecting messages from current screen with improved detection...")
+        android.util.Log.d("BaseIntegrationTest", "📱 Collecting messages from current screen using content descriptions...")
+        
+        val messages = mutableListOf<Pair<String, String>>()
+        
+        try {
+            // Use content descriptions for message content (serves both accessibility and testing)
+            val userMessages = device.findObjects(By.descContains("User message:").pkg(packageName))
+            val assistantMessages = device.findObjects(By.descContains("Assistant message:").pkg(packageName))
+            
+            android.util.Log.d("BaseIntegrationTest", "📱 Content description search: ${userMessages.size} user messages and ${assistantMessages.size} assistant messages found")
+            
+            // DEBUG: If no messages found via content descriptions, log this for investigation
+            if (userMessages.isEmpty() && assistantMessages.isEmpty()) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ No messages found via content descriptions - checking if elements exist")
+                val allElements = device.findObjects(By.pkg(packageName))
+                android.util.Log.d("BaseIntegrationTest", "📱 Total elements in package: ${allElements.size}")
+                
+                val elementsWithDesc = allElements.filter { 
+                    try { 
+                        it.contentDescription?.isNotBlank() == true 
+                    } catch (e: Exception) { 
+                        false 
+                    } 
+                }
+                android.util.Log.d("BaseIntegrationTest", "📱 Elements with content descriptions: ${elementsWithDesc.size}")
+                
+                elementsWithDesc.take(5).forEach { element ->
+                    try {
+                        android.util.Log.d("BaseIntegrationTest", "📱 Sample desc: '${element.contentDescription}'")
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "Error reading content description: ${e.message}")
+                    }
+                }
+            }
+            
+            // Collect user messages with position-based identification
+            for (messageElement in userMessages) {
+                try {
+                    val text = messageElement.text
+                    if (text != null && text.isNotBlank()) {
+                        val scrollPosition = messageElement.visibleBounds.centerY()
+                        val timestamp = findTimestampForMessage(messageElement)
+                        android.util.Log.d("BaseIntegrationTest", "📱 Found user message: '${text.take(50)}...' at position $scrollPosition (timestamp: $timestamp)")
+                        messages.add(Pair(text.trim(), "pos_$scrollPosition"))
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Error reading user message: ${e.message}")
+                }
+            }
+            
+            // Collect assistant messages with position-based identification
+            for (messageElement in assistantMessages) {
+                try {
+                    val text = messageElement.text
+                    if (text != null && text.isNotBlank()) {
+                        val scrollPosition = messageElement.visibleBounds.centerY()
+                        val timestamp = findTimestampForMessage(messageElement)
+                        android.util.Log.d("BaseIntegrationTest", "📱 Found assistant message: '${text.take(50)}...' at position $scrollPosition (timestamp: $timestamp)")
+                        messages.add(Pair(text.trim(), "pos_$scrollPosition"))
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Error reading assistant message: ${e.message}")
+                }
+            }
+            
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error collecting messages from screen: ${e.message}")
+            
+            // Fallback to old method if content descriptions fail
+            android.util.Log.d("BaseIntegrationTest", "🚨 FALLBACK TRIGGERED: Content descriptions failed - using old TextView scanning method")
+            return collectMessagesFromCurrentScreenFallback()
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${messages.size} messages on current screen using content descriptions")
+        return messages
+    }
+    
+    /**
+     * Find timestamp for a message element by looking at nearby elements
+     */
+    private fun findTimestampForMessage(messageElement: UiObject2): String {
+        try {
+            // Look for timestamp in the parent container
+            val parent = messageElement.parent
+            val siblings = parent?.findObjects(By.clazz("android.widget.TextView"))
+            
+            siblings?.forEach { sibling ->
+                val text = sibling.text
+                if (text != null && (text.contains("AM") || text.contains("PM"))) {
+                    return text
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error finding timestamp: ${e.message}")
+        }
+        
+        return "unknown"
+    }
+    
+    /**
+     * Fallback method using generic TextView scanning (old approach)
+     */
+    private fun collectMessagesFromCurrentScreenFallback(): List<Pair<String, String>> {
+        android.util.Log.d("BaseIntegrationTest", "📱 Using fallback TextView scanning method...")
         
         val messages = mutableListOf<Pair<String, String>>()
         
@@ -860,7 +1019,7 @@ abstract class BaseIntegrationTest {
             android.util.Log.w("BaseIntegrationTest", "⚠️ Error collecting messages from screen: ${e.message}")
         }
         
-        android.util.Log.d("BaseIntegrationTest", "📱 Found ${messages.size} messages on current screen")
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${messages.size} messages on current screen using fallback")
         return messages
     }
 
@@ -917,22 +1076,22 @@ abstract class BaseIntegrationTest {
         // Use longer search text (30 chars) to avoid matching truncated chat titles
         val searchText = messageText.take(30)
         
-        for ((message, timestamp) in allMessages) {
+        for ((message, position) in allMessages) {
             if (message.contains(searchText, ignoreCase = true)) {
                 count++
-                messageInstances.add(Pair(message, timestamp))
-                android.util.Log.d("BaseIntegrationTest", "✅ Found match: '$message' at $timestamp")
+                messageInstances.add(Pair(message, position))
+                android.util.Log.d("BaseIntegrationTest", "✅ Found match: '$message' at $position")
             }
         }
         
-        // Check for real duplicates (same message content appearing multiple times)
+        // Check for real duplicates (same message content appearing at different positions)
         val messageGroups = messageInstances.groupBy { it.first }
         for ((messageContent, instances) in messageGroups) {
             if (instances.size > 1) {
                 realDuplicatesFound++
                 android.util.Log.w("BaseIntegrationTest", "🚨 REAL DUPLICATE: '$messageContent' appears ${instances.size} times!")
-                instances.forEach { (_, timestamp) ->
-                    android.util.Log.w("BaseIntegrationTest", "    - At timestamp: $timestamp")
+                instances.forEach { (_, position) ->
+                    android.util.Log.w("BaseIntegrationTest", "    - At position: $position")
                 }
             }
         }

@@ -582,7 +582,14 @@ fun MessageItem(message: MessageEntity) {
                 }
                 Text(
                     text = message.content,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.semantics { 
+                        contentDescription = if (message.type == MessageType.USER) {
+                            "User message: ${message.content}"
+                        } else {
+                            "Assistant message: ${message.content}"
+                        }
+                    }
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
