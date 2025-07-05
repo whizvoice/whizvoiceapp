@@ -161,24 +161,84 @@ abstract class BaseIntegrationTest {
      * Find and click the new chat button, wait for chat screen to load
      */
     protected fun clickNewChatButtonAndWaitForChatScreen(): Boolean {
-        val newChatButton = device.findObject(
+        // Try to find the main FloatingActionButton first (when chats exist)
+        var newChatButton = device.findObject(
             UiSelector()
-                .descriptionContains("New Chat")
+                .description("New Chat")
                 .packageName(packageName)
         )
         
-        if (!newChatButton.waitForExists(5000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ new chat button not found")
+        // If not found, try to find the empty state button (when no chats exist)
+        if (!newChatButton.waitForExists(2000)) {
+            android.util.Log.d("BaseIntegrationTest", "🔍 Main 'New Chat' FAB not found, trying empty state button...")
+            newChatButton = device.findObject(
+                UiSelector()
+                    .description("Start your first chat")
+                    .packageName(packageName)
+            )
+        }
+        
+        if (!newChatButton.waitForExists(3000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Neither 'New Chat' nor 'Start your first chat' button found")
             return false
         }
         
-        newChatButton.click()
+        android.util.Log.d("BaseIntegrationTest", "✅ Found new chat button, clicking...")
         
-        // wait for chat screen to load by looking for message input field
+        // Try multiple click approaches to ensure it works with Compose FAB
+        var clickSuccessful = false
+        try {
+            // First attempt: Standard UiObject click
+            newChatButton.click()
+            android.util.Log.d("BaseIntegrationTest", "📱 Attempted standard UiObject click")
+            Thread.sleep(500)
+            
+            // Check if click worked
+            val stillOnChatsListAfterFirst = device.hasObject(By.desc("New Chat").pkg(packageName)) || 
+                                            device.hasObject(By.desc("Start your first chat").pkg(packageName))
+            
+            if (stillOnChatsListAfterFirst) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Standard click failed, trying coordinate-based click...")
+                
+                // Second attempt: Click at center coordinates
+                val bounds = newChatButton.bounds
+                val centerX = bounds.centerX()
+                val centerY = bounds.centerY()
+                device.click(centerX, centerY)
+                android.util.Log.d("BaseIntegrationTest", "📱 Attempted coordinate click at ($centerX, $centerY)")
+                Thread.sleep(500)
+                
+                // Check if second click worked
+                val stillOnChatsListAfterSecond = device.hasObject(By.desc("New Chat").pkg(packageName)) || 
+                                                  device.hasObject(By.desc("Start your first chat").pkg(packageName))
+                
+                if (!stillOnChatsListAfterSecond) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: Coordinate click worked - navigation started")
+                    clickSuccessful = true
+                } else {
+                    android.util.Log.e("BaseIntegrationTest", "❌ DIAGNOSTIC: Both click methods failed - still on chats list")
+                    return false
+                }
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: Standard click worked - navigation started")
+                clickSuccessful = true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Click failed with exception: ${e.message}")
+            return false
+        }
+        
+        // Wait for chat screen to load by looking for the message input field using proper content description
+        android.util.Log.d("BaseIntegrationTest", "🔍 Waiting for chat screen to load (looking for message input field)...")
         val chatScreenLoaded = device.wait(Until.hasObject(
-            By.clazz("android.widget.EditText").pkg(packageName)
-        ), 8000)
+            By.desc("Message input field").pkg(packageName)
+        ), 5000)
         
+        if (!chatScreenLoaded) {
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ Chat screen loaded successfully")
         return chatScreenLoaded
     }
     
@@ -186,31 +246,19 @@ abstract class BaseIntegrationTest {
      * Find message input field, type message, and verify text appears
      */
     protected fun typeMessageInInputField(message: String): Boolean {
+        // Look for the message input field using its content description
         val messageInput = device.findObject(
             UiSelector()
-                .className("android.widget.EditText")
+                .description("Message input field")
                 .packageName(packageName)
         )
         
         if (!messageInput.waitForExists(5000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ message input field not found")
-            
-            // debug: dump all EditText elements
-            val allEditTexts = device.findObjects(By.clazz("android.widget.EditText"))
-            android.util.Log.d("BaseIntegrationTest", "🔍 found ${allEditTexts.size} EditText elements")
-            allEditTexts.forEachIndexed { i, element ->
-                try {
-                    val bounds = element.visibleBounds
-                    val hint = element.hint
-                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: hint='$hint', bounds=$bounds")
-                } catch (e: Exception) {
-                    android.util.Log.d("BaseIntegrationTest", "  EditText $i: error reading properties")
-                }
-            }
-            
+            android.util.Log.e("BaseIntegrationTest", "❌ message input field not found using content description")
             return false
         }
         
+        android.util.Log.d("BaseIntegrationTest", "✅ Found message input field using content description")
         messageInput.click()
         messageInput.setText(message)
         
@@ -304,15 +352,37 @@ abstract class BaseIntegrationTest {
      */
     protected fun verifyInputFieldCleared(): Boolean {
         try {
+            // Look for the message input field using its content description
             val inputField = device.findObject(
                 UiSelector()
-                    .className("android.widget.EditText")
+                    .description("Message input field")
                     .packageName(packageName)
             )
             
             if (!inputField.exists()) {
-                android.util.Log.d("BaseIntegrationTest", "❌ Input field not found - WebSocket verification failed")
-                return false
+                android.util.Log.d("BaseIntegrationTest", "❌ Input field not found using content description, trying EditText fallback...")
+                
+                // Fallback: try EditText class
+                val legacyInputField = device.findObject(
+                    UiSelector()
+                        .className("android.widget.EditText")
+                        .packageName(packageName)
+                )
+                
+                if (!legacyInputField.exists()) {
+                    android.util.Log.d("BaseIntegrationTest", "❌ Input field not found - WebSocket verification failed")
+                    return false
+                }
+                
+                // Use legacy input field
+                val inputText = legacyInputField.text ?: ""
+                if (inputText.isEmpty() || inputText.isBlank()) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared - WebSocket send successful")
+                    return true
+                } else {
+                    android.util.Log.d("BaseIntegrationTest", "❌ Input field still contains text: '${inputText.take(30)}...' - WebSocket send failed")
+                    return false
+                }
             }
             
             val inputText = inputField.text ?: ""
