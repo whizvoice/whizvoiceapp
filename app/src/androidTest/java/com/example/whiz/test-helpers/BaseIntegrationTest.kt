@@ -113,9 +113,9 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // Ensure it starts in a new task to avoid voice assistant mode
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Add flags to match manual launch pattern (0x10200000) to avoid voice detection
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)         // 0x10000000
+        intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)  // 0x00200000
         
         android.util.Log.d("BaseIntegrationTest", "   intent: $intent")
         android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
@@ -200,12 +200,12 @@ abstract class BaseIntegrationTest {
             if (stillOnChatsListAfterFirst) {
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Standard click failed, trying coordinate-based click...")
                 
-                // Second attempt: Click at center coordinates
+                // Second attempt: Click at adjusted center coordinates
                 val bounds = newChatButton.bounds
-                val centerX = bounds.centerX()
-                val centerY = bounds.centerY()
+                val centerX = bounds.centerX() + 30  // Adjust right by 30px
+                val centerY = bounds.centerY() + 70  // Adjust down by 70px  
                 device.click(centerX, centerY)
-                android.util.Log.d("BaseIntegrationTest", "📱 Attempted coordinate click at ($centerX, $centerY)")
+                android.util.Log.d("BaseIntegrationTest", "📱 Attempted coordinate click at ($centerX, $centerY) (adjusted from bounds)")
                 Thread.sleep(500)
                 
                 // Check if second click worked
@@ -1414,7 +1414,20 @@ abstract class BaseIntegrationTest {
                 .packageName(packageName)
         )
         
-        return messageInput.exists() || sendButton.exists() || micButton.exists()
+        // Log what we found
+        val messageInputExists = messageInput.exists()
+        val sendButtonExists = sendButton.exists()
+        val micButtonExists = micButton.exists()
+        
+        android.util.Log.d("BaseIntegrationTest", "🔍 isCurrentlyInChatScreen check:")
+        android.util.Log.d("BaseIntegrationTest", "   messageInput (EditText): $messageInputExists")
+        android.util.Log.d("BaseIntegrationTest", "   sendButton (desc contains 'Send'): $sendButtonExists")
+        android.util.Log.d("BaseIntegrationTest", "   micButton (desc contains 'Mic'): $micButtonExists")
+        
+        val result = messageInputExists || sendButtonExists || micButtonExists
+        android.util.Log.d("BaseIntegrationTest", "   📱 Result: ${if (result) "IN CHAT SCREEN" else "NOT IN CHAT SCREEN"}")
+        
+        return result
     }
 
     /**
