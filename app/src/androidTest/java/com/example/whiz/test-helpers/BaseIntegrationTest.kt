@@ -264,19 +264,13 @@ abstract class BaseIntegrationTest {
         messageInput.click()
         messageInput.setText(message)
         
-        // Wait for text to appear in field with retry
-        var textSet = device.wait(Until.hasObject(
+        // Wait for text to appear in field
+        val textSet = device.wait(Until.hasObject(
             By.text(message).pkg(packageName)
-        ), 3000)
+        ), 500)
         
         if (!textSet) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ text not visible, retrying...")
-            messageInput.clearTextField()
-            Thread.sleep(200)
-            messageInput.setText(message)
-            textSet = device.wait(Until.hasObject(
-                By.text(message).pkg(packageName)
-            ), 2000)
+            android.util.Log.e("BaseIntegrationTest", "❌ Text not visible after typing - failing immediately")
         }
         
         return textSet
