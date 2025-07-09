@@ -246,29 +246,33 @@ abstract class BaseIntegrationTest {
      * Find message input field, type message, and verify text appears
      */
     protected fun typeMessageInInputField(message: String): Boolean {
-        // Look for the message input field using its content description
+        // Look for the actual EditText (the real input field)
         val messageInput = device.findObject(
             UiSelector()
-                .description("Message input field")
+                .className("android.widget.EditText")
                 .packageName(packageName)
         )
         
         if (!messageInput.waitForExists(5000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ message input field not found using content description")
+            android.util.Log.e("BaseIntegrationTest", "❌ EditText input field not found")
             return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "✅ Found message input field using content description")
+        android.util.Log.d("BaseIntegrationTest", "✅ Found EditText input field")
+        
+        // Click and set text
         messageInput.click()
         messageInput.setText(message)
         
-        // wait for text to appear in field with retry
+        // Wait for text to appear in field with retry
         var textSet = device.wait(Until.hasObject(
             By.text(message).pkg(packageName)
         ), 3000)
         
         if (!textSet) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ text not visible, retrying...")
+            messageInput.clearTextField()
+            Thread.sleep(200)
             messageInput.setText(message)
             textSet = device.wait(Until.hasObject(
                 By.text(message).pkg(packageName)
@@ -352,37 +356,16 @@ abstract class BaseIntegrationTest {
      */
     protected fun verifyInputFieldCleared(): Boolean {
         try {
-            // Look for the message input field using its content description
+            // Look for the actual EditText (the working approach)
             val inputField = device.findObject(
                 UiSelector()
-                    .description("Message input field")
+                    .className("android.widget.EditText")
                     .packageName(packageName)
             )
             
             if (!inputField.exists()) {
-                android.util.Log.d("BaseIntegrationTest", "❌ Input field not found using content description, trying EditText fallback...")
-                
-                // Fallback: try EditText class
-                val legacyInputField = device.findObject(
-                    UiSelector()
-                        .className("android.widget.EditText")
-                        .packageName(packageName)
-                )
-                
-                if (!legacyInputField.exists()) {
-                    android.util.Log.d("BaseIntegrationTest", "❌ Input field not found - WebSocket verification failed")
-                    return false
-                }
-                
-                // Use legacy input field
-                val inputText = legacyInputField.text ?: ""
-                if (inputText.isEmpty() || inputText.isBlank()) {
-                    android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared - WebSocket send successful")
-                    return true
-                } else {
-                    android.util.Log.d("BaseIntegrationTest", "❌ Input field still contains text: '${inputText.take(30)}...' - WebSocket send failed")
-                    return false
-                }
+                android.util.Log.d("BaseIntegrationTest", "❌ EditText input field not found - WebSocket verification failed")
+                return false
             }
             
             val inputText = inputField.text ?: ""
@@ -1814,40 +1797,19 @@ abstract class BaseIntegrationTest {
     protected fun tryToTypeInInputField(testText: String = "test"): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 Trying to type '$testText' in input field...")
         
-        // Try multiple selectors to find the input field
-        var inputField: UiObject
-        var selectorUsed = ""
-        
-        // Method 1: ContentDescription selector (accessibility - most reliable)
-        val contentDescSelector = device.findObject(
+        // Find the actual EditText input field
+        val inputField = device.findObject(
             UiSelector()
-                .description("Message input field")
+                .className("android.widget.EditText")
                 .packageName(packageName)
         )
-        if (contentDescSelector.exists()) {
-            inputField = contentDescSelector
-            selectorUsed = "contentDescription"
-            android.util.Log.d("BaseIntegrationTest", "✅ Found input field using contentDescription selector")
-        } else {
-            android.util.Log.d("BaseIntegrationTest", "🔍 ContentDescription selector failed, trying className selector...")
-            
-            // Method 2: Fallback to className selector
-            val classNameSelector = device.findObject(
-                UiSelector()
-                    .className("android.widget.EditText")
-                    .packageName(packageName)
-            )
-            if (classNameSelector.exists()) {
-                inputField = classNameSelector
-                selectorUsed = "className"
-                android.util.Log.d("BaseIntegrationTest", "✅ Found input field using className selector")
-            } else {
-                android.util.Log.e("BaseIntegrationTest", "❌ Input field not found using any selector")
-                return false
-            }
+        
+        if (!inputField.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ EditText input field not found")
+            return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "🎯 Input field found using: $selectorUsed")
+        android.util.Log.d("BaseIntegrationTest", "✅ Found EditText input field")
         
         // 🔧 DEBUG: Log basic input field state 
         android.util.Log.d("BaseIntegrationTest", "🔍 INPUT FIELD STATE: exists=${inputField.exists()}, enabled=${inputField.isEnabled}, clickable=${inputField.isClickable}")

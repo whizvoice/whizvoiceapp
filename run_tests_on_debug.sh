@@ -70,6 +70,7 @@ trap cleanup_and_ensure_debug_installed EXIT ERR
 # Parse command line arguments
 CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
+SKIP_APP_INSTALL=false
 SINGLE_TEST=""
 
 while [[ $# -gt 0 ]]; do
@@ -82,16 +83,21 @@ while [[ $# -gt 0 ]]; do
             SKIP_UNIT_TESTS=true
             shift
             ;;
+        --skip-app-install)
+            SKIP_APP_INSTALL=true
+            shift
+            ;;
         --test)
             SINGLE_TEST="$2"
             shift 2
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--test <test_class_or_method>]"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
+            echo "  $0 --skip-app-install --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             exit 1
             ;;
     esac
@@ -861,8 +867,12 @@ echo "# HUMAN-READABLE SUMMARIES WITH RELEVANT EXCERPTS" > test_summary.log
 # test_logcat_output.log will be initialized when tests start
 
 # Build and install (no gradle output redirection here - these are not tests)
-run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
-run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
+if [[ "$SKIP_APP_INSTALL" == "true" ]]; then
+    log_with_time "⏭️ Skipping app rebuild and installation (using existing app)"
+else
+    run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
+    run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
+fi
 
 # Build and install test APK
 run_with_log "Building test APK" "./gradlew assembleDebugAndroidTest --console=plain --quiet"
