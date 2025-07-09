@@ -714,12 +714,15 @@ fun ChatInputBar(
     Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
     Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: TextField will be enabled=${!isInputDisabled}, isInputDisabled=$isInputDisabled")
     
-    // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
+    // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
+    // The issue was complex conditional logic that wasn't recomposing properly
     val displayValue = when {
-        inputText.isNotBlank() -> inputText // Always show sent message if present (grayed out when disabled)
-        isListening -> transcription // Show live transcription only when no sent message
-        else -> inputText // Default to input text
+        inputText.isNotBlank() -> inputText // Always show actual input text if present
+        isListening && transcription.isNotBlank() -> transcription // Show live transcription when listening
+        else -> inputText // Default to input text (could be empty)
     }
+    
+    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription'")
     
     val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
     
@@ -737,6 +740,8 @@ fun ChatInputBar(
         Box( // Use Box to contain TextField and allow padding
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
+            // 🔧 PRODUCTION BUG FIX: Remove key() block that was causing TextField recreation
+            // The key() block was destroying focus and text input handling on every character
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = { newValue ->

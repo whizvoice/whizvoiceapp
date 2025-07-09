@@ -477,6 +477,11 @@ class ChatViewModel @Inject constructor(
                             if (shouldMigrate) {
                                 Log.d(TAG, "$eventLogId 🔄 STARTING MIGRATION: Syncing local chat ID to server conversation_id: $effectiveConversationId")
                                 
+                                // 🔧 PRODUCTION BUG FIX: Preserve input text during chat migration
+                                // The chat ID change causes UI recomposition which resets input field state
+                                val preservedInputText = _inputText.value
+                                val preservedIsInputFromVoice = _isInputFromVoice.value
+                                Log.d(TAG, "$eventLogId 🔧 MIGRATION: Preserving input text: '$preservedInputText' (fromVoice: $preservedIsInputFromVoice)")
 
                                 
                                 // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
@@ -496,6 +501,15 @@ class ChatViewModel @Inject constructor(
                                         if (shouldSwitchToMigratedChat) {
                                             Log.d(TAG, "$eventLogId 🔄 MIGRATION: Switching UI from ${_chatId.value} to migrated chat $effectiveConversationId (currentIsOptimistic=$currentChatIsOptimistic)")
                                             _chatId.value = effectiveConversationId
+                                            
+                                            // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
+                                            // This ensures user's typing is preserved during migration
+                                            if (preservedInputText.isNotBlank()) {
+                                                Log.d(TAG, "$eventLogId 🔧 MIGRATION: Restoring preserved input text: '$preservedInputText'")
+                                                _inputText.value = preservedInputText
+                                                _isInputFromVoice.value = preservedIsInputFromVoice
+                                            }
+                                            
                                             Log.d(TAG, "$eventLogId ✅ MIGRATION: Completed with UI switch to server chat $effectiveConversationId")
                                         } else {
                                             Log.d(TAG, "$eventLogId ✅ MIGRATION: Completed migration without UI switch (staying on server chat ${_chatId.value})")
@@ -513,7 +527,20 @@ class ChatViewModel @Inject constructor(
                             } else {
                                 Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: No migration needed - originalChatId: $originalChatId, currentChatId: ${_chatId.value}, effectiveConversationId: $effectiveConversationId")
                                 Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                                
+                                // 🔧 PRODUCTION BUG FIX: Preserve input text during chat ID update
+                                val preservedInputText = _inputText.value
+                                val preservedIsInputFromVoice = _isInputFromVoice.value
+                                Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Preserving input text: '$preservedInputText' (fromVoice: $preservedIsInputFromVoice)")
+                                
                                 _chatId.value = effectiveConversationId
+                                
+                                // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
+                                if (preservedInputText.isNotBlank()) {
+                                    Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Restoring preserved input text: '$preservedInputText'")
+                                    _inputText.value = preservedInputText
+                                    _isInputFromVoice.value = preservedIsInputFromVoice
+                                }
                             }
                             effectiveConversationId
                                         } else {
