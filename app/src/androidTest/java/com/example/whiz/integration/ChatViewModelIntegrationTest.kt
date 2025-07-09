@@ -187,18 +187,21 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 // Type IMMEDIATELY without waiting for UI stability - this tests the real production bug
                 // If this fails during bot response, that's the exact bug we're testing for
                 if (!typeImmediatelyDuringBotResponse(interruptMessage)) {
-                    Log.e(TAG, "🚨 PRODUCTION BUG DETECTED: Cannot type in input field while bot is responding!")
-                    Log.e(TAG, "   This is the exact bug we're testing for - users cannot type messages while bot is thinking")
-                    failWithScreenshot("message_blocking_bug_detected", "PRODUCTION BUG: Cannot type in input field during bot response")
+                    Log.e(TAG, "❌ TYPED: Message $i failed during TYPING phase!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot type in input field while bot is responding!")
+                    Log.e(TAG, "   📝 This is the exact bug we're testing for - users cannot type messages while bot is thinking")
+                    failWithScreenshot("typed_message_${i}_typing_blocked", "TYPED message $i failed during TYPING phase - input field blocked during bot response")
                     return@runBlocking
                 }
                 
-                Log.d(TAG, "✅ TYPED: Message $i typed successfully, now sending...")
+                Log.d(TAG, "✅ TYPED: Message $i typed successfully, now testing send button...")
                 
                 // Send whatever is currently typed (two-step user flow: type → send)
                 if (!sendCurrentTypedMessage()) {
-                    Log.e(TAG, "❌ TYPED: Failed to send typed message $i")
-                    failWithScreenshot("typed_send_${i}_failed", "Failed to send typed message $i")
+                    Log.e(TAG, "❌ TYPED: Message $i failed during SEND BUTTON phase!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG: Send button not working for typed message")
+                    Log.e(TAG, "   📤 This prevents users from sending pre-typed messages during bot response")
+                    failWithScreenshot("typed_message_${i}_send_failed", "TYPED message $i failed during SEND BUTTON phase - send button not working for typed message")
                     return@runBlocking
                 }
                 
@@ -215,10 +218,23 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "⚡ QUICK MESSAGE $i: Testing rapid type+send during bot response...")
                 
-                // Send message with rapid 50ms timeouts for true interruption testing
-                if (!sendMessageAndVerifyDisplayRapid(interruptMessage)) {
-                    Log.e(TAG, "❌ QUICK: Rapid message $i failed to appear in UI with 50ms timeout!")
-                    failWithScreenshot("rapid_message_${i}_ui_failed", "Rapid message $i failed to appear in UI with 50ms timeout")
+                // Step 1: Try to type the message
+                if (!typeMessageInInputField(interruptMessage)) {
+                    Log.e(TAG, "❌ QUICK: Rapid message $i failed during TYPING phase!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG: Input field is blocked during bot response")
+                    Log.e(TAG, "   📝 This prevents users from typing messages while bot is thinking")
+                    failWithScreenshot("rapid_message_${i}_typing_blocked", "Rapid message $i failed during TYPING phase - input field blocked during bot response")
+                    return@runBlocking
+                }
+                
+                Log.d(TAG, "✅ QUICK MESSAGE $i: Typing successful, now testing send button...")
+                
+                // Step 2: Try to send the message
+                if (!clickSendButtonAndWaitForSentRapid(interruptMessage)) {
+                    Log.e(TAG, "❌ QUICK: Rapid message $i failed during SEND BUTTON phase!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG: Send button not working during bot response")
+                    Log.e(TAG, "   📤 This prevents users from sending messages while bot is thinking")
+                    failWithScreenshot("rapid_message_${i}_send_failed", "Rapid message $i failed during SEND BUTTON phase - send button not working during bot response")
                     return@runBlocking
                 }
                 
