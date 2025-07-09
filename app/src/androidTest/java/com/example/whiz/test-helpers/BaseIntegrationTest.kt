@@ -264,15 +264,27 @@ abstract class BaseIntegrationTest {
         messageInput.click()
         messageInput.setText(message)
         
-        // Wait for the UI to settle after setText operation
-        device.waitForIdle(50)
-        
-        // Verify text was set correctly - use first 30 characters for verification
-        // Full message might be truncated in UI, so we check for a representative substring
+        // Wait for the specific text to appear in the EditText field
         val searchText = message.take(30)
-        val currentText = messageInput.text ?: ""
         
-        if (!currentText.contains(searchText, ignoreCase = true)) {
+        // Use a custom wait condition specifically for EditText content
+        var textFound = false
+        val startTime = System.currentTimeMillis()
+        val timeout = 2000L // 2 seconds
+        
+        while (!textFound && (System.currentTimeMillis() - startTime) < timeout) {
+            val currentText = messageInput.text ?: ""
+            if (currentText.contains(searchText, ignoreCase = true)) {
+                textFound = true
+                android.util.Log.d("BaseIntegrationTest", "✅ Text found in EditText: '${currentText.take(50)}...'")
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "🔄 Waiting for text... current: '${currentText.take(30)}...'")
+                Thread.sleep(100)
+            }
+        }
+        
+        if (!textFound) {
+            val currentText = messageInput.text ?: ""
             android.util.Log.e("BaseIntegrationTest", "❌ Text not visible after typing - typing failed")
             android.util.Log.e("BaseIntegrationTest", "   Looking for: '$searchText...' in EditText")
             android.util.Log.e("BaseIntegrationTest", "   EditText contains: '${currentText.take(50)}...'")
