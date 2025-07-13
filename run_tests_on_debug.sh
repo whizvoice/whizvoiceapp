@@ -870,8 +870,8 @@ echo "# HUMAN-READABLE SUMMARIES WITH RELEVANT EXCERPTS" > test_summary.log
 if [[ "$SKIP_APP_INSTALL" == "true" ]]; then
     log_with_time "⏭️ Skipping app rebuild and installation (using existing app)"
 else
-    run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
-    run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
+run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
+run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
 fi
 
 # Build and install test APK

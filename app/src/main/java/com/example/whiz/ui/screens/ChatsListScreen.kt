@@ -121,8 +121,7 @@ fun ChatsListScreen(
             ) {
                 Icon(
                     Icons.Default.Add, 
-                    contentDescription = null, // Remove duplicate description
-                    modifier = Modifier.clearAndSetSemantics { }
+                    contentDescription = null // Icon description handled by parent FAB
                 )
             }
         }

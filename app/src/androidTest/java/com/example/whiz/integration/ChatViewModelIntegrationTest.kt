@@ -120,8 +120,8 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             try {
             val uniqueTestId = System.currentTimeMillis()
             
-            // Initialize cleanup tracking - assume we're using existing chat unless we create one
-            createdNewChatThisTest = false
+            // Initialize cleanup tracking - assume we're creating a new chat
+            createdNewChatThisTest = true
             
             // Step 1: Launch app and navigate to new chat screen
             Log.d(TAG, "📱 Step 1: Launching app and navigating to new chat")
@@ -129,31 +129,32 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("app_launch_failed", "App failed to launch or load main UI")
             }
             
-
+            // Step 2: Navigate to new chat (handling both chats list and existing chat scenarios)
+            Log.d(TAG, "➕ Step 2: Navigating to new chat")
             
-            // Ensure we're in a fresh chat for bot interruption testing
-            // Note: Opening a chat should automatically enable continuous listening
-            // If this doesn't work, the test should fail - we don't manually activate it
-            Log.d(TAG, "➕ Step 2: Ensuring we're in a fresh chat for testing")
-            
-            // We're on chats list, create new chat
-            Log.d(TAG, "📋 On chats list, creating new chat for bot interruption test")  
-            if (!clickNewChatButtonAndWaitForChatScreen()) {
-                failWithScreenshot("new_chat_creation_failed", "Failed to create new chat for bot interruption test")
+            if (isCurrentlyInChatScreen()) {
+                // If we're already in a chat, navigate back to chats list first, then create new chat
+                Log.d(TAG, "🔄 Currently in chat screen, going back to chats list first")
+                if (!navigateBackToChatsListFromChat()) {
+                    failWithScreenshot("navigate_to_chats_list_failed", "Failed to navigate from chat screen to chats list")
+                    return@runBlocking
+                }
                 
-                // Mark that we created a new chat and get its ID for cleanup
-                createdNewChatThisTest = true
-                Log.d(TAG, "✅ New chat created - will track for cleanup")
-                
-                // Get the chat ID for cleanup tracking
-                val chatId = getCurrentOptimisticChatId()
-                if (chatId != null) {
-                    createdChatIds.add(chatId)
-                    Log.d(TAG, "📝 Tracking chat ID for cleanup: $chatId")
-                } else {
-                    Log.w(TAG, "⚠️ Could not get chat ID for cleanup tracking")
+                // Now click new chat button
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
+                    return@runBlocking
+                }
+            } else {
+                // We're on chats list, directly click new chat button
+                Log.d(TAG, "📋 On chats list, clicking new chat button directly")
+                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                    failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
+                    return@runBlocking
                 }
             }
+            
+            Log.d(TAG, "✅ Successfully navigated to new chat screen")
             
             // Step 2: Send first message to trigger bot response
             val sentMessages = mutableListOf<String>()

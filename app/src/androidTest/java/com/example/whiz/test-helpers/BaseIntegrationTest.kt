@@ -185,17 +185,42 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Found new chat button, clicking...")
         
+        // 🔧 DEBUG: Log the exact properties of the button we found
+        try {
+            val bounds = newChatButton.bounds
+            val desc = newChatButton.contentDescription ?: "no desc"
+            val text = newChatButton.text ?: "no text"
+            val className = newChatButton.className ?: "no class"
+            val isClickable = newChatButton.isClickable
+            val isEnabled = newChatButton.isEnabled
+            val isSelected = newChatButton.isSelected
+            
+            android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Button properties:")
+            android.util.Log.d("BaseIntegrationTest", "   📍 Bounds: $bounds")
+            android.util.Log.d("BaseIntegrationTest", "   📝 Description: '$desc'")
+            android.util.Log.d("BaseIntegrationTest", "   📝 Text: '$text'")
+            android.util.Log.d("BaseIntegrationTest", "   🏷️ Class: $className")
+            android.util.Log.d("BaseIntegrationTest", "   ✅ Clickable: $isClickable")
+            android.util.Log.d("BaseIntegrationTest", "   ✅ Enabled: $isEnabled")
+            android.util.Log.d("BaseIntegrationTest", "   ✅ Selected: $isSelected")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not read button properties: ${e.message}")
+        }
+        
         // Try multiple click approaches to ensure it works with Compose FAB
         var clickSuccessful = false
         try {
             // First attempt: Standard UiObject click
             newChatButton.click()
             android.util.Log.d("BaseIntegrationTest", "📱 Attempted standard UiObject click")
-            Thread.sleep(500)
             
-            // Check if click worked
-            val stillOnChatsListAfterFirst = device.hasObject(By.desc("New Chat").pkg(packageName)) || 
-                                            device.hasObject(By.desc("Start your first chat").pkg(packageName))
+            // 🔧 IMPROVED: Wait for navigation to complete by checking for chat screen elements
+            // Look for input field (EditText) which indicates we're in chat screen
+            val navigatedToChat = device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName)
+            ), 3000) // Increased timeout to 3 seconds
+            
+            val stillOnChatsListAfterFirst = !navigatedToChat
             
             if (stillOnChatsListAfterFirst) {
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Standard click failed, trying coordinate-based click...")
@@ -206,17 +231,49 @@ abstract class BaseIntegrationTest {
                 val centerY = bounds.centerY() + 70  // Adjust down by 70px  
                 device.click(centerX, centerY)
                 android.util.Log.d("BaseIntegrationTest", "📱 Attempted coordinate click at ($centerX, $centerY) (adjusted from bounds)")
-                Thread.sleep(500)
                 
-                // Check if second click worked
-                val stillOnChatsListAfterSecond = device.hasObject(By.desc("New Chat").pkg(packageName)) || 
-                                                  device.hasObject(By.desc("Start your first chat").pkg(packageName))
+                // 🔧 IMPROVED: Wait for navigation to complete by checking for chat screen elements
+                val navigatedToChatSecond = device.wait(Until.hasObject(
+                    By.clazz("android.widget.EditText").pkg(packageName)
+                ), 3000) // Increased timeout to 3 seconds
+                
+                val stillOnChatsListAfterSecond = !navigatedToChatSecond
                 
                 if (!stillOnChatsListAfterSecond) {
                     android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: Coordinate click worked - navigation started")
                     clickSuccessful = true
                 } else {
                     android.util.Log.e("BaseIntegrationTest", "❌ DIAGNOSTIC: Both click methods failed - still on chats list")
+                    
+                    // 🔧 DEBUG: Capture UI dump to understand what elements exist and their properties
+                    android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Capturing UI dump to analyze failure...")
+                    try {
+                        val dumpFile = "/sdcard/ui_dump_new_chat_failure.xml"
+                        device.dumpWindowHierarchy(dumpFile)
+                        android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: UI dump saved to $dumpFile")
+                        
+                        // Also log all elements that might be related to the "+" button
+                        val allViews = device.findObjects(By.clazz("android.view.View"))
+                        val allButtons = device.findObjects(By.clickable(true))
+                        
+                        android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Found ${allViews.size} View elements, ${allButtons.size} clickable elements")
+                        
+                        // Look for any element with "+" or related to new chat
+                        allButtons.forEachIndexed { index, button ->
+                            val text = button.text ?: ""
+                            val desc = button.contentDescription ?: ""
+                            val bounds = button.visibleBounds
+                            val className = button.className
+                            
+                            if (text.contains("+") || desc.contains("New") || desc.contains("Chat") || 
+                                text.contains("New") || text.contains("Chat")) {
+                                android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Relevant button [$index]: text='$text', desc='$desc', bounds=$bounds, class=$className, clickable=${button.isClickable}, enabled=${button.isEnabled}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "⚠️ DIAGNOSTIC: Failed to capture UI dump: ${e.message}")
+                    }
+                    
                     return false
                 }
             } else {
@@ -2102,19 +2159,37 @@ abstract class BaseIntegrationTest {
             
             android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Keyboard input completed, checking if text was accepted...")
             
+            // 🔧 ENHANCED DEBUG: Add detailed timing and UI state logging
+            val checkStartTime = System.currentTimeMillis()
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkStartTime}]: Starting text acceptance check for '$testText'")
+            
             // 🔧 PRODUCTION BUG FIX: More generous timeout for text acceptance
             // Wait for UI to settle after typing, then verify text was accepted
             device.waitForIdle(50)
             
-            // Get fresh reference to input field to avoid stale cached state
-            val freshInputField = device.findObject(
-                UiSelector()
-                    .className("android.widget.EditText")
-                    .packageName(packageName)
-            )
+            // 🔧 FIXED: Use By.clazz instead of UiSelector for more reliable text verification
+            val allEditTexts = device.findObjects(By.clazz("android.widget.EditText"))
             
-            val actualText = freshInputField.text ?: ""
+            // 🔧 ENHANCED DEBUG: Log exact UI state at time of check
+            val checkAfterIdleTime = System.currentTimeMillis()
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: After waitForIdle(50), checking input field (${checkAfterIdleTime - checkStartTime}ms later)")
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Found ${allEditTexts.size} EditText elements")
+            
+            // Find the input field using By.clazz (more reliable during recomposition)
+            val inputField = allEditTexts.find { it.isEnabled } ?: allEditTexts.firstOrNull()
+            
+            val actualText = inputField?.text ?: ""
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Input field text (By.clazz): '$actualText'")
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Expected text: '$testText'")
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Text lengths - found: ${actualText.length}, expected: ${testText.length}")
+            
+            // 🔧 ENHANCED DEBUG: Log all EditText elements for comparison
+            allEditTexts.forEachIndexed { index, editText ->
+                android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: EditText[$index] text: '${editText.text}' enabled: ${editText.isEnabled}")
+            }
+            
             val textAccepted = actualText.contains(testText)
+            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Text acceptance result: textAccepted=$textAccepted (contains check)")
             
             if (textAccepted) {
                 android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Text '$testText' accepted during bot response!")
