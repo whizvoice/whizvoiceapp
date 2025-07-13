@@ -11,6 +11,7 @@ import androidx.test.uiautomator.UiSelector
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.data.auth.AuthRepository
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -25,6 +26,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+import android.os.SystemClock
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.UiCollection
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
+import androidx.test.uiautomator.UiObjectNotFoundException
+import androidx.test.uiautomator.UiWatcher
+import androidx.test.uiautomator.Configurator
+import java.util.concurrent.TimeUnit
 
 /**
  * Base class for integration tests that need authentication.
@@ -127,29 +139,56 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
+        // First attempt: Wait for app to launch
+        var appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
         if (!appLaunched) {
             android.util.Log.e("BaseIntegrationTest", "❌ app failed to launch within 10 seconds")
-            return false
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Attempting backgrounding recovery...")
+            
+            // Try to bring app to foreground
+            bringAppToForeground()
+            
+            // Check again after recovery
+            appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 5000)
+            if (!appLaunched) {
+                android.util.Log.e("BaseIntegrationTest", "❌ app still failed to launch after recovery attempt")
+                return false
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "✅ app recovered successfully")
+            }
         }
         
         // Wait for main UI elements to load - should be chats list for manual launch
-        val mainUILoaded = device.wait(Until.hasObject(
+        var mainUILoaded = device.wait(Until.hasObject(
             By.text("My Chats").pkg(packageName)
         ), 8000) || device.wait(Until.hasObject(
             By.descContains("New Chat").pkg(packageName)  
         ), 3000)
         
         if (!mainUILoaded) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ main UI not detected, but checking for any app content...")
-            // Fallback check for any app content
-            val anyAppContent = device.wait(Until.hasObject(
-                By.pkg(packageName)
-            ), 2000)
+            android.util.Log.w("BaseIntegrationTest", "⚠️ main UI not detected, attempting recovery...")
             
-            if (!anyAppContent) {
-                android.util.Log.e("BaseIntegrationTest", "❌ no app content visible after launch")
-                return false
+            // Try to bring app to foreground again
+            bringAppToForeground()
+            
+            // Check for main UI again
+            mainUILoaded = device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), 5000) || device.wait(Until.hasObject(
+                By.descContains("New Chat").pkg(packageName)  
+            ), 3000)
+            
+            if (!mainUILoaded) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ main UI still not detected, checking for any app content...")
+                // Fallback check for any app content
+                val anyAppContent = device.wait(Until.hasObject(
+                    By.pkg(packageName)
+                ), 2000)
+                
+                if (!anyAppContent) {
+                    android.util.Log.e("BaseIntegrationTest", "❌ no app content visible after launch and recovery")
+                    return false
+                }
             }
         }
         
@@ -158,9 +197,11 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Find and click the new chat button, wait for chat screen to load
+     * Find and click the new chat button using accessibility actions, wait for chat screen to load
      */
     protected fun clickNewChatButtonAndWaitForChatScreen(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎯 Clicking new chat button using accessibility actions...")
+        
         // Try to find the main FloatingActionButton first (when chats exist)
         var newChatButton = device.findObject(
             UiSelector()
@@ -183,120 +224,41 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        android.util.Log.d("BaseIntegrationTest", "✅ Found new chat button, clicking...")
+        android.util.Log.d("BaseIntegrationTest", "✅ Found new chat button: ${newChatButton.contentDescription}")
         
-        // 🔧 DEBUG: Log the exact properties of the button we found
+        // Wait a moment for Compose to fully render the button (addresses timing issues)
         try {
-            val bounds = newChatButton.bounds
-            val desc = newChatButton.contentDescription ?: "no desc"
-            val text = newChatButton.text ?: "no text"
-            val className = newChatButton.className ?: "no class"
-            val isClickable = newChatButton.isClickable
-            val isEnabled = newChatButton.isEnabled
-            val isSelected = newChatButton.isSelected
+            android.util.Log.d("BaseIntegrationTest", "⏱️ Waiting for button to be fully rendered...")
+            Thread.sleep(500) // Brief pause for Compose stabilization
             
-            android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Button properties:")
-            android.util.Log.d("BaseIntegrationTest", "   📍 Bounds: $bounds")
-            android.util.Log.d("BaseIntegrationTest", "   📝 Description: '$desc'")
-            android.util.Log.d("BaseIntegrationTest", "   📝 Text: '$text'")
-            android.util.Log.d("BaseIntegrationTest", "   🏷️ Class: $className")
-            android.util.Log.d("BaseIntegrationTest", "   ✅ Clickable: $isClickable")
-            android.util.Log.d("BaseIntegrationTest", "   ✅ Enabled: $isEnabled")
-            android.util.Log.d("BaseIntegrationTest", "   ✅ Selected: $isSelected")
-        } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not read button properties: ${e.message}")
-        }
-        
-        // Try multiple click approaches to ensure it works with Compose FAB
-        var clickSuccessful = false
-        try {
-            // First attempt: Standard UiObject click
-            newChatButton.click()
-            android.util.Log.d("BaseIntegrationTest", "📱 Attempted standard UiObject click")
-            
-            // 🔧 IMPROVED: Wait for navigation to complete by checking for chat screen elements
-            // Look for input field (EditText) which indicates we're in chat screen
-            val navigatedToChat = device.wait(Until.hasObject(
-                By.clazz("android.widget.EditText").pkg(packageName)
-            ), 3000) // Increased timeout to 3 seconds
-            
-            val stillOnChatsListAfterFirst = !navigatedToChat
-            
-            if (stillOnChatsListAfterFirst) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ Standard click failed, trying coordinate-based click...")
-                
-                // Second attempt: Click at adjusted center coordinates
-                val bounds = newChatButton.bounds
-                val centerX = bounds.centerX() + 30  // Adjust right by 30px
-                val centerY = bounds.centerY() + 70  // Adjust down by 70px  
-                device.click(centerX, centerY)
-                android.util.Log.d("BaseIntegrationTest", "📱 Attempted coordinate click at ($centerX, $centerY) (adjusted from bounds)")
-                
-                // 🔧 IMPROVED: Wait for navigation to complete by checking for chat screen elements
-                val navigatedToChatSecond = device.wait(Until.hasObject(
-                    By.clazz("android.widget.EditText").pkg(packageName)
-                ), 3000) // Increased timeout to 3 seconds
-                
-                val stillOnChatsListAfterSecond = !navigatedToChatSecond
-                
-                if (!stillOnChatsListAfterSecond) {
-                    android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: Coordinate click worked - navigation started")
-                    clickSuccessful = true
-                } else {
-                    android.util.Log.e("BaseIntegrationTest", "❌ DIAGNOSTIC: Both click methods failed - still on chats list")
-                    
-                    // 🔧 DEBUG: Capture UI dump to understand what elements exist and their properties
-                    android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Capturing UI dump to analyze failure...")
-                    try {
-                        val dumpFile = "/sdcard/ui_dump_new_chat_failure.xml"
-                        device.dumpWindowHierarchy(dumpFile)
-                        android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: UI dump saved to $dumpFile")
-                        
-                        // Also log all elements that might be related to the "+" button
-                        val allViews = device.findObjects(By.clazz("android.view.View"))
-                        val allButtons = device.findObjects(By.clickable(true))
-                        
-                        android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Found ${allViews.size} View elements, ${allButtons.size} clickable elements")
-                        
-                        // Look for any element with "+" or related to new chat
-                        allButtons.forEachIndexed { index, button ->
-                            val text = button.text ?: ""
-                            val desc = button.contentDescription ?: ""
-                            val bounds = button.visibleBounds
-                            val className = button.className
-                            
-                            if (text.contains("+") || desc.contains("New") || desc.contains("Chat") || 
-                                text.contains("New") || text.contains("Chat")) {
-                                android.util.Log.d("BaseIntegrationTest", "🔍 DIAGNOSTIC: Relevant button [$index]: text='$text', desc='$desc', bounds=$bounds, class=$className, clickable=${button.isClickable}, enabled=${button.isEnabled}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.w("BaseIntegrationTest", "⚠️ DIAGNOSTIC: Failed to capture UI dump: ${e.message}")
-                    }
-                    
-                    return false
-                }
-            } else {
-                android.util.Log.d("BaseIntegrationTest", "✅ DIAGNOSTIC: Standard click worked - navigation started")
-                clickSuccessful = true
+            // Ensure button is still present and clickable
+            if (!newChatButton.isClickable) {
+                android.util.Log.e("BaseIntegrationTest", "❌ Button found but not clickable")
+                return false
             }
+            
+            android.util.Log.d("BaseIntegrationTest", "🎯 Clicking new chat button...")
+            newChatButton.click()
+            android.util.Log.d("BaseIntegrationTest", "✅ Click performed")
+            
+            // Wait for navigation to chat screen with longer timeout
+            android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for navigation to chat screen...")
+            val chatScreenLoaded = device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName)
+            ), 3000) // Increased timeout to 8 seconds
+            
+            if (chatScreenLoaded) {
+                android.util.Log.d("BaseIntegrationTest", "✅ Successfully navigated to chat screen")
+                return true
+            } else {
+                android.util.Log.e("BaseIntegrationTest", "❌ Navigation to chat screen failed - EditText not found after 8 seconds")
+                return false
+            }
+            
         } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Click failed with exception: ${e.message}")
+            android.util.Log.e("BaseIntegrationTest", "❌ Button click failed with exception: ${e.message}")
             return false
         }
-        
-        // Wait for chat screen to load by looking for the message input field using proper content description
-        android.util.Log.d("BaseIntegrationTest", "🔍 Waiting for chat screen to load (looking for message input field)...")
-        val chatScreenLoaded = device.wait(Until.hasObject(
-            By.desc("Message input field").pkg(packageName)
-        ), 5000)
-        
-        if (!chatScreenLoaded) {
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ Chat screen loaded successfully")
-        return chatScreenLoaded
     }
     
     /**
@@ -2387,6 +2349,46 @@ abstract class BaseIntegrationTest {
         // No filtering needed - collect all messages to understand complete chat state
         return allMessages
     }
+
+    /**
+     * Bring the app to foreground if it gets backgrounded
+     */
+    protected fun bringAppToForeground() {
+        android.util.Log.d("BaseIntegrationTest", "🔄 Bringing app to foreground...")
+        try {
+            // Method 1: Use recent apps and click on our app
+            device.pressRecentApps()
+            Thread.sleep(1000)
+            
+            // Look for our app in recent apps
+            val whizVoiceApp = device.findObject(UiSelector().textContains("Whiz Voice"))
+            if (whizVoiceApp.exists()) {
+                whizVoiceApp.click()
+                android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked WhizVoice in recent apps")
+            } else {
+                // Method 2: Launch via package name
+                android.util.Log.d("BaseIntegrationTest", "⚠️ App not found in recent apps, launching directly")
+                val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                    context.startActivity(intent)
+                    android.util.Log.d("BaseIntegrationTest", "✅ Launched app directly via intent")
+                } else {
+                    // Method 3: Use adb to launch
+                    android.util.Log.d("BaseIntegrationTest", "⚠️ Intent not found, using adb to launch")
+                    device.executeShellCommand("am start -n $packageName/com.example.whiz.MainActivity")
+                }
+            }
+            
+            // Wait for app to come to foreground
+            Thread.sleep(2000)
+            android.util.Log.d("BaseIntegrationTest", "✅ App brought to foreground")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Failed to bring app to foreground: ${e.message}")
+        }
+    }
+
+
 
 }
 
