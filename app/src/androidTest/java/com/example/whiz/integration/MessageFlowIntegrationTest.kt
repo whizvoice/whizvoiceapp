@@ -97,14 +97,13 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
     fun cleanup() {
         runBlocking {
             android.util.Log.d(TAG, "🧹 cleaning up test chats")
-            createdChatIds.forEach { chatId ->
-                try {
-                    repository.deleteChat(chatId)
-                    android.util.Log.d(TAG, "🗑️ deleted test chat: $chatId")
-                } catch (e: Exception) {
-                    android.util.Log.w(TAG, "⚠️ failed to delete test chat $chatId", e)
-                }
-            }
+            // Use simplified cleanup method
+            cleanupTestChats(
+                repository = repository,
+                trackedChatIds = createdChatIds,
+                additionalPatterns = listOf("message flow", "comprehensive", "migration"),
+                enablePatternFallback = true
+            )
             createdChatIds.clear()
             android.util.Log.d(TAG, "✅ test cleanup completed")
         }

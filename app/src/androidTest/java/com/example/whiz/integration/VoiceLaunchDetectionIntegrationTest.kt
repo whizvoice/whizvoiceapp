@@ -62,16 +62,14 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
         
-        // Clean up any existing test chats (both negative optimistic and positive server chats)
+        // Clean up any existing test chats using standardized method
         runBlocking {
-            val chats = repository.getAllChats()
-            chats.forEach { chat ->
-                if (chat.title.contains("Assistant Chat") || chat.title.contains("Voice Assistant Chat") || 
-                    chat.id < 0 || chat.title == "New Chat") {
-                    repository.deleteChat(chat.id)
-                    android.util.Log.d(TAG, "🗑️ Cleaned up test chat ${chat.id} (${chat.title})")
-                }
-            }
+            cleanupTestChats(
+                repository = repository,
+                trackedChatIds = emptyList(),
+                additionalPatterns = listOf("voice launch", "launch detection"),
+                enablePatternFallback = true
+            )
         }
     }
 

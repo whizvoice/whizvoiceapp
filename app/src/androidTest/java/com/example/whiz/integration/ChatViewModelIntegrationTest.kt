@@ -79,15 +79,13 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
         runBlocking {
             Log.d(TAG, "🧹 Cleaning up test chats (only deleting chats created by this test)")
             if (createdNewChatThisTest && createdChatIds.isNotEmpty()) {
-                Log.d(TAG, "🗑️ Deleting ${createdChatIds.size} chat(s) created during test")
-                createdChatIds.forEach { chatId ->
-                    try {
-                        repository.deleteChat(chatId)
-                        Log.d(TAG, "✅ Deleted test chat: $chatId")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "⚠️ Failed to delete test chat $chatId", e)
-                    }
-                }
+                // Use simplified cleanup method
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = createdChatIds,
+                    additionalPatterns = listOf("interrupt", "bot", "PRODUCTION BUG"),
+                    enablePatternFallback = false // Only clean up tracked chats for this test
+                )
                 createdChatIds.clear()
             } else {
                 Log.d(TAG, "ℹ️ No new chats created by test - using existing chat, nothing to clean up")

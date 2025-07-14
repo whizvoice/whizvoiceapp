@@ -2388,8 +2388,188 @@ abstract class BaseIntegrationTest {
         }
     }
 
+    /**
+     * Simplified cleanup method for test chats
+     * Focuses on ID tracking with optional pattern matching fallback
+     */
+    protected suspend fun cleanupTestChats(
+        repository: com.example.whiz.data.repository.WhizRepository,
+        trackedChatIds: List<Long> = emptyList(),
+        additionalPatterns: List<String> = emptyList(),
+        enablePatternFallback: Boolean = false
+    ) {
+        try {
+            android.util.Log.d("BaseIntegrationTest", "🧹 Starting simplified test chat cleanup")
+            
+            var chatsDeleted = 0
+            
+            // Primary method: Delete tracked chats (most reliable)
+            if (trackedChatIds.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🗑️ Deleting ${trackedChatIds.size} tracked chat(s)")
+                trackedChatIds.forEach { chatId ->
+                    try {
+                        repository.deleteChat(chatId)
+                        chatsDeleted++
+                        android.util.Log.d("BaseIntegrationTest", "✅ Deleted tracked chat: $chatId")
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete tracked chat $chatId", e)
+                    }
+                }
+            }
 
+            // Optional fallback: Pattern matching (only if enabled)
+            if (enablePatternFallback && additionalPatterns.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🔍 Checking for pattern-matched chats as fallback")
+                val allChats = repository.getAllChats()
+                val testChats = allChats.filter { chat ->
+                    !trackedChatIds.contains(chat.id) && 
+                    additionalPatterns.any { pattern -> 
+                        chat.title.contains(pattern, ignoreCase = true) 
+                    }
+                }
+                
+                if (testChats.isNotEmpty()) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ FALLBACK ACTIVATED: Found ${testChats.size} untracked test chats")
+                    testChats.forEach { chat ->
+                        try {
+                            repository.deleteChat(chat.id)
+                            chatsDeleted++
+                            android.util.Log.d("BaseIntegrationTest", "✅ Deleted untracked chat ${chat.id} (${chat.title})")
+                        } catch (e: Exception) {
+                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete untracked chat ${chat.id}", e)
+                        }
+                    }
+                }
+            }
 
+            android.util.Log.d("BaseIntegrationTest", "✅ Cleanup completed: $chatsDeleted chats deleted")
+            
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error during test chat cleanup", e)
+        }
+    }
+
+    /**
+     * Legacy method for backward compatibility - will be removed after testing
+     */
+    protected suspend fun cleanupTestChatsDetailed(
+        repository: com.example.whiz.data.repository.WhizRepository,
+        trackedChatIds: List<Long> = emptyList(),
+        additionalPatterns: List<String> = emptyList(),
+        cleanupRecentChats: Boolean = true,
+        recentChatTimeoutMinutes: Int = 10
+    ) {
+        try {
+            android.util.Log.d("BaseIntegrationTest", "🧹 Starting detailed test chat cleanup (legacy)")
+            
+            var trackedChatsDeleted = 0
+            var patternChatsDeleted = 0
+            var recentChatsDeleted = 0
+            val allChats = repository.getAllChats()
+            
+            android.util.Log.d("BaseIntegrationTest", "📊 Total chats before cleanup: ${allChats.size}")
+
+            // Strategy 1: Clean up tracked chats
+            if (trackedChatIds.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 1: Deleting ${trackedChatIds.size} tracked chat(s)")
+                trackedChatIds.forEach { chatId ->
+                    try {
+                        repository.deleteChat(chatId)
+                        trackedChatsDeleted++
+                        android.util.Log.d("BaseIntegrationTest", "✅ Deleted tracked test chat: $chatId")
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete tracked test chat $chatId", e)
+                    }
+                }
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 1: No tracked chats to delete")
+            }
+
+            // Strategy 2: Clean up test chats by pattern matching
+            val commonTestPatterns = listOf(
+                "Assistant Chat",
+                "Voice Assistant Chat", 
+                "New Chat",
+                "test",
+                "Test",
+                "integration",
+                "Integration",
+                "INTEGRATION_TEST_MSG_",
+                "Hello! this is test"
+            ) + additionalPatterns
+
+            val testChats = allChats.filter { chat ->
+                // Skip chats that were already deleted by ID tracking
+                !trackedChatIds.contains(chat.id) && (
+                    chat.id < 0 || // Optimistic chats
+                    commonTestPatterns.any { pattern -> 
+                        chat.title.contains(pattern, ignoreCase = true) 
+                    } ||
+                    chat.title.matches(Regex(".*test.*\\d+.*", RegexOption.IGNORE_CASE))
+                )
+            }
+            
+            if (testChats.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 2: Deleting ${testChats.size} test chat(s) found by pattern")
+                testChats.forEach { chat ->
+                    try {
+                        repository.deleteChat(chat.id)
+                        patternChatsDeleted++
+                        android.util.Log.d("BaseIntegrationTest", "✅ Deleted pattern-matched test chat ${chat.id} (${chat.title})")
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete pattern-matched test chat ${chat.id}: ${e.message}")
+                    }
+                }
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 2: No pattern-matched chats to delete")
+            }
+
+            // Strategy 3: Clean up recent chats (safety net)
+            if (cleanupRecentChats) {
+                val timeoutMillis = recentChatTimeoutMinutes * 60 * 1000L
+                val cutoffTime = System.currentTimeMillis() - timeoutMillis
+                val recentChats = allChats.filter { chat ->
+                    chat.createdAt > cutoffTime && 
+                    !trackedChatIds.contains(chat.id) &&
+                    !testChats.contains(chat)
+                }
+                
+                if (recentChats.isNotEmpty()) {
+                    android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 3: Deleting ${recentChats.size} recent chat(s) as safety net")
+                    recentChats.forEach { chat ->
+                        try {
+                            repository.deleteChat(chat.id)
+                            recentChatsDeleted++
+                            android.util.Log.d("BaseIntegrationTest", "✅ Deleted recent test chat ${chat.id} (${chat.title})")
+                        } catch (e: Exception) {
+                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete recent test chat ${chat.id}: ${e.message}")
+                        }
+                    }
+                } else {
+                    android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 3: No recent chats to delete")
+                }
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 3: Recent chat cleanup disabled")
+            }
+
+            // Summary
+            val totalDeleted = trackedChatsDeleted + patternChatsDeleted + recentChatsDeleted
+            android.util.Log.d("BaseIntegrationTest", "✅ Standardized test chat cleanup completed")
+            android.util.Log.d("BaseIntegrationTest", "📊 Cleanup Summary:")
+            android.util.Log.d("BaseIntegrationTest", "   Strategy 1 (ID tracking): $trackedChatsDeleted chats deleted")
+            android.util.Log.d("BaseIntegrationTest", "   Strategy 2 (Pattern matching): $patternChatsDeleted chats deleted")
+            android.util.Log.d("BaseIntegrationTest", "   Strategy 3 (Recent chats): $recentChatsDeleted chats deleted")
+            android.util.Log.d("BaseIntegrationTest", "   Total deleted: $totalDeleted chats")
+            
+            if (patternChatsDeleted > 0 || recentChatsDeleted > 0) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ BACKUP METHODS USED: ${patternChatsDeleted} pattern + ${recentChatsDeleted} recent chats deleted")
+                android.util.Log.w("BaseIntegrationTest", "   This suggests ID tracking might be insufficient or tests aren't properly tracking chat IDs")
+            }
+            
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error during standardized test chat cleanup", e)
+        }
+    }
 }
 
 /**

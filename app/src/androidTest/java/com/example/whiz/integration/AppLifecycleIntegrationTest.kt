@@ -28,6 +28,7 @@ import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.integration.GoogleSignInAutomator
 import com.example.whiz.BaseIntegrationTest
 import androidx.test.InstrumentationRegistry
+import org.junit.After
 
 /**
  * Real app lifecycle integration tests using Strategy #2: Real App Testing
@@ -63,6 +64,9 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
     private val TAG = "AppLifecycleTest"
 
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
+
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
@@ -74,11 +78,40 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
         
+        // Clean up any existing test chats proactively
+        runBlocking {
+            cleanupTestChats()
+        }
+        
         // Start with clean state
         device.pressHome()
         Thread.sleep(1000)
         
         Log.d(TAG, "🔥 Real App Lifecycle Integration Test Setup Complete")
+    }
+
+    @After
+    fun cleanup() {
+        runBlocking {
+            Log.d(TAG, "🧹 Cleaning up test chats created during lifecycle test")
+            cleanupTestChats()
+            Log.d(TAG, "✅ Test cleanup completed")
+        }
+    }
+
+    private suspend fun cleanupTestChats() {
+        try {
+            // Use the simplified cleanup method from BaseIntegrationTest
+            cleanupTestChats(
+                repository = repository,
+                trackedChatIds = createdChatIds,
+                additionalPatterns = listOf("lifecycle", "Lifecycle"),
+                enablePatternFallback = true // Only enable if needed
+            )
+            createdChatIds.clear()
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+        }
     }
 
     // Authentication is now handled automatically by BaseIntegrationTest
