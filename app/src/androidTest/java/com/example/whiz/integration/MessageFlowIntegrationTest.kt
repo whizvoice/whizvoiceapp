@@ -128,21 +128,14 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             android.util.Log.d(TAG, "➕ step 2: navigating to new chat")
             
             if (isCurrentlyInChatScreen()) {
-                // if we're already in a chat, navigate back to chats list first, then create new chat
-                android.util.Log.d(TAG, "🔄 currently in chat screen, going back to chats list first")
-                if (!navigateBackToChatsListFromChat()) {
-                    android.util.Log.e(TAG, "❌ FAILURE at step 2a: failed to navigate from chat screen to chats list")
-                    failWithScreenshot("navigate_to_chats_list_failed", "failed to navigate from chat screen to chats list")
-                }
-                
-                // now click new chat button
-                if (!clickNewChatButtonAndWaitForChatScreen()) {
-                    android.util.Log.e(TAG, "❌ FAILURE at step 2b: new chat button not found or chat screen failed to load")
-                    failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
-                }
+                // FAIL: Manual app launch should go to chats list, not directly to chat screen
+                android.util.Log.e(TAG, "❌ FAILURE at step 2: app launch went to chat screen instead of chats list")
+                android.util.Log.e(TAG, "   Manual app launches should always go to chats list first")
+                android.util.Log.e(TAG, "   Being in chat screen after manual launch indicates incorrect app behavior")
+                failWithScreenshot("unexpected_chat_screen_after_manual_launch", "Manual app launch incorrectly went to chat screen instead of chats list")
             } else {
-                // we're on chats list, directly click new chat button
-                android.util.Log.d(TAG, "📋 on chats list, clicking new chat button directly")
+                // CORRECT: we're on chats list, directly click new chat button
+                android.util.Log.d(TAG, "📋 ✅ CORRECT: on chats list after manual launch, clicking new chat button")
                 if (!clickNewChatButtonAndWaitForChatScreen()) {
                     android.util.Log.e(TAG, "❌ FAILURE at step 2: new chat button not found or chat screen failed to load")
                     failWithScreenshot("new_chat_failed", "new chat button not found or chat screen failed to load")
