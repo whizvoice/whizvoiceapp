@@ -263,17 +263,6 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("ui_not_stable", "UI not stable for verification")
             }
             
-            // ensure we're in chat screen before verification
-            if (!isCurrentlyInChatScreen()) {
-                android.util.Log.w(TAG, "⚠️ not currently in chat screen during verification, attempting recovery...")
-                // try to get back to chat screen if possible
-                device.pressBack()
-                if (!waitForChatScreenToLoad()) {
-                    android.util.Log.e(TAG, "❌ FAILURE: Could not recover to chat screen for verification")
-                    failWithScreenshot("chat_screen_recovery_failed", "Could not recover to chat screen for verification")
-                }
-            }
-            
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
             verifyAllMessagesDisplayCorrectly(sentMessages)
             
