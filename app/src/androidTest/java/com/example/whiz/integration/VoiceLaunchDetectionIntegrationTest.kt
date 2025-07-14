@@ -68,7 +68,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
                 repository = repository,
                 trackedChatIds = emptyList(),
                 additionalPatterns = listOf("voice launch", "launch detection"),
-                enablePatternFallback = true
+                enablePatternFallback = false
             )
         }
     }

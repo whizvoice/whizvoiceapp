@@ -265,6 +265,10 @@ abstract class BaseIntegrationTest {
      * Find message input field, type message, and verify text appears
      */
     protected fun typeMessageInInputField(message: String): Boolean {
+        // First, scroll to bottom to ensure input field is accessible
+        android.util.Log.d("BaseIntegrationTest", "📜 Ensuring input field is accessible by scrolling to bottom...")
+        scrollToBottom()
+        
         // Look for the actual EditText (the real input field)
         val messageInput = device.findObject(
             UiSelector()
@@ -1705,6 +1709,49 @@ abstract class BaseIntegrationTest {
     }
 
     /**
+     * Scroll to the bottom of the chat to ensure the input field is visible and accessible
+     * This is essential for reliable message sending in long conversations
+     */
+    protected fun scrollToBottom(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "📜 Scrolling to bottom of chat to ensure input field is accessible...")
+        
+        try {
+            val height = device.displayHeight
+            val width = device.displayWidth
+            
+            // Perform multiple scroll downs to ensure we reach the bottom
+            repeat(5) { attempt ->
+                android.util.Log.d("BaseIntegrationTest", "📜 Bottom scroll attempt ${attempt + 1}/5")
+                
+                // Swipe from bottom to top to scroll down (showing newer messages)
+                device.swipe(width/2, height*2/3, width/2, height/3, 10)
+                
+                // Wait for scroll animation to complete
+                Thread.sleep(300)
+                
+                // Check if input field is now visible and accessible
+                val inputField = device.findObject(
+                    UiSelector()
+                        .className("android.widget.EditText")
+                        .packageName(packageName)
+                )
+                
+                if (inputField.exists() && inputField.isEnabled) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Input field visible and accessible after scroll attempt ${attempt + 1}")
+                    return true
+                }
+            }
+            
+            android.util.Log.d("BaseIntegrationTest", "✅ Completed scrolling to bottom")
+            return true
+            
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error scrolling to bottom: ${e.message}")
+            return false
+        }
+    }
+
+    /**
      * Click microphone button and wait for listening to start - RAPID VERSION
      * For voice interruption testing - should activate immediately
      */
@@ -1830,6 +1877,10 @@ abstract class BaseIntegrationTest {
      */
     protected fun tryToTypeInInputField(testText: String = "test"): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 Trying to type '$testText' in input field...")
+        
+        // First, scroll to bottom to ensure input field is accessible
+        android.util.Log.d("BaseIntegrationTest", "📜 Ensuring input field is accessible by scrolling to bottom...")
+        scrollToBottom()
         
         // Find the actual EditText input field
         val inputField = device.findObject(
@@ -2446,128 +2497,6 @@ abstract class BaseIntegrationTest {
             
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ Error during test chat cleanup", e)
-        }
-    }
-
-    /**
-     * Legacy method for backward compatibility - will be removed after testing
-     */
-    protected suspend fun cleanupTestChatsDetailed(
-        repository: com.example.whiz.data.repository.WhizRepository,
-        trackedChatIds: List<Long> = emptyList(),
-        additionalPatterns: List<String> = emptyList(),
-        cleanupRecentChats: Boolean = true,
-        recentChatTimeoutMinutes: Int = 10
-    ) {
-        try {
-            android.util.Log.d("BaseIntegrationTest", "🧹 Starting detailed test chat cleanup (legacy)")
-            
-            var trackedChatsDeleted = 0
-            var patternChatsDeleted = 0
-            var recentChatsDeleted = 0
-            val allChats = repository.getAllChats()
-            
-            android.util.Log.d("BaseIntegrationTest", "📊 Total chats before cleanup: ${allChats.size}")
-
-            // Strategy 1: Clean up tracked chats
-            if (trackedChatIds.isNotEmpty()) {
-                android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 1: Deleting ${trackedChatIds.size} tracked chat(s)")
-                trackedChatIds.forEach { chatId ->
-                    try {
-                        repository.deleteChat(chatId)
-                        trackedChatsDeleted++
-                        android.util.Log.d("BaseIntegrationTest", "✅ Deleted tracked test chat: $chatId")
-                    } catch (e: Exception) {
-                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete tracked test chat $chatId", e)
-                    }
-                }
-            } else {
-                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 1: No tracked chats to delete")
-            }
-
-            // Strategy 2: Clean up test chats by pattern matching
-            val commonTestPatterns = listOf(
-                "Assistant Chat",
-                "Voice Assistant Chat", 
-                "New Chat",
-                "test",
-                "Test",
-                "integration",
-                "Integration",
-                "INTEGRATION_TEST_MSG_",
-                "Hello! this is test"
-            ) + additionalPatterns
-
-            val testChats = allChats.filter { chat ->
-                // Skip chats that were already deleted by ID tracking
-                !trackedChatIds.contains(chat.id) && (
-                    chat.id < 0 || // Optimistic chats
-                    commonTestPatterns.any { pattern -> 
-                        chat.title.contains(pattern, ignoreCase = true) 
-                    } ||
-                    chat.title.matches(Regex(".*test.*\\d+.*", RegexOption.IGNORE_CASE))
-                )
-            }
-            
-            if (testChats.isNotEmpty()) {
-                android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 2: Deleting ${testChats.size} test chat(s) found by pattern")
-                testChats.forEach { chat ->
-                    try {
-                        repository.deleteChat(chat.id)
-                        patternChatsDeleted++
-                        android.util.Log.d("BaseIntegrationTest", "✅ Deleted pattern-matched test chat ${chat.id} (${chat.title})")
-                    } catch (e: Exception) {
-                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete pattern-matched test chat ${chat.id}: ${e.message}")
-                    }
-                }
-            } else {
-                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 2: No pattern-matched chats to delete")
-            }
-
-            // Strategy 3: Clean up recent chats (safety net)
-            if (cleanupRecentChats) {
-                val timeoutMillis = recentChatTimeoutMinutes * 60 * 1000L
-                val cutoffTime = System.currentTimeMillis() - timeoutMillis
-                val recentChats = allChats.filter { chat ->
-                    chat.createdAt > cutoffTime && 
-                    !trackedChatIds.contains(chat.id) &&
-                    !testChats.contains(chat)
-                }
-                
-                if (recentChats.isNotEmpty()) {
-                    android.util.Log.d("BaseIntegrationTest", "🗑️ Strategy 3: Deleting ${recentChats.size} recent chat(s) as safety net")
-                    recentChats.forEach { chat ->
-                        try {
-                            repository.deleteChat(chat.id)
-                            recentChatsDeleted++
-                            android.util.Log.d("BaseIntegrationTest", "✅ Deleted recent test chat ${chat.id} (${chat.title})")
-                        } catch (e: Exception) {
-                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete recent test chat ${chat.id}: ${e.message}")
-                        }
-                    }
-                } else {
-                    android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 3: No recent chats to delete")
-                }
-            } else {
-                android.util.Log.d("BaseIntegrationTest", "ℹ️ Strategy 3: Recent chat cleanup disabled")
-            }
-
-            // Summary
-            val totalDeleted = trackedChatsDeleted + patternChatsDeleted + recentChatsDeleted
-            android.util.Log.d("BaseIntegrationTest", "✅ Standardized test chat cleanup completed")
-            android.util.Log.d("BaseIntegrationTest", "📊 Cleanup Summary:")
-            android.util.Log.d("BaseIntegrationTest", "   Strategy 1 (ID tracking): $trackedChatsDeleted chats deleted")
-            android.util.Log.d("BaseIntegrationTest", "   Strategy 2 (Pattern matching): $patternChatsDeleted chats deleted")
-            android.util.Log.d("BaseIntegrationTest", "   Strategy 3 (Recent chats): $recentChatsDeleted chats deleted")
-            android.util.Log.d("BaseIntegrationTest", "   Total deleted: $totalDeleted chats")
-            
-            if (patternChatsDeleted > 0 || recentChatsDeleted > 0) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ BACKUP METHODS USED: ${patternChatsDeleted} pattern + ${recentChatsDeleted} recent chats deleted")
-                android.util.Log.w("BaseIntegrationTest", "   This suggests ID tracking might be insufficient or tests aren't properly tracking chat IDs")
-            }
-            
-        } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ Error during standardized test chat cleanup", e)
         }
     }
 }

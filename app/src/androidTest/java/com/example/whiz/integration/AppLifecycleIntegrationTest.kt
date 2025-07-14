@@ -106,7 +106,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 repository = repository,
                 trackedChatIds = createdChatIds,
                 additionalPatterns = listOf("lifecycle", "Lifecycle"),
-                enablePatternFallback = true // Only enable if needed
+                enablePatternFallback = false // Only enable if needed
             )
             createdChatIds.clear()
         } catch (e: Exception) {

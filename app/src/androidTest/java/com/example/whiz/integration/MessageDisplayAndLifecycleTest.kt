@@ -193,7 +193,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                         repository = repository,
                         trackedChatIds = listOf(testChatId, createdServerChatId).filter { it > 0 },
                         additionalPatterns = listOf("INTEGRATION_TEST_MSG_", "message display", "lifecycle"),
-                        enablePatternFallback = true
+                        enablePatternFallback = false
                     )
                     
                     Log.d(TAG, "✅ Test chat cleanup completed")

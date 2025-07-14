@@ -102,7 +102,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                 repository = repository,
                 trackedChatIds = createdChatIds,
                 additionalPatterns = listOf("message flow", "comprehensive", "migration"),
-                enablePatternFallback = true
+                enablePatternFallback = false
             )
             createdChatIds.clear()
             android.util.Log.d(TAG, "✅ test cleanup completed")
