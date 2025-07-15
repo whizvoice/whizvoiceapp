@@ -201,9 +201,15 @@ jobs:
             echo "📁 Pushing test credentials to emulator..."
             adb push test_credentials.json /data/local/tmp/test_credentials.json
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
+
+            # Run tests and capture exit code, but don't let it stop the script
+            set +e  # Disable exit on error temporarily
             ./gradlew connectedDebugAndroidTest --stacktrace --continue
+            GRADLE_EXIT_CODE=$?
+            set -e  # Re-enable exit on error
 
             echo ""
+            echo "📋 Test execution completed with exit code: $GRADLE_EXIT_CODE"
             echo "📸 IMMEDIATELY pulling screenshots while emulator is still online..."
             echo "🔍 Checking emulator storage state..."
             adb shell df -h | grep -E "(Filesystem|/sdcard)" || echo "Storage check failed"
@@ -229,6 +235,19 @@ jobs:
             echo "📱 Screenshot files pulled locally:"
             ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
             find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
+
+            echo ""
+            echo "📋 Final test result summary:"
+            if [ $GRADLE_EXIT_CODE -eq 0 ]; then
+              echo "✅ All tests passed!"
+            else
+              echo "❌ Some tests failed (exit code: $GRADLE_EXIT_CODE)"
+              echo "📸 Failure screenshots should be available above"
+              echo "⚠️ This will cause the CI to fail at the end, but screenshots were collected first"
+            fi
+
+            # Exit with the original test result to maintain CI behavior
+            exit $GRADLE_EXIT_CODE
 
       - name: Final verification and upload preparation
         if: always()
