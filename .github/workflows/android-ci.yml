@@ -202,12 +202,8 @@ jobs:
             adb push test_credentials.json /data/local/tmp/test_credentials.json
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
 
-            # Run tests and capture exit code - bulletproof approach
-            if ./gradlew connectedDebugAndroidTest --stacktrace --continue; then
-              GRADLE_EXIT_CODE=0
-            else
-              GRADLE_EXIT_CODE=1
-            fi
+            # Run tests and capture exit code - single line approach for shell compatibility
+            if ./gradlew connectedDebugAndroidTest --stacktrace --continue; then GRADLE_EXIT_CODE=0; else GRADLE_EXIT_CODE=1; fi
 
             echo ""
             echo "📋 Test execution completed with exit code: $GRADLE_EXIT_CODE"
