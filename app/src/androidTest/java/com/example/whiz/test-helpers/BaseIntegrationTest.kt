@@ -96,11 +96,25 @@ abstract class BaseIntegrationTest {
      */
     private fun setupScreenshotDirectory() {
         try {
+            android.util.Log.d("BaseIntegrationTest", "🔧 Setting up single screenshot directory...")
+            
             // Clear existing screenshots on device
-            device.executeShellCommand("rm -rf $screenshotDir")
+            val removeResult = device.executeShellCommand("rm -rf $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "🧹 Screenshot cleanup result: $removeResult")
+            
             // Create fresh directory on device
-            device.executeShellCommand("mkdir -p $screenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "🔧 Device screenshot directory prepared: $screenshotDir")
+            val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory creation result: $mkdirResult")
+            
+            // Verify directory exists and check permissions
+            val dirCheck = device.executeShellCommand("ls -la $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📋 Screenshot directory contents: $dirCheck")
+            
+            // Check storage space
+            val storageCheck = device.executeShellCommand("df /sdcard/")
+            android.util.Log.d("BaseIntegrationTest", "💾 Storage space: $storageCheck")
+            
+            android.util.Log.d("BaseIntegrationTest", "✅ Device screenshot directory prepared: $screenshotDir")
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "Failed to setup screenshot directory", e)
         }
@@ -1265,63 +1279,18 @@ abstract class BaseIntegrationTest {
             val testRead = device.executeShellCommand("cat /sdcard/test.txt")
             android.util.Log.d("BaseIntegrationTest", "👀 Test read result: $testRead")
             
-            // ensure screenshot directories exist (both regular and CI-accessible)
+            // ensure screenshot directory exists
             val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "📁 Create regular directory result: $mkdirResult")
-            
-            val mkdirCiResult = device.executeShellCommand("mkdir -p $ciScreenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "📁 Create CI directory result: $mkdirCiResult")
+            android.util.Log.d("BaseIntegrationTest", "📁 Create directory result: $mkdirResult")
             
             // check if directory was actually created
             val dirCheckResult = device.executeShellCommand("ls -la $screenshotDir")
             android.util.Log.d("BaseIntegrationTest", "📁 Directory check: $dirCheckResult")
             
-            // try multiple screenshot approaches
-            android.util.Log.d("BaseIntegrationTest", "📸 Attempting method 1: screencap -p")
-            val result1 = device.executeShellCommand("screencap -p $filepath")
-            android.util.Log.d("BaseIntegrationTest", "📸 Method 1 result: $result1")
-            
-            // check if first method worked
-            val check1 = device.executeShellCommand("ls -la $filepath")
-            if (!check1.contains(filename)) {
-                android.util.Log.w("BaseIntegrationTest", "📸 Method 1 failed, trying method 2: screencap without -p")
-                val result2 = device.executeShellCommand("screencap $filepath")
-                android.util.Log.d("BaseIntegrationTest", "📸 Method 2 result: $result2")
-                
-                val check2 = device.executeShellCommand("ls -la $filepath")
-                if (!check2.contains(filename)) {
-                    android.util.Log.w("BaseIntegrationTest", "📸 Method 2 failed, trying method 3: different directory")
-                    val altPath = "/sdcard/$filename"
-                    val result3 = device.executeShellCommand("screencap -p $altPath")
-                    android.util.Log.d("BaseIntegrationTest", "📸 Method 3 result: $result3")
-                    
-                                         val check3 = device.executeShellCommand("ls -la $altPath")
-                     android.util.Log.d("BaseIntegrationTest", "📸 Method 3 check: $check3")
-                     
-                     if (!check3.contains(filename)) {
-                         android.util.Log.w("BaseIntegrationTest", "📸 All shell methods failed, trying UiAutomator method")
-                         try {
-                             val uiFile = java.io.File("/sdcard/$filename")
-                             val success = device.takeScreenshot(uiFile)
-                             android.util.Log.d("BaseIntegrationTest", "📸 UiAutomator method success: $success")
-                             
-                             val check4 = device.executeShellCommand("ls -la /sdcard/$filename")
-                             android.util.Log.d("BaseIntegrationTest", "📸 UiAutomator check: $check4")
-                         } catch (e: Exception) {
-                             android.util.Log.e("BaseIntegrationTest", "📸 UiAutomator method failed: ${e.message}")
-                                                   }
-                      }
-                  }
-              }
-              
-              // also save to CI-accessible location
-              val ciFilepath = "$ciScreenshotDir/$filename"
-              android.util.Log.d("BaseIntegrationTest", "📸 Saving copy to CI location: $ciFilepath")
-              val ciCopyResult = device.executeShellCommand("screencap -p $ciFilepath")
-              android.util.Log.d("BaseIntegrationTest", "📸 CI copy result: $ciCopyResult")
-              
-              val ciCheckResult = device.executeShellCommand("ls -la $ciFilepath")
-              android.util.Log.d("BaseIntegrationTest", "🔍 CI file check: $ciCheckResult")
+            // take screenshot using standard method
+            android.util.Log.d("BaseIntegrationTest", "📸 Taking screenshot with screencap -p")
+            val result = device.executeShellCommand("screencap -p $filepath")
+            android.util.Log.d("BaseIntegrationTest", "📸 Screenshot result: $result")
               
               // Verify screenshot was created with more detailed checking
               val checkResult = device.executeShellCommand("ls -la $filepath")
@@ -1330,20 +1299,11 @@ abstract class BaseIntegrationTest {
             if (checkResult.contains(filename)) {
                 android.util.Log.d("BaseIntegrationTest", "✅ Screenshot confirmed saved: $filepath")
                 
-                // also check file size to ensure it's not empty
+                // check file size to ensure it's not empty
                 val fileSizeResult = device.executeShellCommand("stat -c%s $filepath 2>/dev/null || echo 'stat failed'")
                 android.util.Log.d("BaseIntegrationTest", "📏 Screenshot file size: $fileSizeResult bytes")
             } else {
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Screenshot may not have been saved: $checkResult")
-                
-                // try alternative screenshot location
-                val altPath = "/sdcard/$filename"
-                android.util.Log.d("BaseIntegrationTest", "🔄 Trying alternative path: $altPath")
-                val altResult = device.executeShellCommand("screencap -p $altPath")
-                android.util.Log.d("BaseIntegrationTest", "📸 Alternative screenshot result: $altResult")
-                
-                val altCheck = device.executeShellCommand("ls -la $altPath")
-                android.util.Log.d("BaseIntegrationTest", "🔍 Alternative file check: $altCheck")
             }
             
             // Also dump UI hierarchy for debugging
@@ -1363,6 +1323,19 @@ abstract class BaseIntegrationTest {
                     android.util.Log.d("BaseIntegrationTest", "🔍 Element $index: error reading properties")
                 }
             }
+            
+            // Force file system sync to ensure screenshots are written to disk
+            android.util.Log.d("BaseIntegrationTest", "🔄 Forcing file system sync...")
+            val syncResult = device.executeShellCommand("sync")
+            android.util.Log.d("BaseIntegrationTest", "💾 File sync result: $syncResult")
+            
+            // Wait a moment for sync to complete
+            Thread.sleep(500)
+            
+            // Final verification of screenshot location
+            android.util.Log.d("BaseIntegrationTest", "🔍 Final screenshot verification:")
+            val finalCheck = device.executeShellCommand("ls -la $filepath")
+            android.util.Log.d("BaseIntegrationTest", "📁 Screenshot location: $finalCheck")
             
             android.util.Log.d("BaseIntegrationTest", "✅ Screenshot saved: $filepath")
         } catch (e: Exception) {
@@ -2222,9 +2195,6 @@ abstract class BaseIntegrationTest {
     companion object {
         const val packageName = "com.example.whiz"
         const val screenshotDir = "/sdcard/test_screenshots"
-        
-        // also save to a location that's more accessible for CI
-        const val ciScreenshotDir = "/data/local/tmp/screenshots"
         
         // detect if running in CI environment (GitHub Actions)
         private val isRunningInCI: Boolean by lazy {
