@@ -203,10 +203,9 @@ jobs:
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
 
             # Run tests and capture exit code, but don't let it stop the script
-            set +e  # Disable exit on error temporarily
-            ./gradlew connectedDebugAndroidTest --stacktrace --continue
-            GRADLE_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
+            # Use || true to ensure script continues even if gradle fails
+            ./gradlew connectedDebugAndroidTest --stacktrace --continue || true
+            GRADLE_EXIT_CODE=${PIPESTATUS[0]}
 
             echo ""
             echo "📋 Test execution completed with exit code: $GRADLE_EXIT_CODE"
