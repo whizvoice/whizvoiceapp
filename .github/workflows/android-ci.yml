@@ -203,101 +203,68 @@ jobs:
             echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
             ./gradlew connectedDebugAndroidTest --stacktrace --continue
 
-            echo "📸 Immediately checking for failure screenshots (while emulator is still running)..."
-            echo "🔍 Checking screenshot directory..."
+            echo ""
+            echo "📸 IMMEDIATELY pulling screenshots while emulator is still online..."
+            echo "🔍 Checking emulator storage state..."
+            adb shell df -h | grep -E "(Filesystem|/sdcard)" || echo "Storage check failed"
 
-            # Check main screenshots directory
-            echo "📁 Checking /sdcard/Download/test_screenshots/:"
-            adb shell ls -la /sdcard/Download/test_screenshots/ || echo "No screenshots directory found"
+            echo "📱 Device info:"
+            adb shell getprop ro.product.model || echo "Device info failed"
+            adb shell getprop ro.build.version.sdk || echo "API level check failed"
 
-            # Quick pull attempt to get any existing screenshots
-            echo "📁 Quick pull attempt from screenshots directory..."
+            echo "🔧 Checking screenshot directory on device..."
+            adb shell ls -la /sdcard/Download/test_screenshots/ 2>/dev/null || echo "No screenshots directory found"
+
+            echo "📁 All PNG files in screenshot directory:"
+            adb shell find /sdcard/Download/test_screenshots -name "*.png" -type f 2>/dev/null | head -20 || echo "No PNG files found"
+
+            echo "💾 Forcing file sync before pull..."
+            adb shell sync || echo "Sync failed"
+            sleep 1
+
+            echo "📁 Creating local directory and pulling screenshots..."
             mkdir -p test-failure-screenshots
-            adb pull /sdcard/Download/test_screenshots/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from screenshots directory"
+            adb pull /sdcard/Download/test_screenshots/ ./test-failure-screenshots/ 2>/dev/null || echo "Screenshot directory pull failed"
 
-            echo "📱 Screenshot files found locally:"
+            echo "📱 Screenshot files pulled locally:"
             ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
             find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
 
-      - name: Debug emulator storage and screenshot setup
+      - name: Final verification and upload preparation
         if: always()
         run: |
-          echo "🔍 1. Checking Emulator Storage State..."
-          adb shell df -h | grep -E "(Filesystem|/sdcard|/data)" || echo "Storage check failed"
+          echo "🔍 Final screenshot verification for upload..."
           echo ""
 
-          echo "📱 2. Device info and storage permissions..."
-          adb shell getprop ro.product.model
-          adb shell getprop ro.build.version.sdk
-          adb shell ls -ld /sdcard/
-          echo ""
-
-          echo "🧹 3. Cleaning up old screenshots first..."
-          rm -rf ./test-failure-screenshots || echo "No old screenshots to clean"
-          mkdir -p ./test-failure-screenshots
-          echo ""
-
-          echo "🔧 4. Screenshot Directory Check on Device..."
-          echo "📁 Screenshot directory:"
-          adb shell ls -la /sdcard/Download/test_screenshots/ 2>/dev/null || echo "Screenshot directory not found"
-          echo ""
-          echo "📁 All PNG files in screenshot directory:"
-          adb shell find /sdcard/Download/test_screenshots -name "*.png" -type f 2>/dev/null | head -20 || echo "No PNG files found"
-          echo ""
-
-          echo "💾 5. Force File Sync..."
-          adb shell sync
-          sleep 2
-          echo "✅ File sync completed"
-
-      - name: Pull screenshots from emulator
-        if: always()
-        run: |
-          echo "📸 Pulling failure screenshots from emulator..."
-          echo "🔍 Pulling from single screenshot directory..."
-
-          # Pull screenshots from the one directory
-          echo "📁 Pulling from test screenshots directory..."
-          adb pull /sdcard/Download/test_screenshots/ ./test-failure-screenshots/ 2>/dev/null || echo "Screenshot directory pull failed"
-
-      - name: Pre-upload verification and final check
-        if: always()
-        run: |
-          echo "🔍 Pre-Upload Verification..."
-          echo ""
-
-          echo "📱 Final screenshot files found locally:"
-          ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
-
-          echo ""
-          echo "📊 Detailed file analysis:"
           if [ -d "./test-failure-screenshots" ]; then
-            echo "Directory exists: ✅"
+            echo "📱 Screenshot directory exists: ✅"
             
             # Count files by type
             png_count=$(find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l)
             total_files=$(find ./test-failure-screenshots -type f 2>/dev/null | wc -l)
             
-            echo "Total files: $total_files"
-            echo "PNG files: $png_count"
+            echo "📊 File count summary:"
+            echo "  Total files: $total_files"
+            echo "  PNG files: $png_count"
             
             if [ "$png_count" -gt 0 ]; then
-              echo "✅ Screenshots found! Ready for upload."
+              echo "✅ Screenshots ready for upload!"
               echo ""
               echo "📸 Screenshot details:"
               find ./test-failure-screenshots -name "*.png" -exec ls -lh {} \; 2>/dev/null | head -10
             else
-              echo "⚠️ No PNG screenshots found for upload."
+              echo "ℹ️ No failure screenshots found (tests may have passed)"
               echo ""
-              echo "🔍 Contents of screenshot directory:"
-              find ./test-failure-screenshots -type f 2>/dev/null | head -20
+              echo "📁 Directory contents:"
+              ls -la ./test-failure-screenshots/ 2>/dev/null || echo "Directory empty"
             fi
           else
-            echo "❌ Screenshot directory does not exist"
+            echo "📁 Creating empty screenshots directory for upload consistency"
+            mkdir -p ./test-failure-screenshots
           fi
 
           echo ""
-          echo "📁 Summary: $(find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l) PNG files ready for upload"
+          echo "📋 Upload summary: $(find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l) PNG files ready"
 
       - name: Upload test failure screenshots
         uses: actions/upload-artifact@v4
