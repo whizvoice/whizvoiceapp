@@ -1,6 +1,7 @@
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.uiautomator.Until
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -237,14 +238,6 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "🔍 VERIFICATION PHASE: Checking WebSocket delivery for all messages...")
             
             // Wait for all WebSocket sends to complete by checking input field state
-            Log.d(TAG, "⏳ Waiting for all WebSocket sends to complete...")
-            
-            var inputFieldCleared = false
-            val checkIntervalMs = 50L // Check every 200ms
-            if (!inputFieldCleared) {
-                Thread.sleep(checkIntervalMs)
-            }
-            
             // Wait for WebSocket sends to complete by waiting for input field to be cleared
             Log.d(TAG, "⏳ Waiting for WebSocket completion (input field cleared)...")
             
