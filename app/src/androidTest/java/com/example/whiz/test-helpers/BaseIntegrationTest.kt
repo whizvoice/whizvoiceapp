@@ -92,29 +92,33 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Set up screenshot directory - clear existing screenshots and create fresh directory
+     * Set up screenshot directory - ensure it exists but preserve existing screenshots from other tests
      */
     private fun setupScreenshotDirectory() {
         try {
-            android.util.Log.d("BaseIntegrationTest", "🔧 Setting up single screenshot directory...")
+            android.util.Log.d("BaseIntegrationTest", "🔧 Ensuring screenshot directory exists...")
             
-            // Clear existing screenshots on device
-            val removeResult = device.executeShellCommand("rm -rf $screenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "🧹 Screenshot cleanup result: $removeResult")
+            // Only clear on first test run (check if directory is empty)
+            val dirCheck = device.executeShellCommand("ls -la $screenshotDir 2>/dev/null || echo 'DIR_NOT_EXISTS'")
+            val shouldClear = dirCheck.contains("DIR_NOT_EXISTS") || dirCheck.trim() == "total 0"
             
-            // Create fresh directory on device
+            if (shouldClear) {
+                android.util.Log.d("BaseIntegrationTest", "🧹 First test - clearing any existing screenshots...")
+                val removeResult = device.executeShellCommand("rm -rf $screenshotDir")
+                android.util.Log.d("BaseIntegrationTest", "🧹 Screenshot cleanup result: $removeResult")
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory exists with content - preserving for CI collection")
+            }
+            
+            // Ensure directory exists
             val mkdirResult = device.executeShellCommand("mkdir -p $screenshotDir")
             android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory creation result: $mkdirResult")
             
-            // Verify directory exists and check permissions
-            val dirCheck = device.executeShellCommand("ls -la $screenshotDir")
-            android.util.Log.d("BaseIntegrationTest", "📋 Screenshot directory contents: $dirCheck")
+            // Log current directory state
+            val finalDirCheck = device.executeShellCommand("ls -la $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📋 Screenshot directory state: $finalDirCheck")
             
-            // Check storage space
-            val storageCheck = device.executeShellCommand("df /sdcard/")
-            android.util.Log.d("BaseIntegrationTest", "💾 Storage space: $storageCheck")
-            
-            android.util.Log.d("BaseIntegrationTest", "✅ Device screenshot directory prepared: $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "✅ Screenshot directory ready: $screenshotDir")
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "Failed to setup screenshot directory", e)
         }
