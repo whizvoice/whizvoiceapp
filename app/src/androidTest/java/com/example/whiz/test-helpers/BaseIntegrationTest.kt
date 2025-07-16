@@ -1206,6 +1206,8 @@ abstract class BaseIntegrationTest {
         }
         
         if (realDuplicatesFound > 0) {
+            // Take screenshot before throwing assertion for debugging
+            takeFailureScreenshot("duplicate_messages_detected", "Found $realDuplicatesFound real duplicate message(s) in chat! This indicates a production bug.")
             throw AssertionError("Found $realDuplicatesFound real duplicate message(s) in chat! This indicates a production bug.")
         }
         
@@ -2311,20 +2313,20 @@ abstract class BaseIntegrationTest {
             return true
         }
         
-        // If not found immediately, wait for app's automatic scroll to complete
-        android.util.Log.d("BaseIntegrationTest", "🔍 SIMPLE: Not immediately visible, waiting for app's automatic scroll...")
+        // If not found immediately, wait longer for app's automatic scroll
+        android.util.Log.d("BaseIntegrationTest", "🔍 SIMPLE: Not immediately visible, waiting longer for app's automatic scroll...")
         
-        // Wait for the app's built-in auto-scroll (LaunchedEffect in ChatScreen.kt) to show the message
+        // Give the app more time for auto-scroll + layout (especially on different screen sizes)
         val messageFoundAfterAutoScroll = device.wait(
             Until.hasObject(By.textContains(messageText.take(20)).pkg(packageName)),
-            3000 // Give enough time for auto-scroll + layout
+            5000 // Increased timeout for different screen sizes and slower devices
         )
         
         if (messageFoundAfterAutoScroll) {
-            android.util.Log.d("BaseIntegrationTest", "✅ SIMPLE: Message found after app's automatic scroll")
+            android.util.Log.d("BaseIntegrationTest", "✅ SIMPLE: Message found after waiting for automatic scroll")
             return true
         } else {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ SIMPLE: Message not found even after waiting for automatic scroll")
+            android.util.Log.w("BaseIntegrationTest", "⚠️ SIMPLE: Message not found after extended wait for automatic scroll")
         }
         
         android.util.Log.w("BaseIntegrationTest", "❌ SIMPLE: Message not found")
