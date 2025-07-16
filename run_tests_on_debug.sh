@@ -32,9 +32,9 @@ cleanup_and_ensure_debug_installed() {
         # Inline screenshot pulling if function not available yet
         log_with_time "📸 Pulling test screenshots and UI dumps from device (cleanup)..."
         mkdir -p test_screenshots 2>/dev/null || true
-        local files=$(adb shell "ls /sdcard/test_screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
+        local files=$(adb shell "ls /sdcard/Download/test_screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
         if [[ -n "$files" ]]; then
-            if adb pull /sdcard/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+            if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
                 find temp_screenshots \( -name "*.png" -o -name "*.xml" \) -exec mv {} test_screenshots/ \; 2>/dev/null || true
                 rm -rf temp_screenshots 2>/dev/null || true
                 local local_count=$(ls -1 test_screenshots/*.png test_screenshots/*.xml 2>/dev/null | wc -l | tr -d ' ')
@@ -421,12 +421,12 @@ pull_test_screenshots() {
     
     local total_pulled=0
     
-    # Check primary location: /sdcard/test_screenshots/ (dedicated test screenshot directory)
-    local primary_files=$(adb shell "ls /sdcard/test_screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
+    # Check primary location: /sdcard/Download/test_screenshots/ (dedicated test screenshot directory)
+    local primary_files=$(adb shell "ls /sdcard/Download/test_screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
     
     if [[ -n "$primary_files" ]]; then
-        log_with_time "📱 Found test screenshots in primary location: /sdcard/test_screenshots/"
-        if adb pull /sdcard/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
+        log_with_time "📱 Found test screenshots in primary location: /sdcard/Download/test_screenshots/"
+        if adb pull /sdcard/Download/test_screenshots/ temp_screenshots/ >/dev/null 2>&1; then
             # Move screenshots and UI dumps from temp folder to final location
             find temp_screenshots \( -name "*.png" -o -name "*.xml" \) -exec mv {} test_screenshots/ \; 2>/dev/null || true
             rm -rf temp_screenshots
@@ -912,9 +912,9 @@ log_with_time "🧹 Cleaning app state, device screenshots, and UI dumps before 
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 
 # Clean old screenshots and UI dumps from device (local artifacts already cleaned at script start)
-# BaseIntegrationTest saves screenshots to /sdcard/test_screenshots/ (primary location)
-adb shell 'rm -rf /sdcard/test_screenshots/*' 2>/dev/null || true
-adb shell 'mkdir -p /sdcard/test_screenshots' 2>/dev/null || true
+# BaseIntegrationTest saves screenshots to /sdcard/Download/test_screenshots/ (primary location)
+adb shell 'rm -rf /sdcard/Download/test_screenshots/*' 2>/dev/null || true
+adb shell 'mkdir -p /sdcard/Download/test_screenshots' 2>/dev/null || true
 # Also cleans UI dumps since they're now saved to /data/local/tmp/screenshots/
 adb shell 'rm -rf /data/local/tmp/screenshots/*' 2>/dev/null || true
 adb shell 'mkdir -p /data/local/tmp/screenshots' 2>/dev/null || true

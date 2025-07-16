@@ -2239,7 +2239,7 @@ abstract class BaseIntegrationTest {
 
     companion object {
         const val packageName = "com.example.whiz"
-        const val screenshotDir = "/sdcard/test_screenshots"
+        const val screenshotDir = "/sdcard/Download/test_screenshots"
         
         // detect if running in CI environment (GitHub Actions)
         private val isRunningInCI: Boolean by lazy {
