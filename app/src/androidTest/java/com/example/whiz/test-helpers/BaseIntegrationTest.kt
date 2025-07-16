@@ -1256,31 +1256,34 @@ abstract class BaseIntegrationTest {
      */
     protected fun takeFailureScreenshotAndWaitForCompletion(testName: String, reason: String) {
         try {
-            android.util.Log.d("BaseIntegrationTest", "🔴 STARTING screenshot capture for test failure...")
+            android.util.Log.e("BaseIntegrationTest", "🔴 STARTING screenshot capture for test failure...")
+            android.util.Log.e("BaseIntegrationTest", "🔴 Test name: $testName, Reason: $reason")
             takeFailureScreenshot(testName, reason)
             
             // Force completion by waiting for file system operations
-            android.util.Log.d("BaseIntegrationTest", "⏳ Ensuring screenshot file operations complete...")
+            android.util.Log.e("BaseIntegrationTest", "⏳ Ensuring screenshot file operations complete...")
             Thread.sleep(2000) // Give file system time to complete operations
             
             // Verify screenshot was actually created
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val expectedPattern = "${testName}_${timestamp.take(13)}"  // Match first 13 chars of timestamp (YYYYMMDD_HHMM)
             val verifyResult = device.executeShellCommand("find $screenshotDir -name '*${testName}*.png' -type f | head -5")
-            android.util.Log.d("BaseIntegrationTest", "📁 Screenshot verification result: $verifyResult")
+            android.util.Log.e("BaseIntegrationTest", "📁 Screenshot verification result: $verifyResult")
             
             if (verifyResult.contains(".png")) {
-                android.util.Log.d("BaseIntegrationTest", "✅ SCREENSHOT CONFIRMED: File created successfully")
+                android.util.Log.e("BaseIntegrationTest", "✅ SCREENSHOT CONFIRMED: File created successfully")
             } else {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ SCREENSHOT WARNING: File may not have been created")
+                android.util.Log.e("BaseIntegrationTest", "⚠️ SCREENSHOT WARNING: File may not have been created")
             }
             
             // Final sync to ensure screenshot is written to storage
             device.executeShellCommand("sync")
-            android.util.Log.d("BaseIntegrationTest", "💾 Final file system sync completed")
+            android.util.Log.e("BaseIntegrationTest", "💾 Final file system sync completed")
             
         } catch (e: Exception) {
             android.util.Log.e("BaseIntegrationTest", "❌ Error in takeFailureScreenshotAndWaitForCompletion", e)
+            android.util.Log.e("BaseIntegrationTest", "❌ Exception details: ${e.message}")
+            android.util.Log.e("BaseIntegrationTest", "❌ Stack trace: ${e.stackTrace.joinToString("\n")}")
             // Continue to fail the test even if screenshot fails
         }
     }
@@ -1402,7 +1405,8 @@ abstract class BaseIntegrationTest {
      */
     protected fun failWithScreenshot(message: String): Nothing {
         val testName = getCurrentTestMethodName()
-        android.util.Log.d("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT: $message")
+        android.util.Log.e("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT: $message")
+        android.util.Log.e("BaseIntegrationTest", "🔴 Test method: $testName")
         takeFailureScreenshotAndWaitForCompletion(testName, message)
         org.junit.Assert.fail(message)
         throw AssertionError(message) // This will never be reached but satisfies Nothing return type
@@ -1415,7 +1419,8 @@ abstract class BaseIntegrationTest {
      */
     protected fun failWithScreenshot(message: String, reason: String): Nothing {
         val testName = getCurrentTestMethodName()
-        android.util.Log.d("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT (reason: $reason): $message")
+        android.util.Log.e("BaseIntegrationTest", "🔴 FAIL WITH SCREENSHOT (reason: $reason): $message")
+        android.util.Log.e("BaseIntegrationTest", "🔴 Test method: $testName")
         takeFailureScreenshotAndWaitForCompletion(testName, reason)
         org.junit.Assert.fail(message)
         throw AssertionError(message) // This will never be reached but satisfies Nothing return type
