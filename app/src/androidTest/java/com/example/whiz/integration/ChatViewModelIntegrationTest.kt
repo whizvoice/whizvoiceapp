@@ -212,7 +212,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ QUICK MESSAGE $i: Typing successful, now testing send button...")
                 
                 // Step 2: Try to send the message
-                if (!clickSendButtonAndWaitForSentRapid(interruptMessage)) {
+                if (!clickSendButtonAndWaitForSent(interruptMessage, rapid = true)) {
                     Log.e(TAG, "❌ QUICK: Rapid message $i failed during SEND BUTTON phase!")
                     Log.e(TAG, "   🚨 PRODUCTION BUG: Send button not working during bot response")
                     Log.e(TAG, "   📤 This prevents users from sending messages while bot is thinking")

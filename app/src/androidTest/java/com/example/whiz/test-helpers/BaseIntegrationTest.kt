@@ -360,7 +360,7 @@ abstract class BaseIntegrationTest {
     /**
      * Complete message sending flow: type message, click send, verify display - NORMAL VERSION
      */
-    protected fun sendMessageAndVerifyDisplay(message: String): Boolean {
+    protected fun sendMessageAndVerifyDisplay(message: String, rapid: Boolean = false): Boolean {
         android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: '${message.take(30)}...'")
         
         // step 1: type message
@@ -373,7 +373,7 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "✅ message typed successfully")
         
         // step 2: click send and wait - NORMAL
-        val sendingSuccess = clickSendButtonAndWaitForSent(message)
+        val sendingSuccess = clickSendButtonAndWaitForSent(message, rapid = rapid)
         if (!sendingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ clickSendButtonAndWaitForSent returned false")
             return false
@@ -1472,9 +1472,9 @@ abstract class BaseIntegrationTest {
         )
         
         // Ultra-short timeout for rapid testing - fail fast if not immediately available
-        var sendTimeout = 1000
+        var sendTimeout = 1000L
         if (rapid) {
-            sendTimeout = 100
+            sendTimeout = 100L
         }
         if (!sendButton.waitForExists(sendTimeout)) {
                          android.util.Log.e("BaseIntegrationTest", "❌ Send button not found within $sendTimeout - UI not responsive enough for immediate sending")
@@ -1527,9 +1527,9 @@ abstract class BaseIntegrationTest {
             android.util.Log.e("BaseIntegrationTest", "❌: Send button click failed")
             return false
         }
-        var messageDisplayTimeout = 1000
+        var messageDisplayTimeout = 1000L
         if (rapid) {
-            messageDisplayTimeout = 20
+            messageDisplayTimeout = 20L
         }
         device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
                  // Proper wait for message to render in UI (not just instant check)
@@ -1565,9 +1565,9 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message typed successfully")
         
         // step 2: click send and wait - RAPID
-        val sendingSuccess = clickSendButtonAndWaitForSentRapid(message)
+        val sendingSuccess = clickSendButtonAndWaitForSent(message, rapid = true)
         if (!sendingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: clickSendButtonAndWaitForSentRapid returned false")
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: clickSendButtonAndWaitForSent returned false")
             return false
         }
         
@@ -1598,7 +1598,7 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "📤 TYPED: Current input field content: '${currentText.take(30)}...'")
         
         // Just click send - don't type anything new
-        val sendingSuccess = clickSendButtonAndWaitForSentRapid(currentText)
+        val sendingSuccess = clickSendButtonAndWaitForSent(currentText, rapid = true)
         if (!sendingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ TYPED: Failed to send currently typed message")
             return false
@@ -1853,7 +1853,7 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice transcription simulated successfully")
         
         // Now send the message with rapid timing (as voice input typically auto-sends)
-        val sendingSuccess = clickSendButtonAndWaitForSentRapid(message)
+        val sendingSuccess = clickSendButtonAndWaitForSent(message, rapid = true)
         if (!sendingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Voice message send failed")
             return false
