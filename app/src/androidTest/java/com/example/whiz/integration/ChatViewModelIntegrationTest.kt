@@ -278,24 +278,6 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             // Step 6 & 7: Verify all messages exist and check for duplicates using SINGLE smart collection
             Log.d(TAG, "🔍 Step 6 & 7: Single smart collection for message verification and duplicate detection...")
             
-            // Dismiss keyboard before final message collection to ensure clean UI state
-            Log.d(TAG, "⌨️ Checking if keyboard needs dismissing before final message verification...")
-            
-            // Check if input field is focused (indicates keyboard might be showing)
-            val messageInput = device.findObject(
-                UiSelector()
-                    .className("android.widget.EditText")
-                    .packageName(packageName)
-            )
-            
-            if (messageInput != null && messageInput.isFocused) {
-                Log.d(TAG, "📱 Input field is focused - dismissing keyboard...")
-                device.pressBack()
-                Thread.sleep(100) // Wait for keyboard to dismiss
-            } else {
-                Log.d(TAG, "⌨️ No keyboard dismissal needed - input field not focused")
-            }
-            
             // Single collection to avoid redundant scrolling
             val allChatMessages = collectAllMessages()
             Log.d(TAG, "✅ Smart collection complete: found ${allChatMessages.size} total messages in chat")

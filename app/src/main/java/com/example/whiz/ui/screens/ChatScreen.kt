@@ -322,15 +322,23 @@ fun ChatScreen(
         CenterAlignedTopAppBar(
             title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
             navigationIcon = {
-                IconButton(onClick = onChatsListClick) {
-                    Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
+                IconButton(
+                    onClick = onChatsListClick,
+                    modifier = Modifier.semantics { contentDescription = "Open Chats List" }
+                ) {
+                    Icon(Icons.Default.Menu, contentDescription = null)
                 }
             },
             actions = {
-                IconButton(onClick = viewModel::toggleVoiceResponse) {
+                IconButton(
+                    onClick = viewModel::toggleVoiceResponse,
+                    modifier = Modifier.semantics { 
+                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response"
+                    }
+                ) {
                     Icon(
                         imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
+                        contentDescription = null,
                     )
                 }
             },

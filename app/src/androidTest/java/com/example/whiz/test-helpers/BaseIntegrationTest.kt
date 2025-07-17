@@ -332,7 +332,7 @@ abstract class BaseIntegrationTest {
         val startTime = System.currentTimeMillis()
         var timeout = 1000L // 1 seconds
         if (rapid) {
-            timeout = 50L
+            timeout = 25L
         }
         android.util.Log.d("BaseIntegrationTest", "looking for text")
         
@@ -1525,50 +1525,7 @@ abstract class BaseIntegrationTest {
      */
     protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
-        
-        // Debug what ALL elements are actually present on screen
-        android.util.Log.d("BaseIntegrationTest", "🔍 FULL SCREEN DEBUG: Scanning ALL elements on screen...")
-        
-        // All buttons
-        val allButtons = device.findObjects(By.clazz("android.widget.Button").pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "📱 Found ${allButtons.size} Button elements:")
-        allButtons.forEachIndexed { index, button ->
-            android.util.Log.d("BaseIntegrationTest", "  Button $index: desc='${button.contentDescription}', text='${button.text}', clickable=${button.isClickable}, enabled=${button.isEnabled}")
-        }
-        
-        // All Views (since we know send button is a View)
-        val allViews = device.findObjects(By.clazz("android.view.View").pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "📱 Found ${allViews.size} View elements with package filter:")
-        allViews.forEachIndexed { index, view ->
-            android.util.Log.d("BaseIntegrationTest", "  View $index: desc='${view.contentDescription}', text='${view.text}', clickable=${view.isClickable}, enabled=${view.isEnabled}")
-        }
-        
-        // All elements with "Send" in description (including typed/voice variants)
-        val sendRelatedElements = device.findObjects(By.desc(java.util.regex.Pattern.compile(".*[Ss]end.*")).pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "📱 Found ${sendRelatedElements.size} Send-related elements:")
-        sendRelatedElements.forEachIndexed { index, element ->
-            android.util.Log.d("BaseIntegrationTest", "  Send element $index: desc='${element.contentDescription}', clickable=${element.isClickable}, enabled=${element.isEnabled}, className='${element.className}'")
-        }
-        
-        // Specifically look for typed message send button
-        val typedSendElements = device.findObjects(By.desc("Send typed message").pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "📱 Found ${typedSendElements.size} 'Send typed message' elements:")
-        typedSendElements.forEachIndexed { index, element ->
-            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: clickable=${element.isClickable}, enabled=${element.isEnabled}")
-            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: bounds=${element.visibleBounds}, className=${element.className}")
-            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: resourceName=${element.resourceName}")
-        }
-        
-        // CRITICAL DEBUG: Check if buttons are in same location (would indicate same button)
-        if (typedSendElements.size >= 2) {
-            val button1 = typedSendElements[0]
-            val button2 = typedSendElements[1]
-            val sameBounds = button1.visibleBounds == button2.visibleBounds
-            android.util.Log.w("BaseIntegrationTest", "🚨 DUPLICATE ANALYSIS: Same bounds? $sameBounds")
-            android.util.Log.w("BaseIntegrationTest", "🚨 Button1 bounds: ${button1.visibleBounds}")
-            android.util.Log.w("BaseIntegrationTest", "🚨 Button2 bounds: ${button2.visibleBounds}")
-        }
-        
+
         // Use only the proven working method - exact content description for TYPED messages
         val sendButton = device.findObject(
             UiSelector()
@@ -1599,12 +1556,10 @@ abstract class BaseIntegrationTest {
             return false
         }
         
-        // Ultra-fast verification - just check if message appears immediately (optimistic UI)
-        // NO scrolling, NO waiting - just instant check for what's visible right now
-        Thread.sleep(10) // Minimal delay for UI to update
-        
-        val messageDisplayed = device.hasObject(
-            By.textContains(messageText.take(20)).pkg(packageName)
+        // Proper wait for message to render in UI (not just instant check)
+        val messageDisplayed = device.wait(
+            Until.hasObject(By.textContains(messageText.take(20)).pkg(packageName)),
+            20
         )
         
         if (messageDisplayed) {
@@ -1980,175 +1935,6 @@ abstract class BaseIntegrationTest {
         val isFocusable = inputField.isFocusable
         android.util.Log.d("BaseIntegrationTest", "🔍 Input field enabled: $isEnabled, focusable: $isFocusable")
         return !isEnabled || !isFocusable
-    }
-
-    /**
-     * IMMEDIATE typing method that bypasses all UI waits - for testing during bot response
-     * This method doesn't wait for UI stability and types immediately
-     */
-    protected fun typeImmediatelyDuringBotResponse(testText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Typing '$testText' without waiting for UI stability...")
-        
-        // Find input field with minimal wait (100ms max)
-        val inputField = device.findObject(
-            UiSelector()
-                .className("android.widget.EditText")
-                .packageName(packageName)
-        )
-        
-        // Don't wait - if it doesn't exist immediately, that's the bug
-        if (!inputField.exists()) {
-            android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Input field not found immediately - this IS the production bug!")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Input field found, proceeding with direct interaction...")
-        
-        // Try to interact immediately without waiting for "stability"
-        try {
-            // Method 1: Direct coordinate click (bypass UI Automator's stability waits)
-            val bounds = inputField.bounds
-            val centerX = bounds.centerX()
-            val centerY = bounds.centerY()
-            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Direct coordinate click at ($centerX, $centerY)")
-            device.click(centerX, centerY)
-            
-            // Wait for focus to be established
-            device.waitForIdle(5)
-            
-            // start typing with keyboard
-            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Starting keyboard input without delay...")
-            
-            // 🔧 PRODUCTION BUG FIX: Use more realistic typing speed (50ms between chars)
-            // Real users don't type at 5ms intervals - this was causing race conditions
-            for (char in testText) {
-                val keyCode = when (char) {
-                    'a' -> android.view.KeyEvent.KEYCODE_A
-                    'b' -> android.view.KeyEvent.KEYCODE_B
-                    'c' -> android.view.KeyEvent.KEYCODE_C
-                    'd' -> android.view.KeyEvent.KEYCODE_D
-                    'e' -> android.view.KeyEvent.KEYCODE_E
-                    'f' -> android.view.KeyEvent.KEYCODE_F
-                    'g' -> android.view.KeyEvent.KEYCODE_G
-                    'h' -> android.view.KeyEvent.KEYCODE_H
-                    'i' -> android.view.KeyEvent.KEYCODE_I
-                    'j' -> android.view.KeyEvent.KEYCODE_J
-                    'k' -> android.view.KeyEvent.KEYCODE_K
-                    'l' -> android.view.KeyEvent.KEYCODE_L
-                    'm' -> android.view.KeyEvent.KEYCODE_M
-                    'n' -> android.view.KeyEvent.KEYCODE_N
-                    'o' -> android.view.KeyEvent.KEYCODE_O
-                    'p' -> android.view.KeyEvent.KEYCODE_P
-                    'q' -> android.view.KeyEvent.KEYCODE_Q
-                    'r' -> android.view.KeyEvent.KEYCODE_R
-                    's' -> android.view.KeyEvent.KEYCODE_S
-                    't' -> android.view.KeyEvent.KEYCODE_T
-                    'u' -> android.view.KeyEvent.KEYCODE_U
-                    'v' -> android.view.KeyEvent.KEYCODE_V
-                    'w' -> android.view.KeyEvent.KEYCODE_W
-                    'x' -> android.view.KeyEvent.KEYCODE_X
-                    'y' -> android.view.KeyEvent.KEYCODE_Y
-                    'z' -> android.view.KeyEvent.KEYCODE_Z
-                    '0' -> android.view.KeyEvent.KEYCODE_0
-                    '1' -> android.view.KeyEvent.KEYCODE_1
-                    '2' -> android.view.KeyEvent.KEYCODE_2
-                    '3' -> android.view.KeyEvent.KEYCODE_3
-                    '4' -> android.view.KeyEvent.KEYCODE_4
-                    '5' -> android.view.KeyEvent.KEYCODE_5
-                    '6' -> android.view.KeyEvent.KEYCODE_6
-                    '7' -> android.view.KeyEvent.KEYCODE_7
-                    '8' -> android.view.KeyEvent.KEYCODE_8
-                    '9' -> android.view.KeyEvent.KEYCODE_9
-                    ' ' -> android.view.KeyEvent.KEYCODE_SPACE
-                    else -> android.view.KeyEvent.KEYCODE_UNKNOWN
-                }
-                
-                if (keyCode != android.view.KeyEvent.KEYCODE_UNKNOWN) {
-                    android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Typing character '$char' (keyCode: $keyCode)")
-                    device.pressKeyCode(keyCode)
-                    // Allow UI to process the keystroke before next character
-                    device.waitForIdle(5)
-                }
-            }
-            
-            android.util.Log.d("BaseIntegrationTest", "⚡ IMMEDIATE: Keyboard input completed, checking if text was accepted...")
-            
-            // 🔧 ENHANCED DEBUG: Add detailed timing and UI state logging
-            val checkStartTime = System.currentTimeMillis()
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkStartTime}]: Starting text acceptance check for '$testText'")
-            
-            // 🔧 PRODUCTION BUG FIX: More generous timeout for text acceptance
-            // Wait for UI to settle after typing, then verify text was accepted
-            device.waitForIdle(50)
-            
-            // 🔧 FIXED: Use By.clazz instead of UiSelector for more reliable text verification
-            val allEditTexts = device.findObjects(By.clazz("android.widget.EditText"))
-            
-            // 🔧 ENHANCED DEBUG: Log exact UI state at time of check
-            val checkAfterIdleTime = System.currentTimeMillis()
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: After waitForIdle(50), checking input field (${checkAfterIdleTime - checkStartTime}ms later)")
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Found ${allEditTexts.size} EditText elements")
-            
-            // Find the input field using By.clazz (more reliable during recomposition)
-            val inputField = allEditTexts.find { it.isEnabled } ?: allEditTexts.firstOrNull()
-            
-            val actualText = inputField?.text ?: ""
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Input field text (By.clazz): '$actualText'")
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Expected text: '$testText'")
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Text lengths - found: ${actualText.length}, expected: ${testText.length}")
-            
-            // 🔧 ENHANCED DEBUG: Log all EditText elements for comparison
-            allEditTexts.forEachIndexed { index, editText ->
-                android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: EditText[$index] text: '${editText.text}' enabled: ${editText.isEnabled}")
-            }
-            
-            val textAccepted = actualText.contains(testText)
-            android.util.Log.d("BaseIntegrationTest", "🔍 IMMEDIATE CHECK [${checkAfterIdleTime}]: Text acceptance result: textAccepted=$textAccepted (contains check)")
-            
-            if (textAccepted) {
-                android.util.Log.d("BaseIntegrationTest", "✅ IMMEDIATE: Text '$testText' accepted during bot response!")
-                return true
-            } else {
-                android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Text '$testText' was NOT accepted - production bug confirmed!")
-                android.util.Log.e("BaseIntegrationTest", "   Input field text: '$actualText'")
-                return false
-            }
-            
-        } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "❌ IMMEDIATE: Exception during immediate typing: ${e.message}")
-            return false
-        }
-    }
-
-    companion object {
-        const val packageName = "com.example.whiz"
-        const val screenshotDir = "/sdcard/Download/test_screenshots"
-        
-        // detect if running in CI environment (GitHub Actions)
-        private val isRunningInCI: Boolean by lazy {
-            System.getenv("CI") == "true" || 
-            System.getenv("GITHUB_ACTIONS") == "true" ||
-            System.getProperty("ci.environment") == "true"
-        }
-        
-        // CI-aware timing multiplier
-        private val timingMultiplier: Float by lazy {
-            if (isRunningInCI) 3.0f else 1.0f
-        }
-        
-        /**
-         * Get CI-aware timeout with multiplier for slower environments
-         */
-        fun getCIAwareTimeout(baseTimeoutMs: Long): Long {
-            return (baseTimeoutMs * timingMultiplier).toLong()
-        }
-        
-        /**
-         * Get CI-aware delay with multiplier for slower environments  
-         */
-        fun getCIAwareDelay(baseDelayMs: Long): Long {
-            return (baseDelayMs * timingMultiplier).toLong()
-        }
     }
 
     /**
