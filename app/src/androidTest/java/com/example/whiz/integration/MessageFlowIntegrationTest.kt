@@ -143,7 +143,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             // step 3: send first message and verify optimistic UI
-            val firstMessage = "Hello! this is test message 1 - $uniqueTestId"
+            val firstMessage = "Pls always reply with just 1 word for test - $uniqueTestId"
             android.util.Log.d(TAG, "💬 step 3: sending first message and verifying optimistic UI")
             
             // wait for chat UI to be ready for message input
@@ -186,7 +186,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             // step 5: send second message while bot is responding
             // This is the CRITICAL test for the production bug where messages appear to send
             // during bot response but don't actually reach the server via WebSocket
-            val secondMessage = "second message while you're thinking - $uniqueTestId"
+            val secondMessage = "2nd msg - $uniqueTestId"
             android.util.Log.d(TAG, "💬 step 5: sending second message while bot is responding (CRITICAL WebSocket test)")
             
             // CRITICAL: verify bot is still responding before sending - this tests the interruption capability
@@ -238,7 +238,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             }
             
             // step 7: send third message after bot response
-            val thirdMessage = "third message after your response - $uniqueTestId"
+            val thirdMessage = "3rd msg - $uniqueTestId"
             android.util.Log.d(TAG, "💬 step 7: sending third message after bot response")
             
             // ensure bot is no longer responding
