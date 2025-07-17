@@ -905,7 +905,7 @@ fun ChatInputBar(
                     ) {
                         Icon(
                             imageVector = icon,
-                            contentDescription = description,
+                            contentDescription = null, // Remove duplicate accessibility description
                             tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                     }
