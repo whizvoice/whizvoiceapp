@@ -876,7 +876,10 @@ fun ChatInputBar(
                     }
                     
                     // Debug logging for button decision
+                    val buttonInstanceId = "BTN_${System.currentTimeMillis()}_${hashCode()}"
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
+                    Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
+                    Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled

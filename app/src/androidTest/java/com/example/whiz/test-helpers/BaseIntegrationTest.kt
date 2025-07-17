@@ -1555,6 +1555,18 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "📱 Found ${typedSendElements.size} 'Send typed message' elements:")
         typedSendElements.forEachIndexed { index, element ->
             android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: clickable=${element.isClickable}, enabled=${element.isEnabled}")
+            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: bounds=${element.visibleBounds}, className=${element.className}")
+            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: resourceName=${element.resourceName}")
+        }
+        
+        // CRITICAL DEBUG: Check if buttons are in same location (would indicate same button)
+        if (typedSendElements.size >= 2) {
+            val button1 = typedSendElements[0]
+            val button2 = typedSendElements[1]
+            val sameBounds = button1.visibleBounds == button2.visibleBounds
+            android.util.Log.w("BaseIntegrationTest", "🚨 DUPLICATE ANALYSIS: Same bounds? $sameBounds")
+            android.util.Log.w("BaseIntegrationTest", "🚨 Button1 bounds: ${button1.visibleBounds}")
+            android.util.Log.w("BaseIntegrationTest", "🚨 Button2 bounds: ${button2.visibleBounds}")
         }
         
         // Use only the proven working method - exact content description for TYPED messages

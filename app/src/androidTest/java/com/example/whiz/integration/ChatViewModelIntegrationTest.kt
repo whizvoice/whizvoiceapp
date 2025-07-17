@@ -157,7 +157,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             
             // Step 2: Send first message to trigger bot response
             val sentMessages = mutableListOf<String>()
-            val firstMessage = "Keep ur responses to 1 word so msgs fit on screen. What's a coffee- making professional alled? - test $uniqueTestId"
+            val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - test $uniqueTestId"
             
             Log.d(TAG, "📨 Step 3: Sending initial message with normal timeouts for chat loading...")
             if (!sendMessageAndVerifyDisplay(firstMessage)) {
