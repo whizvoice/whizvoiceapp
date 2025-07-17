@@ -263,6 +263,21 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("ui_not_stable", "UI not stable for verification")
             }
             
+            // Dismiss keyboard before final message verification to ensure clean UI state
+            android.util.Log.d(TAG, "⌨️ Dismissing keyboard before final message verification...")
+            device.pressBack()
+            
+            // Wait for keyboard to dismiss using conditional wait instead of arbitrary delay
+            val keyboardDismissed = device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName).focused(false)
+            ), 1000)
+            
+            if (!keyboardDismissed) {
+                android.util.Log.w(TAG, "⚠️ Keyboard may not have dismissed completely, proceeding anyway")
+            } else {
+                android.util.Log.d(TAG, "✅ Keyboard dismissed successfully")
+            }
+            
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
             verifyAllMessagesDisplayCorrectly(sentMessages)
             
@@ -875,6 +890,21 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             if (!waitForUIToBeStable()) {
                 android.util.Log.e(TAG, "❌ FAILURE: UI not stable for VOICE verification")
                 failWithScreenshot("voice_ui_not_stable", "UI not stable for VOICE verification")
+            }
+            
+            // Dismiss keyboard before final message verification to ensure clean UI state
+            android.util.Log.d(TAG, "⌨️ Dismissing keyboard before final VOICE message verification...")
+            device.pressBack()
+            
+            // Wait for keyboard to dismiss using conditional wait instead of arbitrary delay
+            val keyboardDismissed = device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName).focused(false)
+            ), 1000)
+            
+            if (!keyboardDismissed) {
+                android.util.Log.w(TAG, "⚠️ Keyboard may not have dismissed completely, proceeding anyway")
+            } else {
+                android.util.Log.d(TAG, "✅ Keyboard dismissed successfully")
             }
             
             // ensure we're in chat screen before verification
