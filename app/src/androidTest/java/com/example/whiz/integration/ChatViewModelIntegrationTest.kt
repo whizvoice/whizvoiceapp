@@ -178,22 +178,22 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             val interruptMessageCount = MESSAGE_COUNT - 1 // 4 more messages
             
             // BUG DETECTION PHASE: Try to send rapid messages and FAIL if blocked
-            // Phase 1: Test 2 IMMEDIATE messages (ultra-immediate send - most aggressive user flow)
+            // Phase 1: Test 2 IMMEDIATE messages (rapid send - most aggressive user flow)
             for (i in 1..2) {
                 val interruptMessage = "hi $i"
                 
-                Log.d(TAG, "⚡ IMMEDIATE MESSAGE $i: Testing ultra-immediate send during bot response...")
+                Log.d(TAG, "🚀 IMMEDIATE MESSAGE $i: Testing rapid send during bot response...")
                 
-                // Send with ultra-immediate method (must work instantly or fail)
-                if (!sendMessageUltraImmediate(interruptMessage)) {
-                    Log.e(TAG, "❌ IMMEDIATE: Message $i failed during ultra-immediate send!")
-                    Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages immediately during bot response")
-                    Log.e(TAG, "   📝 This means users cannot interrupt bot responses - critical UX issue")
-                    failWithScreenshot("immediate_message_${i}_blocked", "Ultra-immediate message $i failed - bot response blocking user input")
+                // Send with rapid method
+                if (!sendMessageAndVerifyDisplayRapid(interruptMessage)) {
+                    Log.e(TAG, "❌ IMMEDIATE: Message $i failed during rapid send!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
+                    Log.e(TAG, "   📝 This means users cannot interrupt bot responses effectively")
+                    failWithScreenshot("immediate_message_${i}_blocked", "Rapid message $i failed - bot response blocking user input")
                     return@runBlocking
                 }
                 
-                Log.d(TAG, "✅ IMMEDIATE MESSAGE $i sent successfully via ultra-immediate send")
+                Log.d(TAG, "✅ IMMEDIATE MESSAGE $i sent successfully via rapid send")
                 
                 // Track sent messages for verification
                 sentMessages.add(interruptMessage)

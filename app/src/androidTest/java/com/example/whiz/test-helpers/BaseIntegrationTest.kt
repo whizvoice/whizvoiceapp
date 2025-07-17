@@ -2546,58 +2546,7 @@ abstract class BaseIntegrationTest {
         }
     }
 
-    /**
-     * ULTRA-IMMEDIATE message sending - fails instantly if not ready
-     * For testing true interruption capability during bot responses
-     */
-    protected fun sendMessageUltraImmediate(message: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: attempting instant send: '${message.take(30)}...'")
-        
-        // Find input field with ZERO timeout - must be immediately available
-        val messageInput = device.findObject(
-            UiSelector()
-                .className("android.widget.EditText")
-                .packageName(packageName)
-        )
-        
-        // NO waiting - if not found immediately, fail
-        if (!messageInput.exists()) {
-            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Input field not immediately available - interruption blocked")
-            return false
-        }
-        
-        // Type immediately - no verification wait
-        messageInput.setText(message)
-        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Text set instantly")
-        
-        // Find send button with ZERO timeout
-        val sendButton = device.findObject(
-            UiSelector()
-                .description("Send message")
-                .packageName(packageName)
-        )
-        
-        // NO waiting - if not found immediately, fail  
-        if (!sendButton.exists()) {
-            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Send button not immediately available - UI blocked")
-            return false
-        }
-        
-        // Click immediately
-        sendButton.click()
-        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Clicked send instantly")
-        
-        // Ultra-minimal verification - just check message appears immediately
-        Thread.sleep(10) // Minimal UI update time
-        val messageVisible = device.hasObject(By.textContains(message).pkg(packageName))
-        if (!messageVisible) {
-            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Message not visible immediately - optimistic UI blocked")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Message sent and visible instantly")
-        return true
-    }
+
 }
 
 /**
