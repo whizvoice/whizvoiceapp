@@ -1525,7 +1525,39 @@ abstract class BaseIntegrationTest {
      */
     protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
-
+/*
+        // UI dump to see what's actually on screen when send button search fails
+        val allElements = device.findObjects(By.pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for RAPID send button search:")
+        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
+        
+        // Show all clickable elements
+        val clickableElements = device.findObjects(By.clickable(true).pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${clickableElements.size} clickable elements")
+        clickableElements.forEachIndexed { index, element ->
+            try {
+                val text = element.text ?: "no text"
+                val desc = element.contentDescription ?: "no desc" 
+                val className = element.className ?: "no class"
+                android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: text='$text', desc='$desc', class='$className'")
+            } catch (e: Exception) {
+                android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: error reading properties")
+            }
+        }
+        
+        // Show all Button elements specifically  
+        val allButtons = device.findObjects(By.clazz("android.widget.Button").pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allButtons.size} Button elements:")
+        allButtons.forEachIndexed { index, button ->
+            try {
+                val text = button.text ?: "no text"
+                val desc = button.contentDescription ?: "no desc"
+                android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: text='$text', desc='$desc', clickable=${button.isClickable}, enabled=${button.isEnabled}")
+            } catch (e: Exception) {
+                android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: error reading properties")
+            }
+        }
+*/
         // Use only the proven working method - exact content description for TYPED messages
         val sendButton = device.findObject(
             UiSelector()
@@ -1535,7 +1567,7 @@ abstract class BaseIntegrationTest {
         )
         
         // Ultra-short timeout for rapid testing - fail fast if not immediately available
-        if (!sendButton.waitForExists(100)) {
+        if (!sendButton.waitForExists(200)) {
             android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found within 100ms - UI not responsive enough for immediate sending")
             return false
         }
