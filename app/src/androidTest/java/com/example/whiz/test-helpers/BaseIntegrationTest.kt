@@ -283,23 +283,12 @@ abstract class BaseIntegrationTest {
         }
         device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
         // Look for the actual EditText (the real input field)
-        // Try with description first, then fallback to just EditText when continuous listening is active
-        var messageInput = device.findObject(
+        val messageInput = device.findObject(
             UiSelector()
                 .className("android.widget.EditText")
                 .description("Message input field")
                 .packageName(packageName)
         )
-        /*
-        // If not found, try without description (for continuous listening state)
-        if (!messageInput.exists()) {
-            android.util.Log.d("BaseIntegrationTest", "🔍 Input field not found with description, trying without description...")
-            messageInput = device.findObject(
-                UiSelector()
-                    .className("android.widget.EditText")
-                    .packageName(packageName)
-            )
-        }*/
         
         var waitTimeout = 1000L
         if (rapid) {

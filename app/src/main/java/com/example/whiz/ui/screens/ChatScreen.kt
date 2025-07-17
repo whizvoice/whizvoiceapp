@@ -766,17 +766,7 @@ fun ChatInputBar(
         ) {
             // 🔧 PRODUCTION BUG FIX: Remove key() block that was causing TextField recreation
             // The key() block was destroying focus and text input handling on every character
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { 
-                        contentDescription = "Message input field"
-                        testTag = "chat_input_field"
-                        role = Role.Button
-                        focused = true
-                    }
-            ) {
-                OutlinedTextField(
+            OutlinedTextField(
                 value = displayValue,
                 onValueChange = { newValue ->
                     // 🔧 ENHANCED DEBUG: Log every onValueChange call
@@ -787,8 +777,16 @@ fun ChatInputBar(
                     // The updateInputText method will handle stopping voice recognition when user types
                     onInputChange(newValue)
                 },
-                modifier = Modifier.fillMaxWidth() // TextField fills the Box
-                ,placeholder = { Text(placeholderText) },
+                modifier = Modifier
+                    .fillMaxWidth() // TextField fills the Box
+                    .semantics { 
+                        contentDescription = "Message input field"
+                        testTag = "chat_input_field"
+                        // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
+                        role = Role.Button
+                        focused = true
+                    }, // Add accessibility description for both users and testing
+                placeholder = { Text(placeholderText) },
                 readOnly = false, // Always allow text input for production bug fix
                 enabled = !isInputDisabled, // Respect the isInputDisabled parameter
                 singleLine = false,
@@ -921,7 +919,6 @@ fun ChatInputBar(
                     }
                 }
             )
-            } // Close the Box with semantics
         }
     }
 }
