@@ -132,25 +132,17 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "➕ Step 2: Navigating to new chat")
             
             if (isCurrentlyInChatScreen()) {
-                // If we're already in a chat, navigate back to chats list first, then create new chat
+                // If we're already in a chat, navigate back to chats list first, then create new chat so we have a fresh chat for test
                 Log.d(TAG, "🔄 Currently in chat screen, going back to chats list first")
                 if (!navigateBackToChatsListFromChat()) {
                     failWithScreenshot("navigate_to_chats_list_failed", "Failed to navigate from chat screen to chats list")
                     return@runBlocking
                 }
-                
-                // Now click new chat button
-                if (!clickNewChatButtonAndWaitForChatScreen()) {
-                    failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
-                    return@runBlocking
-                }
-            } else {
-                // We're on chats list, directly click new chat button
-                Log.d(TAG, "📋 On chats list, clicking new chat button directly")
-                if (!clickNewChatButtonAndWaitForChatScreen()) {
-                    failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
-                    return@runBlocking
-                }
+            }
+            Log.d(TAG, "📋 On chats list, clicking new chat button directly")
+            if (!clickNewChatButtonAndWaitForChatScreen()) {
+                failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
+                return@runBlocking
             }
             
             Log.d(TAG, "✅ Successfully navigated to new chat screen")
@@ -185,7 +177,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "🚀 IMMEDIATE MESSAGE $i: Testing rapid send during bot response...")
                 
                 // Send with rapid method
-                if (!sendMessageAndVerifyDisplayRapid(interruptMessage)) {
+                if (!sendMessageAndVerifyDisplay(interruptMessage, rapid = true)) {
                     Log.e(TAG, "❌ IMMEDIATE: Message $i failed during rapid send!")
                     Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
                     Log.e(TAG, "   📝 This means users cannot interrupt bot responses effectively")

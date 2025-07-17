@@ -456,7 +456,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 10: Send a second message to test existing chat functionality - using RAPID method
         Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
-        if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
+        if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
             failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
         }
         Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")

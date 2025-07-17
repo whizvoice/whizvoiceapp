@@ -218,6 +218,8 @@ abstract class BaseIntegrationTest {
      * Find and click the new chat button using accessibility actions, wait for chat screen to load
      */
     protected fun clickNewChatButtonAndWaitForChatScreen(): Boolean {
+        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+
         android.util.Log.d("BaseIntegrationTest", "🎯 Clicking new chat button using accessibility actions...")
         
         // Try to find the main FloatingActionButton first (when chats exist)
@@ -227,18 +229,8 @@ abstract class BaseIntegrationTest {
                 .packageName(packageName)
         )
         
-        // If not found, try to find the empty state button (when no chats exist)
-        if (!newChatButton.waitForExists(2000)) {
-            android.util.Log.d("BaseIntegrationTest", "🔍 Main 'New Chat' FAB not found, trying empty state button...")
-            newChatButton = device.findObject(
-                UiSelector()
-                    .description("Start your first chat")
-                    .packageName(packageName)
-            )
-        }
-        
-        if (!newChatButton.waitForExists(3000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Neither 'New Chat' nor 'Start your first chat' button found")
+        if (!newChatButton.waitForExists(1000)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ 'New Chat' button not found")
             return false
         }
         
@@ -246,8 +238,6 @@ abstract class BaseIntegrationTest {
         
         // Wait a moment for Compose to fully render the button (addresses timing issues)
         try {
-            android.util.Log.d("BaseIntegrationTest", "⏱️ Waiting for button to be fully rendered...")
-            Thread.sleep(500) // Brief pause for Compose stabilization
             
             // Ensure button is still present and clickable
             if (!newChatButton.isClickable) {
@@ -261,9 +251,10 @@ abstract class BaseIntegrationTest {
             
             // Wait for navigation to chat screen with longer timeout
             android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for navigation to chat screen...")
+            device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
             val chatScreenLoaded = device.wait(Until.hasObject(
                 By.clazz("android.widget.EditText").pkg(packageName)
-            ), 3000) // Increased timeout to 8 seconds
+            ), 2000)
             
             if (chatScreenLoaded) {
                 android.util.Log.d("BaseIntegrationTest", "✅ Successfully navigated to chat screen")
@@ -290,11 +281,12 @@ abstract class BaseIntegrationTest {
         } else {
             android.util.Log.d("BaseIntegrationTest", "🚀 RAPID: Skipping scroll to bottom for rapid typing...")
         }
-        
+        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
         // Look for the actual EditText (the real input field)
         val messageInput = device.findObject(
             UiSelector()
                 .className("android.widget.EditText")
+                .description("Message input field")
                 .packageName(packageName)
         )
         
@@ -326,7 +318,7 @@ abstract class BaseIntegrationTest {
         
         // Wait for the specific text to appear in the EditText field
         val searchText = message.take(30)
-        
+
         // Use a custom wait condition specifically for EditText content
         var textFound = false
         val startTime = System.currentTimeMillis()
@@ -335,7 +327,8 @@ abstract class BaseIntegrationTest {
             timeout = 25L
         }
         android.util.Log.d("BaseIntegrationTest", "looking for text")
-        
+        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+
         while (!textFound && (System.currentTimeMillis() - startTime) < timeout) {
             val currentText = messageInput.text ?: ""
             if (currentText.contains(searchText, ignoreCase = true)) {
@@ -362,50 +355,6 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Text visible in UI - typing successful")
         return true
-    }
-    
-    /**
-     * Find and click send button, wait for message to be sent - NORMAL VERSION with enhanced Compose compatibility
-     */
-    protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 NORMAL: clicking send button...")
-        
-        // Use only the working method - exact content description for TYPED messages
-        val sendButton = device.findObject(
-            UiSelector()
-                .description("Send typed message")
-                .className("android.widget.Button")  // Fixed: UI dump shows it's a Button, not View
-                .packageName(packageName)
-        )
-        
-        if (!sendButton.waitForExists(1000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: Send button not found!")
-            return false
-        }
-        
-        try {
-            sendButton.click()
-            android.util.Log.d("BaseIntegrationTest", "📤 NORMAL: send button clicked")
-        } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: Click failed: ${e.message}")
-            return false
-        }
-        
-        // Normal delay for regular testing
-        Thread.sleep(100)
-        
-        // Use lightweight verification to check if message was sent
-        android.util.Log.d("BaseIntegrationTest", "🔍 NORMAL: verifying message was sent...")
-        
-        val messageFound = verifyMessageSentAtBottom(messageText, 3000)
-        
-        if (messageFound) {
-            android.util.Log.d("BaseIntegrationTest", "✅ NORMAL: message sent and displayed successfully")
-            return true
-        } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ NORMAL: message not found at bottom of chat")
-            return false
-        }
     }
     
     /**
@@ -1489,116 +1438,112 @@ abstract class BaseIntegrationTest {
         val messageInput = device.findObject(
             UiSelector()
                 .className("android.widget.EditText")
-                .packageName(packageName)
-        )
-        
-        val sendButton = device.findObject(
-            UiSelector()
-                .descriptionContains("Send")
-                .packageName(packageName)
-        )
-        
-        val micButton = device.findObject(
-            UiSelector()
-                .descriptionContains("Mic")
+                .description("Message input field")
                 .packageName(packageName)
         )
         
         // Log what we found
         val messageInputExists = messageInput.exists()
-        val sendButtonExists = sendButton.exists()
-        val micButtonExists = micButton.exists()
         
         android.util.Log.d("BaseIntegrationTest", "🔍 isCurrentlyInChatScreen check:")
         android.util.Log.d("BaseIntegrationTest", "   messageInput (EditText): $messageInputExists")
-        android.util.Log.d("BaseIntegrationTest", "   sendButton (desc contains 'Send'): $sendButtonExists")
-        android.util.Log.d("BaseIntegrationTest", "   micButton (desc contains 'Mic'): $micButtonExists")
         
-        val result = messageInputExists || sendButtonExists || micButtonExists
-        android.util.Log.d("BaseIntegrationTest", "   📱 Result: ${if (result) "IN CHAT SCREEN" else "NOT IN CHAT SCREEN"}")
+        android.util.Log.d("BaseIntegrationTest", "   📱 Result: ${if (messageInputExists) "IN CHAT SCREEN" else "NOT IN CHAT SCREEN - CANT FIND MESSAGE INPUT"}")
         
-        return result
+        return messageInputExists
     }
 
     /**
      * Find and click send button, wait for message to be sent - RAPID VERSION for interruption testing
      */
-    protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
-/*
-        // UI dump to see what's actually on screen when send button search fails
-        val allElements = device.findObjects(By.pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for RAPID send button search:")
-        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
-        
-        // Show all clickable elements
-        val clickableElements = device.findObjects(By.clickable(true).pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${clickableElements.size} clickable elements")
-        clickableElements.forEachIndexed { index, element ->
-            try {
-                val text = element.text ?: "no text"
-                val desc = element.contentDescription ?: "no desc" 
-                val className = element.className ?: "no class"
-                android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: text='$text', desc='$desc', class='$className'")
-            } catch (e: Exception) {
-                android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: error reading properties")
-            }
+    protected fun clickSendButtonAndWaitForSent(messageText: String, rapid: Boolean = false): Boolean {
+        if (rapid) {
+            android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "🔍 REGULAR: clicking send button (not optimized for speed)...")
         }
-        
-        // Show all Button elements specifically  
-        val allButtons = device.findObjects(By.clazz("android.widget.Button").pkg(packageName))
-        android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allButtons.size} Button elements:")
-        allButtons.forEachIndexed { index, button ->
-            try {
-                val text = button.text ?: "no text"
-                val desc = button.contentDescription ?: "no desc"
-                android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: text='$text', desc='$desc', clickable=${button.isClickable}, enabled=${button.isEnabled}")
-            } catch (e: Exception) {
-                android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: error reading properties")
-            }
-        }
-*/
 
         device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send typed message")
-                .className("android.widget.Button")  // Fixed: UI dump shows it's a Button, not View
+                .className("android.widget.Button")
                 .packageName(packageName)
         )
         
         // Ultra-short timeout for rapid testing - fail fast if not immediately available
-        if (!sendButton.waitForExists(100)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found within 100ms - UI not responsive enough for immediate sending")
+        var sendTimeout = 1000
+        if (rapid) {
+            sendTimeout = 100
+        }
+        if (!sendButton.waitForExists(sendTimeout)) {
+                         android.util.Log.e("BaseIntegrationTest", "❌ Send button not found within $sendTimeout - UI not responsive enough for immediate sending")
+            // UI dump to see what's actually on screen when send button search fails
+            val allElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for RAPID send button search:")
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
+            
+            // Show all clickable elements
+            val clickableElements = device.findObjects(By.clickable(true).pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${clickableElements.size} clickable elements")
+            clickableElements.forEachIndexed { index, element ->
+                try {
+                    val text = element.text ?: "no text"
+                    val desc = element.contentDescription ?: "no desc" 
+                    val className = element.className ?: "no class"
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: text='$text', desc='$desc', class='$className'")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Clickable element $index: error reading properties")
+                }
+            }
+            
+            // Show all Button elements specifically  
+            val allButtons = device.findObjects(By.clazz("android.widget.Button").pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allButtons.size} Button elements:")
+            allButtons.forEachIndexed { index, button ->
+                try {
+                    val text = button.text ?: "no text"
+                    val desc = button.contentDescription ?: "no desc"
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: text='$text', desc='$desc', clickable=${button.isClickable}, enabled=${button.isEnabled}")
+                } catch (e: Exception) {
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Button $index: error reading properties")
+                }
+            }
             return false
         }
         
-        // Single click attempt for maximum speed
+        // Single click attempt
         var clickSuccessful = false
         try {
             sendButton.click()
-            android.util.Log.d("BaseIntegrationTest", "📤 RAPID: send button clicked")
+            android.util.Log.d("BaseIntegrationTest", "📤: send button clicked")
             clickSuccessful = true
         } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button click failed: ${e.message}")
+            android.util.Log.e("BaseIntegrationTest", "❌: Send button click failed: ${e.message}")
             return false
         }
         
         if (!clickSuccessful) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button click failed")
+            android.util.Log.e("BaseIntegrationTest", "❌: Send button click failed")
             return false
         }
-        
-        // Proper wait for message to render in UI (not just instant check)
-        val messageDisplayed = device.wait(
-            Until.hasObject(By.textContains(messageText.take(20)).pkg(packageName)),
-            20
-        )
+        var messageDisplayTimeout = 1000
+        if (rapid) {
+            messageDisplayTimeout = 20
+        }
+        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+                 // Proper wait for message to render in UI (not just instant check)
+         val messageDisplayed = device.wait(
+             Until.hasObject(
+                 By.desc("User message: $messageText").pkg(packageName)
+             ),
+             messageDisplayTimeout
+         )
         
         if (messageDisplayed) {
-            android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed instantly")
+            android.util.Log.d("BaseIntegrationTest", "✅ : message sent and displayed instantly")
         } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: message not displayed instantly")
+            android.util.Log.e("BaseIntegrationTest", "❌ : message not displayed instantly")
         }
         
         return messageDisplayed
