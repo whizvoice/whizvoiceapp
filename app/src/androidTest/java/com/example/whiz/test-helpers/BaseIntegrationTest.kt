@@ -374,7 +374,7 @@ abstract class BaseIntegrationTest {
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send typed message")
-                .className("android.view.View")
+                .className("android.widget.Button")  // Fixed: UI dump shows it's a Button, not View
                 .packageName(packageName)
         )
         
@@ -1573,7 +1573,7 @@ abstract class BaseIntegrationTest {
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send typed message")
-                .className("android.view.View")
+                .className("android.widget.Button")  // Fixed: UI dump shows it's a Button, not View
                 .packageName(packageName)
         )
         
@@ -1980,36 +1980,6 @@ abstract class BaseIntegrationTest {
         val isFocusable = inputField.isFocusable
         android.util.Log.d("BaseIntegrationTest", "🔍 Input field enabled: $isEnabled, focusable: $isFocusable")
         return !isEnabled || !isFocusable
-    }
-
-    /**
-     * Try to find and click the send button after typing text
-     */
-    protected fun tryToClickSendButton(): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 Looking for send button...")
-        
-        val sendButton = device.findObject(
-            UiSelector()
-                .description("Send typed message")
-                .className("android.view.View")
-                .packageName(packageName)
-        )
-        
-        if (!sendButton.waitForExists(50)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Send button not found")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ Send button found, trying to click...")
-        val clickSuccess = sendButton.click()
-        
-        if (clickSuccess) {
-            android.util.Log.d("BaseIntegrationTest", "✅ Successfully clicked send button")
-        } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ Could not click send button")
-        }
-        
-        return clickSuccess
     }
 
     /**
