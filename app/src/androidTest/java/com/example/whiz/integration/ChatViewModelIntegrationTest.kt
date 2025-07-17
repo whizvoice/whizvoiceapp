@@ -178,26 +178,28 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             val interruptMessageCount = MESSAGE_COUNT - 1 // 4 more messages
             
             // BUG DETECTION PHASE: Try to send rapid messages and FAIL if blocked
-            // Phase 1: Test 2 IMMEDIATE messages (rapid send like initial message - most aggressive user flow)
+            // Phase 1: Test 2 IMMEDIATE messages (ultra-immediate send - most aggressive user flow)
             for (i in 1..2) {
                 val interruptMessage = "hi $i"
                 
-                Log.d(TAG, "🚀 IMMEDIATE MESSAGE $i: Testing rapid send during bot response...")
+                Log.d(TAG, "⚡ IMMEDIATE MESSAGE $i: Testing ultra-immediate send during bot response...")
                 
-                // Send immediately without typing phase (like first message)
-                if (!sendMessageAndVerifyDisplayRapid(interruptMessage)) {
-                    Log.e(TAG, "❌ IMMEDIATE: Message $i failed during rapid send!")
-                    Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send message rapidly while bot is responding!")
-                    Log.e(TAG, "   📝 This prevents users from rapidly sending messages during bot response")
-                    failWithScreenshot("immediate_message_${i}_send_failed", "IMMEDIATE message $i failed during rapid send - UI blocked during bot response")
+                // Send with ultra-immediate method (must work instantly or fail)
+                if (!sendMessageUltraImmediate(interruptMessage)) {
+                    Log.e(TAG, "❌ IMMEDIATE: Message $i failed during ultra-immediate send!")
+                    Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages immediately during bot response")
+                    Log.e(TAG, "   📝 This means users cannot interrupt bot responses - critical UX issue")
+                    failWithScreenshot("immediate_message_${i}_blocked", "Ultra-immediate message $i failed - bot response blocking user input")
                     return@runBlocking
                 }
                 
-                sentMessages.add(interruptMessage)
-                Log.d(TAG, "✅ IMMEDIATE MESSAGE $i sent successfully via rapid send")
+                Log.d(TAG, "✅ IMMEDIATE MESSAGE $i sent successfully via ultra-immediate send")
                 
-                // Brief pause between immediate messages (realistic user behavior)
-                Thread.sleep(50)
+                // Track sent messages for verification
+                sentMessages.add(interruptMessage)
+                
+                // Small delay between immediate messages (simulating rapid user input)
+                delay(50)
             }
             
             // Phase 2: Test 2 QUICK messages (rapid type+send combo - power user flow)
@@ -491,6 +493,5 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             null
         }
     }
-
 
 }

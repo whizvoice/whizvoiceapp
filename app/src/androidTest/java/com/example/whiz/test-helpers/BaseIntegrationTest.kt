@@ -280,12 +280,16 @@ abstract class BaseIntegrationTest {
     }
     
     /**
-     * Find message input field, type message, and verify text appears
+     * Type a message in the input field with optional scrolling
      */
-    protected fun typeMessageInInputField(message: String): Boolean {
-        // First, scroll to bottom to ensure input field is accessible
-        android.util.Log.d("BaseIntegrationTest", "📜 Ensuring input field is accessible by scrolling to bottom...")
-        scrollToBottom()
+    protected fun typeMessageInInputField(message: String, rapid: Boolean = false): Boolean {
+        if (!rapid) {
+            // First, scroll to bottom to ensure input field is accessible
+            android.util.Log.d("BaseIntegrationTest", "📜 Ensuring input field is accessible by scrolling to bottom...")
+            scrollToBottom()
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "🚀 RAPID: Skipping scroll to bottom for rapid typing...")
+        }
         
         // Look for the actual EditText (the real input field)
         val messageInput = device.findObject(
@@ -294,7 +298,11 @@ abstract class BaseIntegrationTest {
                 .packageName(packageName)
         )
         
-        if (!messageInput.waitForExists(5000)) {
+        var waitTimeout = 1000L
+        if (rapid) {
+            waitTimeout = 10L  // Ultra-short timeout for immediate sending test
+        }
+        if (!messageInput.waitForExists(waitTimeout)) {
             android.util.Log.e("BaseIntegrationTest", "❌ EditText input field not found")
             return false
         }
@@ -320,6 +328,9 @@ abstract class BaseIntegrationTest {
                 android.util.Log.d("BaseIntegrationTest", "✅ Text found in EditText: '${currentText.take(50)}...'")
             } else {
                 android.util.Log.d("BaseIntegrationTest", "🔄 Waiting for text... current: '${currentText.take(30)}...'")
+                if (rapid) {
+                    return true
+                }
                 Thread.sleep(100)
             }
         }
@@ -1497,7 +1508,7 @@ abstract class BaseIntegrationTest {
      * Find and click send button, wait for message to be sent - RAPID VERSION for interruption testing
      */
     protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized)...")
+        android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
         
         // Use only the proven working method - exact content description
         val sendButton = device.findObject(
@@ -1506,44 +1517,40 @@ abstract class BaseIntegrationTest {
                 .packageName(packageName)
         )
         
-        // 🔧 PATIENCE: Increased timeout for rapid messaging - send button may be disabled during migration/bot responses
-        if (!sendButton.waitForExists(5000)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found even with 5000ms timeout!")
+        // Ultra-short timeout for rapid testing - fail fast if not immediately available
+        if (!sendButton.waitForExists(100)) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found within 100ms - UI not responsive enough for immediate sending")
             return false
         }
         
-        // 🔧 RETRY: Try clicking send button multiple times if it's temporarily disabled during bot responses
+        // Single click attempt for maximum speed
         var clickSuccessful = false
-        for (attempt in 1..3) {
-            try {
-                sendButton.click()
-                android.util.Log.d("BaseIntegrationTest", "📤 RAPID: send button clicked (attempt $attempt)")
-                clickSuccessful = true
-                break
-            } catch (e: Exception) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ RAPID: Click attempt $attempt failed: ${e.message}")
-                if (attempt < 3) {
-                    Thread.sleep(500) // Wait before retry
-                }
-            }
+        try {
+            sendButton.click()
+            android.util.Log.d("BaseIntegrationTest", "📤 RAPID: send button clicked")
+            clickSuccessful = true
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button click failed: ${e.message}")
+            return false
         }
         
         if (!clickSuccessful) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: All send button click attempts failed")
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button click failed")
             return false
         }
         
-        // Minimal delay and fast verification for true rapid testing
-        Thread.sleep(10)
+        // Ultra-fast verification - just check if message appears immediately (optimistic UI)
+        // NO scrolling, NO waiting - just instant check for what's visible right now
+        Thread.sleep(10) // Minimal delay for UI to update
         
-        val messageDisplayed = device.wait(Until.hasObject(
-            By.textContains(messageText).pkg(packageName)
-        ), 1000)
+        val messageDisplayed = device.hasObject(
+            By.textContains(messageText.take(20)).pkg(packageName)
+        )
         
         if (messageDisplayed) {
             android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed instantly")
         } else {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: message not displayed after clicking send button")
+            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: message not displayed instantly")
         }
         
         return messageDisplayed
@@ -1555,8 +1562,8 @@ abstract class BaseIntegrationTest {
     protected fun sendMessageAndVerifyDisplayRapid(message: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "📝 RAPID: attempting to send message: '${message.take(30)}...'")
         
-        // step 1: type message
-        val typingSuccess = typeMessageInInputField(message)
+        // step 1: type message WITHOUT scrolling (rapid mode)
+        val typingSuccess = typeMessageInInputField(message, rapid = true)
         if (!typingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ RAPID: typeMessageInInputField returned false")
             return false
@@ -1762,11 +1769,13 @@ abstract class BaseIntegrationTest {
             val width = device.displayWidth
             
             // Perform multiple scroll downs to ensure we reach the bottom
+            // 🔧 KEYBOARD FIX: Avoid swiping through keyboard area where paint palette icon is located
             repeat(5) { attempt ->
                 android.util.Log.d("BaseIntegrationTest", "📜 Bottom scroll attempt ${attempt + 1}/5")
                 
-                // Swipe from bottom to top to scroll down (showing newer messages)
-                device.swipe(width/2, height*2/3, width/2, height/3, 10)
+                // Swipe in the CHAT AREA ONLY - avoid keyboard toolbar at bottom
+                // Start at 45% and swipe to 20% (staying well above keyboard area)
+                device.swipe(width/2, height*45/100, width/2, height*20/100, 10)
                 
                 // Wait for scroll animation to complete
                 Thread.sleep(300)
@@ -1842,7 +1851,7 @@ abstract class BaseIntegrationTest {
         // we simulate this by directly typing the message (as if transcription completed)
         // and then triggering the send
         
-        val typingSuccess = typeMessageInInputField(message)
+        val typingSuccess = typeMessageInInputField(message, rapid = true)
         if (!typingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Failed to simulate voice transcription")
             return false
@@ -2535,6 +2544,59 @@ abstract class BaseIntegrationTest {
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ Error during test chat cleanup", e)
         }
+    }
+
+    /**
+     * ULTRA-IMMEDIATE message sending - fails instantly if not ready
+     * For testing true interruption capability during bot responses
+     */
+    protected fun sendMessageUltraImmediate(message: String): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: attempting instant send: '${message.take(30)}...'")
+        
+        // Find input field with ZERO timeout - must be immediately available
+        val messageInput = device.findObject(
+            UiSelector()
+                .className("android.widget.EditText")
+                .packageName(packageName)
+        )
+        
+        // NO waiting - if not found immediately, fail
+        if (!messageInput.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Input field not immediately available - interruption blocked")
+            return false
+        }
+        
+        // Type immediately - no verification wait
+        messageInput.setText(message)
+        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Text set instantly")
+        
+        // Find send button with ZERO timeout
+        val sendButton = device.findObject(
+            UiSelector()
+                .description("Send message")
+                .packageName(packageName)
+        )
+        
+        // NO waiting - if not found immediately, fail  
+        if (!sendButton.exists()) {
+            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Send button not immediately available - UI blocked")
+            return false
+        }
+        
+        // Click immediately
+        sendButton.click()
+        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Clicked send instantly")
+        
+        // Ultra-minimal verification - just check message appears immediately
+        Thread.sleep(10) // Minimal UI update time
+        val messageVisible = device.hasObject(By.textContains(message).pkg(packageName))
+        if (!messageVisible) {
+            android.util.Log.e("BaseIntegrationTest", "❌ ULTRA-IMMEDIATE: Message not visible immediately - optimistic UI blocked")
+            return false
+        }
+        
+        android.util.Log.d("BaseIntegrationTest", "⚡ ULTRA-IMMEDIATE: Message sent and visible instantly")
+        return true
     }
 }
 
