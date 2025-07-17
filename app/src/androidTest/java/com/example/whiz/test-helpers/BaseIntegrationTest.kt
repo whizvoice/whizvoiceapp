@@ -1558,7 +1558,8 @@ abstract class BaseIntegrationTest {
             }
         }
 */
-        // Use only the proven working method - exact content description for TYPED messages
+
+        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send typed message")
@@ -1567,7 +1568,7 @@ abstract class BaseIntegrationTest {
         )
         
         // Ultra-short timeout for rapid testing - fail fast if not immediately available
-        if (!sendButton.waitForExists(200)) {
+        if (!sendButton.waitForExists(100)) {
             android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Send button not found within 100ms - UI not responsive enough for immediate sending")
             return false
         }
