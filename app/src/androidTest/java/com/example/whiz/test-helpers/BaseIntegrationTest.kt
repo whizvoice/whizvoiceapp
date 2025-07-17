@@ -414,7 +414,7 @@ abstract class BaseIntegrationTest {
         try {
             android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for input field to be cleared (WebSocket verification)...")
             
-            // Wait directly for the EditText to have empty text (the actual dependency)
+            // Wait directly for the EditText to exist and be accessible
             val timeout = 1500L // 1.5 second timeout (increased for CI environments)
             
             // First, ensure the EditText exists
@@ -423,45 +423,39 @@ abstract class BaseIntegrationTest {
             ), 1000)
             
             if (!inputFieldExists) {
-                android.util.Log.d("BaseIntegrationTest", "❌ EditText input field not found - WebSocket verification failed")
+                android.util.Log.e("BaseIntegrationTest", "❌ Input field not found during WebSocket verification")
                 return false
             }
             
-            // Now wait for the specific condition: EditText with empty/blank text
-            // This waits for the actual dependency instead of polling
-            val inputFieldCleared = device.wait(Until.hasObject(
-                By.clazz("android.widget.EditText")
-                  .pkg(packageName)
-                  .textMatches("^\\s*$") // Regex for empty or whitespace-only text
-            ), timeout)
-            
-            if (inputFieldCleared) {
-                android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared via conditional wait - WebSocket send successful")
-                return true
-            } else {
-                // Final manual check in case regex matching had issues
-                val inputField = device.findObject(
-                    UiSelector()
-                        .className("android.widget.EditText")
-                        .packageName(packageName)
-                )
-                
-                if (inputField.exists()) {
-                    val inputText = inputField.text ?: ""
-                    if (inputText.isEmpty() || inputText.isBlank()) {
-                        android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared via fallback check - WebSocket send successful")
-                        return true
-                    } else {
-                        android.util.Log.d("BaseIntegrationTest", "❌ Input field still contains text after ${timeout}ms: '${inputText.take(30)}...' - WebSocket send failed")
-                        return false
+            // Now check for empty text by finding the EditText and checking its content
+            val startTime = System.currentTimeMillis()
+            while ((System.currentTimeMillis() - startTime) < timeout) {
+                try {
+                    val inputField = device.findObject(
+                        By.clazz("android.widget.EditText").pkg(packageName)
+                    )
+                    
+                    if (inputField != null) {
+                        val inputText = inputField.text
+                        if (inputText == null || inputText.trim().isEmpty()) {
+                            android.util.Log.d("BaseIntegrationTest", "✅ Input field cleared via conditional wait - WebSocket send successful")
+                            return true
+                        }
                     }
-                } else {
-                    android.util.Log.d("BaseIntegrationTest", "❌ EditText input field not found after wait - WebSocket verification failed")
-                    return false
+                    
+                    // Brief wait before next check
+                    device.waitForIdle(100)
+                    
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Error checking input field during WebSocket verification: ${e.message}")
                 }
             }
+            
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Input field not cleared after ${timeout}ms - WebSocket send may still be in progress")
+            return false
+            
         } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "❌ Error checking input field: ${e.message}")
+            android.util.Log.e("BaseIntegrationTest", "❌ Error during WebSocket verification", e)
             return false
         }
     }
