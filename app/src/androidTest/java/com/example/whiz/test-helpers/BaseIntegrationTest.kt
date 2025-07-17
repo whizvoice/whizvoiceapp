@@ -295,7 +295,36 @@ abstract class BaseIntegrationTest {
             waitTimeout = 10L  // Ultra-short timeout for immediate sending test
         }
         if (!messageInput.waitForExists(waitTimeout)) {
-            android.util.Log.e("BaseIntegrationTest", "❌ EditText input field not found")
+            android.util.Log.e("BaseIntegrationTest", "❌ EditText input field not found within ${waitTimeout}ms")
+            
+            // UI dump to see what's actually on screen when input field search fails
+            val allElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for input field search failure:")
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
+            
+            // Log ALL elements to see what's actually available
+            android.util.Log.d("BaseIntegrationTest", "🔍 ALL ELEMENTS ON SCREEN:")
+            allElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  Element $index: class='${element.className}', text='${element.text}', desc='${element.contentDescription}', enabled=${element.isEnabled}, clickable=${element.isClickable}")
+            }
+            
+            // Log all EditText elements specifically
+            val editTextElements = device.findObjects(By.clazz("android.widget.EditText").pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${editTextElements.size} EditText elements:")
+            editTextElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  EditText $index: text='${element.text}', desc='${element.contentDescription}', enabled=${element.isEnabled}, clickable=${element.isClickable}")
+            }
+            
+            // Log all elements with "input" or "message" in their description
+            val inputRelatedElements = allElements.filter { element ->
+                element.contentDescription?.contains("input", ignoreCase = true) == true ||
+                element.contentDescription?.contains("message", ignoreCase = true) == true
+            }
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${inputRelatedElements.size} input-related elements:")
+            inputRelatedElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  Input-related $index: class='${element.className}', text='${element.text}', desc='${element.contentDescription}'")
+            }
+            
             return false
         }
         
