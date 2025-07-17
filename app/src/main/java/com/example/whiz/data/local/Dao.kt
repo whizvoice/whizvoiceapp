@@ -54,6 +54,12 @@ interface MessageDao {
     @Update
     suspend fun updateMessage(message: MessageEntity): Int
 
+    @Update
+    suspend fun updateMessages(messages: List<MessageEntity>): Int
+
+    @Query("UPDATE messages SET chatId = :newChatId WHERE chatId = :oldChatId")
+    suspend fun migrateChatIdForMessages(oldChatId: Long, newChatId: Long): Int
+
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteMessage(messageId: Long): Int
 

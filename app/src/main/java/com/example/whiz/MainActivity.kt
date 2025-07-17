@@ -181,10 +181,10 @@ class MainActivity : ComponentActivity() {
             val traceId = intent?.extras?.getLong("tracing_intent_id")
             val hasTraceId = traceId != null && traceId > 0
             
-            // SECONDARY DETECTION: Intent flags analysis  
-            // Voice: 0x10000000, Manual: 0x10200000
-            val intentFlags = intent?.flags ?: 0
-            val hasVoiceFlags = (intentFlags and 0x10000000) != 0 && (intentFlags and 0x00200000) == 0
+                    // SECONDARY DETECTION: Intent flags analysis  
+        // Voice: 0x10000000, Manual: 0x10200000
+        val intentFlags = intent?.flags ?: 0
+        val hasVoiceFlags = (intentFlags and 0x10000000) != 0 && (intentFlags and 0x00200000) == 0
             
             // TERTIARY DETECTION: Bounds analysis
             // Manual launches have bounds (app icon position), voice launches don't

@@ -175,37 +175,26 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 
                 // 6. Clean up test chats to prevent accumulation
                 try {
-                    // Delete the initial test chat created in setup
+                    // Direct database cleanup for this test's specific chats
                     if (testChatId > 0) {
                         val deletedMessages = database.messageDao().deleteMessagesForChat(testChatId)
                         val deletedChat = database.chatDao().deleteChat(testChatId)
                         Log.d(TAG, "✅ Deleted initial test chat $testChatId ($deletedMessages messages, $deletedChat chat)")
                     }
                     
-                    // Delete the server chat created during the test
                     if (createdServerChatId > 0) {
                         val deletedMessages = database.messageDao().deleteMessagesForChat(createdServerChatId)
                         val deletedChat = database.chatDao().deleteChat(createdServerChatId)
                         Log.d(TAG, "✅ Deleted server test chat $createdServerChatId ($deletedMessages messages, $deletedChat chat)")
                     }
                     
-                    // Also clean up any test chats by searching for our test message pattern
-                    val allMessages = database.messageDao().getAllMessages()
-                    val testMessageIds = allMessages.filter { 
-                        it.content.contains("INTEGRATION_TEST_MSG_") 
-                    }.map { it.chatId }.distinct()
-                    
-                    for (chatId in testMessageIds) {
-                        if (chatId != testChatId && chatId != createdServerChatId) {
-                            try {
-                                val deletedMessages = database.messageDao().deleteMessagesForChat(chatId)
-                                val deletedChat = database.chatDao().deleteChat(chatId)
-                                Log.d(TAG, "✅ Deleted orphaned test chat $chatId ($deletedMessages messages, $deletedChat chat)")
-                            } catch (e: Exception) {
-                                Log.w(TAG, "⚠️ Could not delete orphaned test chat $chatId: ${e.message}")
-                            }
-                        }
-                    }
+                    // Use simplified cleanup for any other test chats
+                    cleanupTestChats(
+                        repository = repository,
+                        trackedChatIds = listOf(testChatId, createdServerChatId).filter { it > 0 },
+                        additionalPatterns = listOf("INTEGRATION_TEST_MSG_", "message display", "lifecycle"),
+                        enablePatternFallback = false
+                    )
                     
                     Log.d(TAG, "✅ Test chat cleanup completed")
                 } catch (e: Exception) {
@@ -465,12 +454,12 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ First message confirmed still visible after navigation")
         }
         
-        // Step 10: Send a second message to test existing chat functionality
-        Log.d(TAG, "💬 Sending second message in existing chat...")
-        if (!sendMessageAndVerifyDisplay(secondMessage)) {
+        // Step 10: Send a second message to test existing chat functionality - using RAPID method
+        Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
+        if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
             failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
         }
-        Log.d(TAG, "✅ Second message sent and visible successfully")
+        Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
         
         // Step 11: Final verification - both messages should be visible
         Log.d(TAG, "🔍 Final verification: checking if both messages are visible...")

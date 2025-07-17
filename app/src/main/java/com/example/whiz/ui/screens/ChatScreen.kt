@@ -55,8 +55,10 @@ import android.util.Log
 import androidx.navigation.NavHostController
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -65,6 +67,13 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.focused
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,6 +111,8 @@ fun ChatScreen(
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
+    
+
 
     // Voice state from VoiceManager (clean separation)
     val isListening by voiceManager.isListening.collectAsState()
@@ -185,9 +196,12 @@ fun ChatScreen(
 
     // Scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) { // Trigger scroll based on message count change
-        if (messages.isNotEmpty()) {
+        if (messages.isNotEmpty() && messages.size > 0) {
             delay(100L) // Allow layout
-            listState.animateScrollToItem(messages.size - 1)
+            val targetIndex = messages.size - 1
+            if (targetIndex >= 0) { // Extra safety check to prevent crash
+                listState.animateScrollToItem(targetIndex)
+            }
         }
     }
 
@@ -297,37 +311,62 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
-                navigationIcon = {
-                    IconButton(onClick = onChatsListClick) {
-                        Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = viewModel::toggleVoiceResponse) {
-                        Icon(
-                            imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                            contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+    // 🔧 PRODUCTION BUG FIX: Eliminate Scaffold completely to prevent touch interception
+    // Replace with simple Column layout - no bottomBar, no padding calculations, no overlays
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Top bar - directly placed
+        CenterAlignedTopAppBar(
+            title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
+            navigationIcon = {
+                IconButton(onClick = onChatsListClick) {
+                    Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
+                }
+            },
+            actions = {
+                IconButton(onClick = viewModel::toggleVoiceResponse) {
+                    Icon(
+                        imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
+                    )
+                }
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            // Disable text input when responding or speaking
-            val isTextInputDisabled = isResponding || isSpeaking
-            // FIXED: Don't disable mic during TTS - allow interruption
-            val isMicDisabled = false // Mic should always be available for user interaction
+        )
+        
+        // Messages area - takes remaining space above input
+        Box(
+            modifier = Modifier.weight(1f)
+        ) {
+            if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                EmptyChatPlaceholder()
+            } else {
+                MessagesList(
+                    messages = messages,
+                    listState = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                    showTypingIndicator = isResponding && !isSpeaking
+                )
+            }
+        }
+        
+        // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
+        run {
+            // Never disable text input - users should always be able to type
+            val isTextInputDisabled = false
+            // Only disable mic during TTS when no headphones (to prevent audio feedback)
+            val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
+            
             ChatInputBar(
                 inputText = inputText,
                 isInputFromVoice = isInputFromVoice,
@@ -341,46 +380,17 @@ fun ChatScreen(
                 shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { 
-                    if (isResponding) {
-                        viewModel.interruptResponse()
-                    } else {
-                        viewModel.sendUserInput(inputText)
-                    }
+                    // Always send regular messages - let server handle interruption logic
+                    viewModel.sendUserInput(inputText)
                 },
                 onMicClick = { handleMicClick() },
                 onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
         }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues) // Apply padding from Scaffold
-                .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent) // Subtle speaking indicator
-        ) {
-            // Display messages or placeholder
-            if (messages.isEmpty() && !isResponding && !isSpeaking) { // Show placeholder only if truly empty and idle
-                EmptyChatPlaceholder()
-            } else {
-                MessagesList(
-                    messages = messages,
-                    listState = listState
-                )
-            }
-
-            // Typing Indicator - Show only when responding (agent thinking), not when speaking
-            AnimatedVisibility(
-                visible = isResponding && !isSpeaking,
-                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
-                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 8.dp) // Position above input bar area
-            ) {
-                TypingIndicator()
-            }
-        }
+        
+        // Snackbar host at bottom
+        SnackbarHost(snackbarHostState)
     }
 
     // Dialog for missing Asana Token
@@ -458,7 +468,9 @@ fun ChatScreen(
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
-    listState: androidx.compose.foundation.lazy.LazyListState
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier,
+    showTypingIndicator: Boolean = false
 ) {
     // 🔧 DEDUPLICATION FIX: Remove duplicate messages during chat ID migration race condition
     // The test countMessageOccurrences() uses UI Automator to scan screen text - during optimistic
@@ -502,10 +514,9 @@ fun MessagesList(
     
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxWidth(), // Only fill width, not height - prevents overlay
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
-        // reverseLayout = true // Keep false for messages appearing at the bottom
     ) {
         items(deduplicatedMessages, key = { message -> 
             // 🔧 SAFETY FIX: Create unique key from content+timestamp to prevent any LazyColumn duplication
@@ -514,6 +525,14 @@ fun MessagesList(
         }) { message ->
             MessageItem(message = message)
         }
+        
+        // Show typing indicator as a message when bot is responding
+        if (showTypingIndicator) {
+            item(key = "typing_indicator") {
+                TypingIndicator()
+            }
+        }
+        
         // Add a spacer at the bottom for breathing room above input bar
         item { Spacer(modifier = Modifier.height(8.dp)) }
     }
@@ -563,7 +582,14 @@ fun MessageItem(message: MessageEntity) {
                 }
                 Text(
                     text = message.content,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.semantics { 
+                        contentDescription = if (message.type == MessageType.USER) {
+                            "User message: ${message.content}"
+                        } else {
+                            "Assistant message: ${message.content}"
+                        }
+                    }
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -581,7 +607,7 @@ fun MessageItem(message: MessageEntity) {
 @Composable
 fun EmptyChatPlaceholder() {
     Box(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -683,17 +709,40 @@ fun ChatInputBar(
     val hasTypedText = hasInputText && !isInputFromVoice
     val hasVoiceText = hasInputText && isInputFromVoice
     
-    // Debug logging for button logic
+    // Debug logging for button logic and input state
     Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
+    Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
+    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: TextField will be enabled=${!isInputDisabled}, isInputDisabled=$isInputDisabled")
     
-    // 🔧 Show actual input text if present (sent message), otherwise show transcription when listening
+    // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
+    // The issue was complex conditional logic that wasn't recomposing properly
     val displayValue = when {
-        inputText.isNotBlank() -> inputText // Always show sent message if present (grayed out when disabled)
-        isListening -> transcription // Show live transcription only when no sent message
-        else -> inputText // Default to input text
+        inputText.isNotBlank() -> inputText // Always show actual input text if present
+        isListening && transcription.isNotBlank() -> transcription // Show live transcription when listening
+        else -> inputText // Default to input text (could be empty)
+    }
+    
+    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription'")
+    
+    // 🔧 ENHANCED DEBUG LOGGING: Track displayValue changes and timing
+    val currentTimeMs = System.currentTimeMillis()
+    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription', isResponding=$isResponding")
+    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue.length=${displayValue.length}, inputText.length=${inputText.length}")
+    
+    // 🔧 CRITICAL DEBUG: Log every time displayValue changes
+    LaunchedEffect(displayValue) {
+        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: '$displayValue' (length=${displayValue.length})")
+        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: inputText='$inputText', isListening=$isListening, transcription='$transcription'")
+    }
+    
+    // 🔧 CRITICAL DEBUG: Log every time inputText changes
+    LaunchedEffect(inputText) {
+        Log.d("ChatInputBar", "🔥 INPUTTEXT CHANGE [${System.currentTimeMillis()}]: '$inputText' (length=${inputText.length})")
     }
     
     val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    
+
 
     Surface(
         color = surfaceColor,
@@ -707,17 +756,31 @@ fun ChatInputBar(
         Box( // Use Box to contain TextField and allow padding
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
+            // 🔧 PRODUCTION BUG FIX: Remove key() block that was causing TextField recreation
+            // The key() block was destroying focus and text input handling on every character
             OutlinedTextField(
                 value = displayValue,
-                onValueChange = {
+                onValueChange = { newValue ->
+                    // 🔧 ENHANCED DEBUG: Log every onValueChange call
+                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: '$newValue' (prev: '$displayValue')")
+                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: newValue.length=${newValue.length}, displayValue.length=${displayValue.length}")
+                    
                     // Always allow input change - this enables manual typing to disable continuous listening
                     // The updateInputText method will handle stopping voice recognition when user types
-                    onInputChange(it)
+                    onInputChange(newValue)
                 },
-                modifier = Modifier.fillMaxWidth(), // TextField fills the Box
+                modifier = Modifier
+                    .fillMaxWidth() // TextField fills the Box
+                    .semantics { 
+                        contentDescription = "Message input field"
+                        testTag = "chat_input_field"
+                        // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
+                        role = Role.Button
+                        focused = true
+                    }, // Add accessibility description for both users and testing
                 placeholder = { Text(placeholderText) },
-                readOnly = false, // Always allow text input - users can type at any time
-                enabled = true, // Always enable input field to allow interrupts
+                readOnly = false, // Always allow text input for production bug fix
+                enabled = !isInputDisabled, // Respect the isInputDisabled parameter
                 singleLine = false,
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp), // Rounded corners
@@ -816,16 +879,26 @@ fun ChatInputBar(
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
 
                     val isButtonEnabled = when {
+                        hasTypedText -> true  // Send button for typed text is ALWAYS enabled
+                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
                         isListening -> !isMicDisabled
                         shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled
-                        hasInputText -> !isInputDisabled
                         else -> !isMicDisabled
                     }
                     
                     IconButton(
                         onClick = action,
-                        enabled = isButtonEnabled
+                        enabled = isButtonEnabled,
+                        modifier = Modifier.semantics { 
+                            contentDescription = description
+                            testTag = when {
+                                hasTypedText -> "send_button"
+                                hasVoiceText -> "send_button"
+                                isListening -> "mic_off_button"
+                                else -> "mic_button"
+                            }
+                        }
                     ) {
                         Icon(
                             imageVector = icon,

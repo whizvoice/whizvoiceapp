@@ -27,6 +27,8 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.integration.GoogleSignInAutomator
 import com.example.whiz.BaseIntegrationTest
+import androidx.test.InstrumentationRegistry
+import org.junit.After
 
 /**
  * Real app lifecycle integration tests using Strategy #2: Real App Testing
@@ -62,6 +64,9 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
     private val TAG = "AppLifecycleTest"
 
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
+
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
@@ -73,11 +78,40 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
         
+        // Clean up any existing test chats proactively
+        runBlocking {
+            cleanupTestChats()
+        }
+        
         // Start with clean state
         device.pressHome()
         Thread.sleep(1000)
         
         Log.d(TAG, "🔥 Real App Lifecycle Integration Test Setup Complete")
+    }
+
+    @After
+    fun cleanup() {
+        runBlocking {
+            Log.d(TAG, "🧹 Cleaning up test chats created during lifecycle test")
+            cleanupTestChats()
+            Log.d(TAG, "✅ Test cleanup completed")
+        }
+    }
+
+    private suspend fun cleanupTestChats() {
+        try {
+            // Use the simplified cleanup method from BaseIntegrationTest
+            cleanupTestChats(
+                repository = repository,
+                trackedChatIds = createdChatIds,
+                additionalPatterns = listOf("lifecycle", "Lifecycle"),
+                enablePatternFallback = false // Only enable if needed
+            )
+            createdChatIds.clear()
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+        }
     }
 
     // Authentication is now handled automatically by BaseIntegrationTest
@@ -92,31 +126,40 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "🚀🚀🚀 STARTING TEST: realApp_navigationAwayAndBack_behavesCorrectly 🚀🚀🚀")
         Log.d(TAG, "🧪 Testing REAL navigation away and back triggers correct service behaviors")
         
-        // Skip authentication but launch the real app for navigation testing
-        Log.d(TAG, "🚀 Launching app for MANUAL launch testing (not voice)...")
-        
-        // Create a manual launch intent that won't trigger voice detection
-        val intent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            setPackage(packageName)
-            component = ComponentName(packageName, "com.example.whiz.MainActivity")
-            // Use manual launch flags (0x10200000) instead of voice flags (0x10000000)
-            // Manual launches have 0x00200000 bit set, voice launches don't
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or 0x00200000
-            // Add sourceBounds to simulate clicking app icon (manual launches have bounds)
-            sourceBounds = Rect(100, 100, 200, 200) // Simulate app icon position
-            // DON'T add tracing_intent_id (voice launches have this, manual launches don't)
+        // Launch app with enhanced error handling
+        val packageName = "com.example.whiz.debug"
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         }
         
-        Log.d(TAG, "📱 Manual launch intent flags: ${String.format("0x%08X", intent.flags)}")
-        Log.d(TAG, "📱 Manual launch intent bounds: ${intent.sourceBounds}")
-        context.startActivity(intent)
+        if (intent == null) {
+            failWithScreenshot("Could not get launch intent for package $packageName", "No launch intent")
+            return@runBlocking
+        }
         
-        device.wait(Until.hasObject(By.pkg(packageName)), 15000)
-        // Wait for app to fully load instead of arbitrary delay
-        // Try to wait for either "My Chats" or EditText (chat input) 
-        if (!device.wait(Until.hasObject(By.textContains("My Chats").pkg(packageName)), 5000)) {
-            device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 5000)
+        // Launch app
+        context.startActivity(intent)
+        Log.d(TAG, "📱 App launch intent sent successfully")
+        
+        // Wait for app to appear
+        val appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 15000)
+        Log.d(TAG, "📱 App launch wait result: $appLaunched")
+        
+        if (!appLaunched) {
+            failWithScreenshot("App failed to launch within 15 seconds", "App launch timeout")
+            return@runBlocking
+        }
+        
+        // Wait for UI to load
+        val uiLoaded = device.wait(Until.hasObject(By.text("My Chats").pkg(packageName)), 10000) ||
+                      device.wait(Until.hasObject(By.descContains("New Chat").pkg(packageName)), 5000)
+        Log.d(TAG, "📱 App UI load result: $uiLoaded")
+        
+        if (!uiLoaded) {
+            failWithScreenshot("App UI failed to load within timeout", "UI load timeout")
+            return@runBlocking
         }
         
         try {
@@ -127,7 +170,15 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             if (!initialAppVisible) {
                 Log.e(TAG, "❌ CRITICAL: App not detected as foreground!")
                 Log.d(TAG, "🔍 Current package: ${device.currentPackageName}")
+                
+                // Add more diagnostic information before failing
+                Log.d(TAG, "🔍 DIAGNOSTIC INFO:")
+                Log.d(TAG, "   Package name: $packageName")
+                Log.d(TAG, "   Current package: ${device.currentPackageName}")
+                Log.d(TAG, "   Display size: ${device.displayWidth}x${device.displayHeight}")
+                
                 failWithScreenshot("Test requires app to be initially visible but app is not detected as foreground", "App not initially visible")
+                return@runBlocking
             }
 
             // Check if we're already in a chat (should NOT happen for manual launches)

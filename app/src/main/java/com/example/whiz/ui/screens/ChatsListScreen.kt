@@ -16,6 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -107,9 +112,17 @@ fun ChatsListScreen(
             FloatingActionButton(
                 onClick = onNewChatClick,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                containerColor = MaterialTheme.colorScheme.primary
+                containerColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics {
+                    // Explicit accessibility properties
+                    role = Role.Button
+                    contentDescription = "New Chat"
+                }
             ) {
-                Icon(Icons.Default.Add, contentDescription = "New Chat")
+                Icon(
+                    Icons.Default.Add, 
+                    contentDescription = null // Icon description handled by parent FAB
+                )
             }
         }
     ) { paddingValues ->
@@ -261,12 +274,18 @@ fun EmptyChatsList(onNewChatClick: () -> Unit) {
                 modifier = Modifier
                     .size(56.dp)
                     .padding(8.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Start your first chat"
+                    }
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Start your first chat",
+                    contentDescription = null, // Remove duplicate description
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clearAndSetSemantics { }
                 )
             }
         }

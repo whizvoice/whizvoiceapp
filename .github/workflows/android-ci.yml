@@ -15,8 +15,8 @@ on:
       - "!.github/workflows/android-ci.yml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
 
 permissions:
   contents: read
@@ -186,89 +186,93 @@ jobs:
           disable-animations: true
           script: |
             echo "🚀 Starting comprehensive instrumented tests with REAL credentials..."
+
+            # Create log directories
+            mkdir -p test-logs
+
+            # Start logcat capture in background (capture everything)
+            echo "📱 Starting comprehensive logcat capture..."
+            adb logcat -v threadtime > test-logs/full-logcat.log 2>&1 &
+            LOGCAT_PID=$!
+            echo "✅ Logcat capture started (PID: $LOGCAT_PID)"
+
+            # Wait for device and setup
             adb wait-for-device
             echo "⏳ Waiting for system boot..."
             sleep 15
             adb shell getprop sys.boot_completed
             sleep 10
             echo "Emulator should be ready!"
-            echo "📱 Device Info:"
-            adb shell getprop ro.product.model
-            adb shell getprop ro.build.version.sdk
+
+            # Device info logging
+            echo "📱 Device Info:" | tee -a test-logs/test-summary.log
+            adb shell getprop ro.product.model | tee -a test-logs/test-summary.log
+            adb shell getprop ro.build.version.sdk | tee -a test-logs/test-summary.log
+            echo "Test started at: $(date)" | tee -a test-logs/test-summary.log
+
+            # Cleanup
             echo "🧹 Cleaning up any existing app installations..."
             adb uninstall com.example.whiz || echo "No existing app to uninstall"
             adb uninstall com.example.whiz.test || echo "No existing test app to uninstall"
+
+            # Setup credentials
             echo "📁 Pushing test credentials to emulator..."
             adb push test_credentials.json /data/local/tmp/test_credentials.json
-            echo "🧪 Running ALL tests with REAL credentials (no mocking)..."
-            ./gradlew connectedDebugAndroidTest --stacktrace --continue
 
-            echo "📸 Immediately pulling failure screenshots (while emulator is still running)..."
-            echo "🔍 Checking multiple screenshot locations..."
+            # Clear logcat before test execution to get clean test logs
+            echo "🧹 Clearing logcat before test execution..."
+            adb logcat -c
 
-            # Check CI-accessible directory first (most likely to have screenshots)
-            echo "📁 Checking /data/local/tmp/screenshots/:"
-            adb shell ls -la /data/local/tmp/screenshots/ || echo "No CI screenshots directory found"
+            # Restart focused logcat capture for test execution only
+            kill $LOGCAT_PID 2>/dev/null || true
+            adb logcat -v threadtime > test-logs/test-execution-logcat.log 2>&1 &
+            LOGCAT_PID=$!
+            echo "✅ Test execution logcat capture started (PID: $LOGCAT_PID)"
 
-            # Check main screenshots directory
-            echo "📁 Checking /sdcard/Pictures/:"
-            adb shell ls -la /sdcard/Pictures/ || echo "No /sdcard/Pictures/ directory found"
+            echo "🧪 Running ALL tests with REAL credentials (no mocking)..." | tee -a test-logs/test-summary.log
 
-            # Check root sdcard directory too
-            echo "📁 Checking /sdcard/ for any PNG files:"
-            adb shell ls -la /sdcard/*.png 2>/dev/null || echo "No PNG files in /sdcard/"
+            # Run tests and capture everything in single command block for GitHub Actions variable persistence
+            echo "📊 Starting Gradle test execution..." | tee -a test-logs/test-summary.log; echo "Test execution started at: $(date)" | tee -a test-logs/test-summary.log; ./gradlew connectedDebugAndroidTest --stacktrace --continue > test-logs/gradle-output.log 2>&1; GRADLE_EXIT_CODE=$?; kill $LOGCAT_PID 2>/dev/null || true; echo "✅ Logcat capture stopped"; echo "" | tee -a test-logs/test-summary.log; echo "📋 Test execution completed with exit code: $GRADLE_EXIT_CODE" | tee -a test-logs/test-summary.log; echo "Test execution finished at: $(date)" | tee -a test-logs/test-summary.log; echo "" | tee -a test-logs/test-summary.log; echo "📊 Test Results Summary:" | tee -a test-logs/test-summary.log; echo "===========================================" | tee -a test-logs/test-summary.log; grep -E "(FAILED|PASSED|Tests.*completed)" test-logs/gradle-output.log | tee -a test-logs/test-summary.log || echo "No test result patterns found" | tee -a test-logs/test-summary.log; echo "" | tee -a test-logs/test-summary.log; echo "❌ Failed Tests Details:" | tee -a test-logs/test-summary.log; echo "===========================================" | tee -a test-logs/test-summary.log; grep -B2 -A2 "FAILED" test-logs/gradle-output.log | tee -a test-logs/test-summary.log || echo "No failed tests found" | tee -a test-logs/test-summary.log; echo "📸 IMMEDIATELY pulling screenshots while emulator is still online..." | tee -a test-logs/test-summary.log; echo "🔍 Checking emulator storage state..."; adb shell df -h | grep -E "(Filesystem|/sdcard)" || echo "Storage check failed"; echo "📱 Device info:"; adb shell getprop ro.product.model || echo "Device info failed"; adb shell getprop ro.build.version.sdk || echo "API level check failed"; echo "🔧 Checking screenshot directory on device..."; adb shell ls -la /sdcard/Download/test_screenshots/ 2>/dev/null || echo "No screenshots directory found"; echo "📁 All PNG files in screenshot directory:"; adb shell find /sdcard/Download/test_screenshots -name "*.png" -type f 2>/dev/null | head -20 || echo "No PNG files found"; echo "🔍 Extracting test failure logs..." | tee -a test-logs/test-summary.log; echo "===========================================" | tee -a test-logs/test-summary.log; adb logcat -d | grep -E "(FAIL WITH SCREENSHOT|Taking failure screenshot|Screenshot saved|BaseIntegrationTest)" > test-logs/test-failure-logcat.log || echo "No test failure logs found"; tail -50 test-logs/test-failure-logcat.log | tee -a test-logs/test-summary.log || echo "No recent failure logs" | tee -a test-logs/test-summary.log; echo "💾 Forcing file sync before pull..."; adb shell sync || echo "Sync failed"; sleep 1; echo "📁 Creating local directory and pulling screenshots..."; mkdir -p test-failure-screenshots; echo "🔄 Pulling screenshot directory (robust method)..."; adb pull /sdcard/Download/test_screenshots ./test-failure-screenshots/ 2>/dev/null && echo "✅ Screenshot directory pull succeeded" || echo "⚠️ Directory pull failed, trying individual files..."; if [ ! -f ./test-failure-screenshots/test_screenshots/*.png 2>/dev/null ]; then echo "🔄 Attempting individual file pulls..."; adb shell find /sdcard/Download/test_screenshots -name "*.png" -type f 2>/dev/null | while read file; do filename=$(basename "$file"); echo "📥 Pulling: $file -> $filename"; adb pull "$file" "./test-failure-screenshots/$filename" 2>/dev/null && echo "✅ $filename" || echo "❌ $filename"; done; fi; echo "" | tee -a test-logs/test-summary.log; echo "📄 Generated Log Files:" | tee -a test-logs/test-summary.log; echo "===========================================" | tee -a test-logs/test-summary.log; ls -la test-logs/ | tee -a test-logs/test-summary.log; echo "📱 Screenshot files pulled locally:"; ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"; find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"; echo "📄 Individual screenshot files:"; find ./test-failure-screenshots -name "*.png" 2>/dev/null | head -10 || echo "No PNG files found"; echo "📦 Preparing log files for upload..." | tee -a test-logs/test-summary.log; echo "" | tee -a test-logs/test-summary.log; echo "📊 Log File Summary:" | tee -a test-logs/test-summary.log; echo "===========================================" | tee -a test-logs/test-summary.log; if [ -f test-logs/gradle-output.log ]; then echo "Gradle output: $(wc -l < test-logs/gradle-output.log) lines, $(du -h test-logs/gradle-output.log | cut -f1)" | tee -a test-logs/test-summary.log; fi; if [ -f test-logs/test-execution-logcat.log ]; then echo "Test logcat: $(wc -l < test-logs/test-execution-logcat.log) lines, $(du -h test-logs/test-execution-logcat.log | cut -f1)" | tee -a test-logs/test-summary.log; fi; if [ -f test-logs/test-failure-logcat.log ]; then echo "Failure logs: $(wc -l < test-logs/test-failure-logcat.log) lines, $(du -h test-logs/test-failure-logcat.log | cut -f1)" | tee -a test-logs/test-summary.log; fi; echo ""; echo "📋 Final test result summary:" | tee -a test-logs/test-summary.log; if [ "$GRADLE_EXIT_CODE" -eq 0 ]; then echo "✅ All tests passed!" | tee -a test-logs/test-summary.log; else echo "❌ Some tests failed (exit code: $GRADLE_EXIT_CODE)" | tee -a test-logs/test-summary.log; echo "📸 Failure screenshots should be available above" | tee -a test-logs/test-summary.log; echo "📄 Detailed logs available in artifacts" | tee -a test-logs/test-summary.log; echo "⚠️ This will cause the CI to fail at the end, but screenshots were collected first" | tee -a test-logs/test-summary.log; fi; echo "Final summary completed at: $(date)" | tee -a test-logs/test-summary.log; exit $GRADLE_EXIT_CODE
 
-            # Check if any screenshots exist anywhere
-            echo "📁 Searching for all PNG files on device:"
-            adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found in /sdcard/"
-            adb shell find /data/local/tmp -name "*.png" 2>/dev/null || echo "No PNG files found in /data/local/tmp/"
-
-            # Create local directory for screenshots
-            mkdir -p test-failure-screenshots
-
-            # Try to pull from CI directory first
-            adb pull /data/local/tmp/screenshots/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from CI screenshots directory"
-
-            # Try to pull from Pictures directory
-            adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
-
-            # Try to pull any PNG files from root sdcard (simplified single command)
-            adb shell "ls /sdcard/*.png 2>/dev/null && echo 'Found PNG files in /sdcard/'" || echo "No PNG files found in /sdcard/"
-
-            echo "📱 Screenshot files found locally:"
-            ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
-            find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
-
-      - name: Pull screenshots from emulator (backup)
+      - name: Final verification and upload preparation
         if: always()
         run: |
-          echo "📸 Pulling failure screenshots from emulator..."
-          echo "🔍 Checking multiple screenshot locations..."
+          echo "🔍 Final screenshot verification for upload..."
+          echo ""
 
-          # Check main screenshots directory
-          echo "📁 Checking /sdcard/Pictures/:"
-          adb shell ls -la /sdcard/Pictures/ || echo "No /sdcard/Pictures/ directory found"
+          if [ -d "./test-failure-screenshots" ]; then
+            echo "📱 Screenshot directory exists: ✅"
+            
+            # Check for both flat structure and nested structure (robust checking)
+            png_count=$(find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l)
+            total_files=$(find ./test-failure-screenshots -type f 2>/dev/null | wc -l)
+            
+            echo "📊 File count summary:"
+            echo "  Total files: $total_files"
+            echo "  PNG files: $png_count"
+            
+            # Debug: show actual directory structure
+            echo "📁 Complete directory structure:"
+            find ./test-failure-screenshots -type f 2>/dev/null | head -15 || echo "No files found"
+            
+            if [ "$png_count" -gt 0 ]; then
+              echo "✅ Screenshots ready for upload!"
+              echo ""
+              echo "📸 Screenshot details:"
+              find ./test-failure-screenshots -name "*.png" -exec ls -lh {} \; 2>/dev/null | head -10
+            else
+              echo "ℹ️ No failure screenshots found (tests may have passed)"
+              echo ""
+              echo "📁 Directory contents (all levels):"
+              find ./test-failure-screenshots -type f 2>/dev/null || echo "No files found"
+            fi
+          else
+            echo "📁 Creating empty screenshots directory for upload consistency"
+            mkdir -p ./test-failure-screenshots
+          fi
 
-          # Check root sdcard directory too
-          echo "📁 Checking /sdcard/ for any PNG files:"
-          adb shell ls -la /sdcard/*.png 2>/dev/null || echo "No PNG files in /sdcard/"
-
-          # Check if any screenshots exist anywhere
-          echo "📁 Searching for all PNG files on device:"
-          adb shell find /sdcard -name "*.png" 2>/dev/null || echo "No PNG files found anywhere on device"
-
-          # Create local directory for screenshots
-          mkdir -p test-failure-screenshots
-
-          # Try to pull from Pictures directory
-          adb pull /sdcard/Pictures/ ./test-failure-screenshots/ 2>/dev/null || echo "Failed to pull from Pictures directory"
-
-          # Try to pull any PNG files from root sdcard (simplified single command)
-          adb shell "ls /sdcard/*.png 2>/dev/null && echo 'Found PNG files in /sdcard/'" || echo "No PNG files found in /sdcard/"
-
-          echo "📱 Final screenshot files found locally:"
-          ls -la ./test-failure-screenshots/ || echo "No screenshots directory created"
-          find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l | xargs echo "PNG files found:"
+          echo ""
+          echo "📋 Upload summary: $(find ./test-failure-screenshots -name "*.png" 2>/dev/null | wc -l) PNG files ready"
 
       - name: Upload test failure screenshots
         uses: actions/upload-artifact@v4
@@ -277,6 +281,67 @@ jobs:
           name: test-failure-screenshots-api${{ matrix.api-level }}
           path: test-failure-screenshots/
           retention-days: 30
+
+      - name: Upload comprehensive test logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comprehensive-test-logs-api${{ matrix.api-level }}
+          path: test-logs/
+          retention-days: 30
+
+      - name: Display log capture summary
+        if: always()
+        run: |
+          echo "📊 COMPREHENSIVE LOG CAPTURE SUMMARY"
+          echo "======================================"
+          echo ""
+
+          if [ -d "test-logs" ]; then
+            echo "✅ Log files captured successfully:"
+            echo ""
+            ls -la test-logs/ || echo "No log files found"
+            echo ""
+            
+            # Show test summary if available
+            if [ -f "test-logs/test-summary.log" ]; then
+              echo "📋 TEST SUMMARY (first 50 lines):"
+              echo "----------------------------------------"
+              head -50 test-logs/test-summary.log
+              echo ""
+              echo "📄 Full test summary available in artifacts: test-summary.log"
+              echo ""
+            fi
+            
+            # Show recent failure logs if available
+            if [ -f "test-logs/test-failure-logcat.log" ]; then
+              echo "❌ RECENT FAILURE LOGS (last 20 lines):"
+              echo "----------------------------------------"
+              tail -20 test-logs/test-failure-logcat.log
+              echo ""
+              echo "📄 Full failure logs available in artifacts: test-failure-logcat.log"
+              echo ""
+            fi
+            
+            # Show gradle test results snippet
+            if [ -f "test-logs/gradle-output.log" ]; then
+              echo "📊 GRADLE TEST RESULTS (key snippets):"
+              echo "----------------------------------------"
+              grep -E "(FAILED|PASSED|Tests.*completed|BUILD FAILED|BUILD SUCCESSFUL)" test-logs/gradle-output.log | tail -10 || echo "No test result patterns found"
+              echo ""
+              echo "📄 Full gradle output available in artifacts: gradle-output.log"
+              echo ""
+            fi
+            
+            echo "📦 DOWNLOADABLE ARTIFACTS:"
+            echo "- comprehensive-test-logs-api${{ matrix.api-level }} (Contains all log files)"
+            echo "- test-failure-screenshots-api${{ matrix.api-level }} (Contains failure screenshots)"
+            echo ""
+            echo "💡 TIP: Download these artifacts from the GitHub Actions 'Summary' page for detailed analysis."
+            
+          else
+            echo "❌ No test logs directory found - log capture may have failed"
+          fi
 
       - name: Generate instrumented test report
         uses: dorny/test-reporter@v1

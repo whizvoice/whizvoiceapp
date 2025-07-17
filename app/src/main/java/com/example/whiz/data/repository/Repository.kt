@@ -504,24 +504,22 @@ class WhizRepository @Inject constructor(
             
             if (messagesToMigrate.isNotEmpty()) {
                 Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                
+                // 🔧 PERFORMANCE FIX: Use batch SQL update instead of individual message updates
+                // This prevents multiple Flow emissions that cause UI recompositions
+                try {
+                    Log.d(TAG, "migrateChatMessages: 🚀 BATCH: Migrating ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId in single operation")
+                    val updateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
+                    Log.d(TAG, "migrateChatMessages: ✅ BATCH: Successfully migrated $updateCount messages in single operation")
+                } catch (e: Exception) {
+                    Log.e(TAG, "migrateChatMessages: ❌ BATCH: Error in batch migration", e)
+                    throw e // Re-throw to fail the migration
+                }
             } else {
                 Log.w(TAG, "migrateChatMessages: ⚠️ No messages found for chat $fromChatId - this might be a timing issue")
             }
             
             if (messagesToMigrate.isNotEmpty()) {
-                // Update chat ID for all messages
-                messagesToMigrate.forEach { message ->
-                    try {
-                        Log.d(TAG, "migrateChatMessages: 🔄 Migrating message ${message.id} from chat $fromChatId to $toChatId")
-                        val updatedMessage = message.copy(chatId = toChatId)
-                        val updateResult = messageDao.updateMessage(updatedMessage)
-                        Log.d(TAG, "migrateChatMessages: ✅ Successfully migrated message ${message.id} (updateResult: $updateResult)")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "migrateChatMessages: ❌ Error migrating individual message ${message.id}", e)
-                        throw e // Re-throw to fail the migration
-                    }
-                }
-                
                 // Delete the old optimistic chat if it was temporary (negative ID means optimistic)
                 if (fromChatId < 0) {
                     try {
