@@ -809,7 +809,7 @@ fun ChatInputBar(
                             // This must come first to override listening/responding states
                             Tuple4(
                                 Icons.Filled.Send,
-                                "Send message",
+                                "Send typed message",
                                 onSendClick,
                                 MaterialTheme.colorScheme.primary
                             )
@@ -851,7 +851,7 @@ fun ChatInputBar(
                             // Show send button for voice text when continuous listening is OFF
                             Tuple4(
                                 Icons.Filled.Send,
-                                "Send message",
+                                "Send voice message",
                                 onSendClick,
                                 MaterialTheme.colorScheme.primary
                             )

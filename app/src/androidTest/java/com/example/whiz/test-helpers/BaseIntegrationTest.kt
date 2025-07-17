@@ -370,10 +370,10 @@ abstract class BaseIntegrationTest {
     protected fun clickSendButtonAndWaitForSent(messageText: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 NORMAL: clicking send button...")
         
-        // Use only the working method - exact content description
+        // Use only the working method - exact content description for TYPED messages
         val sendButton = device.findObject(
             UiSelector()
-                .description("Send message")
+                .description("Send typed message")
                 .className("android.view.View")
                 .packageName(packageName)
         )
@@ -1526,10 +1526,41 @@ abstract class BaseIntegrationTest {
     protected fun clickSendButtonAndWaitForSentRapid(messageText: String): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔍 RAPID: clicking send button (optimized for speed)...")
         
-        // Use only the proven working method - exact content description
+        // Debug what ALL elements are actually present on screen
+        android.util.Log.d("BaseIntegrationTest", "🔍 FULL SCREEN DEBUG: Scanning ALL elements on screen...")
+        
+        // All buttons
+        val allButtons = device.findObjects(By.clazz("android.widget.Button").pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${allButtons.size} Button elements:")
+        allButtons.forEachIndexed { index, button ->
+            android.util.Log.d("BaseIntegrationTest", "  Button $index: desc='${button.contentDescription}', text='${button.text}', clickable=${button.isClickable}, enabled=${button.isEnabled}")
+        }
+        
+        // All Views (since we know send button is a View)
+        val allViews = device.findObjects(By.clazz("android.view.View").pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${allViews.size} View elements with package filter:")
+        allViews.forEachIndexed { index, view ->
+            android.util.Log.d("BaseIntegrationTest", "  View $index: desc='${view.contentDescription}', text='${view.text}', clickable=${view.isClickable}, enabled=${view.isEnabled}")
+        }
+        
+        // All elements with "Send" in description (including typed/voice variants)
+        val sendRelatedElements = device.findObjects(By.desc(java.util.regex.Pattern.compile(".*[Ss]end.*")).pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${sendRelatedElements.size} Send-related elements:")
+        sendRelatedElements.forEachIndexed { index, element ->
+            android.util.Log.d("BaseIntegrationTest", "  Send element $index: desc='${element.contentDescription}', clickable=${element.isClickable}, enabled=${element.isEnabled}, className='${element.className}'")
+        }
+        
+        // Specifically look for typed message send button
+        val typedSendElements = device.findObjects(By.desc("Send typed message").pkg(packageName))
+        android.util.Log.d("BaseIntegrationTest", "📱 Found ${typedSendElements.size} 'Send typed message' elements:")
+        typedSendElements.forEachIndexed { index, element ->
+            android.util.Log.d("BaseIntegrationTest", "  Typed send element $index: clickable=${element.isClickable}, enabled=${element.isEnabled}")
+        }
+        
+        // Use only the proven working method - exact content description for TYPED messages
         val sendButton = device.findObject(
             UiSelector()
-                .description("Send message")
+                .description("Send typed message")
                 .className("android.view.View")
                 .packageName(packageName)
         )
@@ -1947,7 +1978,7 @@ abstract class BaseIntegrationTest {
         
         val sendButton = device.findObject(
             UiSelector()
-                .description("Send message")
+                .description("Send typed message")
                 .className("android.view.View")
                 .packageName(packageName)
         )
