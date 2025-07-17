@@ -309,9 +309,18 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Found EditText input field")
         
+        // Debug logging of input field status
+        android.util.Log.d("BaseIntegrationTest", "🔍 INPUT FIELD STATUS:")
+        android.util.Log.d("BaseIntegrationTest", "  - isClickable: ${messageInput.isClickable}")
+        android.util.Log.d("BaseIntegrationTest", "  - isEnabled: ${messageInput.isEnabled}")
+        android.util.Log.d("BaseIntegrationTest", "  - isSelected: ${messageInput.isSelected}")
+        android.util.Log.d("BaseIntegrationTest", "  - isFocused: ${messageInput.isFocused}")
+        android.util.Log.d("BaseIntegrationTest", "  - bounds: ${messageInput.visibleBounds}")
+        android.util.Log.d("BaseIntegrationTest", "  - text: '${messageInput.text}'")
+        
         // Click and set text
-        messageInput.click()
-        android.util.Log.d("BaseIntegrationTest", "just clicked")
+        // messageInput.click()
+        android.util.Log.d("BaseIntegrationTest", "skipped click")
         messageInput.setText(message)
         android.util.Log.d("BaseIntegrationTest", "just set text")
         
@@ -365,6 +374,7 @@ abstract class BaseIntegrationTest {
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send message")
+                .className("android.view.View")
                 .packageName(packageName)
         )
         
@@ -1520,6 +1530,7 @@ abstract class BaseIntegrationTest {
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send message")
+                .className("android.view.View")
                 .packageName(packageName)
         )
         
@@ -1937,6 +1948,7 @@ abstract class BaseIntegrationTest {
         val sendButton = device.findObject(
             UiSelector()
                 .description("Send message")
+                .className("android.view.View")
                 .packageName(packageName)
         )
         
