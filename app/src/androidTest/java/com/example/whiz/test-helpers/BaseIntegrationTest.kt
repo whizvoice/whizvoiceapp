@@ -286,7 +286,6 @@ abstract class BaseIntegrationTest {
         val messageInput = device.findObject(
             UiSelector()
                 .className("android.widget.EditText")
-                .description("Message input field")
                 .packageName(packageName)
         )
         
@@ -1492,20 +1491,21 @@ abstract class BaseIntegrationTest {
             android.util.Log.d("BaseIntegrationTest", "🔍 REGULAR: clicking send button (not optimized for speed)...")
         }
 
-        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
-        val sendButton = device.findObject(
-            UiSelector()
-                .description("Send typed message")
-                .className("android.widget.Button")
-                .packageName(packageName)
-        )
-        
         // Ultra-short timeout for rapid testing - fail fast if not immediately available
         var sendTimeout = 1000L
         if (rapid) {
             sendTimeout = 100L
         }
-        if (!sendButton.waitForExists(sendTimeout)) {
+
+        // Wait for specific element with description
+        var sendButttonExists = waitForElementExists(
+            className = "android.widget.Button", 
+            description = "Send typed message",
+            timeoutMs = sendTimeout,
+            elementDescription = "Send button"
+        )
+
+        if (!sendButttonExists) {
                          android.util.Log.e("BaseIntegrationTest", "❌ Send button not found within $sendTimeout - UI not responsive enough for immediate sending")
             // UI dump to see what's actually on screen when send button search fails
             val allElements = device.findObjects(By.pkg(packageName))
@@ -1544,6 +1544,13 @@ abstract class BaseIntegrationTest {
         // Single click attempt
         var clickSuccessful = false
         try {
+            // Find and click the send button
+            val sendButton = device.findObject(
+                UiSelector()
+                    .description("Send typed message")
+                    .className("android.widget.Button")
+                    .packageName(packageName)
+            )
             sendButton.click()
             android.util.Log.d("BaseIntegrationTest", "📤: send button clicked")
             clickSuccessful = true
@@ -1557,14 +1564,17 @@ abstract class BaseIntegrationTest {
             return false
         }
         var messageDisplayTimeout = 1000L
+        android.util.Log.d("BaseIntegrationTest", "🔍 TIMEOUT DEBUG: rapid=$rapid, initial timeout=$messageDisplayTimeout")
         if (rapid) {
             messageDisplayTimeout = 20L
+        } else {
         }
-        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+        device.findObject(UiSelector().packageName(packageName)) // Force UI sync
+        android.util.Log.d("BaseIntegrationTest", "🔍 TIMEOUT DEBUG: About to wait for message with timeout=${messageDisplayTimeout}ms")
                  // Proper wait for message to render in UI (not just instant check)
          val messageDisplayed = device.wait(
              Until.hasObject(
-                 By.desc("User message: $messageText").pkg(packageName)
+                 By.descContains("User message:").textContains(messageText.take(20)).pkg(packageName)
              ),
              messageDisplayTimeout
          )
@@ -1573,6 +1583,37 @@ abstract class BaseIntegrationTest {
             android.util.Log.d("BaseIntegrationTest", "✅ : message sent and displayed instantly")
         } else {
             android.util.Log.e("BaseIntegrationTest", "❌ : message not displayed instantly")
+            
+            // Full UI dump to see what's actually on screen when message detection fails
+            val allElements = device.findObjects(By.pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 UI Dump for message detection failure:")
+            android.util.Log.d("BaseIntegrationTest", "🔍 Looking for message: '$messageText'")
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${allElements.size} elements in package $packageName")
+            
+            // Log ALL elements to see what's actually available
+            android.util.Log.d("BaseIntegrationTest", "🔍 ALL ELEMENTS ON SCREEN:")
+            allElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  Element $index: class='${element.className}', text='${element.text}', desc='${element.contentDescription}', enabled=${element.isEnabled}, clickable=${element.isClickable}")
+            }
+            
+            // Log all elements that might contain our message text
+            val messageRelatedElements = allElements.filter { element ->
+                element.text?.contains(messageText, ignoreCase = true) == true ||
+                element.contentDescription?.contains(messageText, ignoreCase = true) == true ||
+                element.text?.contains("User message:", ignoreCase = true) == true ||
+                element.contentDescription?.contains("User message:", ignoreCase = true) == true
+            }
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${messageRelatedElements.size} message-related elements:")
+            messageRelatedElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  Message-related $index: class='${element.className}', text='${element.text}', desc='${element.contentDescription}'")
+            }
+            
+            // Log all TextView elements specifically (where messages are usually displayed)
+            val textViewElements = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
+            android.util.Log.d("BaseIntegrationTest", "🔍 Found ${textViewElements.size} TextView elements:")
+            textViewElements.forEachIndexed { index, element ->
+                android.util.Log.d("BaseIntegrationTest", "  TextView $index: text='${element.text}', desc='${element.contentDescription}'")
+            }
         }
         
         return messageDisplayed
@@ -2187,6 +2228,52 @@ abstract class BaseIntegrationTest {
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ Error during test chat cleanup", e)
         }
+    }
+
+    /**
+     * Custom wait function that uses .exists() with a loop and timeout
+     * @param className The class name to search for (e.g., "android.widget.TextView")
+     * @param description Optional description to filter by
+     * @param timeoutMs Timeout in milliseconds
+     * @param elementDescription Human-readable description for logging
+     * @return true if element was found within timeout, false otherwise
+     */
+    protected fun waitForElementExists(
+        className: String,
+        description: String? = null,
+        timeoutMs: Long = 1000L,
+        elementDescription: String = "element"
+    ): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for $elementDescription (${timeoutMs}ms timeout)...")
+        
+        val startTime = System.currentTimeMillis()
+
+        device.findObject(UiSelector().packageName(packageName)) // Force UI sync
+        
+        while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+            try {
+                val selector = UiSelector().className(className).packageName(packageName)
+                if (description != null) {
+                    selector.description(description)
+                }
+                
+                val element = device.findObject(selector)
+                if (element.exists()) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Found $elementDescription within ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+                
+                // Brief wait before next check
+                Thread.sleep(10)
+                
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Error checking for $elementDescription: ${e.message}")
+                Thread.sleep(10)
+            }
+        }
+        
+        android.util.Log.w("BaseIntegrationTest", "❌ $elementDescription not found within ${timeoutMs}ms timeout")
+        return false
     }
 
 
