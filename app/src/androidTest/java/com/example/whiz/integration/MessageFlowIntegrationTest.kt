@@ -200,7 +200,7 @@ class MessageFlowIntegrationTest : BaseIntegrationTest() {
             // This is the core UX test: users MUST be able to interrupt the bot AND have messages actually reach the server
             // Using rapid send method to test interruption capability during bot response
             // This should detect the production bug where typing is blocked during bot response
-            if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
+            if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
                 android.util.Log.e(TAG, "❌ CRITICAL: Bot interruption test failed!")
                 android.util.Log.e(TAG, "   Rapid message sending failed during bot response")
                 android.util.Log.e(TAG, "   This indicates the PRODUCTION BUG where users cannot type/send")

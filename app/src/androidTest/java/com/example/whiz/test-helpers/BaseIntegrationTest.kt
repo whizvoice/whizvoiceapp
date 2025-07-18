@@ -392,7 +392,7 @@ abstract class BaseIntegrationTest {
         android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: '${message.take(30)}...'")
         
         // step 1: type message
-        val typingSuccess = typeMessageInInputField(message)
+        val typingSuccess = typeMessageInInputField(message, rapid = rapid)
         if (!typingSuccess) {
             android.util.Log.e("BaseIntegrationTest", "❌ typeMessageInInputField returned false")
             return false
@@ -1617,32 +1617,6 @@ abstract class BaseIntegrationTest {
         }
         
         return messageDisplayed
-    }
-
-    /**
-     * Complete message sending flow: type message, click send, verify display - RAPID VERSION
-     */
-    protected fun sendMessageAndVerifyDisplayRapid(message: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "📝 RAPID: attempting to send message: '${message.take(30)}...'")
-        
-        // step 1: type message WITHOUT scrolling (rapid mode)
-        val typingSuccess = typeMessageInInputField(message, rapid = true)
-        if (!typingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ tryToTypeInInputField returned false")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message typed successfully")
-        
-        // step 2: click send and wait - RAPID
-        val sendingSuccess = clickSendButtonAndWaitForSent(message, rapid = true)
-        if (!sendingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: clickSendButtonAndWaitForSent returned false")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: message sent and displayed successfully")
-        return true
     }
 
     /**
