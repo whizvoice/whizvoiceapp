@@ -281,7 +281,7 @@ abstract class BaseIntegrationTest {
         } else {
             android.util.Log.d("BaseIntegrationTest", "🚀 RAPID: Skipping scroll to bottom for rapid typing...")
         }
-        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+        device.findObject(UiSelector().packageName(packageName)) // Force UI sync
         // Look for the actual EditText (the real input field)
         val messageInput = device.findObject(
             UiSelector()
@@ -329,15 +329,6 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Found EditText input field")
         
-        // Debug logging of input field status
-        android.util.Log.d("BaseIntegrationTest", "🔍 INPUT FIELD STATUS:")
-        android.util.Log.d("BaseIntegrationTest", "  - isClickable: ${messageInput.isClickable}")
-        android.util.Log.d("BaseIntegrationTest", "  - isEnabled: ${messageInput.isEnabled}")
-        android.util.Log.d("BaseIntegrationTest", "  - isSelected: ${messageInput.isSelected}")
-        android.util.Log.d("BaseIntegrationTest", "  - isFocused: ${messageInput.isFocused}")
-        android.util.Log.d("BaseIntegrationTest", "  - bounds: ${messageInput.visibleBounds}")
-        android.util.Log.d("BaseIntegrationTest", "  - text: '${messageInput.text}'")
-        
         // Click and set text
         // messageInput.click()
         android.util.Log.d("BaseIntegrationTest", "skipped click")
@@ -352,30 +343,42 @@ abstract class BaseIntegrationTest {
         val startTime = System.currentTimeMillis()
         var timeout = 1000L // 1 seconds
         if (rapid) {
-            timeout = 25L
+            timeout = 100L
         }
         android.util.Log.d("BaseIntegrationTest", "looking for text")
-        device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+        device.findObject(UiSelector().packageName(packageName)) // Force UI sync
 
         while (!textFound && (System.currentTimeMillis() - startTime) < timeout) {
-            val currentText = messageInput.text ?: ""
+            var currentText = messageInput.text ?: ""
+            
+            // Debug: Show exact strings being compared
+            android.util.Log.d("BaseIntegrationTest", "🔍 DEBUG COMPARISON:")
+            android.util.Log.d("BaseIntegrationTest", "  searchText: '${searchText}' (length: ${searchText.length})")
+            android.util.Log.d("BaseIntegrationTest", "  currentText: '${currentText}' (length: ${currentText.length})")
+            android.util.Log.d("BaseIntegrationTest", "  contains check: ${currentText.contains(searchText, ignoreCase = true)}")
+            
             if (currentText.contains(searchText, ignoreCase = true)) {
                 textFound = true
-                android.util.Log.d("BaseIntegrationTest", "✅ Text found in EditText: '${currentText.take(50)}...'")
+                android.util.Log.d("BaseIntegrationTest", "✅ Text found in EditText: '${currentText.take(50)}'")
             } else {
-                android.util.Log.d("BaseIntegrationTest", "🔄 Waiting for text... current: '${currentText.take(30)}...'")
-                if (rapid) {
-                    return true
-                }
-                Thread.sleep(10)
+                android.util.Log.d("BaseIntegrationTest", "🔄 Waiting for text... current: '${currentText.take(30)}'")
             }
         }
         
         if (!textFound) {
+            // Debug logging of input field status
+            android.util.Log.d("BaseIntegrationTest", "🔍 INPUT FIELD STATUS:")
+            android.util.Log.d("BaseIntegrationTest", "  - isClickable: ${messageInput.isClickable}")
+            android.util.Log.d("BaseIntegrationTest", "  - isEnabled: ${messageInput.isEnabled}")
+            android.util.Log.d("BaseIntegrationTest", "  - isSelected: ${messageInput.isSelected}")
+            android.util.Log.d("BaseIntegrationTest", "  - isFocused: ${messageInput.isFocused}")
+            android.util.Log.d("BaseIntegrationTest", "  - bounds: ${messageInput.visibleBounds}")
+            android.util.Log.d("BaseIntegrationTest", "  - text: '${messageInput.text}'")
+            android.util.Log.d("BaseIntegrationTest", "  - comparison: '${messageInput.text.contains(searchText, ignoreCase = true)}'")
             val currentText = messageInput.text ?: ""
             android.util.Log.e("BaseIntegrationTest", "❌ Text not visible after typing - typing failed")
-            android.util.Log.e("BaseIntegrationTest", "   Looking for: '$searchText...' in EditText")
-            android.util.Log.e("BaseIntegrationTest", "   EditText contains: '${currentText.take(50)}...'")
+            android.util.Log.e("BaseIntegrationTest", "   Looking for: '$searchText' in EditText")
+            android.util.Log.e("BaseIntegrationTest", "   EditText contains: '${currentText.take(50)}'")
             return false
         }
         
@@ -1498,14 +1501,14 @@ abstract class BaseIntegrationTest {
         }
 
         // Wait for specific element with description
-        var sendButttonExists = waitForElementExists(
+        var sendButtonExists = waitForElementExists(
             className = "android.widget.Button", 
             description = "Send typed message",
             timeoutMs = sendTimeout,
             elementDescription = "Send button"
         )
 
-        if (!sendButttonExists) {
+        if (!sendButtonExists) {
                          android.util.Log.e("BaseIntegrationTest", "❌ Send button not found within $sendTimeout - UI not responsive enough for immediate sending")
             // UI dump to see what's actually on screen when send button search fails
             val allElements = device.findObjects(By.pkg(packageName))

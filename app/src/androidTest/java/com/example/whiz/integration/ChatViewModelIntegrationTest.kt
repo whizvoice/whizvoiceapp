@@ -169,8 +169,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "📨 Step 5: Sending interrupt messages RAPIDLY while bot is responding...")
             val interruptMessageCount = MESSAGE_COUNT - 1 // 4 more messages
             
-            // BUG DETECTION PHASE: Try to send rapid messages and FAIL if blocked
-            // Phase 1: Test 2 IMMEDIATE messages (rapid send - most aggressive user flow)
+            // send two instant messages
             for (i in 1..2) {
                 val interruptMessage = "hi $i"
                 
@@ -191,7 +190,7 @@ class ChatViewModelIntegrationTest : BaseIntegrationTest() {
                 sentMessages.add(interruptMessage)
                 
                 // Small delay between immediate messages (simulating rapid user input)
-                delay(50)
+                // delay(50)
             }
             
             // Phase 2: Test 2 QUICK messages (rapid type+send combo - power user flow)
