@@ -1,6 +1,7 @@
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.test.junit4.createComposeRule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -20,22 +21,26 @@ import org.junit.Assert.*
 import org.junit.After
 import android.util.Log
 import com.example.whiz.data.local.MessageType
+import com.example.whiz.test_helpers.ComposeTestHelper
 
 /**
  * Compose-based integration tests for bot interruption and message handling.
- * This uses existing UI Automator methods that work well with Compose UI.
+ * This uses Compose Testing which is specifically designed for testing Compose UI components.
  * 
- * Key advantages of this approach:
- * - Uses proven UI Automator methods that work with Compose
- * - Better reliability than pure Espresso for Compose UI
- * - Faster execution than traditional UI Automator
+ * Key advantages of Compose Testing:
+ * - Native support for Compose UI components
+ * - Better synchronization with Compose state
+ * - More reliable element selection
+ * - Faster execution than UI Automator
  * - Better error messages and debugging
- * - Hybrid approach: navigation with UI Automator, verification with optimized methods
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class ChatViewModelComposeTest : BaseIntegrationTest() {
+    
+    @get:Rule
+    val composeTestRule = createComposeRule()
     
     @Inject
     lateinit var repository: WhizRepository
@@ -142,23 +147,15 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 if (!chatScreenStatus) {
                     Log.e(TAG, "❌ Not on chat screen - navigation failed")
-                    Log.d(TAG, "🔍 Attempting to navigate to chat screen...")
-                    
-                    // Try to navigate to new chat
-                    if (!clickNewChatButtonAndWaitForChatScreen()) {
-                        Log.e(TAG, "❌ Failed to navigate to new chat")
-                        failWithScreenshot("navigation_failed", "Failed to navigate to chat screen")
-                        return@runBlocking
-                    }
-                    
-                    Log.d(TAG, "✅ Successfully navigated to chat screen")
+                    failWithScreenshot("navigate_to_chats_list_failed_2", "❌ Not on chat screen - navigation failed")
+                    return@runBlocking
                 } else {
-                    Log.d(TAG, "✅ Already on chat screen")
+                    Log.d(TAG, "✅ Confirmed we made it to chat screen")
                 }
                 
-                // Now try to send the message using existing UI Automator methods (which work with Compose)
-                Log.d(TAG, "📝 Using existing UI Automator methods for Compose compatibility...")
-                if (!sendMessageAndVerifyDisplay(firstMessage)) {
+                // Now try to send the message using Compose testing
+                Log.d(TAG, "📝 Using Compose testing for better reliability...")
+                if (!ComposeTestHelper.sendMessage(composeTestRule, firstMessage)) {
                     Log.e(TAG, "❌ Initial message failed - cannot proceed with bot interruption test")
                     failWithScreenshot("initial_message_failed", "Initial message failed to display - chat may not have loaded properly")
                     return@runBlocking
@@ -175,7 +172,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                     
                     Log.d(TAG, "🚀 RAPID MESSAGE $i: Testing rapid send during bot response...")
                     
-                    if (!sendMessageAndVerifyDisplay(interruptMessage, rapid = true)) {
+                    if (!ComposeTestHelper.sendMessage(composeTestRule, interruptMessage, rapid = true)) {
                         Log.e(TAG, "❌ RAPID: Message $i failed during rapid send!")
                         Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
                         failWithScreenshot("rapid_message_${i}_failed", "Rapid message $i failed - bot response blocking user input")
@@ -188,10 +185,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "🚀 RAPID PHASE COMPLETE: All ${interruptMessageCount} interrupt messages sent rapidly!")
                 
-                // Step 5: Verify all messages exist using existing methods
-                Log.d(TAG, "🔍 Step 5: Verifying all messages exist...")
+                // Step 5: Verify all messages exist using Compose Testing
+                Log.d(TAG, "🔍 Step 5: Verifying all messages exist using Compose Testing...")
                 
-                val missingMessages = verifyAllMessagesExistInChatCached(sentMessages, collectAllMessages())
+                val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, sentMessages)
                 if (missingMessages.isNotEmpty()) {
                     Log.e(TAG, "❌ Missing messages detected:")
                     missingMessages.forEachIndexed { index, message ->
@@ -202,10 +199,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ All ${sentMessages.size} messages verified to exist in chat")
                 
-                // Step 6: Check for duplicates using existing methods
+                // Step 6: Check for duplicates using Compose Testing
                 Log.d(TAG, "🔍 Step 6: Checking for duplicate messages...")
-                val allChatMessages = collectAllMessages()
-                if (!noDuplicatesInAllMessages(allChatMessages)) {
+                if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
                     failWithScreenshot("chat_duplicates_detected", "Found duplicate message(s) in chat - indicates production bug")
                 }
                 
@@ -223,91 +219,5 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 failWithScreenshot("test_exception_failure", "Bot interruption test failed with exception: ${e.message}")
             }
         }
-    }
-
-    /**
-     * Verify all expected messages exist using cached collection results (no additional scrolling)
-     */
-    private fun verifyAllMessagesExistInChatCached(expectedMessages: List<String>, allMessages: List<Pair<String, String>>): List<String> {
-        val missingMessages = mutableListOf<String>()
-        
-        for ((index, expectedMessage) in expectedMessages.withIndex()) {
-            val searchText = expectedMessage.take(30) // Use first 30 chars for matching
-            
-            // Check if this message exists in our collected messages
-            val found = allMessages.any { (message, _) -> 
-                message.contains(searchText, ignoreCase = true) 
-            }
-            
-            if (found) {
-                Log.d(TAG, "✅ CACHED VERIFICATION: Message ${index + 1} found: '${searchText}...'")
-            } else {
-                Log.w(TAG, "❌ CACHED VERIFICATION: Message ${index + 1} missing: '${searchText}...'")
-                Log.w(TAG, "   Looking for: '${expectedMessage}'")
-                Log.w(TAG, "   Available messages: ${allMessages.map { it.first.take(20) }}")
-                missingMessages.add(expectedMessage)
-            }
-        }
-        
-        if (missingMessages.isEmpty()) {
-            Log.d(TAG, "✅ CACHED VERIFICATION: All ${expectedMessages.size} messages found in chat!")
-        } else {
-            Log.w(TAG, "❌ CACHED VERIFICATION: ${missingMessages.size} messages missing from chat")
-        }
-        
-        return missingMessages
-    }
-
-    /**
-     * Check for duplicates in the entire chat message collection
-     * Returns true if NO duplicates are found, false if duplicates are found
-     */
-    private fun noDuplicatesInAllMessages(allMessages: List<Pair<String, String>>): Boolean {
-        Log.d(TAG, "🔍 DUPLICATE CHECK: Analyzing ${allMessages.size} messages for duplicates...")
-        
-        // Group messages by content to detect real duplicates
-        val messageGroups = allMessages.groupBy { it.first.trim() }
-        
-        // Check each message group for true duplicates (same content appearing multiple times)
-        for ((messageContent, instances) in messageGroups) {
-            if (instances.size > 1) {
-                Log.d(TAG, "🔍 DUPLICATE ANALYSIS: Message '$messageContent' appears ${instances.size} times")
-                
-                // Check if these are likely scroll-related duplicates vs real duplicates
-                val positions = instances.map { it.second }.sorted()
-                Log.d(TAG, "🔍 POSITIONS: ${positions.joinToString(", ")}")
-                
-                // For short messages (like "Hi!", "Hey!"), be more lenient as they might legitimately appear multiple times
-                // For longer messages (like responses), this is more likely a real duplicate
-                if (messageContent.length <= 10) {
-                    Log.d(TAG, "🔍 SHORT MESSAGE: '$messageContent' is short (${messageContent.length} chars) - likely legitimate multiple occurrences")
-                    continue // Skip duplicate detection for short messages
-                }
-                
-                // For longer messages, check if positions are reasonably spaced (scroll-related)
-                val positionDifferences = positions.zipWithNext { a, b -> 
-                    val aPos = a.removePrefix("pos_").toIntOrNull() ?: 0
-                    val bPos = b.removePrefix("pos_").toIntOrNull() ?: 0
-                    kotlin.math.abs(aPos - bPos)
-                }
-                
-                val avgPositionDiff = positionDifferences.average()
-                Log.d(TAG, "🔍 POSITION ANALYSIS: Average position difference: $avgPositionDiff")
-                
-                // If positions are close together (< 500px apart), likely scroll-related false positive
-                if (avgPositionDiff < 500) {
-                    Log.d(TAG, "🔍 SCROLL-RELATED: Positions are close ($avgPositionDiff < 500) - likely scroll-related duplicate")
-                    continue // Skip - likely scroll-related duplicate
-                }
-                
-                // Otherwise, this is likely a real duplicate
-                Log.e(TAG, "❌ REAL DUPLICATE DETECTED: '$messageContent' appears ${instances.size} times with significant position differences")
-                Log.e(TAG, "   Positions: ${positions.joinToString(", ")}")
-                return false
-            }
-        }
-        
-        Log.d(TAG, "✅ DUPLICATE CHECK: No real duplicates found in chat (scroll-related duplicates filtered out)")
-        return true
     }
 } 
