@@ -60,9 +60,6 @@ class ChatViewModel @Inject constructor(
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
-    // Track which request we should cancel if user sends an interrupt
-    private var currentActiveRequestId: String? = null
-
     // Track locally-saved interrupt messages to prevent server duplication
 
 
@@ -104,8 +101,13 @@ class ChatViewModel @Inject constructor(
             val currentChatId = _chatId.value
             val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
             val wasResponding = _isResponding.value
+            
+            // 🔧 CONCURRENT MODE: Only show responding state for UI feedback, don't block input
+            // The UI can still allow new messages even when there are pending requests
             _isResponding.value = hasPendingRequests
+            
             Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
+            Log.d(TAG, "updateRespondingStateForCurrentChat: 🔥 CONCURRENT MODE: UI remains enabled for new messages")
             
             // 🔧 If we just finished responding and continuous listening is enabled, restart microphone immediately
             if (wasResponding && !hasPendingRequests && continuousListeningEnabled && !_isSpeaking.value) {
@@ -278,7 +280,7 @@ class ChatViewModel @Inject constructor(
                             // }
                             Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
                         }
-                        currentActiveRequestId = null // Clear active request on disconnect
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
@@ -299,7 +301,7 @@ class ChatViewModel @Inject constructor(
                             // Clear all pending requests on final connection error
                             pendingRequests.clear()
                             _isResponding.value = false
-                            currentActiveRequestId = null
+                            // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
@@ -311,7 +313,7 @@ class ChatViewModel @Inject constructor(
                                 Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
                                 _isResponding.value = false
                                 pendingRequests.clear()
-                                currentActiveRequestId = null
+                                // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                             }
                         }
                         
@@ -352,15 +354,13 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         _isResponding.value = false
-                        currentActiveRequestId = null // Clear active request on auth error
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
                         // Remove the cancelled request from pending requests
                         pendingRequests.remove(event.cancelledRequestId)
-                        if (currentActiveRequestId == event.cancelledRequestId) {
-                            currentActiveRequestId = null
-                        }
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                     }
                     is WebSocketEvent.Interrupted -> {
@@ -369,7 +369,7 @@ class ChatViewModel @Inject constructor(
                         // Clear all pending requests since they were cancelled
                         val interruptedRequests = pendingRequests.keys.toList()
                         pendingRequests.clear()
-                        currentActiveRequestId = null
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
                     }
@@ -680,10 +680,7 @@ class ChatViewModel @Inject constructor(
                             // 🔧 Add logging to track input text state after response processing
                             Log.d(TAG, "$eventLogId After response processing: _inputText.value = '${_inputText.value}', _isResponding = ${_isResponding.value}")
 
-                            // Clear the active request ID when we receive a response
-                            if (event.requestId != null && event.requestId == currentActiveRequestId) {
-                                currentActiveRequestId = null
-                            }
+                            // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } catch (e: Exception) {
                             Log.e(TAG, "$eventLogId Unexpected error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
@@ -1147,11 +1144,9 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 
-                // Always attempt to send the message regardless of connection status
-                // The WebSocket repository will handle queueing and retry automatically
-                _isResponding.value = true // Show thinking indicator
+                // 🔧 CONCURRENT REQUESTS: Don't block UI with _isResponding = true
+                // Instead, track individual requests and allow multiple concurrent messages
                 val requestId = java.util.UUID.randomUUID().toString()
-                currentActiveRequestId = requestId // Track the active request
                 
                 // 🔧 CRITICAL FIX: Use the updated chat ID after optimistic UI creation
                 // If optimistic UI created a new chat, _chatId.value will be the new local chat ID (could be negative for optimistic chats)
@@ -1160,6 +1155,8 @@ class ChatViewModel @Inject constructor(
                 pendingRequests[requestId] = chatIdForWebSocket
                 
                 Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $requestId")
+                Log.d(TAG, "sendUserInput: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
                 val success = whizServerRepository.sendMessage(trimmedText, requestId, chatIdForWebSocket)
                 
                 if (!success) {
@@ -1323,7 +1320,8 @@ class ChatViewModel @Inject constructor(
         if (textToSend.isBlank()) return
 
         Log.d(TAG, "🔥 sendInputText called with text: '$textToSend', current chatId: ${_chatId.value}")
-        _isResponding.value = true
+        // 🔧 CONCURRENT MODE: Don't block UI with _isResponding = true
+        // Allow multiple concurrent messages to be sent
 
         viewModelScope.launch {
             if (_chatId.value <= 0) {
@@ -1372,8 +1370,9 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 // Generate request ID and track this request
                 val requestId = java.util.UUID.randomUUID().toString()
-                currentActiveRequestId = requestId // Track the active request
                 pendingRequests[requestId] = _chatId.value
+                Log.d(TAG, "sendInputText: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
                 val success = whizServerRepository.sendMessage(textToSend, requestId, _chatId.value)
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet

@@ -43,8 +43,8 @@ cleanup_and_ensure_debug_installed() {
         fi
     fi
     
-    # Only try to install if we're not in clean mode and the script failed
-    if [[ "$CLEAN_AFTER_TESTS" != "true" ]] && [[ $exit_code -ne 0 ]]; then
+    # Always try to install debug app if we're not in clean mode (regardless of success/failure)
+    if [[ "$CLEAN_AFTER_TESTS" != "true" ]]; then
         # Check if debug app is installed
         if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
             log_with_time "📱 Debug app not found - running installation script..."
@@ -969,7 +969,17 @@ if [[ "$CLEAN_AFTER_TESTS" == "true" ]]; then
     adb uninstall com.example.whiz.debug.test >/dev/null 2>&1 || true
     log_summary_only "✅ Debug app and test APK uninstalled"
 else
-    log_summary_only "📱 Debug app remains installed for manual testing"
+    # Ensure debug app is installed for manual testing
+    if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
+        log_summary_only "📱 Debug app not found - installing for manual testing..."
+        if ./install_debug_for_testing.sh 2>/dev/null; then
+            log_summary_only "✅ Debug app installed successfully for manual testing"
+        else
+            log_summary_only "❌ Failed to install debug app for manual testing"
+        fi
+    else
+        log_summary_only "📱 Debug app remains installed for manual testing"
+    fi
 fi
 
 log_summary_only "✅ Test execution completed. Check test_gradle_output.log (gradle), test_logcat_output.log (logcat), and test_summary.log (summaries)."

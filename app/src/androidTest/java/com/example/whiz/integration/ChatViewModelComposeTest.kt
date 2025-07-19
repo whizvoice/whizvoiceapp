@@ -20,6 +20,7 @@ import com.example.whiz.BaseIntegrationTest
 import org.junit.Assert.*
 import org.junit.After
 import android.util.Log
+import android.provider.Settings
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
@@ -72,6 +73,14 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
         
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
+
+        // This might be set automatically by test framework
+        val animationScale = Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1.0f
+        )
+        Log.d("Test", "Animation scale: $animationScale") // Might be 0.0
         
         Log.d(TAG, "🧪 ChatViewModel Compose Test Setup Complete")
     }
@@ -114,10 +123,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 // Initialize cleanup tracking
                 createdNewChatThisTest = true
                 
-                // Step 1: Launch app using ComposeTestHelper
-                Log.d(TAG, "📱 Step 1: Launching app with ComposeTestHelper")
-                if (!ComposeTestHelper.launchApp()) {
-                    failWithScreenshot("app_launch_failed", "App failed to launch via ComposeTestHelper")
+                // Step 1: Verify app is ready (already launched by createAndroidComposeRule)
+                Log.d(TAG, "📱 Step 1: Verifying app is ready (already launched by createAndroidComposeRule)")
+                if (!ComposeTestHelper.isAppReady(composeTestRule)) {
+                    failWithScreenshot("app_not_ready", "App is not ready for testing")
                     return@runBlocking
                 }
                 

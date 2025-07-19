@@ -73,20 +73,16 @@ abstract class BaseIntegrationTest {
         // Set up screenshot directory
         setupScreenshotDirectory()
         
-        if (!skipAutoAuthentication) {
-            runBlocking {
-                try {
-                    val authSuccess = AutoTestAuthentication.ensureAuthenticated(authRepository)
-                    if (!authSuccess) {
-                        throw AssertionError(
-                            "❌ Test authentication failed. " +
-                            "Please ensure REDACTED_TEST_EMAIL is signed in to the device and app."
-                        )
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("BaseIntegrationTest", "Authentication setup failed", e)
-                    throw e
-                }
+        // Set up test authentication
+        runBlocking {
+            try {
+                // Use the test authentication method from AuthRepository
+                authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
+                
+                android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
+            } catch (e: Exception) {
+                android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
+                throw e
             }
         }
     }

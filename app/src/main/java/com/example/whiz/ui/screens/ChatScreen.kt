@@ -632,6 +632,9 @@ fun TypingIndicator() {
     // State for animation
     var isAnimating by remember { mutableStateOf(true) }
     
+    // 🔧 DEBUG: Track animation timing for test vs production comparison
+    val animationStartTime = remember { System.currentTimeMillis() }
+    
     // Using Card for consistency
     Card(
         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
@@ -672,10 +675,19 @@ fun TypingIndicator() {
                     LaunchedEffect(isAnimating) {
                         delay(delay.toLong()) // Initial delay for staggered effect
                         while (isAnimating) {
+                            val cycleStart = System.currentTimeMillis()
                             dotVisible = true
                                                       delay(600L) // Stay visible
                           dotVisible = false
                           delay(600L) // Stay dim
+                            val cycleEnd = System.currentTimeMillis()
+                            
+                            // 🔧 DEBUG: Log animation cycle timing
+                            val cycleDuration = cycleEnd - cycleStart
+                            val expectedDuration = 1200L // 600ms visible + 600ms dim
+                            if (cycleDuration != expectedDuration) {
+                                Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${cycleDuration}ms (expected: ${expectedDuration}ms)")
+                            }
                         }
                     }
                     
@@ -689,6 +701,14 @@ fun TypingIndicator() {
                     )
                 }
             }
+        }
+    }
+    
+    // 🔧 DEBUG: Log total animation duration when component is disposed
+    DisposableEffect(Unit) {
+        onDispose {
+            val totalDuration = System.currentTimeMillis() - animationStartTime
+            Log.d("TypingIndicator", "🎬 TypingIndicator total duration: ${totalDuration}ms")
         }
     }
 }
