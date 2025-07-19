@@ -478,6 +478,87 @@ object ComposeTestHelper {
     }
     
     /**
+     * Verify that a specific message appears right after another message in the chat
+     * This tests the request ID pairing functionality to ensure responses appear in correct order
+     */
+    fun verifyMessageOrder(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        userMessage: String, 
+        expectedResponse: String
+    ): Boolean {
+        return try {
+            Log.d(TAG, "🔍 Compose: Verifying message order - response should appear after user message")
+            Log.d(TAG, "🔍 Compose: User message: '${userMessage.take(50)}...'")
+            Log.d(TAG, "🔍 Compose: Expected response: '${expectedResponse.take(50)}...'")
+            
+            // First, verify both messages exist
+            try {
+                composeTestRule.onNodeWithText(userMessage).assertIsDisplayed()
+                Log.d(TAG, "✅ Compose: User message found")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Compose: User message not found: '${userMessage.take(30)}...'")
+                return false
+            }
+            
+            try {
+                composeTestRule.onNodeWithText(expectedResponse).assertIsDisplayed()
+                Log.d(TAG, "✅ Compose: Expected response found")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Compose: Expected response not found: '${expectedResponse.take(30)}...'")
+                return false
+            }
+            
+            // Now verify the order by checking if the response appears after the user message
+            // We'll use a simple approach: get all text nodes and check their order
+            try {
+                val allTextNodes = composeTestRule.onAllNodesWithText(".*")
+                val textNodes = allTextNodes.fetchSemanticsNodes()
+                
+                var userMessageIndex = -1
+                var responseIndex = -1
+                
+                for ((index, node) in textNodes.withIndex()) {
+                    val nodeText = node.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text ?: ""
+                    if (nodeText.contains(userMessage.take(20))) {
+                        userMessageIndex = index
+                        Log.d(TAG, "🔍 Compose: Found user message at index $index")
+                    }
+                    if (nodeText.contains(expectedResponse.take(20))) {
+                        responseIndex = index
+                        Log.d(TAG, "🔍 Compose: Found response at index $index")
+                    }
+                }
+                
+                if (userMessageIndex == -1) {
+                    Log.e(TAG, "❌ Compose: Could not find user message in text nodes")
+                    return false
+                }
+                
+                if (responseIndex == -1) {
+                    Log.e(TAG, "❌ Compose: Could not find response in text nodes")
+                    return false
+                }
+                
+                if (responseIndex > userMessageIndex) {
+                    Log.d(TAG, "✅ Compose: Message order verified! Response (index $responseIndex) appears after user message (index $userMessageIndex)")
+                    return true
+                } else {
+                    Log.e(TAG, "❌ Compose: Message order incorrect! Response (index $responseIndex) appears before user message (index $userMessageIndex)")
+                    return false
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Compose: Error checking message order", e)
+                return false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception verifying message order", e)
+            false
+        }
+    }
+    
+    /**
      * Navigate to new chat using Compose Testing
      */
     fun navigateToNewChat(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {

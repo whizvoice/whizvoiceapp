@@ -211,8 +211,24 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "🚀 RAPID PHASE COMPLETE: All ${interruptMessageCount} interrupt messages sent rapidly!")
                 
-                // Step 5: Verify all messages exist using Compose Testing
-                Log.d(TAG, "🔍 Step 5: Verifying all messages exist using Compose Testing...")
+                // Step 5: Wait for barista response and verify message order
+                Log.d(TAG, "☕ Step 5: Waiting for barista response and verifying message order...")
+                
+                // The first message asked for "coffee-making professional" - expect "Barista" as response
+                val expectedBaristaResponse = "Barista"
+                Log.d(TAG, "🔍 Looking for barista response: '$expectedBaristaResponse'")
+                
+                // Verify that the barista response appears right after the first message
+                if (!ComposeTestHelper.verifyMessageOrder(composeTestRule, firstMessage, expectedBaristaResponse)) {
+                    Log.e(TAG, "❌ Message order verification failed - barista response not in correct position")
+                    failWithScreenshot("message_order_verification_failed", "Barista response not appearing after the correct user message")
+                    return@runBlocking
+                }
+                
+                Log.d(TAG, "✅ Message order verification passed - barista response appears after correct user message")
+                
+                // Step 6: Verify all messages exist using Compose Testing
+                Log.d(TAG, "🔍 Step 6: Verifying all messages exist using Compose Testing...")
                 
                 val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, sentMessages)
                 if (missingMessages.isNotEmpty()) {
@@ -225,8 +241,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ All ${sentMessages.size} messages verified to exist in chat")
                 
-                // Step 6: Check for duplicates using Compose Testing
-                Log.d(TAG, "🔍 Step 6: Checking for duplicate messages...")
+                // Step 7: Check for duplicates using Compose Testing
+                Log.d(TAG, "🔍 Step 7: Checking for duplicate messages...")
                 if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
                     failWithScreenshot("chat_duplicates_detected", "Found duplicate message(s) in chat - indicates production bug")
                 }
@@ -234,9 +250,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Duplicate checking completed")
                 
                 Log.d(TAG, "📊 Test summary:")
-                Log.d(TAG, "   ✅ Sent 1 initial message to trigger bot response")
+                Log.d(TAG, "   ✅ Sent 1 initial message asking for coffee-making professional")
                 Log.d(TAG, "   ✅ Successfully interrupted bot with ${MESSAGE_COUNT - 1} additional messages")
                 Log.d(TAG, "   ✅ All messages appeared immediately (optimistic UI)")
+                Log.d(TAG, "   ✅ Barista response appeared in correct order after first message")
                 Log.d(TAG, "   ✅ No duplicate messages detected")
                 Log.d(TAG, "   ✅ Bot interruption test completed successfully with Compose Testing")
                 
