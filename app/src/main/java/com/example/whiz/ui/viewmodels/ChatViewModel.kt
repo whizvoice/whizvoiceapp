@@ -358,6 +358,12 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
+                        
+                        // 🔧 CANCELLATION HANDLING: User message remains in chat, no assistant response
+                        // The user message with this requestId will stay in the chat but won't get a response
+                        // This creates the natural conversation flow: user message -> (no response) -> next user message
+                        Log.d(TAG, "🔧 CANCELLATION: User message for request ${event.cancelledRequestId} remains in chat (no assistant response)")
+                        
                         // Remove the cancelled request from pending requests
                         pendingRequests.remove(event.cancelledRequestId)
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
@@ -365,9 +371,18 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.Interrupted -> {
                         Log.d(TAG, "Previous request was interrupted: ${event.message}")
+                        
+                        // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
+                        // When multiple requests are sent rapidly, the server cancels previous ones
+                        // All user messages stay in chat but only the latest gets a response
+                        val interruptedRequests = pendingRequests.keys.toList()
+                        Log.d(TAG, "🔧 INTERRUPTION: ${interruptedRequests.size} user messages remain in chat (no assistant responses)")
+                        interruptedRequests.forEach { requestId ->
+                            Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
+                        }
+                        
                         // The backend has cancelled previous requests automatically
                         // Clear all pending requests since they were cancelled
-                        val interruptedRequests = pendingRequests.keys.toList()
                         pendingRequests.clear()
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
@@ -494,6 +509,10 @@ class ChatViewModel @Inject constructor(
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
                                         
+                                        // 🔧 REMOVED: Manual refresh is unnecessary - messages flow updates automatically
+                                        // The database update from migration will trigger the flow naturally
+                                        Log.d(TAG, "$eventLogId 🔄 MIGRATION: Messages flow will update automatically after migration")
+                                        
                                         // 🔧 CROSS-CHAT MIGRATION: Handle UI switching during rapid messaging
                                         val currentChatIsOptimistic = _chatId.value < 0
                                         val shouldSwitchToMigratedChat = currentChatIsOptimistic || _chatId.value == originalChatId
@@ -603,11 +622,16 @@ class ChatViewModel @Inject constructor(
                                     
                                     try {
                                         viewModelScope.launch {
-                                            // 🔧 FIXED: For remote agent, add bot message to local DB for immediate UI display
-                                            // This ensures the response appears immediately without waiting for API sync
-                                            Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally for immediate UI display")
-                                            val messageId = repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
-                                            Log.d(TAG, "$eventLogId Remote agent: Added optimistic assistant message $messageId to chat $targetChatId locally")
+                                            // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
+                                            // This ensures responses appear in the correct order relative to their user messages
+                                            Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally with request ID pairing")
+                                            val messageId = if (event.requestId != null) {
+                                                repository.addAssistantMessageAfterRequest(targetChatId, messageContentForChat, event.requestId)
+                                            } else {
+                                                // Fallback: add at end if no request ID
+                                                repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
+                                            }
+                                            Log.d(TAG, "$eventLogId Remote agent: Added assistant message $messageId to chat $targetChatId with request ID pairing")
                                         }
                                     } catch (e: Exception) {
                                         Log.e(TAG, "$eventLogId Error adding assistant message locally for remote agent", e)
@@ -1055,7 +1079,10 @@ class ChatViewModel @Inject constructor(
             val originalChatId = _chatId.value
             var currentChatId = originalChatId
             
-            Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId")
+            // 🔧 NEW: Generate request ID early for optimistic UI pairing
+            val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
+            
+            Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId, requestId: $requestId")
 
             // Handle new chat creation differently for remote vs local agent
             if (currentChatId <= 0) {
@@ -1099,8 +1126,8 @@ class ChatViewModel @Inject constructor(
                 }
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
-                    Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId")
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText)
+                    Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId with requestId: $requestId")
+                    repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
                 } else {
                     // For local agent: use regular method (creates via API)
                     Log.d(TAG, "sendUserInput: 💬 Adding regular user message to chatId: $actualChatId")
@@ -1146,25 +1173,28 @@ class ChatViewModel @Inject constructor(
                 
                 // 🔧 CONCURRENT REQUESTS: Don't block UI with _isResponding = true
                 // Instead, track individual requests and allow multiple concurrent messages
-                val requestId = java.util.UUID.randomUUID().toString()
+                // Note: requestId is already generated above for optimistic UI pairing
                 
                 // 🔧 CRITICAL FIX: Use the updated chat ID after optimistic UI creation
                 // If optimistic UI created a new chat, _chatId.value will be the new local chat ID (could be negative for optimistic chats)
                 val chatIdForWebSocket = if (_chatId.value != -1L) _chatId.value else currentChatId
                 Log.d(TAG, "sendUserInput: PRE-SEND DEBUG - originalChatId: $originalChatId, currentChatId: $currentChatId, _chatId.value: ${_chatId.value}, using for WebSocket: $chatIdForWebSocket")
-                pendingRequests[requestId] = chatIdForWebSocket
                 
-                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $requestId")
+                // 🔧 FIX: Ensure requestId is non-null for WebSocket operations
+                val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
+                pendingRequests[nonNullRequestId] = chatIdForWebSocket
+                
+                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
                 Log.d(TAG, "sendUserInput: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
                 
-                val success = whizServerRepository.sendMessage(trimmedText, requestId, chatIdForWebSocket)
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
                     // The retry mechanism will handle this transparently
                     Log.d(TAG, "sendUserInput: Message queued for retry - keeping request tracking")
                 } else {
-                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $chatIdForWebSocket with requestId: $requestId")
+                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
                 }
                 
                 // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI
@@ -1179,17 +1209,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // 🔧 SMART DEDUPLICATION: Trigger refresh to reconcile with server, repository will deduplicate
-                // This ensures we get the authoritative server message while avoiding duplicates
-                try {
-                    viewModelScope.launch {
-                        delay(100) // Small delay to let server process
-                        repository.refreshMessages()
-                        Log.d(TAG, "sendUserInput: Triggered messages refresh for server reconciliation with deduplication")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
-                }
+                // 🔧 REMOVED: Manual refresh is unnecessary - messages flow updates automatically
+                // The database updates from optimistic UI and server responses will trigger the flow naturally
+                Log.d(TAG, "sendUserInput: Messages flow will update automatically after server processing")
                 
                 // Response handling is done in observeServerMessages
             } else {
@@ -1353,6 +1375,7 @@ class ChatViewModel @Inject constructor(
             if (_chatId.value > 0) {
                 if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
+                    // Note: sendInputText doesn't have requestId, so we'll use the old method
                     repository.addUserMessageOptimistic(_chatId.value, textToSend)
                     Log.d(TAG, "sendInputText: Added optimistic user message for remote agent")
                 } else {

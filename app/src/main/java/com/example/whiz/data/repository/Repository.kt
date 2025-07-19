@@ -333,9 +333,9 @@ class WhizRepository @Inject constructor(
      * Used when we want immediate UI feedback before server processes the message.
      * The actual server message will be received via WebSocket and deduplicated.
      */
-    suspend fun addUserMessageOptimistic(chatId: Long, content: String): Long {
+    suspend fun addUserMessageOptimistic(chatId: Long, content: String, requestId: String? = null): Long {
         return try {
-            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only)")
+            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only) with requestId: $requestId")
             
             // 🔧 FIXED: Ensure chat exists locally before adding optimistic message
             // This prevents foreign key constraint failures for server-only chats
@@ -373,11 +373,12 @@ class WhizRepository @Inject constructor(
                 chatId = chatId,
                 content = content,
                 type = MessageType.USER,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                requestId = requestId // 🔧 NEW: Store requestId for pairing with response
             )
             
             val messageId = messageDao.insertMessage(messageEntity)
-            Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId")
+            Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId with requestId: $requestId")
             
             // Don't trigger API refresh - this is just for immediate UI
             // The real message will come via WebSocket and trigger refresh
@@ -415,9 +416,9 @@ class WhizRepository @Inject constructor(
      * Add assistant message for optimistic UI - only stores locally, doesn't make API call.
      * Used when we receive WebSocket responses and want immediate UI feedback.
      */
-    suspend fun addAssistantMessageOptimistic(chatId: Long, content: String): Long {
+    suspend fun addAssistantMessageOptimistic(chatId: Long, content: String, requestId: String? = null): Long {
         return try {
-            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $chatId (local only)")
+            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $chatId (local only) with requestId: $requestId")
             
             // 🔧 Ensure chat exists locally before adding optimistic message
             val existingChat = chatDao.getChatById(chatId)
@@ -439,15 +440,53 @@ class WhizRepository @Inject constructor(
                 chatId = chatId,
                 content = content,
                 type = MessageType.ASSISTANT,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                requestId = requestId // 🔧 NEW: Store requestId for pairing with user message
             )
             
             val messageId = messageDao.insertMessage(messageEntity)
-            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId")
+            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId with requestId: $requestId")
             
             messageId
         } catch (e: Exception) {
             Log.e(TAG, "Error adding optimistic assistant message to chat $chatId: ${e.message}", e)
+            -1
+        }
+    }
+
+    /**
+     * 🔧 NEW: Add assistant message after the user message with matching requestId.
+     * This ensures responses appear in the correct order relative to their user messages.
+     */
+    suspend fun addAssistantMessageAfterRequest(chatId: Long, content: String, requestId: String): Long {
+        return try {
+            Log.d(TAG, "addAssistantMessageAfterRequest: adding assistant message after request $requestId in chat $chatId")
+            
+            // Find the user message with this requestId
+            val userMessage = messageDao.getUserMessageByRequestId(chatId, requestId)
+            if (userMessage != null) {
+                Log.d(TAG, "addAssistantMessageAfterRequest: found user message ${userMessage.id} with requestId $requestId")
+                
+                // Create assistant message with timestamp after the user message
+                val assistantMessage = MessageEntity(
+                    id = 0,
+                    chatId = chatId,
+                    content = content,
+                    type = MessageType.ASSISTANT,
+                    timestamp = userMessage.timestamp + 1, // Ensure it goes after the user message
+                    requestId = requestId // Link to the user message
+                )
+                
+                val messageId = messageDao.insertMessage(assistantMessage)
+                Log.d(TAG, "addAssistantMessageAfterRequest: added assistant message $messageId after user message ${userMessage.id}")
+                return messageId
+            } else {
+                Log.w(TAG, "addAssistantMessageAfterRequest: no user message found with requestId $requestId, adding at end")
+                // Fallback: add at the end if no matching user message found
+                return addAssistantMessageOptimistic(chatId, content, requestId)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding assistant message after request $requestId in chat $chatId: ${e.message}", e)
             -1
         }
     }
