@@ -9,6 +9,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ActivityTestRule
@@ -247,36 +249,67 @@ object ComposeTestHelper {
     /**
      * Send a complete message (type + send) using Compose testing
      */
-    suspend fun sendMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String, rapid: Boolean = false): Boolean {
+    suspend fun sendMessage(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        message: String, 
+        rapid: Boolean = false,
+        onFailure: ((String, String) -> Unit)? = null
+    ): Boolean {
         return try {
             Log.d(TAG, "📝 Compose: attempting to send message: '${message.take(30)}...'")
+            Log.d(TAG, "⚡ Compose: Rapid mode: $rapid")
             
             // Type the message
+            Log.d(TAG, "⌨️ Compose: Step 1 - Typing message...")
             if (!typeMessage(composeTestRule, message)) {
                 Log.e(TAG, "❌ Compose: Failed to type message")
+                onFailure?.invoke("message_typing_failed", "Failed to type message: '${message.take(30)}...'")
                 return false
             }
+            Log.d(TAG, "✅ Compose: Step 1 - Message typed successfully")
             
             // Click send button
+            Log.d(TAG, "📤 Compose: Step 2 - Clicking send button...")
             if (!clickSendButton(composeTestRule)) {
                 Log.e(TAG, "❌ Compose: Failed to click send button")
+                onFailure?.invoke("send_button_click_failed", "Failed to click send button after typing: '${message.take(30)}...'")
                 return false
             }
+            Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
             
             // Wait for message to appear (with appropriate timeout)
             val timeout = if (rapid) 100L else 1000L
-            val messageAppeared = waitForMessageToAppear(composeTestRule, message, timeout)
+            Log.d(TAG, "⏳ Compose: Step 3 - Waiting for message to appear (timeout: ${timeout}ms)...")
+            val messageAppeared = waitForMessageToAppear(composeTestRule, message, timeout, onFailure)
             
             if (messageAppeared) {
-                Log.d(TAG, "✅ Compose: Message sent and displayed successfully")
+                Log.d(TAG, "✅ Compose: Step 3 - Message sent and displayed successfully")
                 true
             } else {
-                Log.e(TAG, "❌ Compose: Message not displayed after sending")
+                Log.e(TAG, "❌ Compose: Step 3 - Message not displayed after sending")
+                Log.e(TAG, "🔍 Compose: Message that failed to appear: '${message.take(50)}...'")
+                
+                // Log detailed step-by-step failure for test summary
+                Log.e(TAG, "🚨 COMPOSE SEND MESSAGE FAILURE:")
+                Log.e(TAG, "   ✅ Step 1: Message typed successfully")
+                Log.e(TAG, "   ✅ Step 2: Send button clicked successfully")
+                Log.e(TAG, "   ❌ Step 3: Message failed to appear in UI")
+                Log.e(TAG, "   📝 Message: '${message.take(50)}...'")
+                Log.e(TAG, "   ⏱️ Timeout: ${timeout}ms")
+                Log.e(TAG, "   🎯 This indicates a UI rendering or timing issue")
+                
+                // Call failure callback with screenshot details
+                onFailure?.invoke(
+                    "message_not_displayed", 
+                    "Message sent but not displayed in UI: '${message.take(50)}...' (timeout: ${timeout}ms)"
+                )
+                
                 false
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during message sending", e)
+            onFailure?.invoke("message_send_exception", "Exception during message sending: ${e.message}")
             false
         }
     }
@@ -284,11 +317,19 @@ object ComposeTestHelper {
     /**
      * Wait for a message to appear in the chat using Compose testing
      */
-    suspend fun waitForMessageToAppear(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String, timeoutMs: Long): Boolean {
+    suspend fun waitForMessageToAppear(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        message: String, 
+        timeoutMs: Long,
+        onFailure: ((String, String) -> Unit)? = null
+    ): Boolean {
         return try {
             // Use a shorter search text to be more flexible with message display
             val searchText = message.take(20)
             val startTime = System.currentTimeMillis()
+            
+            Log.d(TAG, "🔍 Compose: Starting message search for: '$searchText' (full: '${message.take(50)}...')")
+            Log.d(TAG, "⏱️ Compose: Search timeout: ${timeoutMs}ms")
             
             while ((System.currentTimeMillis() - startTime) < timeoutMs) {
                 try {
@@ -301,15 +342,26 @@ object ComposeTestHelper {
                         { composeTestRule.onNodeWithContentDescription("Assistant message: $searchText") }
                     )
                     
-                    for (selector in messageSelectors) {
+                    for ((index, selector) in messageSelectors.withIndex()) {
                         try {
                             val node = selector()
                             node.assertIsDisplayed()
-                            Log.d(TAG, "✅ Compose: Message found: '$searchText'")
+                            Log.d(TAG, "✅ Compose: Message found with selector $index: '$searchText'")
                             return true
+                        } catch (e: AssertionError) {
+                            // This is the specific failure we're looking for - message not displayed
+                            Log.d(TAG, "⚠️ Compose: Selector $index failed with AssertionError: ${e.message}")
+                            continue
                         } catch (e: Exception) {
+                            Log.d(TAG, "⚠️ Compose: Selector $index failed with other exception: ${e.message}")
                             continue
                         }
+                    }
+                    
+                    // Log progress every 500ms
+                    val elapsed = System.currentTimeMillis() - startTime
+                    if (elapsed % 500 < 10) {
+                        Log.d(TAG, "⏳ Compose: Still searching for message... (${elapsed}ms elapsed)")
                     }
                     
                     // Brief wait before next check
@@ -322,10 +374,45 @@ object ComposeTestHelper {
             }
             
             Log.e(TAG, "❌ Compose: Message not found within ${timeoutMs}ms: '$searchText'")
+            Log.e(TAG, "🔍 Compose: Full message was: '${message.take(100)}...'")
+            Log.e(TAG, "⏱️ Compose: Search started at ${startTime}, ended at ${System.currentTimeMillis()}")
+            
+            // Try to dump current UI state for debugging
+            try {
+                Log.e(TAG, "🔍 Compose: Attempting to dump current UI state...")
+                val allTextNodes = composeTestRule.onAllNodesWithText(".*")
+                val nodeCount = allTextNodes.fetchSemanticsNodes().size
+                Log.e(TAG, "🔍 Compose: Found $nodeCount text nodes in UI")
+                
+                if (nodeCount > 0) {
+                    Log.e(TAG, "🔍 Compose: UI contains text nodes but message not found")
+                } else {
+                    Log.e(TAG, "🔍 Compose: No text nodes found in UI")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "⚠️ Compose: Failed to dump UI state: ${e.message}")
+            }
+            
+            // Log detailed failure information for test summary
+            Log.e(TAG, "🚨 COMPOSE TEST FAILURE SUMMARY:")
+            Log.e(TAG, "   📝 Message that failed to appear: '${message.take(50)}...'")
+            Log.e(TAG, "   🔍 Search text used: '$searchText'")
+            Log.e(TAG, "   ⏱️ Timeout: ${timeoutMs}ms")
+            Log.e(TAG, "   📊 Search duration: ${System.currentTimeMillis() - startTime}ms")
+            Log.e(TAG, "   🎯 Selectors tried: 5 different strategies")
+            Log.e(TAG, "   ❌ Result: Message not found in UI")
+            
+            // Call failure callback if provided
+            onFailure?.invoke(
+                "message_not_found_in_ui",
+                "Message not found in UI after ${timeoutMs}ms: '${message.take(50)}...'"
+            )
+            
             false
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception waiting for message", e)
+            onFailure?.invoke("message_search_exception", "Exception during message search: ${e.message}")
             false
         }
     }

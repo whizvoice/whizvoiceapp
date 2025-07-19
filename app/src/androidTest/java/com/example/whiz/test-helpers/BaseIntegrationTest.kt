@@ -1285,15 +1285,16 @@ abstract class BaseIntegrationTest {
 
     
     /**
-     * Take a screenshot for test failure debugging with guaranteed completion
+     * Take a screenshot and UI dump for test failure debugging with guaranteed completion
      * @param testName Name of the test that failed
      * @param reason Brief description of the failure
      */
     protected fun takeFailureScreenshotAndWaitForCompletion(testName: String, reason: String) {
         try {
-            android.util.Log.e("BaseIntegrationTest", "🔴 STARTING screenshot capture for test failure...")
+            android.util.Log.e("BaseIntegrationTest", "🔴 STARTING screenshot and UI dump capture for test failure...")
             android.util.Log.e("BaseIntegrationTest", "🔴 Test name: $testName, Reason: $reason")
             takeFailureScreenshot(testName, reason)
+            saveUIDump(testName, reason)
             
             // Force completion by waiting for file system operations
             android.util.Log.e("BaseIntegrationTest", "⏳ Ensuring screenshot file operations complete...")
@@ -1323,6 +1324,59 @@ abstract class BaseIntegrationTest {
         }
     }
 
+    /**
+     * Save UI hierarchy dump to file for debugging
+     * @param testName Name of the test that failed
+     * @param reason Brief description of the failure
+     */
+    private fun saveUIDump(testName: String, reason: String) {
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+            val filename = "${testName}_ui_dump_${timestamp}.xml"
+            val filepath = "$screenshotDir/$filename"
+            
+            android.util.Log.d("BaseIntegrationTest", "🔍 Saving UI dump: $reason")
+            android.util.Log.d("BaseIntegrationTest", "📁 UI dump directory: $screenshotDir")
+            android.util.Log.d("BaseIntegrationTest", "📄 UI dump filename: $filename")
+            android.util.Log.d("BaseIntegrationTest", "📍 UI dump full path: $filepath")
+            
+            // Use UiDevice's dumpWindowHierarchy method instead of shell command
+            // This avoids conflicts with existing UI automation
+            try {
+                device.dumpWindowHierarchy(filepath)
+                android.util.Log.d("BaseIntegrationTest", "🔍 UI dump completed using UiDevice.dumpWindowHierarchy")
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ UiDevice.dumpWindowHierarchy failed: ${e.message}")
+                
+                // Fallback: try to use shell command with a different approach
+                try {
+                    val result = device.executeShellCommand("uiautomator dump $filepath 2>&1")
+                    android.util.Log.d("BaseIntegrationTest", "🔍 UI dump shell result: $result")
+                } catch (e2: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Shell UI dump also failed: ${e2.message}")
+                }
+            }
+            
+            // Verify UI dump was created
+            val checkResult = device.executeShellCommand("ls -la $filepath")
+            android.util.Log.d("BaseIntegrationTest", "🔍 UI dump file check result: $checkResult")
+            
+            if (checkResult.contains(filename)) {
+                android.util.Log.d("BaseIntegrationTest", "✅ UI dump confirmed saved: $filepath")
+                
+                // Check file size to ensure it's not empty
+                val fileSizeResult = device.executeShellCommand("stat -c%s $filepath 2>/dev/null || echo 'stat failed'")
+                android.util.Log.d("BaseIntegrationTest", "📏 UI dump file size: $fileSizeResult bytes")
+            } else {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ UI dump may not have been saved: $checkResult")
+            }
+            
+            android.util.Log.d("BaseIntegrationTest", "✅ UI dump saved: $filepath")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "Failed to save UI dump", e)
+        }
+    }
+    
     /**
      * Take a screenshot for test failure debugging (internal method)
      * @param testName Name of the test that failed

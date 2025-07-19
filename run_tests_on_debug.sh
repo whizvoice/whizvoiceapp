@@ -438,27 +438,8 @@ pull_test_screenshots() {
         fi
     fi
     
-    # Check CI location: /data/local/tmp/screenshots/
-    local ci_files=$(adb shell "ls /data/local/tmp/screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
-    
-    if [[ -n "$ci_files" ]]; then
-        log_with_time "📱 Found screenshots in CI location: /data/local/tmp/screenshots/"
-        if adb pull /data/local/tmp/screenshots/ temp_ci_screenshots/ >/dev/null 2>&1; then
-            # Move screenshots and UI dumps from temp folder to final location, avoiding duplicates
-            find temp_ci_screenshots \( -name "*.png" -o -name "*.xml" \) | while read -r file; do
-                local filename=$(basename "$file")
-                if [[ ! -f "test_screenshots/$filename" ]]; then
-                    mv "$file" test_screenshots/ 2>/dev/null || true
-                    total_pulled=$((total_pulled + 1))
-                fi
-            done
-            rm -rf temp_ci_screenshots
-            local ci_count=$(ls -1 test_screenshots/*.png test_screenshots/*.xml 2>/dev/null | wc -l | tr -d ' ')
-            log_with_time "✅ Pulled additional screenshots from CI location (total now: $ci_count)"
-        else
-            log_with_time "⚠️  Failed to pull screenshots from CI location"
-        fi
-    fi
+    # Note: All screenshots and UI dumps are now saved to /sdcard/Download/test_screenshots/
+    # The CI location /data/local/tmp/screenshots/ is no longer used
     
     # Final count and listing
     local final_count=$(ls -1 test_screenshots/*.png test_screenshots/*.xml 2>/dev/null | wc -l | tr -d ' ')
@@ -466,11 +447,11 @@ pull_test_screenshots() {
     if [[ "$final_count" -gt 0 ]]; then
         log_with_time "✅ Successfully pulled $final_count total screenshots and UI dumps to test_screenshots/"
         
-        # List the screenshots that were pulled
-        log_with_time "📋 Screenshots captured:"
-        for screenshot in test_screenshots/*.png; do
-            if [[ -f "$screenshot" ]]; then
-                local filename=$(basename "$screenshot")
+        # List the screenshots and UI dumps that were pulled
+        log_with_time "📋 Screenshots and UI dumps captured:"
+        for file in test_screenshots/*.png test_screenshots/*.xml; do
+            if [[ -f "$file" ]]; then
+                local filename=$(basename "$file")
                 log_with_time "   • $filename"
             fi
         done
@@ -912,12 +893,9 @@ log_with_time "🧹 Cleaning app state, device screenshots, and UI dumps before 
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 
 # Clean old screenshots and UI dumps from device (local artifacts already cleaned at script start)
-# BaseIntegrationTest saves screenshots to /sdcard/Download/test_screenshots/ (primary location)
+# BaseIntegrationTest saves screenshots and UI dumps to /sdcard/Download/test_screenshots/
 adb shell 'rm -rf /sdcard/Download/test_screenshots/*' 2>/dev/null || true
 adb shell 'mkdir -p /sdcard/Download/test_screenshots' 2>/dev/null || true
-# Also cleans UI dumps since they're now saved to /data/local/tmp/screenshots/
-adb shell 'rm -rf /data/local/tmp/screenshots/*' 2>/dev/null || true
-adb shell 'mkdir -p /data/local/tmp/screenshots' 2>/dev/null || true
 
 sleep 2
 log_with_time "✅ App state and device screenshots cleaned"
