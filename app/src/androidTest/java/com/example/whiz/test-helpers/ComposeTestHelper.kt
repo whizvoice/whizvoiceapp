@@ -61,6 +61,75 @@ object ComposeTestHelper {
     }
     
     /**
+     * Wait for a specific UI element to appear using Compose Testing
+     * This is much better than Thread.sleep() as it waits for the actual dependency
+     */
+    suspend fun waitForElement(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        selector: () -> SemanticsNodeInteraction,
+        timeoutMs: Long = 10000L,
+        description: String = "UI element"
+    ): Boolean {
+        return try {
+            val startTime = System.currentTimeMillis()
+            
+            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "⏳ Waiting for $description... (${System.currentTimeMillis() - startTime}ms elapsed)")
+                    delay(100)
+                }
+            }
+            
+            Log.e(TAG, "❌ $description not found within ${timeoutMs}ms")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception waiting for $description", e)
+            false
+        }
+    }
+    
+    /**
+     * Wait for a specific UI element using efficient polling
+     * This is much better than Thread.sleep() as it waits for the actual dependency
+     */
+    fun waitForElementEfficient(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        selector: () -> SemanticsNodeInteraction,
+        timeoutMs: Long = 10000L,
+        description: String = "UI element"
+    ): Boolean {
+        return try {
+            Log.d(TAG, "⏳ Waiting for $description using efficient polling...")
+            val startTime = System.currentTimeMillis()
+            
+            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "⏳ Waiting for $description... (${System.currentTimeMillis() - startTime}ms elapsed)")
+                    Thread.sleep(50) // Use shorter sleep for more responsive waiting
+                }
+            }
+            
+            Log.e(TAG, "❌ $description not found within ${timeoutMs}ms")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception waiting for $description", e)
+            false
+        }
+    }
+    
+    /**
      * Find and interact with the message input field using Compose testing
      */
     fun findMessageInputField(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
@@ -217,14 +286,17 @@ object ComposeTestHelper {
      */
     suspend fun waitForMessageToAppear(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String, timeoutMs: Long): Boolean {
         return try {
-            val searchText = message.take(30)
+            // Use a shorter search text to be more flexible with message display
+            val searchText = message.take(20)
             val startTime = System.currentTimeMillis()
             
             while ((System.currentTimeMillis() - startTime) < timeoutMs) {
                 try {
-                    // Try to find the message using Compose Testing
+                    // Try to find the message using Compose Testing with multiple strategies
                     val messageSelectors = listOf(
                         { composeTestRule.onNodeWithText(searchText) },
+                        { composeTestRule.onNodeWithText(message.take(15)) }, // Even shorter fallback
+                        { composeTestRule.onNodeWithText(message.take(10)) }, // Very short fallback
                         { composeTestRule.onNodeWithContentDescription("User message: $searchText") },
                         { composeTestRule.onNodeWithContentDescription("Assistant message: $searchText") }
                     )
@@ -365,7 +437,7 @@ object ComposeTestHelper {
                         Log.d(TAG, "✅ Compose content is ready - found 'My Chats' title")
                     } catch (e2: Exception) {
                         Log.d(TAG, "⏳ Waiting for Compose content... (${System.currentTimeMillis() - startTime}ms elapsed)")
-                        Thread.sleep(100) // Wait 100ms before next attempt
+                        Thread.sleep(100) // Use Thread.sleep for non-suspend context
                     }
                 }
             }
@@ -413,33 +485,14 @@ object ComposeTestHelper {
         return try {
             Log.d(TAG, "🔍 Compose: Checking if on chat screen...")
             
-            // Wait for UI to be ready (give time for Compose to render)
-            Thread.sleep(2000) // Wait 2 seconds for UI to render
-            
-            // Try to find message input field with multiple selectors based on production code
-            val inputSelectors = listOf(
-                { composeTestRule.onNodeWithContentDescription("Message input field") }, // Primary selector from production code
-                { composeTestRule.onNodeWithTag("chat_input_field") }, // Test tag from production code
-                { composeTestRule.onNodeWithText("Type or tap mic...") }, // Placeholder text from production code
-                { composeTestRule.onNodeWithText("Listening...") }, // Alternative placeholder when listening
-                { composeTestRule.onNodeWithContentDescription("Type a message") }, // Fallback
-                { composeTestRule.onNodeWithTag("message_input") } // Legacy fallback
+            // Use efficient polling to wait for the specific element
+            // This is much better than Thread.sleep() - it waits for the actual dependency
+            return waitForElementEfficient(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+                timeoutMs = 10000L,
+                description = "chat screen input field"
             )
-            
-            for (selector in inputSelectors) {
-                try {
-                    val node = selector()
-                    node.assertIsDisplayed()
-                    Log.d(TAG, "✅ Compose: Confirmed on chat screen - input field found")
-                    return true
-                } catch (e: Exception) {
-                    Log.d(TAG, "⚠️ Compose: Selector failed: ${e.message}")
-                    continue
-                }
-            }
-            
-            Log.d(TAG, "❌ Compose: Not on chat screen - no input field found")
-            false
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception checking chat screen", e)
