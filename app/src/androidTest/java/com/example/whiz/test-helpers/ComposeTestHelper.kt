@@ -1,6 +1,6 @@
 package com.example.whiz.test_helpers
 
-import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertIsDisplayed
@@ -9,8 +9,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.ActivityTestRule
 import android.util.Log
 import kotlinx.coroutines.delay
+import com.example.whiz.MainActivity
 
 /**
  * Compose helper functions for UI testing
@@ -20,27 +24,59 @@ object ComposeTestHelper {
     
     private const val TAG = "ComposeTestHelper"
     
+    // Activity test rule to launch the app
+    private val activityTestRule = ActivityTestRule(MainActivity::class.java, false, false)
+    
+    /**
+     * Launch the app using ActivityTestRule and wait for it to be ready
+     */
+    fun launchApp(): Boolean {
+        return try {
+            Log.d(TAG, "🚀 Compose: Launching app with ActivityTestRule...")
+            
+            // Launch the main activity
+            activityTestRule.launchActivity(null)
+            
+            // Wait a moment for the app to fully load
+            Thread.sleep(2000)
+            
+            Log.d(TAG, "✅ Compose: App launched successfully")
+            true
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Failed to launch app", e)
+            false
+        }
+    }
+    
+    /**
+     * Clean up the activity test rule
+     */
+    fun cleanup() {
+        try {
+            activityTestRule.finishActivity()
+        } catch (e: Exception) {
+            Log.d(TAG, "⚠️ Compose: Exception during cleanup: ${e.message}")
+        }
+    }
+    
     /**
      * Find and interact with the message input field using Compose testing
      */
-    fun findMessageInputField(composeTestRule: ComposeContentTestRule): SemanticsNodeInteraction? {
+    fun findMessageInputField(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
         val selectors = listOf(
-            // Primary selectors
-            { composeTestRule.onNodeWithContentDescription("Message input field") },
-            { composeTestRule.onNodeWithTag("message_input") },
+            // Primary selectors from production code
+            { composeTestRule.onNodeWithContentDescription("Message input field") }, // Primary selector from production code
+            { composeTestRule.onNodeWithTag("chat_input_field") }, // Test tag from production code
             
-            // Text field selectors
-            { composeTestRule.onNodeWithText("") }, // Empty text field
-            
-            // Compose-specific selectors
-            { composeTestRule.onNodeWithContentDescription("Type a message") }, // Hint text
-            { composeTestRule.onNodeWithText("Type a message") }, // Hint text
-            { composeTestRule.onNodeWithContentDescription("Message") }, // Alternative hint
-            { composeTestRule.onNodeWithText("Message") }, // Alternative hint
+            // Placeholder text selectors from production code
+            { composeTestRule.onNodeWithText("Type or tap mic...") }, // Default placeholder
+            { composeTestRule.onNodeWithText("Listening...") }, // Listening placeholder
             
             // Fallback selectors
-            { composeTestRule.onNodeWithContentDescription("input") },
-            { composeTestRule.onNodeWithContentDescription("text") }
+            { composeTestRule.onNodeWithContentDescription("Type a message") },
+            { composeTestRule.onNodeWithTag("message_input") },
+            { composeTestRule.onNodeWithContentDescription("input") }
         )
         
         for (selector in selectors) {
@@ -62,7 +98,7 @@ object ComposeTestHelper {
     /**
      * Find and interact with the send button using Compose testing
      */
-    fun findSendButton(composeTestRule: ComposeContentTestRule): SemanticsNodeInteraction? {
+    fun findSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
         val selectors = listOf(
             // Primary selectors
             { composeTestRule.onNodeWithContentDescription("Send typed message") },
@@ -97,7 +133,7 @@ object ComposeTestHelper {
     /**
      * Type text into the message input field using Compose testing
      */
-    fun typeMessage(composeTestRule: ComposeContentTestRule, message: String): Boolean {
+    fun typeMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String): Boolean {
         return try {
             val inputField = findMessageInputField(composeTestRule)
             if (inputField == null) {
@@ -121,7 +157,7 @@ object ComposeTestHelper {
     /**
      * Click the send button using Compose testing
      */
-    fun clickSendButton(composeTestRule: ComposeContentTestRule): Boolean {
+    fun clickSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
         return try {
             val sendButton = findSendButton(composeTestRule)
             if (sendButton == null) {
@@ -142,7 +178,7 @@ object ComposeTestHelper {
     /**
      * Send a complete message (type + send) using Compose testing
      */
-    suspend fun sendMessage(composeTestRule: ComposeContentTestRule, message: String, rapid: Boolean = false): Boolean {
+    suspend fun sendMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String, rapid: Boolean = false): Boolean {
         return try {
             Log.d(TAG, "📝 Compose: attempting to send message: '${message.take(30)}...'")
             
@@ -179,7 +215,7 @@ object ComposeTestHelper {
     /**
      * Wait for a message to appear in the chat using Compose testing
      */
-    suspend fun waitForMessageToAppear(composeTestRule: ComposeContentTestRule, message: String, timeoutMs: Long): Boolean {
+    suspend fun waitForMessageToAppear(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String, timeoutMs: Long): Boolean {
         return try {
             val searchText = message.take(30)
             val startTime = System.currentTimeMillis()
@@ -225,7 +261,7 @@ object ComposeTestHelper {
     /**
      * Verify all expected messages exist using Compose testing
      */
-    fun verifyAllMessagesExist(composeTestRule: ComposeContentTestRule, expectedMessages: List<String>): List<String> {
+    fun verifyAllMessagesExist(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): List<String> {
         val missingMessages = mutableListOf<String>()
         
         for ((index, expectedMessage) in expectedMessages.withIndex()) {
@@ -275,7 +311,7 @@ object ComposeTestHelper {
     /**
      * Check for duplicates using Compose testing
      */
-    fun noDuplicates(composeTestRule: ComposeContentTestRule, expectedMessages: List<String>): Boolean {
+    fun noDuplicates(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): Boolean {
         for (message in expectedMessages) {
             val searchText = message.take(30)
             
@@ -300,5 +336,152 @@ object ComposeTestHelper {
         
         Log.d(TAG, "✅ Compose: No duplicates detected (simplified check)")
         return true
+    }
+    
+    /**
+     * Navigate to new chat using Compose Testing
+     */
+    fun navigateToNewChat(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+        return try {
+            Log.d(TAG, "🎯 Compose: Attempting to navigate to new chat...")
+            
+            // First, wait for any Compose content to be available
+            Log.d(TAG, "⏳ Waiting for Compose content to be ready...")
+            var composeReady = false
+            val startTime = System.currentTimeMillis()
+            val timeout = 10000L // 10 seconds timeout
+            
+            while (!composeReady && (System.currentTimeMillis() - startTime) < timeout) {
+                try {
+                    // Try to find the New Chat button directly (most reliable indicator)
+                    composeTestRule.onNodeWithContentDescription("New Chat").assertIsDisplayed()
+                    composeReady = true
+                    Log.d(TAG, "✅ Compose content is ready - found 'New Chat' button")
+                } catch (e: Exception) {
+                    try {
+                        // Fallback: try to find any Compose element to confirm content is ready
+                        composeTestRule.onNodeWithText("My Chats").assertIsDisplayed()
+                        composeReady = true
+                        Log.d(TAG, "✅ Compose content is ready - found 'My Chats' title")
+                    } catch (e2: Exception) {
+                        Log.d(TAG, "⏳ Waiting for Compose content... (${System.currentTimeMillis() - startTime}ms elapsed)")
+                        Thread.sleep(100) // Wait 100ms before next attempt
+                    }
+                }
+            }
+            
+            if (!composeReady) {
+                Log.e(TAG, "❌ Compose content never became ready within ${timeout}ms")
+                return false
+            }
+            
+            // Now try to find and click the New Chat button
+            val newChatSelectors = listOf(
+                { composeTestRule.onNodeWithContentDescription("New Chat") }, // Primary selector based on production code
+                { composeTestRule.onNodeWithText("New Chat") },
+                { composeTestRule.onNodeWithTag("new_chat_button") },
+                { composeTestRule.onNodeWithText("+") }, // Plus icon
+                { composeTestRule.onNodeWithContentDescription("Add new chat") }
+            )
+            
+            for (selector in newChatSelectors) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    node.performClick()
+                    Log.d(TAG, "✅ Compose: New Chat button clicked successfully")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Compose: New Chat selector failed: ${e.message}")
+                    continue
+                }
+            }
+            
+            Log.e(TAG, "❌ Compose: No New Chat button selectors worked")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception navigating to new chat", e)
+            false
+        }
+    }
+    
+    /**
+     * Check if currently on chat screen by looking for message input field
+     */
+    fun isOnChatScreen(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+        return try {
+            Log.d(TAG, "🔍 Compose: Checking if on chat screen...")
+            
+            // Wait for UI to be ready (give time for Compose to render)
+            Thread.sleep(2000) // Wait 2 seconds for UI to render
+            
+            // Try to find message input field with multiple selectors based on production code
+            val inputSelectors = listOf(
+                { composeTestRule.onNodeWithContentDescription("Message input field") }, // Primary selector from production code
+                { composeTestRule.onNodeWithTag("chat_input_field") }, // Test tag from production code
+                { composeTestRule.onNodeWithText("Type or tap mic...") }, // Placeholder text from production code
+                { composeTestRule.onNodeWithText("Listening...") }, // Alternative placeholder when listening
+                { composeTestRule.onNodeWithContentDescription("Type a message") }, // Fallback
+                { composeTestRule.onNodeWithTag("message_input") } // Legacy fallback
+            )
+            
+            for (selector in inputSelectors) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    Log.d(TAG, "✅ Compose: Confirmed on chat screen - input field found")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Compose: Selector failed: ${e.message}")
+                    continue
+                }
+            }
+            
+            Log.d(TAG, "❌ Compose: Not on chat screen - no input field found")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception checking chat screen", e)
+            false
+        }
+    }
+    
+    /**
+     * Navigate back to chats list from chat screen
+     */
+    fun navigateBackToChatsList(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+        return try {
+            Log.d(TAG, "🔙 Compose: Attempting to navigate back to chats list...")
+            
+            // Try multiple selectors for the back button based on production code
+            val backSelectors = listOf(
+                { composeTestRule.onNodeWithContentDescription("Open Chats List") }, // Primary selector from production code
+                { composeTestRule.onNodeWithContentDescription("Navigate back") }, // Fallback
+                { composeTestRule.onNodeWithText("Back") }, // Fallback
+                { composeTestRule.onNodeWithTag("back_button") }, // Fallback
+                { composeTestRule.onNodeWithContentDescription("Back") } // Fallback
+            )
+            
+            for (selector in backSelectors) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    node.performClick()
+                    Log.d(TAG, "✅ Compose: Back button clicked successfully")
+                    return true
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Compose: Back selector failed: ${e.message}")
+                    continue
+                }
+            }
+            
+            Log.e(TAG, "❌ Compose: No back button selectors worked")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception navigating back", e)
+            false
+        }
     }
 } 

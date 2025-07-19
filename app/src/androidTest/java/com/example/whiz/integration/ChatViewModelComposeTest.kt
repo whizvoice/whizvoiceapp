@@ -1,7 +1,7 @@
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -22,6 +22,7 @@ import org.junit.After
 import android.util.Log
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.test_helpers.ComposeTestHelper
+import com.example.whiz.MainActivity
 
 /**
  * Compose-based integration tests for bot interruption and message handling.
@@ -40,7 +41,7 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 class ChatViewModelComposeTest : BaseIntegrationTest() {
     
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
     
     @Inject
     lateinit var repository: WhizRepository
@@ -90,6 +91,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             } else {
                 Log.d(TAG, "ℹ️ No new chats created by test - using existing chat, nothing to clean up")
             }
+            
+            // Clean up ComposeTestHelper resources
+            ComposeTestHelper.cleanup()
+            
             Log.d(TAG, "✅ Test cleanup completed")
         }
     }
@@ -109,30 +114,31 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 // Initialize cleanup tracking
                 createdNewChatThisTest = true
                 
-                // Step 1: Launch app and navigate to new chat screen
-                Log.d(TAG, "📱 Step 1: Launching app and navigating to new chat")
-                if (!launchAppAndWaitForLoad()) {
-                    failWithScreenshot("app_launch_failed", "App failed to launch or load main UI")
+                // Step 1: Launch app using ComposeTestHelper
+                Log.d(TAG, "📱 Step 1: Launching app with ComposeTestHelper")
+                if (!ComposeTestHelper.launchApp()) {
+                    failWithScreenshot("app_launch_failed", "App failed to launch via ComposeTestHelper")
+                    return@runBlocking
                 }
                 
-                // Step 2: Navigate to new chat
-                Log.d(TAG, "➕ Step 2: Navigating to new chat")
+                // Step 2: Navigate to new chat using Compose Testing
+                Log.d(TAG, "➕ Step 2: Navigating to new chat with Compose Testing")
                 
-                if (isCurrentlyInChatScreen()) {
+                if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                     Log.d(TAG, "🔄 Currently in chat screen, going back to chats list first")
-                    if (!navigateBackToChatsListFromChat()) {
+                    if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
                         failWithScreenshot("navigate_to_chats_list_failed", "Failed to navigate from chat screen to chats list")
                         return@runBlocking
                     }
                 }
                 
-                Log.d(TAG, "📋 On chats list, clicking new chat button directly")
-                if (!clickNewChatButtonAndWaitForChatScreen()) {
+                Log.d(TAG, "📋 On chats list, clicking new chat button with Compose Testing")
+                if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
                     return@runBlocking
                 }
                 
-                Log.d(TAG, "✅ Successfully navigated to new chat screen")
+                Log.d(TAG, "✅ Successfully navigated to new chat screen with Compose Testing")
                 
                 // Step 3: Send first message to trigger bot response using Compose Testing
                 val sentMessages = mutableListOf<String>()
@@ -140,9 +146,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "📨 Step 3: Sending initial message with Compose Testing...")
                 
-                // First, ensure we're on the chat screen by using existing navigation methods
-                Log.d(TAG, "🔍 Checking current screen state...")
-                val chatScreenStatus = isCurrentlyInChatScreen()
+                // First, ensure we're on the chat screen using Compose Testing
+                Log.d(TAG, "🔍 Checking current screen state with Compose Testing...")
+                val chatScreenStatus = ComposeTestHelper.isOnChatScreen(composeTestRule)
                 Log.d(TAG, "🔍 Chat screen status: $chatScreenStatus")
                 
                 if (!chatScreenStatus) {
@@ -150,7 +156,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                     failWithScreenshot("navigate_to_chats_list_failed_2", "❌ Not on chat screen - navigation failed")
                     return@runBlocking
                 } else {
-                    Log.d(TAG, "✅ Confirmed we made it to chat screen")
+                    Log.d(TAG, "✅ Confirmed we made it to chat screen with Compose Testing")
                 }
                 
                 // Now try to send the message using Compose testing
