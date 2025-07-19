@@ -324,56 +324,39 @@ object ComposeTestHelper {
         onFailure: ((String, String) -> Unit)? = null
     ): Boolean {
         return try {
-            // Use a shorter search text to be more flexible with message display
-            val searchText = message.take(20)
             val startTime = System.currentTimeMillis()
             
-            Log.d(TAG, "🔍 Compose: Starting message search for: '$searchText' (full: '${message.take(50)}...')")
+            Log.d(TAG, "🔍 Compose: Starting message search for: '${message.take(50)}...'")
             Log.d(TAG, "⏱️ Compose: Search timeout: ${timeoutMs}ms")
             
             while ((System.currentTimeMillis() - startTime) < timeoutMs) {
                 try {
-                    // Try to find the message using Compose Testing with multiple strategies
-                    val messageSelectors = listOf(
-                        { composeTestRule.onNodeWithText(searchText) },
-                        { composeTestRule.onNodeWithText(message.take(15)) }, // Even shorter fallback
-                        { composeTestRule.onNodeWithText(message.take(10)) }, // Very short fallback
-                        { composeTestRule.onNodeWithContentDescription("User message: $searchText") },
-                        { composeTestRule.onNodeWithContentDescription("Assistant message: $searchText") }
-                    )
+                    // Use the perfect content description selector from UI dump analysis
+                    // The UI dump shows: content-desc="User message: [full message text]"
+                    val contentDescription = "User message: $message"
+                    val node = composeTestRule.onNodeWithContentDescription(contentDescription)
+                    node.assertIsDisplayed()
+                    Log.d(TAG, "✅ Compose: Message found with content description selector")
+                    return true
                     
-                    for ((index, selector) in messageSelectors.withIndex()) {
-                        try {
-                            val node = selector()
-                            node.assertIsDisplayed()
-                            Log.d(TAG, "✅ Compose: Message found with selector $index: '$searchText'")
-                            return true
-                        } catch (e: AssertionError) {
-                            // This is the specific failure we're looking for - message not displayed
-                            Log.d(TAG, "⚠️ Compose: Selector $index failed with AssertionError: ${e.message}")
-                            continue
-                        } catch (e: Exception) {
-                            Log.d(TAG, "⚠️ Compose: Selector $index failed with other exception: ${e.message}")
-                            continue
-                        }
-                    }
-                    
-                    // Log progress every 500ms
-                    val elapsed = System.currentTimeMillis() - startTime
-                    if (elapsed % 500 < 10) {
-                        Log.d(TAG, "⏳ Compose: Still searching for message... (${elapsed}ms elapsed)")
-                    }
-                    
-                    // Brief wait before next check
-                    delay(10)
-                    
+                } catch (e: AssertionError) {
+                    // Message not found yet, continue searching
+                    Log.d(TAG, "⏳ Compose: Message not found yet, continuing search...")
                 } catch (e: Exception) {
                     Log.d(TAG, "⚠️ Compose: Exception during message search: ${e.message}")
-                    delay(10)
                 }
+                
+                // Log progress every 500ms
+                val elapsed = System.currentTimeMillis() - startTime
+                if (elapsed % 500 < 10) {
+                    Log.d(TAG, "⏳ Compose: Still searching for message... (${elapsed}ms elapsed)")
+                }
+                
+                // Brief wait before next check
+                delay(10)
             }
             
-            Log.e(TAG, "❌ Compose: Message not found within ${timeoutMs}ms: '$searchText'")
+            Log.e(TAG, "❌ Compose: Message not found within ${timeoutMs}ms")
             Log.e(TAG, "🔍 Compose: Full message was: '${message.take(100)}...'")
             Log.e(TAG, "⏱️ Compose: Search started at ${startTime}, ended at ${System.currentTimeMillis()}")
             
@@ -396,10 +379,10 @@ object ComposeTestHelper {
             // Log detailed failure information for test summary
             Log.e(TAG, "🚨 COMPOSE TEST FAILURE SUMMARY:")
             Log.e(TAG, "   📝 Message that failed to appear: '${message.take(50)}...'")
-            Log.e(TAG, "   🔍 Search text used: '$searchText'")
+            Log.e(TAG, "   🔍 Content description used: 'User message: ${message.take(30)}...'")
             Log.e(TAG, "   ⏱️ Timeout: ${timeoutMs}ms")
             Log.e(TAG, "   📊 Search duration: ${System.currentTimeMillis() - startTime}ms")
-            Log.e(TAG, "   🎯 Selectors tried: 5 different strategies")
+            Log.e(TAG, "   🎯 Selector used: content description (from UI dump analysis)")
             Log.e(TAG, "   ❌ Result: Message not found in UI")
             
             // Call failure callback if provided
@@ -424,36 +407,15 @@ object ComposeTestHelper {
         val missingMessages = mutableListOf<String>()
         
         for ((index, expectedMessage) in expectedMessages.withIndex()) {
-            val searchText = expectedMessage.take(30)
-            
             try {
-                // Try to find the message using multiple selectors
-                val messageFound = try {
-                    composeTestRule.onNodeWithText(searchText).assertIsDisplayed()
-                    true
-                } catch (e: Exception) {
-                    try {
-                        composeTestRule.onNodeWithContentDescription("User message: $searchText").assertIsDisplayed()
-                        true
-                    } catch (e2: Exception) {
-                        try {
-                            composeTestRule.onNodeWithContentDescription("Assistant message: $searchText").assertIsDisplayed()
-                            true
-                        } catch (e3: Exception) {
-                            false
-                        }
-                    }
-                }
-                
-                if (messageFound) {
-                    Log.d(TAG, "✅ Compose: Message ${index + 1} found: '${searchText}...'")
-                } else {
-                    Log.w(TAG, "❌ Compose: Message ${index + 1} missing: '${searchText}...'")
-                    missingMessages.add(expectedMessage)
-                }
+                // Use the same content description selector as waitForMessageToAppear
+                val contentDescription = "User message: $expectedMessage"
+                composeTestRule.onNodeWithContentDescription(contentDescription).assertIsDisplayed()
+                Log.d(TAG, "✅ Compose: Message ${index + 1} found: '${expectedMessage.take(30)}...'")
                 
             } catch (e: Exception) {
-                Log.w(TAG, "❌ Compose: Exception checking message ${index + 1}: ${e.message}")
+                Log.w(TAG, "❌ Compose: Message ${index + 1} missing: '${expectedMessage.take(30)}...'")
+                Log.w(TAG, "   🔍 Looking for content description: 'User message: ${expectedMessage.take(30)}...'")
                 missingMessages.add(expectedMessage)
             }
         }
@@ -472,24 +434,15 @@ object ComposeTestHelper {
      */
     fun noDuplicates(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): Boolean {
         for (message in expectedMessages) {
-            val searchText = message.take(30)
-            
             try {
-                // Check if this message appears multiple times by trying to find it
-                val messageFound = try {
-                    composeTestRule.onNodeWithText(searchText).assertIsDisplayed()
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-                
-                if (messageFound) {
-                    // For now, we'll assume no duplicates since we can't easily count with available APIs
-                    Log.d(TAG, "✅ Compose: Message found: '$searchText'")
-                }
+                // Use the same content description selector as other functions
+                val contentDescription = "User message: $message"
+                composeTestRule.onNodeWithContentDescription(contentDescription).assertIsDisplayed()
+                Log.d(TAG, "✅ Compose: Message found for duplicate check: '${message.take(30)}...'")
                 
             } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Compose: Exception checking duplicates for: '$searchText'")
+                Log.w(TAG, "⚠️ Compose: Exception checking duplicates for: '${message.take(30)}...'")
+                Log.w(TAG, "   🔍 Looking for content description: 'User message: ${message.take(30)}...'")
             }
         }
         
