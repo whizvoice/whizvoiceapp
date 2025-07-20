@@ -721,18 +721,30 @@ run_integration_tests_with_logcat() {
                         # Only show logs for tags that match failing tests
                         if [[ "$tag_matches_failure" == true ]]; then
                             echo "📱 $tag execution logs:" >> test_summary.log
+                            
+                            # Look for specific assertion errors for this test
+                            local assertion_errors=$(grep -A 5 -B 2 "AssertionError.*$tag\|$tag.*AssertionError" test_logcat_output.log | head -20 || echo "")
+                            if [[ -n "$assertion_errors" ]]; then
+                                echo "📱 $tag AssertionError details:" >> test_summary.log
+                                echo "$assertion_errors" >> test_summary.log
+                                echo "" >> test_summary.log
+                            fi
+                            
                             # Look for both direct tag logs and TestRunner logs mentioning the test class
-                            local test_logs=$(grep "$tag" test_logcat_output.log || echo "")
-                            local test_runner_logs=$(grep "TestRunner.*$tag" test_logcat_output.log || echo "")
+                            local test_logs=$(grep "$tag" test_logcat_output.log | head -30 || echo "")
+                            local test_runner_logs=$(grep "TestRunner.*$tag" test_logcat_output.log | head -20 || echo "")
                             # Also look for the full class name in case TAG is shortened
                             local tag_base=$(echo "$tag" | sed 's/Test$//')  # Remove "Test" suffix if present
-                            local class_name_logs=$(grep "${tag_base}.*Test" test_logcat_output.log || echo "")
+                            local class_name_logs=$(grep "${tag_base}.*Test" test_logcat_output.log | head -20 || echo "")
                             
                             if [[ -n "$test_logs" ]]; then
+                                echo "📱 $tag general logs:" >> test_summary.log
                                 echo "$test_logs" >> test_summary.log
                             elif [[ -n "$test_runner_logs" ]]; then
+                                echo "📱 $tag TestRunner logs:" >> test_summary.log
                                 echo "$test_runner_logs" >> test_summary.log
                             elif [[ -n "$class_name_logs" ]]; then
+                                echo "📱 $tag class name logs:" >> test_summary.log
                                 echo "$class_name_logs" >> test_summary.log
                             else
                                 echo "No $tag logs found" >> test_summary.log
@@ -742,12 +754,29 @@ run_integration_tests_with_logcat() {
                     fi
                 done
             else
-                echo "No failing test tags discovered - showing generic test failure logs" >> test_summary.log
-                local test_failure_logs=$(grep -E "TestRunner.*failed|AssertionError|RuntimeException" test_logcat_output.log | head -50 || echo "")
+                echo "No failing test tags discovered - showing comprehensive test failure logs" >> test_summary.log
+                
+                # Extract specific assertion errors with more context
+                echo "📱 FAILED TEST LOGS:" >> test_summary.log
+                echo "=================================================================================" >> test_summary.log
+                
+                # Look for specific assertion errors with full context
+                local assertion_errors=$(grep -A 10 -B 2 "AssertionError" test_logcat_output.log | head -30 || echo "")
+                if [[ -n "$assertion_errors" ]]; then
+                    echo "💡 Complete logcat available in: test_logcat_output.log" >> test_summary.log
+                    echo "" >> test_summary.log
+                    echo "📱 Specific AssertionError details:" >> test_summary.log
+                    echo "$assertion_errors" >> test_summary.log
+                    echo "" >> test_summary.log
+                fi
+                
+                # Also show general test failure logs
+                local test_failure_logs=$(grep -E "TestRunner.*failed|RuntimeException" test_logcat_output.log | head -20 || echo "")
                 if [[ -n "$test_failure_logs" ]]; then
+                    echo "📱 General test failure logs:" >> test_summary.log
                     echo "$test_failure_logs" >> test_summary.log
                 else
-                    echo "No test failure logs found" >> test_summary.log
+                    echo "No additional test failure logs found" >> test_summary.log
                 fi
             fi
         else

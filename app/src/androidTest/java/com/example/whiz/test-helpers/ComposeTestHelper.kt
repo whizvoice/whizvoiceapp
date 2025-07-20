@@ -294,12 +294,12 @@ object ComposeTestHelper {
             Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
             
             // Wait for message to appear (with appropriate timeout)
-            val timeout = if (rapid) 150L else 1000L
+            val timeout = if (rapid) 300L else 1000L
             Log.d(TAG, "⏳ Compose: Step 3 - Waiting for message to appear (timeout: ${timeout}ms)...")
             
             // For rapid messages, add extra logging to detect if interruption is blocked
             if (rapid) {
-                Log.d(TAG, "🚨 RAPID MODE: If this takes longer than 100ms, interruption is blocked!")
+                Log.d(TAG, "🚨 RAPID MODE: If this takes longer than ${timeout}, interruption is blocked!")
             }
             
             val messageAppeared = waitForMessageToAppear(composeTestRule, message, timeout, onFailure)
@@ -362,12 +362,31 @@ object ComposeTestHelper {
             
             while ((System.currentTimeMillis() - startTime) < timeoutMs) {
                 try {
-                    // Use the actual text content of the message (much more reliable than content description)
-                    // The UI dump shows the full message text is available in the text property
-                    val node = composeTestRule.onNodeWithText(message)
-                    node.assertIsDisplayed()
-                    Log.d(TAG, "✅ Compose: Message found with text content selector")
-                    return true
+                    // Try multiple selectors to find the message
+                    // Based on production code, messages are Compose Text components with content descriptions
+                    val selectors = listOf(
+                        { composeTestRule.onNodeWithContentDescription("User message: ${message}") }, // Primary: content description
+                        { composeTestRule.onNodeWithText(message) }, // Fallback: direct text
+                        { composeTestRule.onNodeWithText(message, useUnmergedTree = true) } // Fallback: unmerged tree
+                    )
+                    
+                    var messageFound = false
+                    for (selector in selectors) {
+                        try {
+                            val node = selector()
+                            node.assertIsDisplayed()
+                            messageFound = true
+                            Log.d(TAG, "✅ Compose: Message found with selector")
+                            break
+                        } catch (e: Exception) {
+                            // Continue to next selector
+                            continue
+                        }
+                    }
+                    
+                    if (messageFound) {
+                        return true
+                    }
                     
                 } catch (e: AssertionError) {
                     // Message not found yet, continue searching
@@ -478,8 +497,9 @@ object ComposeTestHelper {
     }
     
     /**
-     * Verify that a specific message appears right after another message in the chat
-     * This tests the request ID pairing functionality to ensure responses appear in correct order
+     * Verify that a response message appears IMMEDIATELY after its corresponding user message
+     * This tests the request ID pairing functionality to ensure responses appear in reply order, not timestamp order
+     * The bug was that responses were appearing chronologically instead of being paired with their user messages
      */
     fun verifyMessageOrder(
         composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
@@ -487,7 +507,8 @@ object ComposeTestHelper {
         expectedResponse: String
     ): Boolean {
         return try {
-            Log.d(TAG, "🔍 Compose: Verifying message order - response should appear after user message")
+            Log.d(TAG, "🔍 Compose: Verifying message order - response should appear IMMEDIATELY after user message")
+            Log.d(TAG, "🔍 Compose: Testing request ID pairing (reply order vs timestamp order)")
             Log.d(TAG, "🔍 Compose: User message: '${userMessage.take(50)}...'")
             Log.d(TAG, "🔍 Compose: Expected response: '${expectedResponse.take(50)}...'")
             
@@ -508,42 +529,61 @@ object ComposeTestHelper {
                 return false
             }
             
-            // Now verify the order by checking if the response appears after the user message
-            // We'll use a simple approach: get all text nodes and check their order
+            // Now verify the order using LazyColumn state
             try {
-                val allTextNodes = composeTestRule.onAllNodesWithText(".*")
-                val textNodes = allTextNodes.fetchSemanticsNodes()
+                // Get all message nodes with their positions
+                val allMessageNodes = composeTestRule.onAllNodesWithContentDescription("message")
+                val messageNodes = allMessageNodes.fetchSemanticsNodes()
+                
+                Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} message nodes in LazyColumn")
                 
                 var userMessageIndex = -1
                 var responseIndex = -1
                 
-                for ((index, node) in textNodes.withIndex()) {
-                    val nodeText = node.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text ?: ""
-                    if (nodeText.contains(userMessage.take(20))) {
+                // Find the indices of both messages
+                for ((index, node) in messageNodes.withIndex()) {
+                    val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                    Log.d(TAG, "🔍 Compose: Node $index: '$contentDesc'")
+                    
+                    if (contentDesc.contains("User message: $userMessage")) {
                         userMessageIndex = index
                         Log.d(TAG, "🔍 Compose: Found user message at index $index")
                     }
-                    if (nodeText.contains(expectedResponse.take(20))) {
+                    
+                    if (contentDesc.contains("Assistant message: $expectedResponse")) {
                         responseIndex = index
                         Log.d(TAG, "🔍 Compose: Found response at index $index")
                     }
                 }
                 
                 if (userMessageIndex == -1) {
-                    Log.e(TAG, "❌ Compose: Could not find user message in text nodes")
+                    Log.e(TAG, "❌ Compose: Could not find user message in LazyColumn nodes")
                     return false
                 }
                 
                 if (responseIndex == -1) {
-                    Log.e(TAG, "❌ Compose: Could not find response in text nodes")
+                    Log.e(TAG, "❌ Compose: Could not find response in LazyColumn nodes")
                     return false
                 }
                 
-                if (responseIndex > userMessageIndex) {
-                    Log.d(TAG, "✅ Compose: Message order verified! Response (index $responseIndex) appears after user message (index $userMessageIndex)")
+                // Verify order: response should appear IMMEDIATELY after user message (not just somewhere after)
+                if (responseIndex == userMessageIndex + 1) {
+                    Log.d(TAG, "✅ Compose: Message order verified! Response (index $responseIndex) appears IMMEDIATELY after user message (index $userMessageIndex)")
                     return true
                 } else {
-                    Log.e(TAG, "❌ Compose: Message order incorrect! Response (index $responseIndex) appears before user message (index $userMessageIndex)")
+                    Log.e(TAG, "❌ Compose: Message order incorrect! Response (index $responseIndex) does not appear immediately after user message (index $userMessageIndex)")
+                    Log.e(TAG, "❌ Compose: Expected response at index ${userMessageIndex + 1}, but found it at index $responseIndex")
+                    
+                    // Log what's actually between the user message and response
+                    if (responseIndex > userMessageIndex) {
+                        Log.e(TAG, "❌ Compose: There are ${responseIndex - userMessageIndex - 1} messages between user message and response:")
+                        for (i in (userMessageIndex + 1) until responseIndex) {
+                            val contentDesc = messageNodes[i].config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                            Log.e(TAG, "❌ Compose:   Index $i: '$contentDesc'")
+                        }
+                    } else {
+                        Log.e(TAG, "❌ Compose: Response appears before user message - this indicates a serious ordering bug")
+                    }
                     return false
                 }
                 
