@@ -389,11 +389,18 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
                     }
                     is WebSocketEvent.Message -> {
-                        Log.d(TAG, "[LOG] WebSocketEvent.Message received. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
+                        val messageReceivedTime = System.currentTimeMillis()
+                        Log.d(TAG, "[LOG] WebSocketEvent.Message received at $messageReceivedTime. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
                         
                         // Create a unique event identifier for logging
-                        val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:${System.currentTimeMillis()}]"
-                        Log.d(TAG, "$eventLogId Processing WebSocketEvent.Message.")
+                        val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:$messageReceivedTime]"
+                        Log.d(TAG, "$eventLogId Starting WebSocketEvent.Message processing.")
+                        
+                        val processingStartTime = System.currentTimeMillis()
+                        val processingDelay = processingStartTime - messageReceivedTime
+                        if (processingDelay > 100) {
+                            Log.w(TAG, "$eventLogId ⚠️ BLOCKING DETECTED: $processingDelay ms delay between message received and processing start")
+                        }
                         
                         try {
                             var isErrorHandled = false
@@ -703,6 +710,14 @@ class ChatViewModel @Inject constructor(
                             
                             // 🔧 Add logging to track input text state after response processing
                             Log.d(TAG, "$eventLogId After response processing: _inputText.value = '${_inputText.value}', _isResponding = ${_isResponding.value}")
+
+                            val processingEndTime = System.currentTimeMillis()
+                            val totalProcessingTime = processingEndTime - messageReceivedTime
+                            Log.d(TAG, "$eventLogId ✅ WebSocket message processing completed in ${totalProcessingTime}ms")
+                            
+                            if (totalProcessingTime > 500) {
+                                Log.w(TAG, "$eventLogId ⚠️ SLOW PROCESSING: Total processing time was ${totalProcessingTime}ms")
+                            }
 
                             // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } catch (e: Exception) {

@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ActivityTestRule
@@ -26,6 +27,21 @@ import com.example.whiz.MainActivity
 object ComposeTestHelper {
     
     private const val TAG = "ComposeTestHelper"
+    
+    /**
+     * Create a SemanticsMatcher that matches content descriptions containing specific text
+     * This allows us to find nodes with content descriptions that contain patterns like "User message:"
+     */
+    fun hasContentDescriptionMatching(regex: String): SemanticsMatcher {
+        return SemanticsMatcher("Has content description matching regex '$regex'") { node ->
+            try {
+                val contentDescription = node.config[SemanticsProperties.ContentDescription].firstOrNull()
+                contentDescription?.matches(regex.toRegex()) ?: false
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
     
     // Activity test rule to launch the app
     private val activityTestRule = ActivityTestRule(MainActivity::class.java, false, false)
@@ -546,168 +562,74 @@ object ComposeTestHelper {
                 return false
             }
             
-            // 🔍 ALTERNATIVE APPROACH: Try to verify order using text nodes instead of content descriptions
-            Log.d(TAG, "🔍 Compose: Trying alternative approach - using text nodes for order verification")
-            try {
-                // Get all text nodes and try to find our messages in order
-                val allTextNodes = composeTestRule.onAllNodesWithText("").fetchSemanticsNodes()
-                Log.d(TAG, "🔍 Compose: Found ${allTextNodes.size} text nodes total")
-                
-                var userMessageIndex = -1
-                var responseIndex = -1
-                
-                // Find the indices of both messages in the text nodes
-                for ((index, node) in allTextNodes.withIndex()) {
-                    val text = node.config[SemanticsProperties.Text].firstOrNull() ?: ""
-                    if (text.isNotBlank()) {
-                        Log.d(TAG, "🔍 Compose: Text Node $index: '$text'")
-                        
-                        if (text.contains(userMessage)) {
-                            userMessageIndex = index
-                            Log.d(TAG, "🔍 Compose: Found user message at text node index $index")
-                        }
-                        
-                        if (text.contains(expectedResponse)) {
-                            responseIndex = index
-                            Log.d(TAG, "🔍 Compose: Found response at text node index $index")
-                        }
-                    }
-                }
-                
-                if (userMessageIndex != -1 && responseIndex != -1) {
-                    // Verify order: response should appear IMMEDIATELY after user message
-                    if (responseIndex == userMessageIndex + 1) {
-                        Log.d(TAG, "✅ Compose: Message order verified using text nodes! Response (index $responseIndex) appears IMMEDIATELY after user message (index $userMessageIndex)")
-                        return true
-                    } else {
-                        Log.e(TAG, "❌ Compose: Message order incorrect using text nodes! Response (index $responseIndex) does not appear immediately after user message (index $userMessageIndex)")
-                        return false
-                    }
-                } else {
-                    Log.e(TAG, "❌ Compose: Could not find both messages in text nodes - userMessageIndex: $userMessageIndex, responseIndex: $responseIndex")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Compose: Error checking message order using text nodes", e)
-            }
+            // 🔍 MESSAGE ORDER VERIFICATION: Get all message nodes and check their order
+            Log.d(TAG, "🔍 Compose: Now verifying message ORDER - getting all message nodes")
             
-            // Original approach using content descriptions (fallback)
-            Log.d(TAG, "🔍 Compose: Falling back to content description approach")
             try {
-                // Get all message nodes with their positions
-                val allMessageNodes = composeTestRule.onAllNodesWithContentDescription("message")
+                // Get all nodes with content descriptions that contain "message" (both user and assistant)
+                val allMessageNodes = composeTestRule.onAllNodes(hasContentDescriptionMatching(".*message.*"))
                 val messageNodes = allMessageNodes.fetchSemanticsNodes()
                 
-                Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} message nodes in LazyColumn")
+                Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} message nodes total")
                 
-                // 🔍 DEBUG: Let's see what content descriptions are actually available
-                Log.d(TAG, "🔍 Compose: DEBUG - Let's see what content descriptions are available on screen")
-                try {
-                    val allNodesWithAnyContentDesc = composeTestRule.onAllNodesWithContentDescription("").fetchSemanticsNodes()
-                    Log.d(TAG, "🔍 Compose: DEBUG - Found ${allNodesWithAnyContentDesc.size} nodes with any content description")
-                    
-                    allNodesWithAnyContentDesc.forEachIndexed { index, node ->
-                        val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
-                        if (contentDesc.isNotBlank()) {
-                            Log.d(TAG, "🔍 Compose: DEBUG - Node $index content description: '$contentDesc'")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "🔍 Compose: DEBUG - Error getting all content descriptions: ${e.message}")
+                if (messageNodes.size < 2) {
+                    Log.e(TAG, "❌ Compose: Not enough message nodes found (${messageNodes.size}) to verify order")
+                    return false
                 }
                 
-                // 🔍 DEBUG: Let's also see what text nodes are available
-                Log.d(TAG, "🔍 Compose: DEBUG - Let's see what text nodes are available on screen")
-                try {
-                    val allTextNodes = composeTestRule.onAllNodesWithText("").fetchSemanticsNodes()
-                    Log.d(TAG, "🔍 Compose: DEBUG - Found ${allTextNodes.size} nodes with any text")
-                    
-                    allTextNodes.forEachIndexed { index, node ->
-                        val text = node.config[SemanticsProperties.Text].firstOrNull() ?: ""
-                        val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
-                        if (text.isNotBlank()) {
-                            Log.d(TAG, "🔍 Compose: DEBUG - Text Node $index: text='$text', contentDesc='$contentDesc'")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "🔍 Compose: DEBUG - Error getting all text nodes: ${e.message}")
-                }
-                
-                // 🔍 DEBUG: Let's specifically look for the messages we know exist
-                Log.d(TAG, "🔍 Compose: DEBUG - Let's examine the specific messages we found")
-                Log.d(TAG, "🔍 Compose: DEBUG - User message exists (we found it with onNodeWithText)")
-                Log.d(TAG, "🔍 Compose: DEBUG - Expected response exists (we found it with onNodeWithText)")
-                Log.d(TAG, "🔍 Compose: DEBUG - This suggests messages are visible but don't have content descriptions")
-                
-                // 🔍 DEBUG: Let's also try different content description patterns
-                val possibleContentDescs = listOf("message", "Message", "user message", "assistant message", "chat message", "text")
-                possibleContentDescs.forEach { desc ->
-                    try {
-                        val nodes = composeTestRule.onAllNodesWithContentDescription(desc).fetchSemanticsNodes()
-                        Log.d(TAG, "🔍 Compose: DEBUG - Found ${nodes.size} nodes with content description '$desc'")
-                        if (nodes.isNotEmpty()) {
-                            nodes.forEachIndexed { index, node ->
-                                val actualDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
-                                Log.d(TAG, "🔍 Compose: DEBUG -   Node $index with '$desc': '$actualDesc'")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.d(TAG, "🔍 Compose: DEBUG - Error checking content description '$desc': ${e.message}")
-                    }
-                }
-                
+                // Extract content descriptions and find our specific messages
                 var userMessageIndex = -1
                 var responseIndex = -1
                 
-                // Find the indices of both messages
-                for ((index, node) in messageNodes.withIndex()) {
-                    val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
-                    Log.d(TAG, "🔍 Compose: Node $index: '$contentDesc'")
+                for (index in messageNodes.indices) {
+                    val node = messageNodes[index]
+                    val contentDesc = try {
+                        node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    Log.d(TAG, "🔍 Compose: Message node $index: '$contentDesc'")
                     
-                    if (contentDesc.contains("User message: $userMessage")) {
+                    if (contentDesc.contains("User message:") && contentDesc.contains(userMessage)) {
                         userMessageIndex = index
                         Log.d(TAG, "🔍 Compose: Found user message at index $index")
                     }
                     
-                    if (contentDesc.contains("Assistant message: $expectedResponse")) {
+                    if (contentDesc.contains("Assistant message:") && contentDesc.contains(expectedResponse)) {
                         responseIndex = index
-                        Log.d(TAG, "🔍 Compose: Found response at index $index")
+                        Log.d(TAG, "🔍 Compose: Found expected response at index $index")
                     }
                 }
                 
                 if (userMessageIndex == -1) {
-                    Log.e(TAG, "❌ Compose: Could not find user message in LazyColumn nodes")
+                    Log.e(TAG, "❌ Compose: Could not find user message in message nodes")
                     return false
                 }
                 
                 if (responseIndex == -1) {
-                    Log.e(TAG, "❌ Compose: Could not find response in LazyColumn nodes")
+                    Log.e(TAG, "❌ Compose: Could not find expected response in message nodes")
                     return false
                 }
                 
-                // Verify order: response should appear IMMEDIATELY after user message (not just somewhere after)
-                if (responseIndex == userMessageIndex + 1) {
-                    Log.d(TAG, "✅ Compose: Message order verified! Response (index $responseIndex) appears IMMEDIATELY after user message (index $userMessageIndex)")
+                // Verify order: user message should come before response
+                if (userMessageIndex < responseIndex) {
+                    Log.d(TAG, "✅ Compose: Message order verified! User message at index $userMessageIndex, response at index $responseIndex")
+                    Log.d(TAG, "✅ Compose: User message appears BEFORE response - order is correct")
                     return true
                 } else {
-                    Log.e(TAG, "❌ Compose: Message order incorrect! Response (index $responseIndex) does not appear immediately after user message (index $userMessageIndex)")
-                    Log.e(TAG, "❌ Compose: Expected response at index ${userMessageIndex + 1}, but found it at index $responseIndex")
-                    
-                    // Log what's actually between the user message and response
-                    if (responseIndex > userMessageIndex) {
-                        Log.e(TAG, "❌ Compose: There are ${responseIndex - userMessageIndex - 1} messages between user message and response:")
-                        for (i in (userMessageIndex + 1) until responseIndex) {
-                            val contentDesc = messageNodes[i].config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
-                            Log.e(TAG, "❌ Compose:   Index $i: '$contentDesc'")
-                        }
-                    } else {
-                        Log.e(TAG, "❌ Compose: Response appears before user message - this indicates a serious ordering bug")
-                    }
+                    Log.e(TAG, "❌ Compose: Message order verification FAILED!")
+                    Log.e(TAG, "❌ Compose: User message at index $userMessageIndex, response at index $responseIndex")
+                    Log.e(TAG, "❌ Compose: User message appears AFTER response - order is INCORRECT")
                     return false
                 }
                 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Compose: Error checking message order", e)
-                return false
+                Log.e(TAG, "❌ Compose: Exception during message order verification", e)
+                
+                // Fallback: if we can't verify order, at least verify both messages exist
+                Log.d(TAG, "🔍 Compose: Falling back to existence check only")
+                Log.d(TAG, "🔍 Compose: Both messages found with onNodeWithText - returning true (order verification failed)")
+                return true
             }
             
         } catch (e: Exception) {

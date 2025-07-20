@@ -522,7 +522,11 @@ fun MessagesList(
     
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth(), // Only fill width, not height - prevents overlay
+        modifier = modifier
+            .fillMaxWidth() // Only fill width, not height - prevents overlay
+            .semantics { 
+                contentDescription = "Chat messages list"
+            },
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {

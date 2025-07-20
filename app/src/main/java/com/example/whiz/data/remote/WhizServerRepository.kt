@@ -211,7 +211,15 @@ class WhizServerRepository @Inject constructor(
                                     jsonObject.getLong("conversation_id")
                                 } else null
                                 Log.d(TAG, "Received structured response with request_id: $requestId, conversation_id: $conversationId")
-                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId, conversationId)) }
+                                val emitStartTime = System.currentTimeMillis()
+                                scope.launch { 
+                                    _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId, conversationId))
+                                    val emitEndTime = System.currentTimeMillis()
+                                    val emitDuration = emitEndTime - emitStartTime
+                                    if (emitDuration > 50) {
+                                        Log.w(TAG, "⚠️ WebSocket emit delay: ${emitDuration}ms for structured response")
+                                    }
+                                }
                                 messageHandled = true
                             }
                         } catch (e: org.json.JSONException) {
@@ -236,7 +244,15 @@ class WhizServerRepository @Inject constructor(
                             } else {
                                 // Default for any unhandled or plain text message
                                 Log.d(TAG, "Emitting as generic WebSocketEvent.Message: $text")
-                                scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(text, requestId)) }
+                                val emitStartTime = System.currentTimeMillis()
+                                scope.launch { 
+                                    _webSocketEvents.emit(WebSocketEvent.Message(text, requestId))
+                                    val emitEndTime = System.currentTimeMillis()
+                                    val emitDuration = emitEndTime - emitStartTime
+                                    if (emitDuration > 50) {
+                                        Log.w(TAG, "⚠️ WebSocket emit delay: ${emitDuration}ms for generic message")
+                                    }
+                                }
                             }
                         }
                     } catch (e: Exception) {
