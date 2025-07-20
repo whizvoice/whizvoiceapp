@@ -1084,13 +1084,20 @@ class ChatViewModel @Inject constructor(
             
             Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId, requestId: $requestId")
 
-            // Handle new chat creation differently for remote vs local agent
-            if (currentChatId <= 0) {
+            // 🔧 FIXED: Use existing chat ID for all messages in a conversation
+            // Only create a new chat if we don't have any chat yet (first message)
+            // Note: Negative chat IDs are valid optimistic chats, not "no chat"
+            if (currentChatId == -1L) {
                 if (configUseRemoteAgent) {
-                    // For remote agent: Don't create conversation locally
+                    // For remote agent: Create optimistic chat only for the first message
                     // Let the WebSocket server create it and then sync
-                    Log.d(TAG, "sendUserInput: Using remote agent for new chat - server will create conversation")
-                    currentChatId = -1 // Keep as new chat indicator
+                    Log.d(TAG, "sendUserInput: 🔧 FIXED: First message - creating optimistic chat for remote agent")
+                    val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val tempChatId = repository.createChatOptimistic(tempTitle)
+                    _chatId.value = tempChatId
+                    _chatTitle.value = tempTitle
+                    currentChatId = tempChatId
+                    Log.d(TAG, "sendUserInput: 🔧 FIXED: Created optimistic chat $tempChatId for first message")
                 } else {
                     // For local agent: Create conversation locally as before
                     val chatTitle = repository.deriveChatTitle(trimmedText)
@@ -1106,24 +1113,15 @@ class ChatViewModel @Inject constructor(
                     whizServerRepository.connect(null)
                 }
             } else {
-                Log.d(TAG, "sendUserInput: Using existing chat - originalChatId: $originalChatId, staying with: $currentChatId")
+                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using existing chat for subsequent message - originalChatId: $originalChatId, staying with: $currentChatId")
             }
 
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
             // Repository will handle deduplication when server messages arrive
             try {
-                val actualChatId = if (currentChatId > 0) {
-                    Log.d(TAG, "sendUserInput: 💬 Using existing chat ID: $currentChatId")
-                    currentChatId
-                } else {
-                    // For new chats, create a temporary local chat to show the message immediately
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChatOptimistic(tempTitle)
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                    Log.d(TAG, "sendUserInput: 💬 Created optimistic local chat $tempChatId with title '$tempTitle' (was currentChatId: $currentChatId)")
-                    tempChatId
-                }
+                // 🔧 FIXED: Always use the current chat ID (whether optimistic or server-backed)
+                val actualChatId = currentChatId
+                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using same chat ID for all messages: $actualChatId")
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
                     Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId with requestId: $requestId")
@@ -1198,7 +1196,7 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI
-                if (currentChatId <= 0) {
+                if (currentChatId == -1L) {
                     try {
                         viewModelScope.launch {
                             repository.refreshConversations()
