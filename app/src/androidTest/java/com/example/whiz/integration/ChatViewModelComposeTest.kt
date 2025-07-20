@@ -219,8 +219,11 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔍 Looking for barista response: '$expectedBaristaResponse'")
                 
                 // Verify that the barista response appears right after the first message
+                Log.d(TAG, "🔍 About to verify message order - looking for Barista response after first message")
                 if (!ComposeTestHelper.verifyMessageOrder(composeTestRule, firstMessage, expectedBaristaResponse)) {
                     Log.e(TAG, "❌ Message order verification failed - barista response not in correct position")
+                    Log.e(TAG, "❌ Expected to find 'Barista' response after first message: '${firstMessage.take(50)}...'")
+                    Log.e(TAG, "❌ This indicates the request ID pairing is not working correctly")
                     failWithScreenshot("message_order_verification_failed", "Barista response not appearing after the correct user message")
                     return@runBlocking
                 }

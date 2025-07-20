@@ -1119,9 +1119,10 @@ class ChatViewModel @Inject constructor(
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
             // Repository will handle deduplication when server messages arrive
             try {
-                // 🔧 FIXED: Always use the current chat ID (whether optimistic or server-backed)
-                val actualChatId = currentChatId
-                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using same chat ID for all messages: $actualChatId")
+                // 🔧 FIXED: Use the current chat ID from _chatId.value to handle migration correctly
+                // This ensures optimistic messages go to the right chat even during migration
+                val actualChatId = _chatId.value
+                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using current chat ID from _chatId.value: $actualChatId (was currentChatId: $currentChatId)")
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
                     Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId with requestId: $requestId")
