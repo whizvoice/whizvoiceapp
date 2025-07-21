@@ -843,14 +843,12 @@ object ComposeTestHelper {
                         Log.d(TAG, "✅ Compose: WebSocket confirmation - bot thinking indicator appeared")
                         return true
                     } catch (e: AssertionError) {
-                        try {
-                            composeTestRule.onNodeWithText("Whiz").assertIsDisplayed()
-                            Log.d(TAG, "✅ Compose: WebSocket confirmation - bot response appeared")
+                        // Check if there's any bot response after our message
+                        if (verifyBotResponseAfterMessage(composeTestRule, message)) {
+                            Log.d(TAG, "✅ Compose: WebSocket confirmation - bot response found after our message")
                             return true
-                        } catch (e2: AssertionError) {
-                            // Continue waiting
-                            Thread.sleep(50)
                         }
+                        Thread.sleep(50)
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "⚠️ Compose: Exception during WebSocket confirmation check: ${e.message}")
@@ -863,6 +861,74 @@ object ComposeTestHelper {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during WebSocket verification", e)
+            false
+        }
+    }
+    
+    /**
+     * Verify that a bot response appears after our specific user message
+     * This checks message ordering to ensure the bot response is related to our message
+     */
+    private fun verifyBotResponseAfterMessage(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        userMessage: String
+    ): Boolean {
+        return try {
+            Log.d(TAG, "🔍 Compose: Verifying bot response appears after user message: '${userMessage.take(30)}...'")
+            
+            // Get all message nodes and check their order
+            val allMessageNodes = composeTestRule.onAllNodes(hasContentDescriptionMatching(".*message.*"))
+            val messageNodes = allMessageNodes.fetchSemanticsNodes()
+            
+            Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} message nodes total")
+            
+            if (messageNodes.size < 2) {
+                Log.d(TAG, "🔍 Compose: Not enough messages to verify order")
+                return false
+            }
+            
+            // Find our user message and any bot response that comes after it
+            var userMessageIndex = -1
+            var botResponseIndex = -1
+            
+            for (index in messageNodes.indices) {
+                val node = messageNodes[index]
+                val contentDesc = try {
+                    node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                
+                // Check if this is our user message
+                if (contentDesc.contains("User message:") && contentDesc.contains(userMessage)) {
+                    userMessageIndex = index
+                    Log.d(TAG, "🔍 Compose: Found our user message at index $index")
+                }
+                
+                // Check if this is a bot response that comes after our message
+                if (userMessageIndex != -1 && index > userMessageIndex && 
+                    contentDesc.contains("Assistant message:")) {
+                    botResponseIndex = index
+                    Log.d(TAG, "🔍 Compose: Found bot response at index $index (after our message)")
+                    break // Found the first bot response after our message
+                }
+            }
+            
+            if (userMessageIndex == -1) {
+                Log.d(TAG, "🔍 Compose: Could not find our user message")
+                return false
+            }
+            
+            if (botResponseIndex == -1) {
+                Log.d(TAG, "🔍 Compose: No bot response found after our message")
+                return false
+            }
+            
+            Log.d(TAG, "✅ Compose: Bot response verified after our message (user at $userMessageIndex, bot at $botResponseIndex)")
+            true
+            
+        } catch (e: Exception) {
+            Log.d(TAG, "🔍 Compose: Exception during bot response verification: ${e.message}")
             false
         }
     }
