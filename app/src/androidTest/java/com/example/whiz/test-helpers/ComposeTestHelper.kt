@@ -611,15 +611,31 @@ object ComposeTestHelper {
                     return false
                 }
                 
-                // Verify order: user message should come before response
-                if (userMessageIndex < responseIndex) {
+                // Verify order: response should appear IMMEDIATELY after the user message
+                if (responseIndex == userMessageIndex + 1) {
                     Log.d(TAG, "✅ Compose: Message order verified! User message at index $userMessageIndex, response at index $responseIndex")
-                    Log.d(TAG, "✅ Compose: User message appears BEFORE response - order is correct")
+                    Log.d(TAG, "✅ Compose: Response appears IMMEDIATELY after user message - order is correct")
                     return true
                 } else {
                     Log.e(TAG, "❌ Compose: Message order verification FAILED!")
                     Log.e(TAG, "❌ Compose: User message at index $userMessageIndex, response at index $responseIndex")
-                    Log.e(TAG, "❌ Compose: User message appears AFTER response - order is INCORRECT")
+                    Log.e(TAG, "❌ Compose: Response does NOT appear immediately after user message - order is INCORRECT")
+                    Log.e(TAG, "❌ Compose: Expected response at index ${userMessageIndex + 1}, but found it at index $responseIndex")
+                    
+                    // Log what's between the user message and response for debugging
+                    if (userMessageIndex < responseIndex) {
+                        Log.e(TAG, "🔍 Compose: Messages between user message and response:")
+                        for (i in (userMessageIndex + 1) until responseIndex) {
+                            try {
+                                val node = messageNodes[i]
+                                val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                                Log.e(TAG, "🔍 Compose:   Index $i: '$contentDesc'")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "🔍 Compose:   Index $i: [Error reading content description]")
+                            }
+                        }
+                    }
+                    
                     return false
                 }
                 
