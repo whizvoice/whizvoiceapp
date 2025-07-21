@@ -209,9 +209,9 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             }
             
             // step 4: confirm bot is responding (thinking indicator visible)
-            Log.d(TAG, "🤖 step 4: confirming bot is responding")
+            Log.d(TAG, "🤖 step 4: confirming bot is responding or already responded")
             if (!waitForBotThinkingIndicator()) {
-                Log.e(TAG, "❌ FAILURE at step 4: bot thinking indicator not found - bot may not be responding")
+                Log.e(TAG, "❌ FAILURE at step 4: bot thinking indicator or response not found - bot may not be responding")
                 failWithScreenshot("bot thinking indicator not found - bot may not be responding", "compose_bot_not_responding")
                 return@runBlocking
             }
@@ -429,37 +429,51 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     }
 
     /**
-     * Wait for bot thinking indicator using Compose testing
+     * Wait for bot thinking indicatoyr OR bot response using Compose testing
+     * Handles cases where bot responds so quickly that thinking indicator never appears
      */
     private fun waitForBotThinkingIndicator(): Boolean {
-        Log.d(TAG, "⏳ waiting for bot thinking indicator...")
+        Log.d(TAG, "⏳ waiting for bot thinking indicator OR bot response...")
         
         return try {
-            // Look for thinking indicator using Compose testing - the actual text is "Whiz is computing"
+            // First, try to find the thinking indicator
             composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
             Log.d(TAG, "✅ Bot thinking indicator found")
             true
         } catch (e: AssertionError) {
-            Log.e(TAG, "❌ Bot thinking indicator not found")
-            Log.e(TAG, "🔍 This could mean:")
-            Log.e(TAG, "   - The bot responded too quickly (no thinking delay)")
-            Log.e(TAG, "   - The 'Whiz is computing' indicator is not showing")
-            Log.e(TAG, "   - The app is not in the expected state")
-            Log.e(TAG, "   - WebSocket connection issues prevented bot response")
-            false
+            Log.d(TAG, "🤔 Thinking indicator not found, checking if bot already responded...")
+            
+            // If thinking indicator not found, check if bot already responded
+            try {
+                // Look for "Whiz" label which indicates a bot response is present
+                composeTestRule.onNodeWithText("Whiz").assertIsDisplayed()
+                Log.d(TAG, "✅ Bot response already present (responded too quickly for thinking indicator)")
+                true
+            } catch (e2: AssertionError) {
+                Log.e(TAG, "❌ Neither thinking indicator nor bot response found")
+                Log.e(TAG, "🔍 This could mean:")
+                Log.e(TAG, "   - The bot is not responding at all")
+                Log.e(TAG, "   - The app is not in the expected state")
+                Log.e(TAG, "   - WebSocket connection issues prevented bot response")
+                false
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Unexpected error while looking for bot thinking indicator", e)
+            Log.e(TAG, "❌ Unexpected error while looking for bot thinking indicator or response", e)
             false
         }
     }
 
     /**
      * Check if bot is currently responding using Compose testing
+     * Handles cases where bot responds so quickly that thinking indicator never appears
      */
     private fun isBotCurrentlyRespondingCompose(): Boolean {
         return try {
+            // First, try to find the thinking indicator
             composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
             true
+        } catch (e: AssertionError) {
+            false
         } catch (e: Exception) {
             false
         }
@@ -468,11 +482,10 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     /**
      * Wait for bot thinking to finish
      */
-    private fun waitForBotThinkingToFinish(): Boolean {
+    private fun waitForBotThinkingToFinish(timeout: Long = 10000L): Boolean {
         Log.d(TAG, "⏳ waiting for bot thinking to finish...")
         
         val startTime = System.currentTimeMillis()
-        val timeout = 10000L // 10 seconds
         
         while (System.currentTimeMillis() - startTime < timeout) {
             if (!isBotCurrentlyRespondingCompose()) {
@@ -497,9 +510,12 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             try {
                 // Look for bot response using Compose testing
-                composeTestRule.onNodeWithText("Whiz").assertIsDisplayed()
-                Log.d(TAG, "✅ Bot response found")
-                return true
+                // Use onAllNodesWithText to handle multiple "Whiz" nodes (multiple bot responses)
+                val whizNodes = composeTestRule.onAllNodesWithText("Whiz").fetchSemanticsNodes()
+                if (whizNodes.isNotEmpty()) {
+                    Log.d(TAG, "✅ Bot response found (${whizNodes.size} Whiz nodes detected)")
+                    return true
+                }
             } catch (e: Exception) {
                 Thread.sleep(100)
             }
