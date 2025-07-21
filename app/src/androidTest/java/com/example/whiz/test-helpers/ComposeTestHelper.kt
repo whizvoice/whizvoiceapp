@@ -88,38 +88,76 @@ object ComposeTestHelper {
             
             // Wait for the app to be fully loaded by checking for common UI elements
             // The app can launch either to chats list or directly to chat screen (voice launch)
-            val appReady = waitForElementEfficient(
+            Log.d(TAG, "🔍 Compose: Looking for chats list indicator ('My Chats')...")
+            val chatsListFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("My Chats") },
                 timeoutMs = 3000L,
                 description = "chats list indicator"
-            ) || waitForElementEfficient(
+            )
+            Log.d(TAG, "🔍 Compose: Chats list indicator found: $chatsListFound")
+            
+            Log.d(TAG, "🔍 Compose: Looking for new chat button...")
+            val newChatButtonFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
                 timeoutMs = 2000L,
                 description = "new chat button"
-            ) || waitForElementEfficient(
+            )
+            Log.d(TAG, "🔍 Compose: New chat button found: $newChatButtonFound")
+            
+            Log.d(TAG, "🔍 Compose: Looking for chat input field...")
+            val chatInputFieldFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
                 timeoutMs = 3000L,
                 description = "chat input field"
-            ) || waitForElementEfficient(
+            )
+            Log.d(TAG, "🔍 Compose: Chat input field found: $chatInputFieldFound")
+            
+            Log.d(TAG, "🔍 Compose: Looking for chat input placeholder...")
+            val chatInputPlaceholderFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Type or tap mic...") },
                 timeoutMs = 2000L,
                 description = "chat input placeholder"
             )
+            Log.d(TAG, "🔍 Compose: Chat input placeholder found: $chatInputPlaceholderFound")
+            
+            val appReady = chatsListFound || newChatButtonFound || chatInputFieldFound || chatInputPlaceholderFound
             
             if (appReady) {
                 Log.d(TAG, "✅ Compose: App is ready for testing")
+                Log.d(TAG, "🔍 Compose: Found UI elements:")
+                if (chatsListFound) Log.d(TAG, "   ✅ Chats list indicator")
+                if (newChatButtonFound) Log.d(TAG, "   ✅ New chat button")
+                if (chatInputFieldFound) Log.d(TAG, "   ✅ Chat input field")
+                if (chatInputPlaceholderFound) Log.d(TAG, "   ✅ Chat input placeholder")
                 true
             } else {
                 Log.e(TAG, "❌ Compose: App is not ready - no main UI elements found")
+                Log.e(TAG, "🔍 Compose: UI element search results:")
+                Log.e(TAG, "   ❌ Chats list indicator: $chatsListFound")
+                Log.e(TAG, "   ❌ New chat button: $newChatButtonFound")
+                Log.e(TAG, "   ❌ Chat input field: $chatInputFieldFound")
+                Log.e(TAG, "   ❌ Chat input placeholder: $chatInputPlaceholderFound")
+                Log.e(TAG, "🔍 Compose: This suggests the app may have:")
+                Log.e(TAG, "   - Launched to a different screen than expected")
+                Log.e(TAG, "   - UI elements not yet loaded")
+                Log.e(TAG, "   - Compose hierarchy not ready")
+                Log.e(TAG, "   - Voice launch detection causing unexpected navigation")
                 false
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception checking app readiness", e)
+            Log.e(TAG, "🔍 Compose: Exception details: ${e.message}")
+            Log.e(TAG, "🔍 Compose: Stack trace: ${e.stackTrace.joinToString("\n")}")
+            false
+        } catch (e: AssertionError) {
+            Log.e(TAG, "❌ Compose: AssertionError checking app readiness", e)
+            Log.e(TAG, "🔍 Compose: AssertionError details: ${e.message}")
+            Log.e(TAG, "🔍 Compose: Stack trace: ${e.stackTrace.joinToString("\n")}")
             false
         }
     }
@@ -179,6 +217,8 @@ object ComposeTestHelper {
                     return true
                 } catch (e: Exception) {
                     Thread.sleep(50) // Use shorter sleep for more responsive waiting
+                } catch (e: AssertionError) {
+                    Thread.sleep(50) // Use shorter sleep for more responsive waiting
                 }
             }
             
@@ -187,6 +227,9 @@ object ComposeTestHelper {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Exception waiting for $description", e)
+            false
+        } catch (e: AssertionError) {
+            Log.e(TAG, "❌ AssertionError waiting for $description", e)
             false
         }
     }

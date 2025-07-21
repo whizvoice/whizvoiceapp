@@ -127,10 +127,48 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 // Step 1: Verify app is ready (already launched by createAndroidComposeRule)
                 Log.d(TAG, "📱 Step 1: Verifying app is ready (already launched by createAndroidComposeRule)")
-                if (!ComposeTestHelper.isAppReady(composeTestRule)) {
-                    failWithScreenshot("app_not_ready", "App is not ready for testing")
+                
+                // Add more detailed logging to understand why app readiness check might fail
+                Log.d(TAG, "🔍 Detailed app readiness check starting...")
+                
+                // First, check if composeTestRule is properly initialized
+                try {
+                    composeTestRule.waitForIdle()
+                    Log.d(TAG, "✅ Compose test rule is properly initialized")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Compose test rule initialization failed", e)
+                    failWithScreenshot("compose_test_rule_failed", "Compose test rule initialization failed: ${e.message}")
                     return@runBlocking
                 }
+                
+                // Check if we can access the activity
+                try {
+                    val activity = composeTestRule.activity
+                    Log.d(TAG, "✅ Activity is accessible: ${activity.javaClass.simpleName}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Activity access failed", e)
+                    failWithScreenshot("activity_access_failed", "Activity access failed: ${e.message}")
+                    return@runBlocking
+                }
+                
+                // Now check app readiness with detailed logging
+                val appReady = ComposeTestHelper.isAppReady(composeTestRule)
+                Log.d(TAG, "🔍 App readiness check result: $appReady")
+                
+                if (!appReady) {
+                    Log.e(TAG, "❌ App is not ready for testing - taking screenshot for debugging")
+                    Log.e(TAG, "🔍 This could be due to:")
+                    Log.e(TAG, "   - App launched to chat screen instead of chats list")
+                    Log.e(TAG, "   - UI elements not loading properly")
+                    Log.e(TAG, "   - Compose hierarchy not ready")
+                    Log.e(TAG, "   - Voice launch detection causing unexpected navigation")
+                    
+                    // Take a screenshot before failing to help debug the issue
+                    failWithScreenshot("app_not_ready", "App is not ready for testing - UI elements not found")
+                    return@runBlocking
+                }
+                
+                Log.d(TAG, "✅ App is ready for testing - proceeding with test")
                 
                 // Step 2: Navigate to new chat using Compose Testing
                 Log.d(TAG, "➕ Step 2: Navigating to new chat with Compose Testing")
