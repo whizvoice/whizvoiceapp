@@ -41,7 +41,9 @@ object AppModule {
             context,
             WhizDatabase::class.java,
             "whiz_database"
-        ).build()
+        )
+        .fallbackToDestructiveMigration() // 🔧 FIX: Allow destructive migration for production app
+        .build()
     }
 
     @Provides

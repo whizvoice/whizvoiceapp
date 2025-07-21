@@ -3,6 +3,7 @@ package com.example.whiz.integration
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsDisplayed
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -219,7 +220,31 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 val expectedBaristaResponse = "Barista"
                 Log.d(TAG, "🔍 Looking for barista response: '$expectedBaristaResponse'")
                 
-                // Verify that the barista response appears right after the first message
+                // 🔧 NEW: Wait for the barista response to appear before verifying order
+                // Since we sent messages rapidly, the bot response might take time to arrive
+                Log.d(TAG, "⏳ Waiting for barista response to appear...")
+                val waitStartTime = System.currentTimeMillis()
+                val waitTimeout = 5000L // 5 seconds timeout
+                var baristaResponseFound = false
+                
+                while (!baristaResponseFound && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
+                    try {
+                        composeTestRule.onNodeWithText(expectedBaristaResponse).assertIsDisplayed()
+                        baristaResponseFound = true
+                        Log.d(TAG, "✅ Barista response found after ${System.currentTimeMillis() - waitStartTime}ms")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
+                        Thread.sleep(100) // Check every 100ms
+                    }
+                }
+                
+                if (!baristaResponseFound) {
+                    Log.e(TAG, "❌ Barista response never appeared within ${waitTimeout}ms")
+                    failWithScreenshot("barista_response_timeout", "Barista response did not appear within timeout")
+                    return@runBlocking
+                }
+                
+                // Now verify that the barista response appears right after the first message
                 Log.d(TAG, "🔍 About to verify message order - looking for Barista response after first message")
                 if (!ComposeTestHelper.verifyMessageOrder(composeTestRule, firstMessage, expectedBaristaResponse)) {
                     Log.e(TAG, "❌ Message order verification failed - barista response not in correct position")
