@@ -106,8 +106,10 @@ class ChatViewModel @Inject constructor(
             // The UI can still allow new messages even when there are pending requests
             _isResponding.value = hasPendingRequests
             
-            Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
-            Log.d(TAG, "updateRespondingStateForCurrentChat: 🔥 CONCURRENT MODE: UI remains enabled for new messages")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Setting _isResponding = $hasPendingRequests")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Pending requests map: $pendingRequests")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: 🔥 CONCURRENT MODE: UI remains enabled for new messages")
             
             // 🔧 If we just finished responding and continuous listening is enabled, restart microphone immediately
             if (wasResponding && !hasPendingRequests && continuousListeningEnabled && !_isSpeaking.value) {
@@ -299,7 +301,9 @@ class ChatViewModel @Inject constructor(
                                 )
                             }
                             // Clear all pending requests on final connection error
+                            Log.d(TAG, "🔥 CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                             pendingRequests.clear()
+                            Log.d(TAG, "🔥 CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
                             _isResponding.value = false
                             // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } else {
@@ -311,8 +315,10 @@ class ChatViewModel @Inject constructor(
                             // clear the responding state to allow user to interact with the microphone button
                             if (_isResponding.value) {
                                 Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                                 _isResponding.value = false
                                 pendingRequests.clear()
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
                                 // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                             }
                         }
@@ -323,7 +329,9 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
+                        Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
                         pendingRequests.clear() // 🔧 Clear all pending requests on auth error
+                        Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
                         viewModelScope.launch {
                             val refreshSuccessful = authRepository.refreshAccessToken()
                             if (refreshSuccessful) {
@@ -365,7 +373,9 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "🔧 CANCELLATION: User message for request ${event.cancelledRequestId} remains in chat (no assistant response)")
                         
                         // Remove the cancelled request from pending requests
+                        Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
+                        Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                     }
@@ -383,7 +393,9 @@ class ChatViewModel @Inject constructor(
                         
                         // The backend has cancelled previous requests automatically
                         // Clear all pending requests since they were cancelled
+                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
                         pendingRequests.clear()
+                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: $pendingRequests")
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
@@ -474,7 +486,9 @@ class ChatViewModel @Inject constructor(
                                     Log.d(TAG, "$eventLogId 🔍 PENDING REQUESTS DEBUG: Looking for requestId=${event.requestId} in pendingRequests=${pendingRequests.keys}")
                                     if (pendingRequests.containsKey(event.requestId)) {
                                         val originalChatId = pendingRequests[event.requestId]!!
+                                        Log.d(TAG, "🔥 $eventLogId REMOVING from pendingRequests: requestId=${event.requestId}, chatId=$originalChatId")
                                         pendingRequests.remove(event.requestId) // Remove completed request
+                                        Log.d(TAG, "🔥 $eventLogId Pending requests map after removing: $pendingRequests")
                                         Log.d(TAG, "$eventLogId 🔍 Request ID ${event.requestId} mapped to chat $originalChatId (current: ${_chatId.value})")
                                         
                                                                 // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
@@ -786,8 +800,10 @@ class ChatViewModel @Inject constructor(
                 // 🔧 Clear pending requests and log what we're clearing
                 try {
                     if (pendingRequests.isNotEmpty()) {
-                        Log.w(TAG, "loadChat: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingRequests")
                         pendingRequests.clear()
+                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: $pendingRequests")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
@@ -1193,8 +1209,13 @@ class ChatViewModel @Inject constructor(
                 val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
                 pendingRequests[nonNullRequestId] = chatIdForWebSocket
                 
-                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
-                Log.d(TAG, "sendUserInput: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                Log.d(TAG, "🔥 sendUserInput: ADDED to pendingRequests: requestId=$nonNullRequestId, chatId=$chatIdForWebSocket")
+                Log.d(TAG, "🔥 sendUserInput: Pending requests map after adding: $pendingRequests")
+                Log.d(TAG, "🔥 sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
+                Log.d(TAG, "🔥 sendUserInput: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
+                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
+                updateRespondingStateForCurrentChat()
                 
                 val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
@@ -1320,8 +1341,10 @@ class ChatViewModel @Inject constructor(
         
         // 🔧 Enhanced cleanup logging
         if (pendingRequests.isNotEmpty()) {
-            Log.w(TAG, "onCleared: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            Log.w(TAG, "🔥 onCleared: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            Log.w(TAG, "🔥 onCleared: Pending requests map before clearing: $pendingRequests")
             pendingRequests.clear()
+            Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
         
         speechRecognitionService.release()
@@ -1403,7 +1426,12 @@ class ChatViewModel @Inject constructor(
                 // Generate request ID and track this request
                 val requestId = java.util.UUID.randomUUID().toString()
                 pendingRequests[requestId] = _chatId.value
+                Log.d(TAG, "🔥 sendInputText: ADDED to pendingRequests: requestId=$requestId, chatId=${_chatId.value}")
+                Log.d(TAG, "🔥 sendInputText: Pending requests map after adding: $pendingRequests")
                 Log.d(TAG, "sendInputText: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
+                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
+                updateRespondingStateForCurrentChat()
                 
                 val success = whizServerRepository.sendMessage(textToSend, requestId, _chatId.value)
                 if (!success) {

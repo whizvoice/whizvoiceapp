@@ -427,8 +427,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         Log.d(TAG, "⏳ waiting for bot thinking indicator...")
         
         return try {
-            // Look for thinking indicator using Compose testing - production shows "Whiz is computing"
-            composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
+            // Look for thinking indicator using Compose testing
+            composeTestRule.onNodeWithText("Thinking...").assertIsDisplayed()
             Log.d(TAG, "✅ Bot thinking indicator found")
             true
         } catch (e: Exception) {
@@ -442,7 +442,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private fun isBotCurrentlyRespondingCompose(): Boolean {
         return try {
-            composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Thinking...").assertIsDisplayed()
             true
         } catch (e: Exception) {
             false
