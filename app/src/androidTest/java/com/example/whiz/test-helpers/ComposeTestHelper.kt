@@ -88,33 +88,48 @@ object ComposeTestHelper {
             
             // Wait for the app to be fully loaded by checking for common UI elements
             // The app can launch either to chats list or directly to chat screen (voice launch)
-            val appReady = waitForElementEfficient(
+            Log.d(TAG, "🔍 Compose: Testing for chats list indicator ('My Chats')...")
+            val chatsListFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("My Chats") },
                 timeoutMs = 3000L,
                 description = "chats list indicator"
-            ) || waitForElementEfficient(
+            )
+            
+            Log.d(TAG, "🔍 Compose: Testing for new chat button...")
+            val newChatButtonFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
                 timeoutMs = 2000L,
                 description = "new chat button"
-            ) || waitForElementEfficient(
+            )
+            
+            Log.d(TAG, "🔍 Compose: Testing for chat input field...")
+            val chatInputFieldFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
                 timeoutMs = 3000L,
                 description = "chat input field"
-            ) || waitForElementEfficient(
+            )
+            
+            Log.d(TAG, "🔍 Compose: Testing for chat input placeholder...")
+            val chatInputPlaceholderFound = waitForElementEfficient(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Type or tap mic...") },
                 timeoutMs = 2000L,
                 description = "chat input placeholder"
             )
             
+            val appReady = chatsListFound || newChatButtonFound || chatInputFieldFound || chatInputPlaceholderFound
+            
             if (appReady) {
                 Log.d(TAG, "✅ Compose: App is ready for testing")
+                Log.d(TAG, "📊 Compose: UI elements found - chatsList: $chatsListFound, newChatButton: $newChatButtonFound, inputField: $chatInputFieldFound, placeholder: $chatInputPlaceholderFound")
                 true
             } else {
                 Log.e(TAG, "❌ Compose: App is not ready - no main UI elements found")
+                Log.e(TAG, "📊 Compose: UI elements status - chatsList: $chatsListFound, newChatButton: $newChatButtonFound, inputField: $chatInputFieldFound, placeholder: $chatInputPlaceholderFound")
+                Log.e(TAG, "🔍 Compose: This suggests the app may have launched to an unexpected screen or failed to load properly")
                 false
             }
             
@@ -179,16 +194,26 @@ object ComposeTestHelper {
                     Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
                     return true
                 } catch (e: Exception) {
-                    Log.d(TAG, "⏳ Waiting for $description... (${System.currentTimeMillis() - startTime}ms elapsed)")
+                    // Only log every 500ms to avoid spam
+                    val elapsed = System.currentTimeMillis() - startTime
+                    if (elapsed % 500 < 50) {
+                        Log.d(TAG, "⏳ Waiting for $description... (${elapsed}ms elapsed)")
+                    }
                     Thread.sleep(50) // Use shorter sleep for more responsive waiting
                 }
             }
             
             Log.e(TAG, "❌ $description not found within ${timeoutMs}ms")
+            Log.e(TAG, "🔍 Debug: This could mean:")
+            Log.e(TAG, "   - The element doesn't exist in the current UI")
+            Log.e(TAG, "   - The element exists but is not displayed")
+            Log.e(TAG, "   - The app is on a different screen than expected")
+            Log.e(TAG, "   - The app failed to load properly")
             false
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Exception waiting for $description", e)
+            Log.e(TAG, "🔍 Exception details: ${e.message}")
             false
         }
     }
@@ -794,6 +819,87 @@ object ComposeTestHelper {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception navigating back", e)
             false
+        }
+    }
+    
+    /**
+     * Get current screen information for debugging
+     */
+    fun getCurrentScreenInfo(composeTestRule: AndroidComposeTestRule<*, MainActivity>): String {
+        return try {
+            val info = mutableListOf<String>()
+            
+            // Check for common UI elements to determine current screen
+            val checks = listOf(
+                "My Chats" to { composeTestRule.onNodeWithText("My Chats") },
+                "New Chat button" to { composeTestRule.onNodeWithContentDescription("New Chat") },
+                "Message input field" to { composeTestRule.onNodeWithContentDescription("Message input field") },
+                "Type or tap mic placeholder" to { composeTestRule.onNodeWithText("Type or tap mic...") },
+                "Send button" to { composeTestRule.onNodeWithContentDescription("Send typed message") },
+                "Settings button" to { composeTestRule.onNodeWithContentDescription("Settings") },
+                "Login screen" to { composeTestRule.onNodeWithText("Sign in with Google") }
+            )
+            
+            for ((name, selector) in checks) {
+                try {
+                    val node = selector()
+                    node.assertIsDisplayed()
+                    info.add("✅ $name: FOUND")
+                } catch (e: Exception) {
+                    info.add("❌ $name: NOT_FOUND")
+                }
+            }
+            
+            "Screen check results: ${info.joinToString(", ")}"
+            
+        } catch (e: Exception) {
+            "Error getting screen info: ${e.message}"
+        }
+    }
+    
+    /**
+     * Get detailed debug information about what's on screen
+     */
+    fun getDebugScreenInfo(composeTestRule: AndroidComposeTestRule<*, MainActivity>): String {
+        return try {
+            val info = mutableListOf<String>()
+            
+            // Get all visible text nodes
+            try {
+                val textNodes = composeTestRule.onAllNodesWithAnyTag()
+                val nodes = textNodes.fetchSemanticsNodes()
+                val visibleTexts = nodes.mapNotNull { node ->
+                    node.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text
+                }.filter { it.isNotBlank() && it.length > 2 }
+                
+                info.add("Visible text elements (${visibleTexts.size}): ${visibleTexts.take(10).joinToString(", ")}")
+                if (visibleTexts.size > 10) {
+                    info.add("... and ${visibleTexts.size - 10} more")
+                }
+            } catch (e: Exception) {
+                info.add("Could not get text elements: ${e.message}")
+            }
+            
+            // Get all content descriptions
+            try {
+                val contentDescNodes = composeTestRule.onAllNodesWithAnyTag()
+                val nodes = contentDescNodes.fetchSemanticsNodes()
+                val contentDescs = nodes.mapNotNull { node ->
+                    node.config.getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull()
+                }.filter { it.isNotBlank() }
+                
+                info.add("Content descriptions (${contentDescs.size}): ${contentDescs.take(5).joinToString(", ")}")
+                if (contentDescs.size > 5) {
+                    info.add("... and ${contentDescs.size - 5} more")
+                }
+            } catch (e: Exception) {
+                info.add("Could not get content descriptions: ${e.message}")
+            }
+            
+            info.joinToString(" | ")
+            
+        } catch (e: Exception) {
+            "Error getting debug info: ${e.message}"
         }
     }
 } 

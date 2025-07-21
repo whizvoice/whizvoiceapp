@@ -135,8 +135,32 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         try {
             // step 1: verify app is ready (already launched by createAndroidComposeRule)
             Log.d(TAG, "📱 step 1: verifying app is ready (already launched by createAndroidComposeRule)")
+            
+            // Add additional debugging to understand what screen we're on
+            Log.d(TAG, "🔍 Debug: Checking current app state before isAppReady...")
+            try {
+                val currentScreen = ComposeTestHelper.getCurrentScreenInfo(composeTestRule)
+                Log.d(TAG, "🔍 Debug: Current screen info: $currentScreen")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Debug: Could not get current screen info: ${e.message}")
+            }
+            
             if (!ComposeTestHelper.isAppReady(composeTestRule)) {
                 Log.e(TAG, "❌ FAILURE at step 1: app failed to launch or load main UI")
+                Log.e(TAG, "🔍 Debug: App readiness check failed - this usually means:")
+                Log.e(TAG, "   - App launched to an unexpected screen")
+                Log.e(TAG, "   - App is still loading/initializing")
+                Log.e(TAG, "   - App crashed or failed to start properly")
+                Log.e(TAG, "   - Voice launch went to chat screen instead of chats list")
+                
+                // Try to get more debug info about what's actually on screen
+                try {
+                    val debugInfo = ComposeTestHelper.getDebugScreenInfo(composeTestRule)
+                    Log.e(TAG, "🔍 Debug: Screen debug info: $debugInfo")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Debug: Could not get screen debug info: ${e.message}")
+                }
+                
                 failWithScreenshot("compose_app_launch_failed", "app failed to launch or load main UI")
                 return@runBlocking
             }
