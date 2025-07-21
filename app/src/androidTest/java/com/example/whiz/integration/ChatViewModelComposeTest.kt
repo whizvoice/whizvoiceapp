@@ -116,52 +116,58 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     @Test
     fun botInterruption_allowsImmediateMessageSending() {
         runBlocking {
+            Log.d(TAG, "🚀 Testing bot interruption with Compose Testing - better reliability for Compose UI")
+                        
             try {
-                // Test setup and execution
-                Log.d(TAG, "🧪 ChatViewModel Compose Test Setup Complete")
+                val uniqueTestId = System.currentTimeMillis()
                 
-                // Step 1: Verify app is ready
-                Log.d(TAG, "🚀 Testing bot interruption with Compose Testing - better reliability for Compose UI")
+                // Initialize cleanup tracking
+                createdNewChatThisTest = true
+                
+                // Step 1: Verify app is ready (already launched by createAndroidComposeRule)
                 Log.d(TAG, "📱 Step 1: Verifying app is ready (already launched by createAndroidComposeRule)")
-                
                 if (!ComposeTestHelper.isAppReady(composeTestRule)) {
-                    Log.e(TAG, "❌ App is not ready for testing")
                     failWithScreenshot("app_not_ready", "App is not ready for testing")
                     return@runBlocking
                 }
                 
-                // Step 2: Navigate to new chat
+                // Step 2: Navigate to new chat using Compose Testing
                 Log.d(TAG, "➕ Step 2: Navigating to new chat with Compose Testing")
-                if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
-                    Log.e(TAG, "❌ Failed to navigate to new chat")
-                    failWithScreenshot("navigate_to_chats_list_failed", "Failed to navigate from chat screen to chats list")
-                    return@runBlocking
+                
+                if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+                    Log.d(TAG, "🔄 Currently in chat screen, going back to chats list first")
+                    if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                        failWithScreenshot("navigate_to_chats_list_failed", "Failed to navigate from chat screen to chats list")
+                        return@runBlocking
+                    }
                 }
                 
-                // Verify we're on chat screen
-                if (!ComposeTestHelper.isOnChatScreen(composeTestRule)) {
-                    Log.e(TAG, "❌ Not on chat screen - navigation failed")
+                Log.d(TAG, "📋 On chats list, clicking new chat button with Compose Testing")
+                if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
                     return@runBlocking
                 }
                 
                 Log.d(TAG, "✅ Successfully navigated to new chat screen with Compose Testing")
                 
-                // Step 3: Send initial message
-                Log.d(TAG, "📨 Step 3: Sending initial message with Compose Testing...")
-                Log.d(TAG, "🔍 Checking current screen state with Compose Testing...")
+                // Step 3: Send first message to trigger bot response using Compose Testing
+                val sentMessages = mutableListOf<String>()
+                val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - test $uniqueTestId"
                 
-                if (!ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+                Log.d(TAG, "📨 Step 3: Sending initial message with Compose Testing...")
+                
+                // First, ensure we're on the chat screen using Compose Testing
+                Log.d(TAG, "🔍 Checking current screen state with Compose Testing...")
+                val chatScreenStatus = ComposeTestHelper.isOnChatScreen(composeTestRule)
+                Log.d(TAG, "🔍 Chat screen status: $chatScreenStatus")
+                
+                if (!chatScreenStatus) {
                     Log.e(TAG, "❌ Not on chat screen - navigation failed")
                     failWithScreenshot("navigate_to_chats_list_failed_2", "❌ Not on chat screen - navigation failed")
                     return@runBlocking
+                } else {
+                    Log.d(TAG, "✅ Confirmed we made it to chat screen with Compose Testing")
                 }
-                
-                Log.d(TAG, "🔍 Chat screen status: ${ComposeTestHelper.isOnChatScreen(composeTestRule)}")
-                Log.d(TAG, "✅ Confirmed we made it to chat screen with Compose Testing")
-                
-                val sentMessages = mutableListOf<String>()
-                val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - test ${System.currentTimeMillis()}"
                 
                 // Now try to send the message using Compose testing
                 Log.d(TAG, "📝 Using Compose testing for better reliability...")
@@ -219,8 +225,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                     Log.e(TAG, "❌ Message order verification failed - barista response not in correct position")
                     Log.e(TAG, "❌ Expected to find 'Barista' response after first message: '${firstMessage.take(50)}...'")
                     Log.e(TAG, "❌ This indicates the request ID pairing is not working correctly")
-                    
-                    failWithScreenshot("Message order verification failed - barista response not in correct position", "message_order_verification_failed")
+                    failWithScreenshot("message_order_verification_failed", "Barista response not appearing after the correct user message")
                     return@runBlocking
                 }
                 
@@ -258,8 +263,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Bot interruption test failed", e)
-                
-                failWithScreenshot("Bot interruption test failed with exception: ${e.message}", "test_exception_failure")
+                failWithScreenshot("test_exception_failure", "Bot interruption test failed with exception: ${e.message}")
             }
         }
     }
