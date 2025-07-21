@@ -59,6 +59,21 @@ class ChatViewModel @Inject constructor(
     
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
+    
+    /**
+     * Check if a specific request ID is in the pending requests list
+     * This is used for testing to verify WebSocket message sending
+     */
+    fun hasPendingRequest(requestId: String): Boolean {
+        return pendingRequests.containsKey(requestId)
+    }
+    
+    /**
+     * Get all pending request IDs for testing purposes
+     */
+    fun getPendingRequestIds(): Set<String> {
+        return pendingRequests.keys.toSet()
+    }
 
     // Track locally-saved interrupt messages to prevent server duplication
 

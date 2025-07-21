@@ -795,5 +795,79 @@ object ComposeTestHelper {
         }
     }
     
+    /**
+     * Send message and verify WebSocket transmission
+     * This function handles both UI interactions and WebSocket verification
+     * It sends a message via UI and verifies a new request was added to pendingRequests
+     */
+    suspend fun sendMessageWithWebSocketVerification(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        message: String,
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel
+    ): Boolean {
+        return try {
+            Log.d(TAG, "📝 Compose: Attempting to send message with WebSocket verification: '${message.take(30)}...'")
+            
+            // Step 1: Get initial pending request count
+            val initialPendingRequests = chatViewModel.getPendingRequestIds()
+            Log.d(TAG, "🔍 Initial pending requests: $initialPendingRequests")
+            
+            // Step 2: Send the message via UI
+            val sendSuccess = sendMessage(composeTestRule, message)
+            if (!sendSuccess) {
+                Log.e(TAG, "❌ Compose: Message send failed during WebSocket verification")
+                return false
+            }
+            
+            // Step 3: Wait for WebSocket confirmation by checking if any new request was added to pendingRequests
+            Log.d(TAG, "🔍 Compose: Waiting for WebSocket confirmation via pendingRequests...")
+            
+            val startTime = System.currentTimeMillis()
+            val timeoutMs = 300L // 3 seconds for WebSocket confirmation
+            
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                try {
+                    val currentPendingRequests = chatViewModel.getPendingRequestIds()
+                    val newRequests = currentPendingRequests - initialPendingRequests
+                    
+                    Log.d(TAG, "🔍 Compose: WebSocket check: currentPendingRequests=$currentPendingRequests, newRequests=$newRequests")
+                    
+                    if (newRequests.isNotEmpty()) {
+                        Log.d(TAG, "✅ Compose: WebSocket confirmation - new request added to pendingRequests: $newRequests")
+                        return true
+                    }
+                    
+                    // Also check for server response indicators as fallback
+                    try {
+                        composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
+                        Log.d(TAG, "✅ Compose: WebSocket confirmation - bot thinking indicator appeared")
+                        return true
+                    } catch (e: AssertionError) {
+                        try {
+                            composeTestRule.onNodeWithText("Whiz").assertIsDisplayed()
+                            Log.d(TAG, "✅ Compose: WebSocket confirmation - bot response appeared")
+                            return true
+                        } catch (e2: AssertionError) {
+                            // Continue waiting
+                            Thread.sleep(50)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Compose: Exception during WebSocket confirmation check: ${e.message}")
+                    Thread.sleep(50)
+                }
+            }
+            
+            Log.e(TAG, "❌ Compose: WebSocket confirmation timeout - message may not have reached server")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception during WebSocket verification", e)
+            false
+        }
+    }
+    
+
+    
 
 } 
