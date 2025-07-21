@@ -136,31 +136,9 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // step 1: verify app is ready (already launched by createAndroidComposeRule)
             Log.d(TAG, "📱 step 1: verifying app is ready (already launched by createAndroidComposeRule)")
             
-            // Add additional debugging to understand what screen we're on
-            Log.d(TAG, "🔍 Debug: Checking current app state before isAppReady...")
-            try {
-                val currentScreen = ComposeTestHelper.getCurrentScreenInfo(composeTestRule)
-                Log.d(TAG, "🔍 Debug: Current screen info: $currentScreen")
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Debug: Could not get current screen info: ${e.message}")
-            }
-            
             if (!ComposeTestHelper.isAppReady(composeTestRule)) {
                 Log.e(TAG, "❌ FAILURE at step 1: app failed to launch or load main UI")
-                Log.e(TAG, "🔍 Debug: App readiness check failed - this usually means:")
-                Log.e(TAG, "   - App launched to an unexpected screen")
-                Log.e(TAG, "   - App is still loading/initializing")
-                Log.e(TAG, "   - App crashed or failed to start properly")
-                Log.e(TAG, "   - Voice launch went to chat screen instead of chats list")
-                
-                // Try to get more debug info about what's actually on screen
-                try {
-                    val debugInfo = ComposeTestHelper.getDebugScreenInfo(composeTestRule)
-                    Log.e(TAG, "🔍 Debug: Screen debug info: $debugInfo")
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Debug: Could not get screen debug info: ${e.message}")
-                }
-                
+                Log.e(TAG, "🔍 This is likely because the app launched to chat screen due to voice launch detection")
                 failWithScreenshot("compose_app_launch_failed", "app failed to launch or load main UI")
                 return@runBlocking
             }
@@ -217,7 +195,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "🔍 verifying first message is visible...")
             if (!verifyMessageVisible(firstMessage)) {
                 Log.e(TAG, "❌ first message not visible")
-                failWithScreenshot("compose_first_message_not_visible", "first message not visible")
+                failWithScreenshot("first message not visible", "compose_first_message_not_visible")
                 return@runBlocking
             }
             
@@ -234,7 +212,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "🤖 step 4: confirming bot is responding")
             if (!waitForBotThinkingIndicator()) {
                 Log.e(TAG, "❌ FAILURE at step 4: bot thinking indicator not found - bot may not be responding")
-                failWithScreenshot("compose_bot_not_responding", "bot thinking indicator not found - bot may not be responding")
+                failWithScreenshot("bot thinking indicator not found - bot may not be responding", "compose_bot_not_responding")
                 return@runBlocking
             }
             
@@ -276,7 +254,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             }
             
             // use styling detection to detect bot response
-            val botResponseDetected = waitForBotResponseCompose(5000)
+            val botResponseDetected = waitForBotResponseCompose(3000)
             
             if (!botResponseDetected) {
                 Log.e(TAG, "❌ FAILURE at step 6: bot response not detected within timeout using styling detection")
@@ -319,19 +297,25 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ waiting for UI to be stable before verification...")
             if (!waitForUIToBeStable()) {
                 Log.e(TAG, "❌ FAILURE: UI not stable for verification")
-                failWithScreenshot("compose_ui_not_stable", "UI not stable for verification")
+                failWithScreenshot("UI not stable for verification", "compose_ui_not_stable")
                 return@runBlocking
             }
             
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
-            verifyAllMessagesDisplayCorrectly(sentMessages)
+            if (!verifyAllMessagesDisplayCorrectly(sentMessages)) {
+                failWithScreenshot("Missing messages from chat", "compose_messages_missing")
+                return@runBlocking
+            }
             
             // step 9: wait for chat migration to complete, then do comprehensive final verification
             Log.d(TAG, "🔍 step 9a: waiting for chat migration to complete...")
             waitForChatMigrationCompletion()
             
             Log.d(TAG, "🔍 step 9b: final comprehensive verification - checking for duplicates and completeness")
-            verifyFinalMessageState(sentMessages)
+            if (!verifyFinalMessageState(sentMessages)) {
+                failWithScreenshot("Final message verification failed", "compose_final_verification_failed")
+                return@runBlocking
+            }
             
             Log.d(TAG, "🎉 comprehensive message flow Compose test PASSED!")
             Log.d(TAG, "✅ Test validated: optimistic UI, bot interruption capability, chat migration, and message persistence")
@@ -451,12 +435,20 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         Log.d(TAG, "⏳ waiting for bot thinking indicator...")
         
         return try {
-            // Look for thinking indicator using Compose testing
-            composeTestRule.onNodeWithText("Thinking...").assertIsDisplayed()
+            // Look for thinking indicator using Compose testing - the actual text is "Whiz is computing"
+            composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
             Log.d(TAG, "✅ Bot thinking indicator found")
             true
-        } catch (e: Exception) {
+        } catch (e: AssertionError) {
             Log.e(TAG, "❌ Bot thinking indicator not found")
+            Log.e(TAG, "🔍 This could mean:")
+            Log.e(TAG, "   - The bot responded too quickly (no thinking delay)")
+            Log.e(TAG, "   - The 'Whiz is computing' indicator is not showing")
+            Log.e(TAG, "   - The app is not in the expected state")
+            Log.e(TAG, "   - WebSocket connection issues prevented bot response")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Unexpected error while looking for bot thinking indicator", e)
             false
         }
     }
@@ -466,7 +458,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private fun isBotCurrentlyRespondingCompose(): Boolean {
         return try {
-            composeTestRule.onNodeWithText("Thinking...").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Whiz is computing").assertIsDisplayed()
             true
         } catch (e: Exception) {
             false
@@ -520,7 +512,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     /**
      * Verify all messages display correctly using Compose testing
      */
-    private fun verifyAllMessagesDisplayCorrectly(sentMessages: List<String>) {
+    private fun verifyAllMessagesDisplayCorrectly(sentMessages: List<String>): Boolean {
         Log.d(TAG, "🔍 verifying all messages display correctly...")
         
         // Use Compose testing to verify all messages exist
@@ -531,16 +523,17 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             missingMessages.forEachIndexed { index, message ->
                 Log.e(TAG, "   Missing ${index + 1}: '${message.take(30)}...'")
             }
-            failWithScreenshot("compose_messages_missing", "Missing ${missingMessages.size} messages from chat")
+            return false
         }
         
         Log.d(TAG, "✅ all messages verified without major duplication issues")
+        return true
     }
 
     /**
      * Verify final message state using Compose testing
      */
-    private fun verifyFinalMessageState(sentMessages: List<String>) {
+    private fun verifyFinalMessageState(sentMessages: List<String>): Boolean {
         Log.d(TAG, "🔍 comprehensive final message verification...")
         
         // 1. verify ALL sent messages are present using Compose testing
@@ -549,8 +542,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         
         if (missingMessages.isNotEmpty()) {
             Log.e(TAG, "❌ FAILURE at step 9.1: FINAL CHECK - sent messages missing")
-            failWithScreenshot("compose_final_messages_missing", "FINAL CHECK: sent messages missing")
-            return
+            return false
         }
         Log.d(TAG, "✅ all sent messages confirmed present")
         
@@ -558,8 +550,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         Log.d(TAG, "🔍 checking for user message duplicates...")
         if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
             Log.e(TAG, "❌ FAILURE at step 9.2: FINAL CHECK - duplicate user messages detected")
-            failWithScreenshot("compose_duplicate_user_messages", "FINAL CHECK: duplicate user messages detected")
-            return
+            return false
         }
         Log.d(TAG, "✅ no user message duplicates found")
         
@@ -579,6 +570,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "✅ comprehensive final verification completed successfully")
+        return true
     }
 
     /**
