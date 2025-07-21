@@ -539,11 +539,16 @@ object ComposeTestHelper {
             
             try {
                 Log.d(TAG, "🔍 Compose: Looking for expected response text: '$expectedResponse'")
+                
+
+                
                 composeTestRule.onNodeWithText(expectedResponse).assertIsDisplayed()
                 Log.d(TAG, "✅ Compose: Expected response found")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Compose: Expected response not found: '${expectedResponse.take(30)}...'")
                 Log.e(TAG, "❌ Compose: Exception details: ${e.message}")
+                
+
                 
                 // Log what messages are actually visible to help debug
                 try {
