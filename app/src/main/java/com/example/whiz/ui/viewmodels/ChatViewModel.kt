@@ -488,15 +488,16 @@ class ChatViewModel @Inject constructor(
                             // Handle case where local chat has temp ID but server provides real ID
                             Log.d(TAG, "$eventLogId 🔄 MIGRATION CHECK: Server provided conversation_id: $effectiveConversationId, originalChatId was: $originalChatId, currentChatId: ${_chatId.value}")
                             
-                            // 🔧 ENHANCED MIGRATION: Handle cross-chat migration during rapid messaging
-                            // Migration should happen for any optimistic chat getting a server ID, regardless of current chat
+                            // 🔧 FIXED: Distinguish between chat migration and regular message processing
+                            // Only migrate when transitioning from optimistic chat to server chat
                             val isOptimisticChat = originalChatId < 0
                             val hasServerId = effectiveConversationId > 0
-                            val shouldMigrate = isOptimisticChat && hasServerId
+                            val isChatTransition = isOptimisticChat && hasServerId && originalChatId != effectiveConversationId
                             
-                            Log.d(TAG, "$eventLogId 🔄 MIGRATION DECISION: shouldMigrate=$shouldMigrate (originalChatId=$originalChatId, currentChatId=${_chatId.value}, isOptimistic=$isOptimisticChat, serverConversationId=$effectiveConversationId)")
+                            Log.d(TAG, "$eventLogId 🔄 MIGRATION ANALYSIS: originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId, currentChatId=${_chatId.value}")
+                            Log.d(TAG, "$eventLogId 🔄 MIGRATION ANALYSIS: isOptimisticChat=$isOptimisticChat, hasServerId=$hasServerId, isChatTransition=$isChatTransition")
                             
-                            if (shouldMigrate) {
+                            if (isChatTransition) {
                                 Log.d(TAG, "$eventLogId 🔄 STARTING MIGRATION: Syncing local chat ID to server conversation_id: $effectiveConversationId")
                                 
                                 // 🔧 PRODUCTION BUG FIX: Preserve input text during chat migration
@@ -550,23 +551,17 @@ class ChatViewModel @Inject constructor(
                                     // Don't update _chatId if migration threw an exception
                                     Log.e(TAG, "$eventLogId 🔄 MIGRATION: Keeping _chatId as ${_chatId.value} due to migration error")
                                 }
-                            } else {
-                                Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: No migration needed - originalChatId: $originalChatId, currentChatId: ${_chatId.value}, effectiveConversationId: $effectiveConversationId")
-                                Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                            } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
+                                // 🔧 SCENARIO 2: Regular message processing with request ID pairing
+                                // This is NOT a migration - just updating chat ID for consistency
+                                Log.d(TAG, "$eventLogId 🔄 REGULAR PROCESSING: Updating chat ID from $originalChatId to $effectiveConversationId (no migration needed)")
                                 
-                                // 🔧 PRODUCTION BUG FIX: Preserve input text during chat ID update
-                                val preservedInputText = _inputText.value
-                                val preservedIsInputFromVoice = _isInputFromVoice.value
-                                Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Preserving input text: '$preservedInputText' (fromVoice: $preservedIsInputFromVoice)")
-                                
+                                // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
-                                
-                                // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
-                                if (preservedInputText.isNotBlank()) {
-                                    Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Restoring preserved input text: '$preservedInputText'")
-                                    _inputText.value = preservedInputText
-                                    _isInputFromVoice.value = preservedIsInputFromVoice
-                                }
+                                Log.d(TAG, "$eventLogId ✅ REGULAR PROCESSING: Chat ID updated to $effectiveConversationId")
+                            } else {
+                                // 🔧 SCENARIO 3: Same chat ID - regular message processing
+                                Log.d(TAG, "$eventLogId 🔄 REGULAR PROCESSING: Same chat ID $originalChatId - no migration or ID change needed")
                             }
                             effectiveConversationId
                                         } else {
