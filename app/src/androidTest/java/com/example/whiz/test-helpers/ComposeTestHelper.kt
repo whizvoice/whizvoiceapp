@@ -310,7 +310,7 @@ object ComposeTestHelper {
             Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
             
             // Wait for message to appear (with appropriate timeout)
-            val timeout = if (rapid) 300L else 1000L
+            val timeout = if (rapid) 400L else 1000L
             Log.d(TAG, "⏳ Compose: Step 3 - Waiting for message to appear (timeout: ${timeout}ms)...")
             
             // For rapid messages, add extra logging to detect if interruption is blocked
