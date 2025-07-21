@@ -290,8 +290,28 @@ class ChatViewModel @Inject constructor(
                         // Only show error to user if it's a persistent failure after retries
                         val errorMessage = event.error.message ?: "Unknown connection failure"
                         
+                        // 🔧 CRITICAL FIX: Check if this is an authentication error
+                        if (errorMessage.contains("Authentication required") || errorMessage.contains("Please log in again")) {
+                            Log.w(TAG, "🔥 AUTHENTICATION ERROR DETECTED: $errorMessage - Navigating to login")
+                            _navigateToLogin.value = true
+                            isDisconnectingForAuthError = true
+                            
+                            // Clear all pending requests on auth error
+                            Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
+                            pendingRequests.clear()
+                            Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
+                            _isResponding.value = false
+                            
+                            // Sign out to clear any invalid tokens
+                            authRepository.signOut()
+                            Log.d(TAG, "AuthError: Called authRepository.signOut() after authentication error")
+                            
+                            _showAuthErrorDialog.value = null
+                            _showAsanaSetupDialog.value = false
+                            _connectionError.value = null
+                        }
                         // Check if this is a final retry failure (contains "after X attempts")
-                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                        else if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
                             // This is a final failure after all retries - show to user
                             _connectionError.value = "Failed to send message. Please check your connection and try again."
                             if (_chatId.value > 0) { // Only add if a chat is active
@@ -324,7 +344,9 @@ class ChatViewModel @Inject constructor(
                         }
                         
                         _showAuthErrorDialog.value = null
-                        _navigateToLogin.value = false
+                        if (!errorMessage.contains("Authentication required")) {
+                            _navigateToLogin.value = false
+                        }
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
@@ -1195,6 +1217,16 @@ class ChatViewModel @Inject constructor(
 
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
+                
+                // 🔧 CRITICAL FIX: Check if we have a server token before attempting to send
+                val serverToken = authRepository.serverToken.firstOrNull()
+                
+                if (serverToken == null) {
+                    Log.w(TAG, "🔥 AUTHENTICATION ERROR: No server token available - navigating to login")
+                    _navigateToLogin.value = true
+                    authRepository.signOut()
+                    return@launch
+                }
                 
                 // 🔧 CONCURRENT REQUESTS: Don't block UI with _isResponding = true
                 // Instead, track individual requests and allow multiple concurrent messages
