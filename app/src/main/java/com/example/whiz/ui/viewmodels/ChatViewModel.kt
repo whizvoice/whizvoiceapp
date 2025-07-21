@@ -97,7 +97,6 @@ class ChatViewModel @Inject constructor(
 
     // Helper function to update responding state based on current chat's pending requests
     private fun updateRespondingStateForCurrentChat() {
-        val functionStartTime = System.currentTimeMillis()
         try {
             val currentChatId = _chatId.value
             val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
@@ -121,19 +120,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            
-            val functionEndTime = System.currentTimeMillis()
-            val functionDuration = functionEndTime - functionStartTime
-            if (functionDuration > 50) {
-                Log.w(TAG, "⚠️ SLOW FUNCTION: updateRespondingStateForCurrentChat took ${functionDuration}ms")
-            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in updateRespondingStateForCurrentChat", e)
             _errorState.value = "Error updating chat state: ${e.message}"
-            
-            val functionEndTime = System.currentTimeMillis()
-            val functionDuration = functionEndTime - functionStartTime
-            Log.e(TAG, "updateRespondingStateForCurrentChat failed after ${functionDuration}ms", e)
         }
     }
 
@@ -260,57 +249,23 @@ class ChatViewModel @Inject constructor(
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
             whizServerRepository.webSocketEvents.collect { event ->
-                val eventStartTime = System.currentTimeMillis()
-                val eventType = event.javaClass.simpleName
-                Log.d(TAG, "🔍 BLOCKING DETECTION: Starting $eventType processing at $eventStartTime")
-                
                 when (event) {
                     is WebSocketEvent.Connected -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Connected processing")
-                        }
-                        
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
                         // Remove arbitrary delays and handle connection state immediately
                         _isConnectedToServer.value = true
                         _connectionError.value = null // Clear any connection errors when successfully connected
                         Log.d(TAG, "WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.")
                         isDisconnectingForAuthError = false
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Connected took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Reconnecting -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Reconnecting processing")
-                        }
-                        
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Called.")
                         _isConnectedToServer.value = false
                         // Don't show "Connection lost" message to user - handle reconnection silently
                         // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Reconnecting took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Closed -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Closed processing")
-                        }
-                        
                         Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
                         pendingRequests.clear() // 🔧 Clear all pending requests on connection close
@@ -326,20 +281,8 @@ class ChatViewModel @Inject constructor(
                             Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
                         }
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Closed took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Error -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Error processing")
-                        }
-                        
                         _isConnectedToServer.value = false
                         
                         // Only show error to user if it's a persistent failure after retries
@@ -376,20 +319,8 @@ class ChatViewModel @Inject constructor(
                         
                         _showAuthErrorDialog.value = null
                         _navigateToLogin.value = false
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Error took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.AuthError -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.AuthError processing")
-                        }
-                        
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
                         pendingRequests.clear() // 🔧 Clear all pending requests on auth error
@@ -424,20 +355,8 @@ class ChatViewModel @Inject constructor(
                         }
                         _isResponding.value = false
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.AuthError took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Cancelled -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Cancelled processing")
-                        }
-                        
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
                         
                         // 🔧 CANCELLATION HANDLING: User message remains in chat, no assistant response
@@ -449,20 +368,8 @@ class ChatViewModel @Inject constructor(
                         pendingRequests.remove(event.cancelledRequestId)
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Cancelled took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Interrupted -> {
-                        val processingStartTime = System.currentTimeMillis()
-                        val delayToStart = processingStartTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Interrupted processing")
-                        }
-                        
                         Log.d(TAG, "Previous request was interrupted: ${event.message}")
                         
                         // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
@@ -480,20 +387,9 @@ class ChatViewModel @Inject constructor(
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
-                        
-                        val processingEndTime = System.currentTimeMillis()
-                        val totalProcessingTime = processingEndTime - eventStartTime
-                        if (totalProcessingTime > 100) {
-                            Log.w(TAG, "⚠️ SLOW PROCESSING: WebSocketEvent.Interrupted took ${totalProcessingTime}ms")
-                        }
                     }
                     is WebSocketEvent.Message -> {
                         val messageReceivedTime = System.currentTimeMillis()
-                        val delayToStart = messageReceivedTime - eventStartTime
-                        if (delayToStart > 50) {
-                            Log.w(TAG, "⚠️ BLOCKING DETECTED: $delayToStart ms delay before WebSocketEvent.Message processing")
-                        }
-                        
                         Log.d(TAG, "[LOG] WebSocketEvent.Message received at $messageReceivedTime. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
                         
                         // Create a unique event identifier for logging
@@ -521,17 +417,7 @@ class ChatViewModel @Inject constructor(
                             // Only attempt JSON parsing for error handling if the text looks like JSON
                             try {
                                 if (event.text.trimStart().startsWith("{")) {
-                                    // 🔍 BLOCKING DETECTION: Log JSON parsing timing
-                                    val jsonParseStartTime = System.currentTimeMillis()
-                                    Log.d(TAG, "$eventLogId 🔍 Starting JSON parsing for message")
-                                    
                                     val jsonObject = JSONObject(event.text)
-                                    
-                                    val jsonParseEndTime = System.currentTimeMillis()
-                                    val jsonParseDuration = jsonParseEndTime - jsonParseStartTime
-                                    if (jsonParseDuration > 50) {
-                                        Log.w(TAG, "$eventLogId ⚠️ SLOW JSON PARSING: JSON parsing took ${jsonParseDuration}ms")
-                                    }
                                     
                                     if (jsonObject.has("error") && jsonObject.has("status_code")) {
                                     val errorMsg = jsonObject.getString("error")
@@ -624,26 +510,9 @@ class ChatViewModel @Inject constructor(
                                 // Use runBlocking to ensure migration completes before chat ID update
                                 try {
                                     Log.d(TAG, "$eventLogId 🔄 MIGRATION: Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
-                                    
-                                    // 🔍 BLOCKING DETECTION: Log before runBlocking operation
-                                    val migrationStartTime = System.currentTimeMillis()
-                                    Log.w(TAG, "$eventLogId ⚠️ CRITICAL: Starting runBlocking database migration operation")
-                                    
                                     val migrationSuccess = runBlocking {
                                         repository.migrateChatMessages(originalChatId, effectiveConversationId)
                                     }
-                                    
-                                    // 🔍 BLOCKING DETECTION: Log after runBlocking operation
-                                    val migrationEndTime = System.currentTimeMillis()
-                                    val migrationDuration = migrationEndTime - migrationStartTime
-                                    Log.w(TAG, "$eventLogId ⚠️ CRITICAL: Completed runBlocking database migration in ${migrationDuration}ms")
-                                    
-                                    if (migrationDuration > 500) {
-                                        Log.e(TAG, "$eventLogId 🚨 SEVERE BLOCKING: Database migration blocked UI for ${migrationDuration}ms!")
-                                    } else if (migrationDuration > 100) {
-                                        Log.w(TAG, "$eventLogId ⚠️ SLOW MIGRATION: Database migration took ${migrationDuration}ms")
-                                    }
-                                    
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
                                         
@@ -763,24 +632,12 @@ class ChatViewModel @Inject constructor(
                                             // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
                                             // This ensures responses appear in the correct order relative to their user messages
                                             Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally with request ID pairing")
-                                            
-                                            // 🔍 BLOCKING DETECTION: Log database operation timing
-                                            val dbOpStartTime = System.currentTimeMillis()
-                                            Log.d(TAG, "$eventLogId 🔍 Starting database operation for assistant message")
-                                            
                                             val messageId = if (event.requestId != null) {
                                                 repository.addAssistantMessageAfterRequest(targetChatId, messageContentForChat, event.requestId)
                                             } else {
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
-                                            
-                                            val dbOpEndTime = System.currentTimeMillis()
-                                            val dbOpDuration = dbOpEndTime - dbOpStartTime
-                                            if (dbOpDuration > 100) {
-                                                Log.w(TAG, "$eventLogId ⚠️ SLOW DATABASE OPERATION: Assistant message DB operation took ${dbOpDuration}ms")
-                                            }
-                                            
                                             Log.d(TAG, "$eventLogId Remote agent: Added assistant message $messageId to chat $targetChatId with request ID pairing")
                                         }
                                     } catch (e: Exception) {
@@ -791,19 +648,8 @@ class ChatViewModel @Inject constructor(
                                     if (targetChatId <= 0) {
                                         try {
                                             viewModelScope.launch {
-                                                // 🔍 BLOCKING DETECTION: Log conversation refresh timing
-                                                val refreshStartTime = System.currentTimeMillis()
-                                                Log.d(TAG, "$eventLogId 🔍 Starting conversation refresh")
-                                                
                                                 // Remove arbitrary delay - refresh immediately when needed
                                                 repository.refreshConversations()
-                                                
-                                                val refreshEndTime = System.currentTimeMillis()
-                                                val refreshDuration = refreshEndTime - refreshStartTime
-                                                if (refreshDuration > 100) {
-                                                    Log.w(TAG, "$eventLogId ⚠️ SLOW REFRESH: Conversation refresh took ${refreshDuration}ms")
-                                                }
-                                                
                                                 Log.d(TAG, "$eventLogId Refreshed conversations for potential new chat creation")
                                             }
                                         } catch (e: Exception) {
@@ -871,14 +717,6 @@ class ChatViewModel @Inject constructor(
                             
                             if (totalProcessingTime > 500) {
                                 Log.w(TAG, "$eventLogId ⚠️ SLOW PROCESSING: Total processing time was ${totalProcessingTime}ms")
-                            }
-                            
-                            // 🔍 BLOCKING DETECTION: Check if ViewModel scope is being blocked
-                            val eventTotalTime = processingEndTime - eventStartTime
-                            if (eventTotalTime > 1000) {
-                                Log.e(TAG, "$eventLogId 🚨 SEVERE BLOCKING: ViewModel scope blocked for ${eventTotalTime}ms during WebSocket event processing!")
-                            } else if (eventTotalTime > 500) {
-                                Log.w(TAG, "$eventLogId ⚠️ MODERATE BLOCKING: ViewModel scope took ${eventTotalTime}ms for WebSocket event processing")
                             }
 
                             // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking

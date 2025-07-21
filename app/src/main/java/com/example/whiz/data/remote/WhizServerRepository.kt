@@ -213,12 +213,6 @@ class WhizServerRepository @Inject constructor(
                                 Log.d(TAG, "Received structured response with request_id: $requestId, conversation_id: $conversationId")
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
-                                    val emitLaunchTime = System.currentTimeMillis()
-                                    val launchDelay = emitLaunchTime - emitStartTime
-                                    if (launchDelay > 50) {
-                                        Log.w(TAG, "⚠️ BLOCKING DETECTED: $launchDelay ms delay before launching WebSocket event emission")
-                                    }
-                                    
                                     _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId, conversationId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
@@ -252,12 +246,6 @@ class WhizServerRepository @Inject constructor(
                                 Log.d(TAG, "Emitting as generic WebSocketEvent.Message: $text")
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
-                                    val emitLaunchTime = System.currentTimeMillis()
-                                    val launchDelay = emitLaunchTime - emitStartTime
-                                    if (launchDelay > 50) {
-                                        Log.w(TAG, "⚠️ BLOCKING DETECTED: $launchDelay ms delay before launching generic WebSocket event emission")
-                                    }
-                                    
                                     _webSocketEvents.emit(WebSocketEvent.Message(text, requestId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
