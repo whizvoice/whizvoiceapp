@@ -216,6 +216,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @Test
     fun messageUI_sendMessage_appearsInChat() {
         runBlocking {
+        try {
         // Comprehensive conversation lifecycle test:
         // 1. Create new chat and send message
         // 2. Verify optimistic UI and bot response
@@ -456,10 +457,33 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 10: Send a second message to test existing chat functionality - using RAPID method
         Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
-        if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
-            failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
+        try {
+            if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
+                Log.e(TAG, "❌ FAILURE: sendMessageAndVerifyDisplay returned false for second message")
+                Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+                Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+                
+                // Debug: Check what's currently visible in the UI
+                val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+                val visibleTexts = allTextViews.mapNotNull { 
+                    try {
+                        it.text
+                    } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                        Log.w(TAG, "⚠️ Stale UI element encountered during error text extraction, skipping")
+                        null
+                    }
+                }.filter { it.isNotBlank() && it.length > 5 }
+                Log.e(TAG, "🔍 Currently visible texts when second message failed: ${visibleTexts.joinToString(", ")}")
+                
+                failWithScreenshot("second_message_failed", "Failed to send second message in existing chat. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+            }
+            Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ EXCEPTION during second message send", e)
+            Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+            Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+            throw e
         }
-        Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
         
         // Step 11: Final verification - both messages should be visible
         Log.d(TAG, "🔍 Final verification: checking if both messages are visible...")
@@ -485,14 +509,30 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 androidx.test.uiautomator.By.textContains("Second message").pkg("com.example.whiz.debug")
             ), 2000)
             
-            if (!firstMessagePartial || !secondMessagePartial) {
-                Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
-                Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
-                Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
-                failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken")
-            } else {
-                Log.d(TAG, "✅ Both messages found using partial matches")
-            }
+                    if (!firstMessagePartial || !secondMessagePartial) {
+            Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
+            Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
+            Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
+            Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+            Log.e(TAG, "🔍 First message content: '$firstMessage'")
+            Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+            
+            // Debug: Check what's currently visible in the UI
+            val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+            val visibleTexts = allTextViews.mapNotNull { 
+                try {
+                    it.text
+                } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                    Log.w(TAG, "⚠️ Stale UI element encountered during final error text extraction, skipping")
+                    null
+                }
+            }.filter { it.isNotBlank() && it.length > 5 }
+            Log.e(TAG, "🔍 Currently visible texts in final verification: ${visibleTexts.joinToString(", ")}")
+            
+            failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+        } else {
+            Log.d(TAG, "✅ Both messages found using partial matches")
+        }
         } else {
             Log.d(TAG, "✅ Both messages confirmed visible in final verification")
         }
@@ -510,6 +550,13 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "⚠️ Could not capture server chat ID: ${e.message}")
+        }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ UNEXPECTED EXCEPTION in messageUI_sendMessage_appearsInChat test", e)
+            Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+            Log.e(TAG, "🔍 First message: '$firstMessage'")
+            Log.e(TAG, "🔍 Second message: '$secondMessage'")
+            throw e
         }
         }
     }
