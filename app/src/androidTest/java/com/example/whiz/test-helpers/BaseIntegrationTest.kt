@@ -325,11 +325,22 @@ abstract class BaseIntegrationTest {
         
         android.util.Log.d("BaseIntegrationTest", "✅ Found EditText input field")
         
-        // Click and set text
+        // Click and set text - COMPOSE-FRIENDLY APPROACH
         // messageInput.click()
         android.util.Log.d("BaseIntegrationTest", "skipped click")
-        messageInput.setText(message)
-        android.util.Log.d("BaseIntegrationTest", "just set text")
+        
+        // Try Compose-friendly approach: clear first, then set text
+        try {
+            messageInput.setText("") // Clear by setting empty text
+            android.util.Log.d("BaseIntegrationTest", "cleared text")
+            Thread.sleep(100) // Small delay for Compose to process
+            messageInput.setText(message)
+            android.util.Log.d("BaseIntegrationTest", "set text with compose-friendly approach")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "Compose-friendly approach failed, trying direct setText: ${e.message}")
+            messageInput.setText(message)
+            android.util.Log.d("BaseIntegrationTest", "fallback: direct setText")
+        }
         
         // Wait for the specific text to appear in the EditText field
         val searchText = message.take(30)

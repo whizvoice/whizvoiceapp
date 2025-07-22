@@ -215,6 +215,12 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     @Test
     fun messageUI_sendMessage_appearsInChat() {
+        // Declare variables in outer scope so they're accessible in exception handlers
+        val uniqueId = System.currentTimeMillis()
+        val firstMessage = "INTEGRATION_TEST_MSG_$uniqueId: Hello, can you help me test this chat?"
+        val secondMessage = "INTEGRATION_TEST_MSG_$uniqueId: Second message after navigation"
+        var chatTitle: String? = null // Will store the chat title for later navigation
+        
         runBlocking {
         try {
         // Comprehensive conversation lifecycle test:
@@ -226,12 +232,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         // 6. Send second message in existing chat
         
         Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
-        
-        // Use a very unique message that won't conflict with other chats
-        val uniqueId = System.currentTimeMillis()
-        val firstMessage = "INTEGRATION_TEST_MSG_$uniqueId: Hello, can you help me test this chat?"
-        val secondMessage = "INTEGRATION_TEST_MSG_$uniqueId: Second message after navigation"
-        var chatTitle: String? = null // Will store the chat title for later navigation
         
         // Step 1: Launch the app for our UI test
         Log.d(TAG, "🚀 Launching app for comprehensive UI test...")
