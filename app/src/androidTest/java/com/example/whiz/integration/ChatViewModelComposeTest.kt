@@ -273,6 +273,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                     } catch (e: Exception) {
                         Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
                         Thread.sleep(100) // Check every 100ms
+                    } catch (e: AssertionError) {
+                        Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
+                        Thread.sleep(100) // Check every 100ms
                     }
                 }
                 
@@ -327,6 +330,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Bot interruption test failed", e)
                 failWithScreenshot("test_exception_failure", "Bot interruption test failed with exception: ${e.message}")
+            } catch (e: AssertionError) {
+                Log.e(TAG, "❌ Bot interruption test failed with assertion error", e)
+                failWithScreenshot("test_assertion_failure", "Bot interruption test failed with assertion error: ${e.message}")
             }
         }
     }
