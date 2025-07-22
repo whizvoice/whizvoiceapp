@@ -17,6 +17,7 @@ import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import org.junit.Before
 import org.junit.Rule
 import org.junit.runner.RunWith
@@ -2204,6 +2205,180 @@ abstract class BaseIntegrationTest {
             android.util.Log.d("BaseIntegrationTest", "✅ App brought to foreground")
         } catch (e: Exception) {
             android.util.Log.e("BaseIntegrationTest", "❌ Failed to bring app to foreground: ${e.message}")
+        }
+    }
+
+    /**
+     * Enhanced cleanup method that handles both optimistic and server-backed chats
+     * This method can be called from try-finally blocks to ensure cleanup happens
+     * even if tests fail before reaching @After methods
+     */
+    protected suspend fun cleanupTestChatsEnhanced(
+        repository: com.example.whiz.data.repository.WhizRepository,
+        database: com.example.whiz.data.local.WhizDatabase? = null,
+        trackedChatIds: List<Long> = emptyList(),
+        additionalPatterns: List<String> = emptyList(),
+        enablePatternFallback: Boolean = true // Enable by default for better cleanup
+    ) {
+        try {
+            android.util.Log.d("BaseIntegrationTest", "🧹 Starting ENHANCED test chat cleanup")
+            
+            var chatsDeleted = 0
+            var optimisticChatsDeleted = 0
+            var serverChatsDeleted = 0
+            
+            // Primary method: Delete tracked chats (most reliable)
+            if (trackedChatIds.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🗑️ Deleting ${trackedChatIds.size} tracked chat(s)")
+                trackedChatIds.forEach { chatId ->
+                    try {
+                        if (chatId < 0) {
+                            // Optimistic chat (negative ID) - delete directly from database
+                            if (database != null) {
+                                val deletedMessages = database.messageDao().deleteMessagesForChat(chatId)
+                                val deletedChat = database.chatDao().deleteChat(chatId)
+                                optimisticChatsDeleted++
+                                android.util.Log.d("BaseIntegrationTest", "✅ Deleted optimistic chat: $chatId ($deletedMessages messages, $deletedChat chat)")
+                            } else {
+                                android.util.Log.w("BaseIntegrationTest", "⚠️ Cannot delete optimistic chat $chatId - database not provided")
+                            }
+                        } else {
+                            // Server-backed chat (positive ID) - use repository
+                            repository.deleteChat(chatId)
+                            serverChatsDeleted++
+                            android.util.Log.d("BaseIntegrationTest", "✅ Deleted server chat: $chatId")
+                        }
+                        chatsDeleted++
+                    } catch (e: Exception) {
+                        android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete tracked chat $chatId", e)
+                    }
+                }
+            }
+
+            // Enhanced fallback: Pattern matching (enabled by default)
+            if (enablePatternFallback && additionalPatterns.isNotEmpty()) {
+                android.util.Log.d("BaseIntegrationTest", "🔍 Checking for pattern-matched chats as fallback")
+                val allChats = repository.getAllChats()
+                val testChats = allChats.filter { chat ->
+                    !trackedChatIds.contains(chat.id) && 
+                    additionalPatterns.any { pattern -> 
+                        chat.title.contains(pattern, ignoreCase = true) 
+                    }
+                }
+                
+                if (testChats.isNotEmpty()) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ FALLBACK ACTIVATED: Found ${testChats.size} untracked test chats")
+                    testChats.forEach { chat ->
+                        try {
+                            if (chat.id < 0) {
+                                // Optimistic chat - delete directly from database
+                                if (database != null) {
+                                    val deletedMessages = database.messageDao().deleteMessagesForChat(chat.id)
+                                    val deletedChat = database.chatDao().deleteChat(chat.id)
+                                    optimisticChatsDeleted++
+                                    android.util.Log.d("BaseIntegrationTest", "✅ Deleted untracked optimistic chat ${chat.id} (${chat.title}) - $deletedMessages messages, $deletedChat chat")
+                                } else {
+                                    android.util.Log.w("BaseIntegrationTest", "⚠️ Cannot delete untracked optimistic chat ${chat.id} - database not provided")
+                                }
+                            } else {
+                                // Server chat - use repository
+                                repository.deleteChat(chat.id)
+                                serverChatsDeleted++
+                                android.util.Log.d("BaseIntegrationTest", "✅ Deleted untracked server chat ${chat.id} (${chat.title})")
+                            }
+                            chatsDeleted++
+                        } catch (e: Exception) {
+                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete untracked chat ${chat.id}", e)
+                        }
+                    }
+                }
+            }
+
+            // Additional cleanup: Delete any remaining optimistic chats with test patterns
+            if (database != null) {
+                try {
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Checking for any remaining optimistic test chats")
+                    val allChats = database.chatDao().getAllChatsFlow().first()
+                    val optimisticTestChats = allChats.filter { chat ->
+                        chat.id < 0 && additionalPatterns.any { pattern -> 
+                            chat.title.contains(pattern, ignoreCase = true) 
+                        }
+                    }
+                    
+                    if (optimisticTestChats.isNotEmpty()) {
+                        android.util.Log.d("BaseIntegrationTest", "🗑️ Found ${optimisticTestChats.size} remaining optimistic test chats")
+                        optimisticTestChats.forEach { chat ->
+                            try {
+                                val deletedMessages = database.messageDao().deleteMessagesForChat(chat.id)
+                                val deletedChat = database.chatDao().deleteChat(chat.id)
+                                optimisticChatsDeleted++
+                                android.util.Log.d("BaseIntegrationTest", "✅ Deleted remaining optimistic chat ${chat.id} (${chat.title}) - $deletedMessages messages, $deletedChat chat")
+                            } catch (e: Exception) {
+                                android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to delete remaining optimistic chat ${chat.id}", e)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Error checking for remaining optimistic chats", e)
+                }
+            }
+
+            android.util.Log.d("BaseIntegrationTest", "✅ ENHANCED cleanup completed: $chatsDeleted total chats deleted ($optimisticChatsDeleted optimistic, $serverChatsDeleted server)")
+            
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Error during enhanced test chat cleanup", e)
+        }
+    }
+
+    /**
+     * Helper function to run a test with automatic cleanup using try-finally
+     * This ensures cleanup happens even if the test fails before reaching @After methods
+     * 
+     * @param testName Human-readable name for logging
+     * @param repository Repository for chat operations
+     * @param database Database for direct optimistic chat cleanup (optional)
+     * @param trackedChatIds List of chat IDs to track for cleanup
+     * @param additionalPatterns Patterns to match for fallback cleanup
+     * @param testBlock The actual test logic to execute
+     */
+    protected suspend fun runTestWithCleanup(
+        testName: String,
+        repository: com.example.whiz.data.repository.WhizRepository,
+        database: com.example.whiz.data.local.WhizDatabase? = null,
+        trackedChatIds: List<Long> = emptyList(),
+        additionalPatterns: List<String> = emptyList(),
+        testBlock: suspend () -> Unit
+    ) {
+        var needsCleanup = false
+        
+        try {
+            android.util.Log.d("BaseIntegrationTest", "🧪 Starting test with cleanup: $testName")
+            testBlock()
+            needsCleanup = true
+            android.util.Log.d("BaseIntegrationTest", "✅ Test completed successfully: $testName")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Test failed: $testName", e)
+            needsCleanup = true // Still need cleanup even if test failed
+            throw e // Re-throw the exception to fail the test
+        } finally {
+            if (needsCleanup) {
+                android.util.Log.d("BaseIntegrationTest", "🧹 FINALLY BLOCK: Attempting cleanup after test: $testName")
+                try {
+                    cleanupTestChatsEnhanced(
+                        repository = repository,
+                        database = database,
+                        trackedChatIds = trackedChatIds,
+                        additionalPatterns = additionalPatterns,
+                        enablePatternFallback = true
+                    )
+                    android.util.Log.d("BaseIntegrationTest", "✅ FINALLY BLOCK: Cleanup completed successfully for: $testName")
+                } catch (e: Exception) {
+                    android.util.Log.e("BaseIntegrationTest", "❌ FINALLY BLOCK: Cleanup failed for: $testName", e)
+                    // Don't throw - we don't want cleanup failures to mask test failures
+                }
+            } else {
+                android.util.Log.d("BaseIntegrationTest", "ℹ️ FINALLY BLOCK: No cleanup needed for: $testName (test failed before chat creation)")
+            }
         }
     }
 
