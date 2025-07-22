@@ -667,6 +667,28 @@ class WhizRepository @Inject constructor(
      */
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
+            // 🔧 FIX: Ensure chat exists in local database before inserting messages
+            val existingChat = chatDao.getChatById(chatId)
+            if (existingChat == null) {
+                Log.d(TAG, "deduplicateMessages: Chat $chatId doesn't exist locally, fetching from server")
+                try {
+                    val serverChat = apiService.getConversation(chatId)
+                    val chatEntity = serverChat.toChatEntity()
+                    chatDao.insertChat(chatEntity)
+                    Log.d(TAG, "deduplicateMessages: Created local chat record for chat $chatId")
+                } catch (e: Exception) {
+                    Log.e(TAG, "deduplicateMessages: Failed to fetch chat $chatId from server, creating placeholder", e)
+                    // Create a placeholder chat record so messages can be stored
+                    val placeholderChat = ChatEntity(
+                        id = chatId,
+                        title = "Chat $chatId",
+                        lastMessageTime = System.currentTimeMillis()
+                    )
+                    chatDao.insertChat(placeholderChat)
+                    Log.d(TAG, "deduplicateMessages: Created placeholder chat record for chat $chatId")
+                }
+            }
+            
             // Get current local messages
             val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
             
