@@ -626,7 +626,7 @@ class WhizRepository @Inject constructor(
     }
     
     // Deduplicated message fetching - prevents multiple concurrent API calls for the same chat
-    private suspend fun fetchMessagesWithDeduplication(chatId: Long): List<MessageEntity> {
+    suspend fun fetchMessagesWithDeduplication(chatId: Long): List<MessageEntity> {
         // Check if there's already an ongoing request for this chat
         val ongoing = ongoingMessageRequests[chatId]
         if (ongoing != null && ongoing.isActive) {

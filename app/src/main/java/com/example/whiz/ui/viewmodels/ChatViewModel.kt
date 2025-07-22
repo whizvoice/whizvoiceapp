@@ -922,11 +922,17 @@ class ChatViewModel @Inject constructor(
                 // Refresh messages to ensure we have latest data
                 if (_chatId.value > 0) {
                     try {
-                        // Skip manual refresh - the reactive flow will update automatically when chatId changes
-                        Log.d(TAG, "loadChat: Skipping manual messages refresh - reactive flow will handle it")
-                        // repository.refreshMessages() // Commented out to prevent duplicate requests
+                        Log.d(TAG, "loadChat: Performing sync for existing chat ${_chatId.value}")
+                        // Use existing deduplicated sync method to get messages from server
+                        val serverMessages = repository.fetchMessagesWithDeduplication(_chatId.value)
+                        Log.d(TAG, "loadChat: Retrieved ${serverMessages.size} messages from server for chat ${_chatId.value}")
+                        
+                        // The fetchMessagesWithDeduplication method already handles storing messages and deduplication
+                        // Just trigger messages refresh to update UI
+                        repository.refreshMessages()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error refreshing messages during loadChat", e)
+                        Log.e(TAG, "Error syncing messages during loadChat", e)
+                        _errorState.value = "Failed to sync messages: ${e.message}"
                     }
                 }
 
