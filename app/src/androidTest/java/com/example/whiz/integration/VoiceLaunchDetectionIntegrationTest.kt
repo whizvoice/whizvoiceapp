@@ -21,6 +21,7 @@ import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.permissions.PermissionManager
 import org.junit.Assert.*
+import org.junit.After
 
 /**
  * Integration tests for voice launch detection functionality using Instrumentation.
@@ -52,6 +53,9 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     lateinit var permissionManager: PermissionManager
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
 
     @Before
     fun setUp() {
@@ -67,9 +71,32 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = emptyList(),
-                additionalPatterns = listOf("voice launch", "launch detection"),
+                additionalPatterns = listOf("voice launch", "launch detection", "Assistant Chat"),
                 enablePatternFallback = false
             )
+        }
+    }
+    
+    @After
+    fun cleanup() {
+        runBlocking {
+            try {
+                android.util.Log.d(TAG, "🧹 Cleaning up test chats created during voice launch tests")
+                
+                // Clean up tracked chats and any chats with voice launch patterns
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = createdChatIds,
+                    additionalPatterns = listOf("voice launch", "launch detection", "Assistant Chat"),
+                    enablePatternFallback = true // Enable pattern fallback since voice tests create chats through navigation
+                )
+                createdChatIds.clear()
+                
+                android.util.Log.d(TAG, "✅ Voice launch test cleanup completed")
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "⚠️ Error during test cleanup", e)
+                // Don't fail the test if cleanup fails
+            }
         }
     }
 
@@ -131,6 +158,18 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         }
         
         android.util.Log.d(TAG, "✅ Voice launch automatically triggered correct behavior (navigation + voice mode)")
+        
+        // Track any chats created for cleanup
+        try {
+            val currentChats = runBlocking { repository.getAllChats() }
+            val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+            newChats.forEach { chat ->
+                createdChatIds.add(chat.id)
+                android.util.Log.d(TAG, "📝 Tracked chat for cleanup: ${chat.id} ('${chat.title}')")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "⚠️ Could not track created chats: ${e.message}")
+        }
         
         // Clean up
         activity.finish()
@@ -245,6 +284,18 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         }
         
         android.util.Log.d(TAG, "✅ Voice launch enabled continuous listening and is actively listening")
+        
+        // Track any chats created for cleanup
+        try {
+            val currentChats = runBlocking { repository.getAllChats() }
+            val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+            newChats.forEach { chat ->
+                createdChatIds.add(chat.id)
+                android.util.Log.d(TAG, "📝 Tracked chat for cleanup: ${chat.id} ('${chat.title}')")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "⚠️ Could not track created chats: ${e.message}")
+        }
         
         // Clean up
         activity.finish()

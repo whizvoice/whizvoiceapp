@@ -63,6 +63,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     lateinit var repository: com.example.whiz.data.repository.WhizRepository
 
     private val TAG = "AppLifecycleTest"
+    private val uniqueTestId = "LIFECYCLE_TEST_${System.currentTimeMillis()}"
 
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
@@ -105,8 +106,8 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = createdChatIds,
-                additionalPatterns = listOf("lifecycle", "Lifecycle"),
-                enablePatternFallback = false // Only enable if needed
+                additionalPatterns = listOf("lifecycle", "Lifecycle", uniqueTestId, "LIFECYCLE_TEST_"),
+                enablePatternFallback = true // Enable to catch any chats with unique identifier
             )
             createdChatIds.clear()
         } catch (e: Exception) {
@@ -197,11 +198,26 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ CORRECT: Manual launch went to chats list as expected")
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 
+                // Capture initial chat count before creating new chat
+                val initialChats = runBlocking { repository.getAllChats() }
+                
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 if (!clickNewChatButtonAndWaitForChatScreen()) {
                     failWithScreenshot("Test was unable to find New Chat button and not already in chat")
                 }
                 Log.d(TAG, "✅ Successfully navigated to New Chat page")
+                
+                // Track the newly created chat for cleanup
+                try {
+                    val currentChats = runBlocking { repository.getAllChats() }
+                    val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+                    newChats.forEach { chat ->
+                        createdChatIds.add(chat.id)
+                        Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not track newly created chat: ${e.message}")
+                }
             }
             
             // Simulate entering a chat page using VoiceManager

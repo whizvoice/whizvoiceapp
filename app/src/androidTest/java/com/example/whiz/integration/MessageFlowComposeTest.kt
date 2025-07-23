@@ -115,8 +115,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = createdChatIds,
-                additionalPatterns = listOf("message flow", "comprehensive", "migration", "compose"),
-                enablePatternFallback = false
+                additionalPatterns = listOf("message flow", "comprehensive", "migration", "compose", "test - $uniqueTestId", "msg - $uniqueTestId"),
+                enablePatternFallback = true // Enable to catch any chats with test content
             )
             createdChatIds.clear()
             
@@ -148,6 +148,14 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // step 2: navigate to new chat using Compose Testing
             Log.d(TAG, "➕ step 2: navigating to new chat with Compose Testing")
             
+            // Capture initial chats before creating new ones
+            val initialChats = try {
+                repository.getAllChats()
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
+                emptyList()
+            }
+            
             if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                 // if we're already in a chat, navigate back to chats list first, then create new chat
                 Log.d(TAG, "🔄 currently in chat screen, going back to chats list first")
@@ -160,6 +168,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                 // now click new chat button
                 if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     Log.e(TAG, "❌ FAILURE at step 2b: new chat button not found or chat screen failed to load")
+                    // Track any chats created before failure
+                    trackNewChats(initialChats)
                     failWithScreenshot("compose_new_chat_failed", "new chat button not found or chat screen failed to load")
                     return@runBlocking
                 }
@@ -168,10 +178,15 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                 Log.d(TAG, "📋 on chats list, clicking new chat button directly")
                 if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     Log.e(TAG, "❌ FAILURE at step 2: new chat button not found or chat screen failed to load")
+                    // Track any chats created before failure
+                    trackNewChats(initialChats)
                     failWithScreenshot("compose_new_chat_failed", "new chat button not found or chat screen failed to load")
                     return@runBlocking
                 }
             }
+            
+            // Track the newly created chat immediately after successful navigation
+            trackNewChats(initialChats)
             
             // step 3: send first message and verify optimistic UI
             val firstMessage = "Pls always reply with just 1 word for test - $uniqueTestId"
@@ -331,7 +346,33 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             throw e
         }
     }
-    
+
+    /**
+     * Track newly created chats for cleanup by comparing with initial chat list
+     */
+    private suspend fun trackNewChats(initialChats: List<com.example.whiz.data.local.ChatEntity>) {
+        try {
+            val currentChats = repository.getAllChats()
+            val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+            newChats.forEach { chat ->
+                if (!createdChatIds.contains(chat.id)) {
+                    createdChatIds.add(chat.id)
+                    Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
+                    
+                    // Update tracking variables for migration monitoring
+                    if (chat.id < 0) {
+                        optimisticChatId = chat.id
+                        Log.d(TAG, "🔍 Captured optimistic chat ID: $optimisticChatId")
+                    } else {
+                        finalServerChatId = chat.id
+                        Log.d(TAG, "🔍 Captured server chat ID: $finalServerChatId")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Could not track newly created chats: ${e.message}")
+        }
+    }
 
 
 

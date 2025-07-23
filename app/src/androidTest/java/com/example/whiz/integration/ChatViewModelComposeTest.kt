@@ -64,6 +64,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
         private const val TEST_TIMEOUT = 15000L // 15 seconds
         private const val MESSAGE_COUNT = 5
     }
+    
+    private val uniqueTestId = "COMPOSE_INTERRUPT_TEST_${System.currentTimeMillis()}"
 
     @Before
     override fun setUpAuthentication() {
@@ -95,8 +97,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = listOf("interrupt", "bot", "PRODUCTION BUG"),
-                    enablePatternFallback = false
+                    additionalPatterns = listOf("interrupt", "bot", "PRODUCTION BUG", uniqueTestId, "COMPOSE_INTERRUPT_TEST_"),
+                    enablePatternFallback = true // Enable to catch any chats with unique identifier
                 )
                 createdChatIds.clear()
             } else {
@@ -124,6 +126,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 // Initialize cleanup tracking
                 createdNewChatThisTest = true
+                
+                // Capture initial chats before creating new ones
+                val initialChats = repository.getAllChats()
                 
                 // Step 1: Verify app is ready (already launched by createAndroidComposeRule)
                 Log.d(TAG, "📱 Step 1: Verifying app is ready (already launched by createAndroidComposeRule)")
@@ -189,9 +194,21 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ Successfully navigated to new chat screen with Compose Testing")
                 
+                // Track the newly created chat for cleanup
+                try {
+                    val currentChats = repository.getAllChats()
+                    val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+                    newChats.forEach { chat ->
+                        createdChatIds.add(chat.id)
+                        Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not track newly created chat: ${e.message}")
+                }
+                
                 // Step 3: Send first message to trigger bot response using Compose Testing
                 val sentMessages = mutableListOf<String>()
-                val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - test $uniqueTestId"
+                val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - $uniqueTestId"
                 
                 Log.d(TAG, "📨 Step 3: Sending initial message with Compose Testing...")
                 
