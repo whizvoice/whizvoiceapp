@@ -477,7 +477,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
                 Log.e(TAG, "❌ FAILURE: sendMessageAndVerifyDisplay returned false for second message")
                 Log.e(TAG, "🔍 Second message content: '$secondMessage'")
-                Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+                Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
                 
                 // Debug: Check what's currently visible in the UI
                 val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
@@ -497,7 +497,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             Log.e(TAG, "❌ EXCEPTION during second message send", e)
             Log.e(TAG, "🔍 Second message content: '$secondMessage'")
-            Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
             throw e
         }
         
@@ -529,7 +529,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
             Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
             Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
-            Log.e(TAG, "🔍 Test identifier: 'INTEGRATION_TEST_MSG_$uniqueId'")
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
             Log.e(TAG, "🔍 First message content: '$firstMessage'")
             Log.e(TAG, "🔍 Second message content: '$secondMessage'")
             
