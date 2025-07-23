@@ -325,8 +325,7 @@ object ComposeTestHelper {
     suspend fun sendMessage(
         composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
         message: String, 
-        rapid: Boolean = false,
-        onFailure: ((String, String) -> Unit)? = null
+        rapid: Boolean = false
     ): Boolean {
         return try {
             Log.d(TAG, "📝 Compose: attempting to send message: '${message.take(30)}...'")
@@ -336,7 +335,6 @@ object ComposeTestHelper {
             Log.d(TAG, "⌨️ Compose: Step 1 - Typing message...")
             if (!typeMessage(composeTestRule, message)) {
                 Log.e(TAG, "❌ Compose: Failed to type message")
-                onFailure?.invoke("message_typing_failed", "Failed to type message: '${message.take(30)}...'")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 1 - Message typed successfully")
@@ -345,21 +343,25 @@ object ComposeTestHelper {
             Log.d(TAG, "📤 Compose: Step 2 - Clicking send button...")
             if (!clickSendButton(composeTestRule)) {
                 Log.e(TAG, "❌ Compose: Failed to click send button")
-                onFailure?.invoke("send_button_click_failed", "Failed to click send button after typing: '${message.take(30)}...'")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
             
-            // Wait for message to appear (with appropriate timeout)
+            // Wait for message to appear using existing waitForElement method
             val timeout = if (rapid) 400L else 1000L
             Log.d(TAG, "⏳ Compose: Step 3 - Waiting for message to appear (timeout: ${timeout}ms)...")
             
-            // For rapid messages, add extra logging to detect if interruption is blocked
             if (rapid) {
-                Log.d(TAG, "🚨 RAPID MODE: If this takes longer than ${timeout}, interruption is blocked!")
+                Log.d(TAG, "🚨 RAPID MODE: Message must appear within ${timeout}ms or test will fail!")
             }
             
-            val messageAppeared = waitForMessageToAppear(composeTestRule, message, timeout, onFailure)
+            // Use existing waitForElement method which provides timing info
+            val messageAppeared = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(message) },
+                timeoutMs = timeout,
+                description = "message '${message.take(30)}...'"
+            )
             
             if (messageAppeared) {
                 Log.d(TAG, "✅ Compose: Step 3 - Message sent and displayed successfully")
@@ -373,31 +375,24 @@ object ComposeTestHelper {
                 
                 if (rapid) {
                     Log.e(TAG, "🚨 RAPID FAILURE: Message took longer than ${timeout}ms to appear!")
-                    Log.e(TAG, "🚨 RAPID FAILURE: This indicates the app is blocking interruption!")
-                    Log.e(TAG, "🚨 RAPID FAILURE: Users should be able to send messages immediately during bot response!")
+                    Log.e(TAG, "🚨 RAPID FAILURE: This indicates the app is blocking rapid interruption!")
+                    Log.e(TAG, "🚨 RAPID FAILURE: Users cannot send messages while bot is responding!")
                 }
                 
                 // Log detailed step-by-step failure for test summary
                 Log.e(TAG, "🚨 COMPOSE SEND MESSAGE FAILURE:")
                 Log.e(TAG, "   ✅ Step 1: Message typed successfully")
                 Log.e(TAG, "   ✅ Step 2: Send button clicked successfully")
-                Log.e(TAG, "   ❌ Step 3: Message failed to appear in UI")
+                Log.e(TAG, "   ❌ Step 3: Message failed to appear in UI within ${timeout}ms")
                 Log.e(TAG, "   📝 Message: '${message.take(50)}...'")
                 Log.e(TAG, "   ⏱️ Timeout: ${timeout}ms")
-                Log.e(TAG, "   🎯 This indicates a UI rendering or timing issue")
-                
-                // Call failure callback with screenshot details
-                onFailure?.invoke(
-                    "message_not_displayed", 
-                    "Message sent but not displayed in UI: '${message.take(50)}...' (timeout: ${timeout}ms)"
-                )
+                Log.e(TAG, "   🎯 This indicates rapid message sending is blocked")
                 
                 false
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during message sending", e)
-            onFailure?.invoke("message_send_exception", "Exception during message sending: ${e.message}")
             false
         }
     }

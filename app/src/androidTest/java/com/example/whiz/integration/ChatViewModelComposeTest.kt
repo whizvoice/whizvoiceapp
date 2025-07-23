@@ -227,14 +227,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 // Now try to send the message using Compose testing
                 Log.d(TAG, "📝 Using Compose testing for better reliability...")
-                if (!ComposeTestHelper.sendMessage(
-                    composeTestRule, 
-                    firstMessage,
-                    onFailure = { failureType, reason ->
-                        Log.e(TAG, "❌ Initial message failed - cannot proceed with bot interruption test")
-                        failWithScreenshot("initial_message_${failureType}", reason)
-                    }
-                )) {
+                if (!ComposeTestHelper.sendMessage(composeTestRule, firstMessage)) {
+                    Log.e(TAG, "❌ Initial message failed - cannot proceed with bot interruption test")
+                    failWithScreenshot("initial_message_failed", "Initial message failed to send")
                     return@runBlocking
                 }
                 sentMessages.add(firstMessage)
@@ -249,16 +244,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                     
                     Log.d(TAG, "🚀 RAPID MESSAGE $i: Testing rapid send during bot response...")
                     
-                    if (!ComposeTestHelper.sendMessage(
-                        composeTestRule, 
-                        interruptMessage, 
-                        rapid = true,
-                        onFailure = { failureType, reason ->
-                            Log.e(TAG, "❌ RAPID: Message $i failed during rapid send!")
-                            Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
-                            failWithScreenshot("rapid_message_${i}_${failureType}", reason)
-                        }
-                    )) {
+                    if (!ComposeTestHelper.sendMessage(composeTestRule, interruptMessage, rapid = true)) {
+                        Log.e(TAG, "❌ RAPID: Message $i failed during rapid send!")
+                        Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
+                        failWithScreenshot("rapid_message_${i}_failed", "Rapid message $i failed to send within timeout")
                         return@runBlocking
                     }
                     

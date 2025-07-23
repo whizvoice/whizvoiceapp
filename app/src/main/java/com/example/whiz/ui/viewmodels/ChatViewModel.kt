@@ -265,7 +265,9 @@ class ChatViewModel @Inject constructor(
 
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
+            Log.d(TAG, "🧵 THREAD DEBUG: WebSocket collector starting on thread: ${Thread.currentThread().name}")
             whizServerRepository.webSocketEvents.collect { event ->
+                Log.d(TAG, "🧵 THREAD DEBUG: Processing WebSocket event on thread: ${Thread.currentThread().name}")
                 when (event) {
                     is WebSocketEvent.Connected -> {
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
@@ -562,9 +564,14 @@ class ChatViewModel @Inject constructor(
                                 // Use runBlocking to ensure migration completes before chat ID update
                                 try {
                                     Log.d(TAG, "$eventLogId 🔄 MIGRATION: Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
+                                    Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: About to runBlocking on thread: ${Thread.currentThread().name}")
+                                    val migrationStartTime = System.currentTimeMillis()
                                     val migrationSuccess = runBlocking {
+                                        Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: Inside runBlocking on thread: ${Thread.currentThread().name}")
                                         repository.migrateChatMessages(originalChatId, effectiveConversationId)
                                     }
+                                    val migrationDuration = System.currentTimeMillis() - migrationStartTime
+                                    Log.d(TAG, "$eventLogId ⏱️ TIMING DEBUG: runBlocking migration took ${migrationDuration}ms on thread: ${Thread.currentThread().name}")
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
                                         
@@ -1137,12 +1144,14 @@ class ChatViewModel @Inject constructor(
         
         // Always send messages - server will handle interrupts automatically based on its state
         Log.d(TAG, "sendUserInput: Sending message (server will handle any needed interrupts)")  
+        Log.d(TAG, "🧵 THREAD DEBUG: sendUserInput called on thread: ${Thread.currentThread().name}")
 
         // Don't clear input text immediately - it will be cleared after optimistic message is added
         // This provides consistent UX for both voice and typed input
         Log.d(TAG, "[LOG] sendUserInput: Will clear input text after optimistic message is added (current: '${_inputText.value}')")
 
         viewModelScope.launch {
+            Log.d(TAG, "🧵 THREAD DEBUG: sendUserInput viewModelScope.launch running on thread: ${Thread.currentThread().name}")
             // 🔧 CRITICAL FIX: Capture chat ID at the start and use it consistently
             // This prevents race conditions where _chatId.value changes during execution
             val originalChatId = _chatId.value
@@ -1206,6 +1215,8 @@ class ChatViewModel @Inject constructor(
                 // Clear input text after optimistic message is added (consistent UX for all input types)
                 // Wait for the message to actually appear in the messages flow rather than using a fixed delay
                 try {
+                    Log.d(TAG, "🧵 THREAD DEBUG: About to wait for message in flow on thread: ${Thread.currentThread().name}")
+                    val flowWaitStartTime = System.currentTimeMillis()
                     withTimeout(1000) {
                         // Wait for the messages to be updated with our new message
                         messages.first { messageList ->
@@ -1214,7 +1225,9 @@ class ChatViewModel @Inject constructor(
                                 message.type == com.example.whiz.data.local.MessageType.USER
                             }
                         }
-                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow, clearing input field")
+                        val flowWaitDuration = System.currentTimeMillis() - flowWaitStartTime
+                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow after ${flowWaitDuration}ms, clearing input field")
+                        Log.d(TAG, "🧵 THREAD DEBUG: Message appeared on thread: ${Thread.currentThread().name}")
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                     Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
