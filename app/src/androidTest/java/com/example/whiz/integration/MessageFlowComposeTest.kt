@@ -193,6 +193,14 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // Track the newly created chat immediately after successful navigation
             trackNewChats(initialChats)
             
+            // CAPTURE OPTIMISTIC ID HERE - right after navigation (Suggestion 1)
+            optimisticChatId = getCurrentOptimisticChatId()
+            if (optimisticChatId != null) {
+                Log.d(TAG, "🔍 Captured optimistic chat ID after navigation: $optimisticChatId")
+            } else {
+                Log.d(TAG, "🔍 No optimistic chat ID found after navigation - may have migrated immediately")
+            }
+            
             // step 3: send first message and verify optimistic UI
             val firstMessage = "Pls always reply with just 1 word for test - $uniqueTestId"
             Log.d(TAG, "💬 step 3: sending first message and verifying optimistic UI")
@@ -224,12 +232,18 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             }
             
             // step 3.5: capture optimistic chat ID for migration tracking
-            Log.d(TAG, "🔍 step 3.5: capturing optimistic chat ID")
-            optimisticChatId = getCurrentOptimisticChatId()
-            if (optimisticChatId != null) {
-                Log.d(TAG, "✅ captured optimistic chat ID: $optimisticChatId")
+            Log.d(TAG, "🔍 step 3.5: checking optimistic chat ID (already attempted capture after navigation)")
+            
+            // Only try to capture again if we didn't get it after navigation
+            if (optimisticChatId == null) {
+                optimisticChatId = getCurrentOptimisticChatId()
+                if (optimisticChatId != null) {
+                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId")
+                } else {
+                    Log.w(TAG, "⚠️ could not capture optimistic chat ID - migration likely happened too quickly")
+                }
             } else {
-                Log.w(TAG, "⚠️ could not capture optimistic chat ID - may already have migrated or not created yet")
+                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId")
             }
             
             // step 4: confirm bot is responding (thinking indicator visible)
