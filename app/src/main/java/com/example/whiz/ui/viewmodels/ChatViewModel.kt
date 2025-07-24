@@ -76,6 +76,20 @@ class ChatViewModel @Inject constructor(
         return pendingRequests.keys.toSet()
     }
 
+    /**
+     * Check if a request is in the WebSocket retry queue (for testing purposes)
+     */
+    fun hasRequestInRetryQueue(requestId: String): Boolean {
+        return whizServerRepository.hasMessageInRetryQueue(requestId)
+    }
+    
+    /**
+     * Get all request IDs in the WebSocket retry queue (for testing purposes)
+     */
+    fun getRetryQueueRequestIds(): Set<String> {
+        return whizServerRepository.getRetryQueueRequestIds()
+    }
+
     // Track locally-saved interrupt messages to prevent server duplication
 
 

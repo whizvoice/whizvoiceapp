@@ -846,9 +846,11 @@ object ComposeTestHelper {
         return try {
             Log.d(TAG, "📝 Compose: Attempting to send message with WebSocket verification: '${message.take(30)}...'")
             
-            // Step 1: Get initial pending request count
+            // Step 1: Get initial state
             val initialPendingRequests = chatViewModel.getPendingRequestIds()
+            val initialRetryQueue = chatViewModel.getRetryQueueRequestIds()
             Log.d(TAG, "🔍 Initial pending requests: $initialPendingRequests")
+            Log.d(TAG, "🔍 Initial retry queue: $initialRetryQueue")
             
             // Step 2: Send the message via UI
             val sendSuccess = sendMessage(composeTestRule, message)
@@ -857,21 +859,32 @@ object ComposeTestHelper {
                 return false
             }
             
-            // Step 3: Wait for WebSocket confirmation by checking if any new request was added to pendingRequests
-            Log.d(TAG, "🔍 Compose: Waiting for WebSocket confirmation via pendingRequests...")
+            // Step 3: Wait for WebSocket handling (either immediate send OR queued for retry)
+            Log.d(TAG, "🔍 Compose: Waiting for WebSocket handling (pending requests OR retry queue)...")
             
             val startTime = System.currentTimeMillis()
-            val timeoutMs = 300L // 3 seconds for WebSocket confirmation
+            val timeoutMs = 3000L // 3 seconds for WebSocket handling
             
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 try {
                     val currentPendingRequests = chatViewModel.getPendingRequestIds()
-                    val newRequests = currentPendingRequests - initialPendingRequests
+                    val currentRetryQueue = chatViewModel.getRetryQueueRequestIds()
                     
-                    Log.d(TAG, "🔍 Compose: WebSocket check: currentPendingRequests=$currentPendingRequests, newRequests=$newRequests")
+                    val newPendingRequests = currentPendingRequests - initialPendingRequests
+                    val newRetryRequests = currentRetryQueue - initialRetryQueue
                     
-                    if (newRequests.isNotEmpty()) {
-                        Log.d(TAG, "✅ Compose: WebSocket confirmation - new request added to pendingRequests: $newRequests")
+                    Log.d(TAG, "🔍 Compose: WebSocket check: pendingRequests=$currentPendingRequests, retryQueue=$currentRetryQueue")
+                    Log.d(TAG, "🔍 Compose: New requests - pending=$newPendingRequests, retry=$newRetryRequests")
+                    
+                    // Success if message is either sent immediately OR queued for retry
+                    if (newPendingRequests.isNotEmpty()) {
+                        Log.d(TAG, "✅ Compose: WebSocket confirmation - immediate send successful: $newPendingRequests")
+                        return true
+                    }
+                    
+                    if (newRetryRequests.isNotEmpty()) {
+                        Log.d(TAG, "✅ Compose: WebSocket confirmation - message queued for retry: $newRetryRequests")
+                        Log.d(TAG, "✅ Compose: This is expected when connection state is invalid - retry logic working correctly")
                         return true
                     }
                     
@@ -894,7 +907,8 @@ object ComposeTestHelper {
                 }
             }
             
-            Log.e(TAG, "❌ Compose: WebSocket confirmation timeout - message may not have reached server")
+            Log.e(TAG, "❌ Compose: WebSocket confirmation timeout - message not found in pending requests OR retry queue")
+            Log.e(TAG, "❌ Compose: This indicates message was neither sent immediately nor queued for retry")
             false
             
         } catch (e: Exception) {

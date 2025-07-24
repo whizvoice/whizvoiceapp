@@ -76,6 +76,20 @@ class WhizServerRepository @Inject constructor(
     private var retryJob: Job? = null
     private var currentConversationId: Long? = null
 
+    /**
+     * Check if a request is currently in the retry queue (for testing purposes)
+     */
+    fun hasMessageInRetryQueue(requestId: String): Boolean {
+        return messageRetryQueue.any { it.requestId == requestId }
+    }
+
+    /**
+     * Get all request IDs currently in the retry queue (for testing purposes)
+     */
+    fun getRetryQueueRequestIds(): Set<String> {
+        return messageRetryQueue.map { it.requestId }.toSet()
+    }
+
     suspend fun connect(conversationId: Long? = null) {
         currentConversationId = conversationId
         
