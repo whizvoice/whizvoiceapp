@@ -12,7 +12,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ActivityTestRule
@@ -331,6 +333,11 @@ object ComposeTestHelper {
             Log.d(TAG, "📝 Compose: attempting to send message: '${message.take(30)}...'")
             Log.d(TAG, "⚡ Compose: Rapid mode: $rapid")
             
+            // 🔍 DEBUG: Check input field state before interaction
+            if (rapid) {
+                logInputFieldState(composeTestRule, "before_rapid_interaction")
+            }
+            
             // Type the message
             Log.d(TAG, "⌨️ Compose: Step 1 - Typing message...")
             if (!typeMessage(composeTestRule, message)) {
@@ -368,6 +375,10 @@ object ComposeTestHelper {
                 if (rapid) {
                     Log.d(TAG, "🚀 RAPID SUCCESS: Interruption working correctly!")
                 }
+                
+                // 🔍 DEBUG: Check input field state after message sending
+                logInputFieldState(composeTestRule, "after_successful_send")
+                
                 true
             } else {
                 Log.e(TAG, "❌ Compose: Step 3 - Message not displayed after sending")
@@ -393,7 +404,63 @@ object ComposeTestHelper {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during message sending", e)
+            
+            // 🔍 DEBUG: Check input field state after exception
+            try {
+                logInputFieldState(composeTestRule, "after_exception")
+            } catch (debugE: Exception) {
+                Log.e(TAG, "Failed to log input field state after exception: ${debugE.message}")
+            }
+            
             false
+        }
+    }
+    
+    /**
+     * Log the current state of the input field for debugging
+     */
+    private fun logInputFieldState(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        context: String
+    ) {
+        try {
+            Log.d(TAG, "🔍 INPUT FIELD STATE ($context):")
+            
+            // Try to find the input field
+            val inputFieldNode = composeTestRule.onNode(
+                hasContentDescription("Message input field")
+            )
+            
+            try {
+                val semantics = inputFieldNode.fetchSemanticsNode()
+                val config = semantics.config
+                
+                Log.d(TAG, "  ✅ Input field found:")
+                Log.d(TAG, "    • Enabled: ${!config.contains(SemanticsProperties.Disabled)}")
+                Log.d(TAG, "    • Focusable: ${config.contains(SemanticsProperties.Focused)}")
+                Log.d(TAG, "    • Has focus: ${config[SemanticsProperties.Focused] ?: false}")
+                Log.d(TAG, "    • Text value: '${config[SemanticsProperties.EditableText]?.text ?: "null"}'")
+                Log.d(TAG, "    • Role: ${config[SemanticsProperties.Role]}")
+                
+                // Try to check if it's clickable/interactive
+                val hasClick = config.contains(SemanticsActions.OnClick)
+                val hasTextInput = config.contains(SemanticsActions.SetText) 
+                Log.d(TAG, "    • Clickable: $hasClick")
+                Log.d(TAG, "    • Text input enabled: $hasTextInput")
+                
+            } catch (e: Exception) {
+                Log.w(TAG, "  ⚠️ Could not read input field semantics: ${e.message}")
+                // Try basic existence check
+                try {
+                    inputFieldNode.assertExists()
+                    Log.d(TAG, "  ✅ Input field exists but semantics unreadable")
+                } catch (existsE: Exception) {
+                    Log.e(TAG, "  ❌ Input field doesn't exist: ${existsE.message}")
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "  ❌ Input field not found or error checking state ($context): ${e.message}")
         }
     }
     
