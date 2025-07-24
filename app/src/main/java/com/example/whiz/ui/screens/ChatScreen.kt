@@ -100,6 +100,9 @@ fun ChatScreen(
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
     Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
     
+    // 🎨 RECOMPOSITION TRACKING: Log when ChatScreen recomposes and why
+    Log.d("ChatScreen", "🎨 MAIN RECOMPOSITION: ChatScreen recomposing at ${System.currentTimeMillis()}")
+    
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     
@@ -111,9 +114,27 @@ fun ChatScreen(
     }
     
     val inputText by viewModel.inputText.collectAsState()
+    
+    // 🎨 RECOMPOSITION TRACKING: Log input text changes
+    LaunchedEffect(inputText) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: Input text changed to: '${inputText.take(20)}...' at ${System.currentTimeMillis()}")
+    }
+    
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
+    
+    // 🎨 RECOMPOSITION TRACKING: Log chat title changes
+    LaunchedEffect(chatTitle) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: Chat title changed to: '$chatTitle' at ${System.currentTimeMillis()}")
+    }
+    
     val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
+    
+    // 🎨 RECOMPOSITION TRACKING: Log responding state changes (major UI trigger)
+    LaunchedEffect(isResponding) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: isResponding changed to: $isResponding at ${System.currentTimeMillis()}")
+    }
+    
     val connectionError by viewModel.connectionError.collectAsState() // General connection errors
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
