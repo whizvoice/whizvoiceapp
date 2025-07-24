@@ -84,7 +84,27 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             Settings.Global.ANIMATOR_DURATION_SCALE,
             1.0f
         )
-        Log.d("Test", "Animation scale: $animationScale") // Might be 0.0
+        Log.d(TAG, "📊 Current animation scale: $animationScale") // Might be 0.0
+        
+        // 🔧 ANIMATION FIX: Restore normal animation timing for realistic testing
+        if (animationScale != 1.0f) {
+            Log.d(TAG, "🎬 FIXING: Restoring normal animation speed (was: $animationScale, setting to: 1.0)")
+            Settings.Global.putFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            
+            // Verify the change took effect
+            val newAnimationScale = Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            Log.d(TAG, "✅ Animation scale after fix: $newAnimationScale")
+        } else {
+            Log.d(TAG, "✅ Animation scale already normal: $animationScale")
+        }
         
         Log.d(TAG, "🧪 ChatViewModel Compose Test Setup Complete")
     }
