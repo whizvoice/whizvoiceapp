@@ -98,7 +98,12 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = listOf("interrupt", "bot", "PRODUCTION BUG", testUniqueId.toString(), "COMPOSE_INTERRUPT_TEST_"),
+                    additionalPatterns = listOf(
+                        "Keep all responses to 1 word", // Match the actual first message content
+                        "Name of coffee-making professional", // Match part of first message
+                        "hi 1", "hi 2", "hi 3", "hi 4", // Match the interrupt messages
+                        testUniqueId.toString(), // Match the timestamp ID
+                    ),
                     enablePatternFallback = true // Enable to catch any chats with unique identifier
                 )
                 createdChatIds.clear()
@@ -108,7 +113,12 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = emptyList(),
-                    additionalPatterns = listOf("Keep all responses to 1 word", "COMPOSE_INTERRUPT_TEST_", testUniqueId.toString()),
+                    additionalPatterns = listOf(
+                        "Keep all responses to 1 word", // Match the actual first message content
+                        "Name of coffee-making professional", // Match part of first message  
+                        "hi 1", "hi 2", "hi 3", "hi 4", // Match the interrupt messages
+                        testUniqueId.toString(), // Match the timestamp ID
+                    ),
                     enablePatternFallback = true // Enable pattern fallback since tracking failed
                 )
             } else {

@@ -115,7 +115,12 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = createdChatIds,
-                additionalPatterns = listOf("message flow", "comprehensive", "migration", "compose", "test - $uniqueTestId", "msg - $uniqueTestId"),
+                additionalPatterns = listOf(
+                    "Pls always reply with just 1 word for test", // Match the actual first message
+                    "2nd msg - $uniqueTestId", // Match the second message  
+                    "3rd msg - $uniqueTestId", // Match the third message
+                    uniqueTestId.toString(), // Match the raw timestamp ID
+                ),
                 enablePatternFallback = true // Enable to catch any chats with test content
             )
             createdChatIds.clear()
