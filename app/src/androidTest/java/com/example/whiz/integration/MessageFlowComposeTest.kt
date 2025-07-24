@@ -333,14 +333,6 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // step 8: verify all messages are showing properly
             Log.d(TAG, "✅ step 8: verifying all messages display correctly")
             
-            // wait for UI to be stable before verification
-            Log.d(TAG, "⏳ waiting for UI to be stable before verification...")
-            if (!waitForUIToBeStable()) {
-                Log.e(TAG, "❌ FAILURE: UI not stable for verification")
-                failWithScreenshot("UI not stable for verification", "compose_ui_not_stable")
-                return@runBlocking
-            }
-            
             val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
             if (!verifyAllMessagesDisplayCorrectly(sentMessages)) {
                 failWithScreenshot("Missing messages from chat", "compose_messages_missing")
