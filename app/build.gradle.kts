@@ -57,7 +57,6 @@ android {
     
     // Configure test options for Android framework mocking
     testOptions {
-        animationsDisabled = false  // Don't disable animations in tests - allow realistic timing
         unitTests {
             isReturnDefaultValues = true
             isIncludeAndroidResources = true
