@@ -102,14 +102,6 @@ fun ChatScreen(
     
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
-    
-    // 🎨 RECOMPOSITION TRACKING: Log when messages change triggers UI recomposition
-    LaunchedEffect(messages.size, messages.hashCode()) {
-        val recompositionTime = System.currentTimeMillis()
-        Log.d("ChatScreen", "🎨 RECOMPOSITION: Messages changed - triggering UI recomposition at $recompositionTime")
-        Log.d("ChatScreen", "🎨 RECOMPOSITION: New message count: ${messages.size}, content hash: ${messages.hashCode()}")
-    }
-    
     val inputText by viewModel.inputText.collectAsState()
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
