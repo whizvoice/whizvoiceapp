@@ -55,7 +55,7 @@ class WhizServerRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Use SharedFlow to broadcast events to collectors
-    private val _webSocketEvents = MutableSharedFlow<WebSocketEvent>(replay = 0) // No replay needed
+    private val _webSocketEvents = MutableSharedFlow<WebSocketEvent>(replay = 1) // Keep last event for connection state tracking
     val webSocketEvents: SharedFlow<WebSocketEvent> = _webSocketEvents.asSharedFlow()
 
     // Replace with your server's actual address
@@ -79,8 +79,10 @@ class WhizServerRepository @Inject constructor(
     suspend fun connect(conversationId: Long? = null) {
         currentConversationId = conversationId
         
-        if (webSocket != null && webSocket?.send("") == true) { // Crude check if socket is still valid
-            Log.w(TAG, "WebSocket already connected or connecting and seems active.")
+        // 🔧 FIXED: Improved WebSocket connection state checking
+        // Don't use the crude send("") check which can cause message loss
+        if (webSocket != null && _webSocketEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
+            Log.w(TAG, "WebSocket already connected based on connection state.")
             // If successfully connected, reset manual disconnect flag
             isManuallyDisconnected = false
             currentReconnectAttempts = 0 // Reset attempts on explicit connect call if it implies success
@@ -89,8 +91,8 @@ class WhizServerRepository @Inject constructor(
             processRetryQueue()
             return
         }
-        // If webSocket is not null but check failed, or webSocket is null:
-        Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but check failed"}")
+        // If webSocket is not null but connection state is not Connected, proceed with new connection
+        Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but not confirmed connected"}")
         isManuallyDisconnected = false // Reset this flag on any attempt to connect
         reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
 
@@ -325,6 +327,14 @@ class WhizServerRepository @Inject constructor(
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !isManuallyDisconnected) {
+                // 🔧 ENHANCED: Check connection state before sending
+                val lastEvent = _webSocketEvents.replayCache.lastOrNull()
+                if (lastEvent !is WebSocketEvent.Connected) {
+                    Log.w(TAG, "WebSocket exists but last state is not Connected: $lastEvent - queueing message for retry")
+                    queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
+                    return false
+                }
+                
                 // Send structured JSON with request ID and optional client context
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
