@@ -87,17 +87,23 @@ fun ChatsListScreen(
                 title = { Text("My Chats") },
                 actions = {
                     if (!hasPermission) {
-                        IconButton(onClick = onRequestPermission) {
+                        IconButton(
+                            onClick = onRequestPermission,
+                            modifier = Modifier.semantics { contentDescription = "Enable Microphone" }
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
-                                contentDescription = "Enable Microphone"
+                                contentDescription = null
                             )
                         }
                     }
-                    IconButton(onClick = onSettingsClick) {
+                    IconButton(
+                        onClick = onSettingsClick,
+                        modifier = Modifier.semantics { contentDescription = "Settings" }
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
+                            contentDescription = null
                         )
                     }
                 },

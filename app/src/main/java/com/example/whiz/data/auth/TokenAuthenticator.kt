@@ -4,6 +4,8 @@ import android.util.Log
 import com.example.whiz.data.remote.AuthApi // Assuming your refresh API endpoint is in AuthApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import okhttp3.Authenticator
 import okhttp3.Request
 import okhttp3.Response
@@ -54,17 +56,23 @@ class TokenAuthenticator @Inject constructor(
             Log.w(TAG, "🔑 Authentication retried too many times. Signing out user.")
             // Trigger sign-out here if multiple refresh attempts fail
             runBlocking { 
-                try {
-                    authRepository.signOut()
-                    Log.d(TAG, "🔑 User signed out due to repeated authentication failures")
-                } catch (e: Exception) {
-                    Log.e(TAG, "🔑 Error during automatic sign-out", e)
+                withContext(Dispatchers.IO) {
+                    try {
+                        authRepository.signOut()
+                        Log.d(TAG, "🔑 User signed out due to repeated authentication failures")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "🔑 Error during automatic sign-out", e)
+                    }
                 }
             }
             return null
         }
 
-        val currentAccessToken = runBlocking { authRepository.serverToken.first() }
+        val currentAccessToken = runBlocking { 
+            withContext(Dispatchers.IO) {
+                authRepository.serverToken.first()
+            }
+        }
         // If the token that failed is not the one we currently have, it means it was refreshed elsewhere.
         // In this case, try the request again with the current token.
         val authHeader = response.request.header("Authorization")
@@ -77,19 +85,25 @@ class TokenAuthenticator @Inject constructor(
 
         Log.d(TAG, "🔄 Attempting to refresh access token...")
         val refreshSuccessful = runBlocking {
-            try {
-                // Pass the actual API service to refreshAccessToken
-                val result = authRepository.refreshAccessToken()
-                Log.d(TAG, "🔄 Token refresh completed with result: $result")
-                result
-            } catch (e: Exception) {
-                Log.e(TAG, "🔄 Exception during token refresh", e)
-                false
+            withContext(Dispatchers.IO) {
+                try {
+                    // Pass the actual API service to refreshAccessToken
+                    val result = authRepository.refreshAccessToken()
+                    Log.d(TAG, "🔄 Token refresh completed with result: $result")
+                    result
+                } catch (e: Exception) {
+                    Log.e(TAG, "🔄 Exception during token refresh", e)
+                    false
+                }
             }
         }
 
         if (refreshSuccessful) {
-            val newAccessToken = runBlocking { authRepository.serverToken.first() }
+            val newAccessToken = runBlocking { 
+                withContext(Dispatchers.IO) {
+                    authRepository.serverToken.first()
+                }
+            }
             Log.i(TAG, "Token refresh successful. Retrying original request with new token.")
             return response.request.newBuilder()
                 .header("Authorization", "Bearer $newAccessToken")
@@ -98,11 +112,13 @@ class TokenAuthenticator @Inject constructor(
             Log.w(TAG, "🔑 Token refresh failed. Signing out user due to invalid tokens.")
             // Token refresh failed (e.g., refresh token invalid), sign out the user
             runBlocking { 
-                try {
-                    authRepository.signOut()
-                    Log.d(TAG, "🔑 User signed out due to token refresh failure")
-                } catch (e: Exception) {
-                    Log.e(TAG, "🔑 Error during automatic sign-out after refresh failure", e)
+                withContext(Dispatchers.IO) {
+                    try {
+                        authRepository.signOut()
+                        Log.d(TAG, "🔑 User signed out due to token refresh failure")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "🔑 Error during automatic sign-out after refresh failure", e)
+                    }
                 }
             }
             return null

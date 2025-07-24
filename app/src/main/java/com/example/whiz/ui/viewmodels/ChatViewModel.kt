@@ -14,7 +14,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import javax.inject.Inject
@@ -59,9 +60,35 @@ class ChatViewModel @Inject constructor(
     
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
+    
+    /**
+     * Check if a specific request ID is in the pending requests list
+     * This is used for testing to verify WebSocket message sending
+     */
+    fun hasPendingRequest(requestId: String): Boolean {
+        return pendingRequests.containsKey(requestId)
+    }
+    
+    /**
+     * Get all pending request IDs for testing purposes
+     */
+    fun getPendingRequestIds(): Set<String> {
+        return pendingRequests.keys.toSet()
+    }
 
-    // Track which request we should cancel if user sends an interrupt
-    private var currentActiveRequestId: String? = null
+    /**
+     * Check if a request is in the WebSocket retry queue (for testing purposes)
+     */
+    fun hasRequestInRetryQueue(requestId: String): Boolean {
+        return whizServerRepository.hasMessageInRetryQueue(requestId)
+    }
+    
+    /**
+     * Get all request IDs in the WebSocket retry queue (for testing purposes)
+     */
+    fun getRetryQueueRequestIds(): Set<String> {
+        return whizServerRepository.getRetryQueueRequestIds()
+    }
 
     // Track locally-saved interrupt messages to prevent server duplication
 
@@ -104,8 +131,15 @@ class ChatViewModel @Inject constructor(
             val currentChatId = _chatId.value
             val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
             val wasResponding = _isResponding.value
+            
+            // 🔧 CONCURRENT MODE: Only show responding state for UI feedback, don't block input
+            // The UI can still allow new messages even when there are pending requests
             _isResponding.value = hasPendingRequests
-            Log.d(TAG, "updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
+            
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Chat $currentChatId has pending requests: $hasPendingRequests (was responding: $wasResponding)")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Setting _isResponding = $hasPendingRequests")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: Pending requests map: $pendingRequests")
+            Log.d(TAG, "🔥 updateRespondingStateForCurrentChat: 🔥 CONCURRENT MODE: UI remains enabled for new messages")
             
             // 🔧 If we just finished responding and continuous listening is enabled, restart microphone immediately
             if (wasResponding && !hasPendingRequests && continuousListeningEnabled && !_isSpeaking.value) {
@@ -211,7 +245,9 @@ class ChatViewModel @Inject constructor(
         // Start observing messages immediately
         if (configUseRemoteAgent) {
             Log.d(TAG, "Init: Using remote agent. Attempting WebSocket connection.")
-            whizServerRepository.connect()
+            viewModelScope.launch {
+                whizServerRepository.connect()
+            }
             // Enhanced server message collection with interrupt handling - moved inline above
         }
         
@@ -246,7 +282,9 @@ class ChatViewModel @Inject constructor(
 
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
+            Log.d(TAG, "🧵 THREAD DEBUG: WebSocket collector starting on thread: ${Thread.currentThread().name}")
             whizServerRepository.webSocketEvents.collect { event ->
+                Log.d(TAG, "🧵 THREAD DEBUG: Processing WebSocket event on thread: ${Thread.currentThread().name}")
                 when (event) {
                     is WebSocketEvent.Connected -> {
                         Log.d(TAG, "WebSocketEvent.Connected: Called.")
@@ -278,7 +316,7 @@ class ChatViewModel @Inject constructor(
                             // }
                             Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
                         }
-                        currentActiveRequestId = null // Clear active request on disconnect
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
                     is WebSocketEvent.Error -> {
                         _isConnectedToServer.value = false
@@ -286,8 +324,28 @@ class ChatViewModel @Inject constructor(
                         // Only show error to user if it's a persistent failure after retries
                         val errorMessage = event.error.message ?: "Unknown connection failure"
                         
+                        // 🔧 CRITICAL FIX: Check if this is an authentication error
+                        if (errorMessage.contains("Authentication required") || errorMessage.contains("Please log in again")) {
+                            Log.w(TAG, "🔥 AUTHENTICATION ERROR DETECTED: $errorMessage - Navigating to login")
+                            _navigateToLogin.value = true
+                            isDisconnectingForAuthError = true
+                            
+                            // Clear all pending requests on auth error
+                            Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
+                            pendingRequests.clear()
+                            Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
+                            _isResponding.value = false
+                            
+                            // Sign out to clear any invalid tokens
+                            authRepository.signOut()
+                            Log.d(TAG, "AuthError: Called authRepository.signOut() after authentication error")
+                            
+                            _showAuthErrorDialog.value = null
+                            _showAsanaSetupDialog.value = false
+                            _connectionError.value = null
+                        }
                         // Check if this is a final retry failure (contains "after X attempts")
-                        if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                        else if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
                             // This is a final failure after all retries - show to user
                             _connectionError.value = "Failed to send message. Please check your connection and try again."
                             if (_chatId.value > 0) { // Only add if a chat is active
@@ -297,9 +355,11 @@ class ChatViewModel @Inject constructor(
                                 )
                             }
                             // Clear all pending requests on final connection error
+                            Log.d(TAG, "🔥 CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                             pendingRequests.clear()
+                            Log.d(TAG, "🔥 CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
                             _isResponding.value = false
-                            currentActiveRequestId = null
+                            // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
@@ -309,19 +369,25 @@ class ChatViewModel @Inject constructor(
                             // clear the responding state to allow user to interact with the microphone button
                             if (_isResponding.value) {
                                 Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                                 _isResponding.value = false
                                 pendingRequests.clear()
-                                currentActiveRequestId = null
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
+                                // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                             }
                         }
                         
                         _showAuthErrorDialog.value = null
-                        _navigateToLogin.value = false
+                        if (!errorMessage.contains("Authentication required")) {
+                            _navigateToLogin.value = false
+                        }
                     }
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
+                        Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
                         pendingRequests.clear() // 🔧 Clear all pending requests on auth error
+                        Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
                         viewModelScope.launch {
                             val refreshSuccessful = authRepository.refreshAccessToken()
                             if (refreshSuccessful) {
@@ -352,33 +418,57 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         _isResponding.value = false
-                        currentActiveRequestId = null // Clear active request on auth error
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
+                        
+                        // 🔧 CANCELLATION HANDLING: User message remains in chat, no assistant response
+                        // The user message with this requestId will stay in the chat but won't get a response
+                        // This creates the natural conversation flow: user message -> (no response) -> next user message
+                        Log.d(TAG, "🔧 CANCELLATION: User message for request ${event.cancelledRequestId} remains in chat (no assistant response)")
+                        
                         // Remove the cancelled request from pending requests
+                        Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
-                        if (currentActiveRequestId == event.cancelledRequestId) {
-                            currentActiveRequestId = null
-                        }
+                        Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                     }
                     is WebSocketEvent.Interrupted -> {
                         Log.d(TAG, "Previous request was interrupted: ${event.message}")
+                        
+                        // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
+                        // When multiple requests are sent rapidly, the server cancels previous ones
+                        // All user messages stay in chat but only the latest gets a response
+                        val interruptedRequests = pendingRequests.keys.toList()
+                        Log.d(TAG, "🔧 INTERRUPTION: ${interruptedRequests.size} user messages remain in chat (no assistant responses)")
+                        interruptedRequests.forEach { requestId ->
+                            Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
+                        }
+                        
                         // The backend has cancelled previous requests automatically
                         // Clear all pending requests since they were cancelled
-                        val interruptedRequests = pendingRequests.keys.toList()
+                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
                         pendingRequests.clear()
-                        currentActiveRequestId = null
+                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: $pendingRequests")
+                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
                     }
                     is WebSocketEvent.Message -> {
-                        Log.d(TAG, "[LOG] WebSocketEvent.Message received. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
+                        val messageReceivedTime = System.currentTimeMillis()
+                        Log.d(TAG, "[LOG] WebSocketEvent.Message received at $messageReceivedTime. continuousListeningEnabled=$continuousListeningEnabled, isVoiceResponseEnabled=${_isVoiceResponseEnabled.value}, isTTSInitialized=${_isTTSInitialized.value}")
                         
                         // Create a unique event identifier for logging
-                        val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:${System.currentTimeMillis()}]"
-                        Log.d(TAG, "$eventLogId Processing WebSocketEvent.Message.")
+                        val eventLogId = "[EventTextHash:${event.text.hashCode()}-Time:$messageReceivedTime]"
+                        Log.d(TAG, "$eventLogId Starting WebSocketEvent.Message processing.")
+                        
+                        val processingStartTime = System.currentTimeMillis()
+                        val processingDelay = processingStartTime - messageReceivedTime
+                        if (processingDelay > 100) {
+                            Log.w(TAG, "$eventLogId ⚠️ BLOCKING DETECTED: $processingDelay ms delay between message received and processing start")
+                        }
                         
                         try {
                             var isErrorHandled = false
@@ -452,7 +542,9 @@ class ChatViewModel @Inject constructor(
                                     Log.d(TAG, "$eventLogId 🔍 PENDING REQUESTS DEBUG: Looking for requestId=${event.requestId} in pendingRequests=${pendingRequests.keys}")
                                     if (pendingRequests.containsKey(event.requestId)) {
                                         val originalChatId = pendingRequests[event.requestId]!!
+                                        Log.d(TAG, "🔥 $eventLogId REMOVING from pendingRequests: requestId=${event.requestId}, chatId=$originalChatId")
                                         pendingRequests.remove(event.requestId) // Remove completed request
+                                        Log.d(TAG, "🔥 $eventLogId Pending requests map after removing: $pendingRequests")
                                         Log.d(TAG, "$eventLogId 🔍 Request ID ${event.requestId} mapped to chat $originalChatId (current: ${_chatId.value})")
                                         
                                                                 // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
@@ -466,15 +558,16 @@ class ChatViewModel @Inject constructor(
                             // Handle case where local chat has temp ID but server provides real ID
                             Log.d(TAG, "$eventLogId 🔄 MIGRATION CHECK: Server provided conversation_id: $effectiveConversationId, originalChatId was: $originalChatId, currentChatId: ${_chatId.value}")
                             
-                            // 🔧 ENHANCED MIGRATION: Handle cross-chat migration during rapid messaging
-                            // Migration should happen for any optimistic chat getting a server ID, regardless of current chat
+                            // 🔧 FIXED: Distinguish between chat migration and regular message processing
+                            // Only migrate when transitioning from optimistic chat to server chat
                             val isOptimisticChat = originalChatId < 0
                             val hasServerId = effectiveConversationId > 0
-                            val shouldMigrate = isOptimisticChat && hasServerId
+                            val isChatTransition = isOptimisticChat && hasServerId && originalChatId != effectiveConversationId
                             
-                            Log.d(TAG, "$eventLogId 🔄 MIGRATION DECISION: shouldMigrate=$shouldMigrate (originalChatId=$originalChatId, currentChatId=${_chatId.value}, isOptimistic=$isOptimisticChat, serverConversationId=$effectiveConversationId)")
+                            Log.d(TAG, "$eventLogId 🔄 MIGRATION ANALYSIS: originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId, currentChatId=${_chatId.value}")
+                            Log.d(TAG, "$eventLogId 🔄 MIGRATION ANALYSIS: isOptimisticChat=$isOptimisticChat, hasServerId=$hasServerId, isChatTransition=$isChatTransition")
                             
-                            if (shouldMigrate) {
+                            if (isChatTransition) {
                                 Log.d(TAG, "$eventLogId 🔄 STARTING MIGRATION: Syncing local chat ID to server conversation_id: $effectiveConversationId")
                                 
                                 // 🔧 PRODUCTION BUG FIX: Preserve input text during chat migration
@@ -485,14 +578,23 @@ class ChatViewModel @Inject constructor(
 
                                 
                                 // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
-                                // Use runBlocking to ensure migration completes before chat ID update
+                                // Use withContext(Dispatchers.IO) to move database operations to background thread
                                 try {
                                     Log.d(TAG, "$eventLogId 🔄 MIGRATION: Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
-                                    val migrationSuccess = runBlocking {
+                                    Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: About to withContext(Dispatchers.IO) on thread: ${Thread.currentThread().name}")
+                                    val migrationStartTime = System.currentTimeMillis()
+                                    val migrationSuccess = withContext(Dispatchers.IO) {
+                                        Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: Inside withContext(Dispatchers.IO) on thread: ${Thread.currentThread().name}")
                                         repository.migrateChatMessages(originalChatId, effectiveConversationId)
                                     }
+                                    val migrationDuration = System.currentTimeMillis() - migrationStartTime
+                                    Log.d(TAG, "$eventLogId ⏱️ TIMING DEBUG: withContext(Dispatchers.IO) migration took ${migrationDuration}ms on thread: ${Thread.currentThread().name}")
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
+                                        
+                                        // 🔧 REMOVED: Manual refresh is unnecessary - messages flow updates automatically
+                                        // The database update from migration will trigger the flow naturally
+                                        Log.d(TAG, "$eventLogId 🔄 MIGRATION: Messages flow will update automatically after migration")
                                         
                                         // 🔧 CROSS-CHAT MIGRATION: Handle UI switching during rapid messaging
                                         val currentChatIsOptimistic = _chatId.value < 0
@@ -524,23 +626,17 @@ class ChatViewModel @Inject constructor(
                                     // Don't update _chatId if migration threw an exception
                                     Log.e(TAG, "$eventLogId 🔄 MIGRATION: Keeping _chatId as ${_chatId.value} due to migration error")
                                 }
-                            } else {
-                                Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: No migration needed - originalChatId: $originalChatId, currentChatId: ${_chatId.value}, effectiveConversationId: $effectiveConversationId")
-                                Log.d(TAG, "$eventLogId 🔄 NO MIGRATION: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                            } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
+                                // 🔧 SCENARIO 2: Regular message processing with request ID pairing
+                                // This is NOT a migration - just updating chat ID for consistency
+                                Log.d(TAG, "$eventLogId 🔄 REGULAR PROCESSING: Updating chat ID from $originalChatId to $effectiveConversationId (no migration needed)")
                                 
-                                // 🔧 PRODUCTION BUG FIX: Preserve input text during chat ID update
-                                val preservedInputText = _inputText.value
-                                val preservedIsInputFromVoice = _isInputFromVoice.value
-                                Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Preserving input text: '$preservedInputText' (fromVoice: $preservedIsInputFromVoice)")
-                                
+                                // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
-                                
-                                // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
-                                if (preservedInputText.isNotBlank()) {
-                                    Log.d(TAG, "$eventLogId 🔧 NO MIGRATION: Restoring preserved input text: '$preservedInputText'")
-                                    _inputText.value = preservedInputText
-                                    _isInputFromVoice.value = preservedIsInputFromVoice
-                                }
+                                Log.d(TAG, "$eventLogId ✅ REGULAR PROCESSING: Chat ID updated to $effectiveConversationId")
+                            } else {
+                                // 🔧 SCENARIO 3: Same chat ID - regular message processing
+                                Log.d(TAG, "$eventLogId 🔄 REGULAR PROCESSING: Same chat ID $originalChatId - no migration or ID change needed")
                             }
                             effectiveConversationId
                                         } else {
@@ -603,11 +699,16 @@ class ChatViewModel @Inject constructor(
                                     
                                     try {
                                         viewModelScope.launch {
-                                            // 🔧 FIXED: For remote agent, add bot message to local DB for immediate UI display
-                                            // This ensures the response appears immediately without waiting for API sync
-                                            Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally for immediate UI display")
-                                            val messageId = repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
-                                            Log.d(TAG, "$eventLogId Remote agent: Added optimistic assistant message $messageId to chat $targetChatId locally")
+                                            // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
+                                            // This ensures responses appear in the correct order relative to their user messages
+                                            Log.d(TAG, "$eventLogId Remote agent: Adding bot message locally with request ID pairing")
+                                            val messageId = if (event.requestId != null) {
+                                                repository.addAssistantMessageAfterRequest(targetChatId, messageContentForChat, event.requestId)
+                                            } else {
+                                                // Fallback: add at end if no request ID
+                                                repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
+                                            }
+                                            Log.d(TAG, "$eventLogId Remote agent: Added assistant message $messageId to chat $targetChatId with request ID pairing")
                                         }
                                     } catch (e: Exception) {
                                         Log.e(TAG, "$eventLogId Error adding assistant message locally for remote agent", e)
@@ -680,10 +781,15 @@ class ChatViewModel @Inject constructor(
                             // 🔧 Add logging to track input text state after response processing
                             Log.d(TAG, "$eventLogId After response processing: _inputText.value = '${_inputText.value}', _isResponding = ${_isResponding.value}")
 
-                            // Clear the active request ID when we receive a response
-                            if (event.requestId != null && event.requestId == currentActiveRequestId) {
-                                currentActiveRequestId = null
+                            val processingEndTime = System.currentTimeMillis()
+                            val totalProcessingTime = processingEndTime - messageReceivedTime
+                            Log.d(TAG, "$eventLogId ✅ WebSocket message processing completed in ${totalProcessingTime}ms")
+                            
+                            if (totalProcessingTime > 500) {
+                                Log.w(TAG, "$eventLogId ⚠️ SLOW PROCESSING: Total processing time was ${totalProcessingTime}ms")
                             }
+
+                            // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } catch (e: Exception) {
                             Log.e(TAG, "$eventLogId Unexpected error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
@@ -755,8 +861,10 @@ class ChatViewModel @Inject constructor(
                 // 🔧 Clear pending requests and log what we're clearing
                 try {
                     if (pendingRequests.isNotEmpty()) {
-                        Log.w(TAG, "loadChat: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingRequests")
                         pendingRequests.clear()
+                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: $pendingRequests")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
@@ -838,11 +946,17 @@ class ChatViewModel @Inject constructor(
                 // Refresh messages to ensure we have latest data
                 if (_chatId.value > 0) {
                     try {
-                        // Skip manual refresh - the reactive flow will update automatically when chatId changes
-                        Log.d(TAG, "loadChat: Skipping manual messages refresh - reactive flow will handle it")
-                        // repository.refreshMessages() // Commented out to prevent duplicate requests
+                        Log.d(TAG, "loadChat: Performing sync for existing chat ${_chatId.value}")
+                        // Use existing deduplicated sync method to get messages from server
+                        val serverMessages = repository.fetchMessagesWithDeduplication(_chatId.value)
+                        Log.d(TAG, "loadChat: Retrieved ${serverMessages.size} messages from server for chat ${_chatId.value}")
+                        
+                        // The fetchMessagesWithDeduplication method already handles storing messages and deduplication
+                        // Just trigger messages refresh to update UI
+                        repository.refreshMessages()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error refreshing messages during loadChat", e)
+                        Log.e(TAG, "Error syncing messages during loadChat", e)
+                        _errorState.value = "Failed to sync messages: ${e.message}"
                     }
                 }
 
@@ -1047,26 +1161,38 @@ class ChatViewModel @Inject constructor(
         
         // Always send messages - server will handle interrupts automatically based on its state
         Log.d(TAG, "sendUserInput: Sending message (server will handle any needed interrupts)")  
+        Log.d(TAG, "🧵 THREAD DEBUG: sendUserInput called on thread: ${Thread.currentThread().name}")
 
         // Don't clear input text immediately - it will be cleared after optimistic message is added
         // This provides consistent UX for both voice and typed input
         Log.d(TAG, "[LOG] sendUserInput: Will clear input text after optimistic message is added (current: '${_inputText.value}')")
 
         viewModelScope.launch {
+            Log.d(TAG, "🧵 THREAD DEBUG: sendUserInput viewModelScope.launch running on thread: ${Thread.currentThread().name}")
             // 🔧 CRITICAL FIX: Capture chat ID at the start and use it consistently
             // This prevents race conditions where _chatId.value changes during execution
             val originalChatId = _chatId.value
             var currentChatId = originalChatId
             
-            Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId")
+            // 🔧 NEW: Generate request ID early for optimistic UI pairing
+            val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
+            
+            Log.d(TAG, "sendUserInput: Starting with originalChatId: $originalChatId, currentChatId: $currentChatId, requestId: $requestId")
 
-            // Handle new chat creation differently for remote vs local agent
-            if (currentChatId <= 0) {
+            // 🔧 FIXED: Use existing chat ID for all messages in a conversation
+            // Only create a new chat if we don't have any chat yet (first message)
+            // Note: Negative chat IDs are valid optimistic chats, not "no chat"
+            if (currentChatId == -1L) {
                 if (configUseRemoteAgent) {
-                    // For remote agent: Don't create conversation locally
+                    // For remote agent: Create optimistic chat only for the first message
                     // Let the WebSocket server create it and then sync
-                    Log.d(TAG, "sendUserInput: Using remote agent for new chat - server will create conversation")
-                    currentChatId = -1 // Keep as new chat indicator
+                    Log.d(TAG, "sendUserInput: 🔧 FIXED: First message - creating optimistic chat for remote agent")
+                    val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val tempChatId = repository.createChatOptimistic(tempTitle)
+                    _chatId.value = tempChatId
+                    _chatTitle.value = tempTitle
+                    currentChatId = tempChatId
+                    Log.d(TAG, "sendUserInput: 🔧 FIXED: Created optimistic chat $tempChatId for first message")
                 } else {
                     // For local agent: Create conversation locally as before
                     val chatTitle = repository.deriveChatTitle(trimmedText)
@@ -1082,28 +1208,20 @@ class ChatViewModel @Inject constructor(
                     whizServerRepository.connect(null)
                 }
             } else {
-                Log.d(TAG, "sendUserInput: Using existing chat - originalChatId: $originalChatId, staying with: $currentChatId")
+                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using existing chat for subsequent message - originalChatId: $originalChatId, staying with: $currentChatId")
             }
 
             // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
             // Repository will handle deduplication when server messages arrive
             try {
-                val actualChatId = if (currentChatId > 0) {
-                    Log.d(TAG, "sendUserInput: 💬 Using existing chat ID: $currentChatId")
-                    currentChatId
-                } else {
-                    // For new chats, create a temporary local chat to show the message immediately
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChatOptimistic(tempTitle)
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                    Log.d(TAG, "sendUserInput: 💬 Created optimistic local chat $tempChatId with title '$tempTitle' (was currentChatId: $currentChatId)")
-                    tempChatId
-                }
+                // 🔧 FIXED: Use the current chat ID from _chatId.value to handle migration correctly
+                // This ensures optimistic messages go to the right chat even during migration
+                val actualChatId = _chatId.value
+                Log.d(TAG, "sendUserInput: 🔧 FIXED: Using current chat ID from _chatId.value: $actualChatId (was currentChatId: $currentChatId)")
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
-                    Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId")
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText)
+                    Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId with requestId: $requestId")
+                    repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
                 } else {
                     // For local agent: use regular method (creates via API)
                     Log.d(TAG, "sendUserInput: 💬 Adding regular user message to chatId: $actualChatId")
@@ -1114,6 +1232,8 @@ class ChatViewModel @Inject constructor(
                 // Clear input text after optimistic message is added (consistent UX for all input types)
                 // Wait for the message to actually appear in the messages flow rather than using a fixed delay
                 try {
+                    Log.d(TAG, "🧵 THREAD DEBUG: About to wait for message in flow on thread: ${Thread.currentThread().name}")
+                    val flowWaitStartTime = System.currentTimeMillis()
                     withTimeout(1000) {
                         // Wait for the messages to be updated with our new message
                         messages.first { messageList ->
@@ -1122,7 +1242,9 @@ class ChatViewModel @Inject constructor(
                                 message.type == com.example.whiz.data.local.MessageType.USER
                             }
                         }
-                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow, clearing input field")
+                        val flowWaitDuration = System.currentTimeMillis() - flowWaitStartTime
+                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow after ${flowWaitDuration}ms, clearing input field")
+                        Log.d(TAG, "🧵 THREAD DEBUG: Message appeared on thread: ${Thread.currentThread().name}")
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                     Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
@@ -1147,31 +1269,49 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 Log.d(TAG, "sendUserInput: Using remote agent. Connected: ${_isConnectedToServer.value}")
                 
-                // Always attempt to send the message regardless of connection status
-                // The WebSocket repository will handle queueing and retry automatically
-                _isResponding.value = true // Show thinking indicator
-                val requestId = java.util.UUID.randomUUID().toString()
-                currentActiveRequestId = requestId // Track the active request
+                // 🔧 CRITICAL FIX: Check if we have a server token before attempting to send
+                val serverToken = authRepository.serverToken.firstOrNull()
+                
+                if (serverToken == null) {
+                    Log.w(TAG, "🔥 AUTHENTICATION ERROR: No server token available - navigating to login")
+                    _navigateToLogin.value = true
+                    authRepository.signOut()
+                    return@launch
+                }
+                
+                // 🔧 CONCURRENT REQUESTS: Don't block UI with _isResponding = true
+                // Instead, track individual requests and allow multiple concurrent messages
+                // Note: requestId is already generated above for optimistic UI pairing
                 
                 // 🔧 CRITICAL FIX: Use the updated chat ID after optimistic UI creation
                 // If optimistic UI created a new chat, _chatId.value will be the new local chat ID (could be negative for optimistic chats)
                 val chatIdForWebSocket = if (_chatId.value != -1L) _chatId.value else currentChatId
                 Log.d(TAG, "sendUserInput: PRE-SEND DEBUG - originalChatId: $originalChatId, currentChatId: $currentChatId, _chatId.value: ${_chatId.value}, using for WebSocket: $chatIdForWebSocket")
-                pendingRequests[requestId] = chatIdForWebSocket
                 
-                Log.d(TAG, "sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $requestId")
-                val success = whizServerRepository.sendMessage(trimmedText, requestId, chatIdForWebSocket)
+                // 🔧 FIX: Ensure requestId is non-null for WebSocket operations
+                val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
+                pendingRequests[nonNullRequestId] = chatIdForWebSocket
+                
+                Log.d(TAG, "🔥 sendUserInput: ADDED to pendingRequests: requestId=$nonNullRequestId, chatId=$chatIdForWebSocket")
+                Log.d(TAG, "🔥 sendUserInput: Pending requests map after adding: $pendingRequests")
+                Log.d(TAG, "🔥 sendUserInput: Sending message via WebSocket: '$trimmedText' for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
+                Log.d(TAG, "🔥 sendUserInput: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
+                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
+                updateRespondingStateForCurrentChat()
+                
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
                     // The retry mechanism will handle this transparently
                     Log.d(TAG, "sendUserInput: Message queued for retry - keeping request tracking")
                 } else {
-                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $chatIdForWebSocket with requestId: $requestId")
+                    Log.d(TAG, "sendUserInput: Message sent successfully via WebSocket for chat: $chatIdForWebSocket with requestId: $nonNullRequestId")
                 }
                 
                 // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI
-                if (currentChatId <= 0) {
+                if (currentChatId == -1L) {
                     try {
                         viewModelScope.launch {
                             repository.refreshConversations()
@@ -1182,17 +1322,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // 🔧 SMART DEDUPLICATION: Trigger refresh to reconcile with server, repository will deduplicate
-                // This ensures we get the authoritative server message while avoiding duplicates
-                try {
-                    viewModelScope.launch {
-                        delay(100) // Small delay to let server process
-                        repository.refreshMessages()
-                        Log.d(TAG, "sendUserInput: Triggered messages refresh for server reconciliation with deduplication")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendUserInput: Error triggering messages refresh", e)
-                }
+                // 🔧 REMOVED: Manual refresh is unnecessary - messages flow updates automatically
+                // The database updates from optimistic UI and server responses will trigger the flow naturally
+                Log.d(TAG, "sendUserInput: Messages flow will update automatically after server processing")
                 
                 // Response handling is done in observeServerMessages
             } else {
@@ -1292,8 +1424,10 @@ class ChatViewModel @Inject constructor(
         
         // 🔧 Enhanced cleanup logging
         if (pendingRequests.isNotEmpty()) {
-            Log.w(TAG, "onCleared: Clearing ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            Log.w(TAG, "🔥 onCleared: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            Log.w(TAG, "🔥 onCleared: Pending requests map before clearing: $pendingRequests")
             pendingRequests.clear()
+            Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
         
         speechRecognitionService.release()
@@ -1323,7 +1457,8 @@ class ChatViewModel @Inject constructor(
         if (textToSend.isBlank()) return
 
         Log.d(TAG, "🔥 sendInputText called with text: '$textToSend', current chatId: ${_chatId.value}")
-        _isResponding.value = true
+        // 🔧 CONCURRENT MODE: Don't block UI with _isResponding = true
+        // Allow multiple concurrent messages to be sent
 
         viewModelScope.launch {
             if (_chatId.value <= 0) {
@@ -1355,6 +1490,7 @@ class ChatViewModel @Inject constructor(
             if (_chatId.value > 0) {
                 if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
+                    // Note: sendInputText doesn't have requestId, so we'll use the old method
                     repository.addUserMessageOptimistic(_chatId.value, textToSend)
                     Log.d(TAG, "sendInputText: Added optimistic user message for remote agent")
                 } else {
@@ -1372,8 +1508,14 @@ class ChatViewModel @Inject constructor(
             if (configUseRemoteAgent) {
                 // Generate request ID and track this request
                 val requestId = java.util.UUID.randomUUID().toString()
-                currentActiveRequestId = requestId // Track the active request
                 pendingRequests[requestId] = _chatId.value
+                Log.d(TAG, "🔥 sendInputText: ADDED to pendingRequests: requestId=$requestId, chatId=${_chatId.value}")
+                Log.d(TAG, "🔥 sendInputText: Pending requests map after adding: $pendingRequests")
+                Log.d(TAG, "sendInputText: 🔥 CONCURRENT MODE: Allowing multiple requests. Current pending requests: ${pendingRequests.size}")
+                
+                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
+                updateRespondingStateForCurrentChat()
+                
                 val success = whizServerRepository.sendMessage(textToSend, requestId, _chatId.value)
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet

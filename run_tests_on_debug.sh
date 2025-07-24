@@ -43,8 +43,8 @@ cleanup_and_ensure_debug_installed() {
         fi
     fi
     
-    # Only try to install if we're not in clean mode and the script failed
-    if [[ "$CLEAN_AFTER_TESTS" != "true" ]] && [[ $exit_code -ne 0 ]]; then
+    # Always try to install debug app if we're not in clean mode (regardless of success/failure)
+    if [[ "$CLEAN_AFTER_TESTS" != "true" ]]; then
         # Check if debug app is installed
         if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
             log_with_time "📱 Debug app not found - running installation script..."
@@ -438,27 +438,8 @@ pull_test_screenshots() {
         fi
     fi
     
-    # Check CI location: /data/local/tmp/screenshots/
-    local ci_files=$(adb shell "ls /data/local/tmp/screenshots/ 2>/dev/null | grep -E '\.(png|xml)$'" | head -1)
-    
-    if [[ -n "$ci_files" ]]; then
-        log_with_time "📱 Found screenshots in CI location: /data/local/tmp/screenshots/"
-        if adb pull /data/local/tmp/screenshots/ temp_ci_screenshots/ >/dev/null 2>&1; then
-            # Move screenshots and UI dumps from temp folder to final location, avoiding duplicates
-            find temp_ci_screenshots \( -name "*.png" -o -name "*.xml" \) | while read -r file; do
-                local filename=$(basename "$file")
-                if [[ ! -f "test_screenshots/$filename" ]]; then
-                    mv "$file" test_screenshots/ 2>/dev/null || true
-                    total_pulled=$((total_pulled + 1))
-                fi
-            done
-            rm -rf temp_ci_screenshots
-            local ci_count=$(ls -1 test_screenshots/*.png test_screenshots/*.xml 2>/dev/null | wc -l | tr -d ' ')
-            log_with_time "✅ Pulled additional screenshots from CI location (total now: $ci_count)"
-        else
-            log_with_time "⚠️  Failed to pull screenshots from CI location"
-        fi
-    fi
+    # Note: All screenshots and UI dumps are now saved to /sdcard/Download/test_screenshots/
+    # The CI location /data/local/tmp/screenshots/ is no longer used
     
     # Final count and listing
     local final_count=$(ls -1 test_screenshots/*.png test_screenshots/*.xml 2>/dev/null | wc -l | tr -d ' ')
@@ -466,11 +447,11 @@ pull_test_screenshots() {
     if [[ "$final_count" -gt 0 ]]; then
         log_with_time "✅ Successfully pulled $final_count total screenshots and UI dumps to test_screenshots/"
         
-        # List the screenshots that were pulled
-        log_with_time "📋 Screenshots captured:"
-        for screenshot in test_screenshots/*.png; do
-            if [[ -f "$screenshot" ]]; then
-                local filename=$(basename "$screenshot")
+        # List the screenshots and UI dumps that were pulled
+        log_with_time "📋 Screenshots and UI dumps captured:"
+        for file in test_screenshots/*.png test_screenshots/*.xml; do
+            if [[ -f "$file" ]]; then
+                local filename=$(basename "$file")
                 log_with_time "   • $filename"
             fi
         done
@@ -511,22 +492,14 @@ run_integration_tests_with_logcat() {
     echo "🔍 Discovered test log tags: $(echo $discovered_tags | tr '\n' ' ')" >> test_summary.log
     echo "📱 Starting logcat with tags: $discovered_tags" >> test_summary.log
     
-    # Start logcat capture with proper tag handling - include more error levels
-    if [[ -n "$discovered_tags" ]]; then
-        # Create logcat command with proper argument structure - capture more error types
-        # Capture directly to the complete logcat file
-        {
-            adb logcat -v time "*:S" $discovered_tags "TestRunner:E" "AssertionError:E" "RuntimeException:E" >> test_logcat_output.log 2>&1 &
-            local logcat_pid=$!
-        }
-        echo "📱 Logcat started with PID: $logcat_pid" >> test_summary.log
-        echo "🔍 Using tags: $discovered_tags TestRunner:E AssertionError:E RuntimeException:E" >> test_summary.log
-    else
-        # Fallback to basic logcat capture with more comprehensive error capture
-        adb logcat -v time "*:S" "AndroidRuntime:E" "System.err:E" "TestRunner:*" "AssertionError:E" "RuntimeException:E" >> test_logcat_output.log 2>&1 &
+    # Start logcat capture with NO FILTER to see everything during the 3-second gaps
+    # TEMPORARILY REMOVED FILTER to debug UI blocking during server processing time
+    {
+        adb logcat -v time >> test_logcat_output.log 2>&1 &
         local logcat_pid=$!
-        echo "📱 Logcat started with enhanced error tags (PID: $logcat_pid)" >> test_summary.log
-    fi
+    }
+    echo "📱 Logcat started with PID: $logcat_pid (NO FILTER - showing ALL logs)" >> test_summary.log
+    echo "🔍 Capturing ALL system activity to debug 3-second UI blocking" >> test_summary.log
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
     local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
@@ -740,18 +713,30 @@ run_integration_tests_with_logcat() {
                         # Only show logs for tags that match failing tests
                         if [[ "$tag_matches_failure" == true ]]; then
                             echo "📱 $tag execution logs:" >> test_summary.log
+                            
+                            # Look for specific assertion errors for this test
+                            local assertion_errors=$(grep -A 5 -B 2 "AssertionError.*$tag\|$tag.*AssertionError" test_logcat_output.log | head -20 || echo "")
+                            if [[ -n "$assertion_errors" ]]; then
+                                echo "📱 $tag AssertionError details:" >> test_summary.log
+                                echo "$assertion_errors" >> test_summary.log
+                                echo "" >> test_summary.log
+                            fi
+                            
                             # Look for both direct tag logs and TestRunner logs mentioning the test class
-                            local test_logs=$(grep "$tag" test_logcat_output.log || echo "")
-                            local test_runner_logs=$(grep "TestRunner.*$tag" test_logcat_output.log || echo "")
+                            local test_logs=$(grep "$tag" test_logcat_output.log | head -30 || echo "")
+                            local test_runner_logs=$(grep "TestRunner.*$tag" test_logcat_output.log | head -20 || echo "")
                             # Also look for the full class name in case TAG is shortened
                             local tag_base=$(echo "$tag" | sed 's/Test$//')  # Remove "Test" suffix if present
-                            local class_name_logs=$(grep "${tag_base}.*Test" test_logcat_output.log || echo "")
+                            local class_name_logs=$(grep "${tag_base}.*Test" test_logcat_output.log | head -20 || echo "")
                             
                             if [[ -n "$test_logs" ]]; then
+                                echo "📱 $tag general logs:" >> test_summary.log
                                 echo "$test_logs" >> test_summary.log
                             elif [[ -n "$test_runner_logs" ]]; then
+                                echo "📱 $tag TestRunner logs:" >> test_summary.log
                                 echo "$test_runner_logs" >> test_summary.log
                             elif [[ -n "$class_name_logs" ]]; then
+                                echo "📱 $tag class name logs:" >> test_summary.log
                                 echo "$class_name_logs" >> test_summary.log
                             else
                                 echo "No $tag logs found" >> test_summary.log
@@ -761,12 +746,29 @@ run_integration_tests_with_logcat() {
                     fi
                 done
             else
-                echo "No failing test tags discovered - showing generic test failure logs" >> test_summary.log
-                local test_failure_logs=$(grep -E "TestRunner.*failed|AssertionError|RuntimeException" test_logcat_output.log | head -50 || echo "")
+                echo "No failing test tags discovered - showing comprehensive test failure logs" >> test_summary.log
+                
+                # Extract specific assertion errors with more context
+                echo "📱 FAILED TEST LOGS:" >> test_summary.log
+                echo "=================================================================================" >> test_summary.log
+                
+                # Look for specific assertion errors with full context
+                local assertion_errors=$(grep -A 10 -B 2 "AssertionError" test_logcat_output.log | head -30 || echo "")
+                if [[ -n "$assertion_errors" ]]; then
+                    echo "💡 Complete logcat available in: test_logcat_output.log" >> test_summary.log
+                    echo "" >> test_summary.log
+                    echo "📱 Specific AssertionError details:" >> test_summary.log
+                    echo "$assertion_errors" >> test_summary.log
+                    echo "" >> test_summary.log
+                fi
+                
+                # Also show general test failure logs
+                local test_failure_logs=$(grep -E "TestRunner.*failed|RuntimeException" test_logcat_output.log | head -20 || echo "")
                 if [[ -n "$test_failure_logs" ]]; then
+                    echo "📱 General test failure logs:" >> test_summary.log
                     echo "$test_failure_logs" >> test_summary.log
                 else
-                    echo "No test failure logs found" >> test_summary.log
+                    echo "No additional test failure logs found" >> test_summary.log
                 fi
             fi
         else
@@ -912,12 +914,9 @@ log_with_time "🧹 Cleaning app state, device screenshots, and UI dumps before 
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 
 # Clean old screenshots and UI dumps from device (local artifacts already cleaned at script start)
-# BaseIntegrationTest saves screenshots to /sdcard/Download/test_screenshots/ (primary location)
+# BaseIntegrationTest saves screenshots and UI dumps to /sdcard/Download/test_screenshots/
 adb shell 'rm -rf /sdcard/Download/test_screenshots/*' 2>/dev/null || true
 adb shell 'mkdir -p /sdcard/Download/test_screenshots' 2>/dev/null || true
-# Also cleans UI dumps since they're now saved to /data/local/tmp/screenshots/
-adb shell 'rm -rf /data/local/tmp/screenshots/*' 2>/dev/null || true
-adb shell 'mkdir -p /data/local/tmp/screenshots' 2>/dev/null || true
 
 sleep 2
 log_with_time "✅ App state and device screenshots cleaned"
@@ -991,7 +990,17 @@ if [[ "$CLEAN_AFTER_TESTS" == "true" ]]; then
     adb uninstall com.example.whiz.debug.test >/dev/null 2>&1 || true
     log_summary_only "✅ Debug app and test APK uninstalled"
 else
-    log_summary_only "📱 Debug app remains installed for manual testing"
+    # Ensure debug app is installed for manual testing
+    if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
+        log_summary_only "📱 Debug app not found - installing for manual testing..."
+        if ./install_debug_for_testing.sh 2>/dev/null; then
+            log_summary_only "✅ Debug app installed successfully for manual testing"
+        else
+            log_summary_only "❌ Failed to install debug app for manual testing"
+        fi
+    else
+        log_summary_only "📱 Debug app remains installed for manual testing"
+    fi
 fi
 
 log_summary_only "✅ Test execution completed. Check test_gradle_output.log (gradle), test_logcat_output.log (logcat), and test_summary.log (summaries)."

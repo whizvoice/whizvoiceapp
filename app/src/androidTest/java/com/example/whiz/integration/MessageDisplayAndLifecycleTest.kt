@@ -72,6 +72,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     private var testChatId = 0L
     private var createdServerChatId = 0L // Track the server chat ID created during test
     private val TAG = "MessageDisplayTest"
+    private val uniqueTestId = "MSG_DISPLAY_TEST_${System.currentTimeMillis()}"
 
     // Authentication is now handled automatically by BaseIntegrationTest
     val authenticated = true // Always authenticated via BaseIntegrationTest
@@ -192,8 +193,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     cleanupTestChats(
                         repository = repository,
                         trackedChatIds = listOf(testChatId, createdServerChatId).filter { it > 0 },
-                        additionalPatterns = listOf("INTEGRATION_TEST_MSG_", "message display", "lifecycle"),
-                        enablePatternFallback = false
+                        additionalPatterns = listOf("INTEGRATION_TEST_MSG_", "message display", "lifecycle", uniqueTestId, "MSG_DISPLAY_TEST_"),
+                        enablePatternFallback = true // Enable to catch any chats with unique identifier
                     )
                     
                     Log.d(TAG, "✅ Test chat cleanup completed")
@@ -215,7 +216,13 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     @Test
     fun messageUI_sendMessage_appearsInChat() {
+        // Declare variables in outer scope so they're accessible in exception handlers
+        val firstMessage = "$uniqueTestId: Help test this chat. Keep responses to 1 word."
+        val secondMessage = "$uniqueTestId: Second message after navigation"
+        var chatTitle: String? = null // Will store the chat title for later navigation
+        
         runBlocking {
+        try {
         // Comprehensive conversation lifecycle test:
         // 1. Create new chat and send message
         // 2. Verify optimistic UI and bot response
@@ -226,12 +233,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
         
-        // Use a very unique message that won't conflict with other chats
-        val uniqueId = System.currentTimeMillis()
-        val firstMessage = "INTEGRATION_TEST_MSG_$uniqueId: Hello, can you help me test this chat?"
-        val secondMessage = "INTEGRATION_TEST_MSG_$uniqueId: Second message after navigation"
-        var chatTitle: String? = null // Will store the chat title for later navigation
-        
         // Step 1: Launch the app for our UI test
         Log.d(TAG, "🚀 Launching app for comprehensive UI test...")
         if (!launchAppAndWaitForLoad()) {
@@ -240,6 +241,10 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 2: Navigate to new chat if needed
         Log.d(TAG, "📱 App loaded successfully, navigating to new chat...")
+        
+        // Capture initial chats before UI navigation
+        val initialUIChats = repository.getAllChats()
+        
         if (!clickNewChatButtonAndWaitForChatScreen()) {
             // Check if already in chat by looking for message input field
             val alreadyInChat = device.hasObject(androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg(packageName))
@@ -247,6 +252,20 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 failWithScreenshot("new_chat_failed", "Failed to navigate to new chat and not already in chat")
             }
             Log.w(TAG, "⚠️ Already in chat, continuing with test...")
+        }
+        
+        // Track any UI-created chat for cleanup
+        try {
+            val currentUIChats = repository.getAllChats()
+            val newUIChats = currentUIChats.filter { !initialUIChats.map { it.id }.contains(it.id) }
+            newUIChats.forEach { chat ->
+                if (chat.id != testChatId) { // Don't double-track the pre-created test chat
+                    createdServerChatId = chat.id
+                    Log.d(TAG, "📝 Tracked UI-created chat for cleanup: ${chat.id} ('${chat.title}')")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Could not track UI-created chat: ${e.message}")
         }
         
         // Step 3: Send first message and verify optimistic UI
@@ -351,17 +370,16 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
         
         // Find our chat by unique test identifier (this always works based on logs)
-        val chatTestIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
-        Log.d(TAG, "🔍 Looking for chat containing unique test identifier: '$chatTestIdentifier'...")
+        Log.d(TAG, "🔍 Looking for chat containing unique test identifier: '$uniqueTestId'...")
         
         val ourChat = device.findObject(
             androidx.test.uiautomator.UiSelector()
-                .textContains(chatTestIdentifier.take(15)) // Use first 15 chars of identifier
+                .textContains(uniqueTestId.take(15)) // Use first 15 chars of identifier
                 .packageName("com.example.whiz.debug")
         )
         
         if (!ourChat.waitForExists(5000)) {
-            failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$chatTestIdentifier' in the chat list")
+            failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$uniqueTestId' in the chat list")
         }
         
         Log.d(TAG, "✅ Found our chat by test identifier, clicking to re-enter...")
@@ -405,9 +423,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         Log.d(TAG, "🔍 Verifying first message is still visible after navigation...")
         
         // Look for our unique test identifier in the message content
-        val testIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
         var firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(testIdentifier).pkg("com.example.whiz.debug")
+            androidx.test.uiautomator.By.textContains(uniqueTestId).pkg("com.example.whiz.debug")
         ), 3000)
         
         // If not found by test identifier, try the full message
@@ -456,17 +473,40 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Step 10: Send a second message to test existing chat functionality - using RAPID method
         Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
-        if (!sendMessageAndVerifyDisplayRapid(secondMessage)) {
-            failWithScreenshot("second_message_failed", "Failed to send second message in existing chat")
+        try {
+            if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
+                Log.e(TAG, "❌ FAILURE: sendMessageAndVerifyDisplay returned false for second message")
+                Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+                Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+                
+                // Debug: Check what's currently visible in the UI
+                val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+                val visibleTexts = allTextViews.mapNotNull { 
+                    try {
+                        it.text
+                    } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                        Log.w(TAG, "⚠️ Stale UI element encountered during error text extraction, skipping")
+                        null
+                    }
+                }.filter { it.isNotBlank() && it.length > 5 }
+                Log.e(TAG, "🔍 Currently visible texts when second message failed: ${visibleTexts.joinToString(", ")}")
+                
+                failWithScreenshot("second_message_failed", "Failed to send second message in existing chat. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+            }
+            Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ EXCEPTION during second message send", e)
+            Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+            throw e
         }
-        Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
         
         // Step 11: Final verification - both messages should be visible
         Log.d(TAG, "🔍 Final verification: checking if both messages are visible...")
         
         // Use the same reliable detection method that worked earlier
         val firstMessageVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(testIdentifier).pkg("com.example.whiz.debug")
+            androidx.test.uiautomator.By.textContains(uniqueTestId).pkg("com.example.whiz.debug")
         ), 3000)
         
         val secondMessageVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
@@ -485,23 +525,38 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 androidx.test.uiautomator.By.textContains("Second message").pkg("com.example.whiz.debug")
             ), 2000)
             
-            if (!firstMessagePartial || !secondMessagePartial) {
-                Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
-                Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
-                Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
-                failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken")
-            } else {
-                Log.d(TAG, "✅ Both messages found using partial matches")
-            }
+                    if (!firstMessagePartial || !secondMessagePartial) {
+            Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
+            Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
+            Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+            Log.e(TAG, "🔍 First message content: '$firstMessage'")
+            Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+            
+            // Debug: Check what's currently visible in the UI
+            val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
+            val visibleTexts = allTextViews.mapNotNull { 
+                try {
+                    it.text
+                } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                    Log.w(TAG, "⚠️ Stale UI element encountered during final error text extraction, skipping")
+                    null
+                }
+            }.filter { it.isNotBlank() && it.length > 5 }
+            Log.e(TAG, "🔍 Currently visible texts in final verification: ${visibleTexts.joinToString(", ")}")
+            
+            failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+        } else {
+            Log.d(TAG, "✅ Both messages found using partial matches")
+        }
         } else {
             Log.d(TAG, "✅ Both messages confirmed visible in final verification")
         }
         
         // Capture the server chat ID for cleanup
         try {
-            val testIdentifier = "INTEGRATION_TEST_MSG_$uniqueId"
             val allMessages = database.messageDao().getAllMessages()
-            val testMessage = allMessages.find { it.content.contains(testIdentifier) }
+            val testMessage = allMessages.find { it.content.contains(uniqueTestId) }
             if (testMessage != null) {
                 createdServerChatId = testMessage.chatId
                 Log.d(TAG, "📝 Captured server chat ID for cleanup: $createdServerChatId")
@@ -510,6 +565,13 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "⚠️ Could not capture server chat ID: ${e.message}")
+        }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ UNEXPECTED EXCEPTION in messageUI_sendMessage_appearsInChat test", e)
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+            Log.e(TAG, "🔍 First message: '$firstMessage'")
+            Log.e(TAG, "🔍 Second message: '$secondMessage'")
+            throw e
         }
         }
     }

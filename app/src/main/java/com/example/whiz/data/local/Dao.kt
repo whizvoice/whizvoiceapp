@@ -71,11 +71,14 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages ORDER BY id DESC")
     suspend fun getAllMessages(): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE chatId = :chatId AND requestId = :requestId AND type = 'USER' LIMIT 1")
+    suspend fun getUserMessageByRequestId(chatId: Long, requestId: String): MessageEntity?
 }
 
 @Database(
     entities = [ChatEntity::class, MessageEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class WhizDatabase : RoomDatabase() {

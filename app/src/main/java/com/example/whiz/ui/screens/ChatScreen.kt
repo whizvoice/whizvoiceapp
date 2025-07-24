@@ -322,15 +322,23 @@ fun ChatScreen(
         CenterAlignedTopAppBar(
             title = { Text(chatTitle, maxLines = 1) }, // Prevent title wrapping issues
             navigationIcon = {
-                IconButton(onClick = onChatsListClick) {
-                    Icon(Icons.Default.Menu, contentDescription = "Open Chats List")
+                IconButton(
+                    onClick = onChatsListClick,
+                    modifier = Modifier.semantics { contentDescription = "Open Chats List" }
+                ) {
+                    Icon(Icons.Default.Menu, contentDescription = null)
                 }
             },
             actions = {
-                IconButton(onClick = viewModel::toggleVoiceResponse) {
+                IconButton(
+                    onClick = viewModel::toggleVoiceResponse,
+                    modifier = Modifier.semantics { 
+                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response"
+                    }
+                ) {
                     Icon(
                         imageVector = if (isVoiceResponseEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                        contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response",
+                        contentDescription = null,
                     )
                 }
             },
@@ -514,7 +522,11 @@ fun MessagesList(
     
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth(), // Only fill width, not height - prevents overlay
+        modifier = modifier
+            .fillMaxWidth() // Only fill width, not height - prevents overlay
+            .semantics { 
+                contentDescription = "Chat messages list"
+            },
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -624,6 +636,9 @@ fun TypingIndicator() {
     // State for animation
     var isAnimating by remember { mutableStateOf(true) }
     
+    // 🔧 DEBUG: Track animation timing for test vs production comparison
+    val animationStartTime = remember { System.currentTimeMillis() }
+    
     // Using Card for consistency
     Card(
         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
@@ -662,12 +677,34 @@ fun TypingIndicator() {
                     
                     // LaunchedEffect to control the animation timing
                     LaunchedEffect(isAnimating) {
-                        delay(delay.toLong()) // Initial delay for staggered effect
+                        delay(delay.toLong()) // Initial stagger delay (0ms, 200ms, 400ms)
                         while (isAnimating) {
+                            val cycleStart = System.currentTimeMillis()
                             dotVisible = true
-                                                      delay(600L) // Stay visible
-                          dotVisible = false
-                          delay(600L) // Stay dim
+                            
+                            // 🔧 NON-BLOCKING WAIT: Use system time + yielding (immune to test framework acceleration)
+                            val visibleStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - visibleStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame (~60fps) - allows other coroutines to run
+                            }
+                            
+                            // Early exit if animation stopped during visible phase
+                            if (!isAnimating) break
+                            
+                            dotVisible = false
+                            val dimStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - dimStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame
+                            }
+                            
+                            val cycleEnd = System.currentTimeMillis()
+                            val actualCycleDuration = cycleEnd - cycleStart
+                            val expectedDuration = 1200L // 600ms visible + 600ms dim
+                            
+                            Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${actualCycleDuration}ms (expected: ${expectedDuration}ms)")
+                            
+                            // Early exit if animation stopped during dim phase
+                            if (!isAnimating) break
                         }
                     }
                     
@@ -681,6 +718,14 @@ fun TypingIndicator() {
                     )
                 }
             }
+        }
+    }
+    
+    // 🔧 DEBUG: Log total animation duration when component is disposed
+    DisposableEffect(Unit) {
+        onDispose {
+            val totalDuration = System.currentTimeMillis() - animationStartTime
+            Log.d("TypingIndicator", "🎬 TypingIndicator total duration: ${totalDuration}ms")
         }
     }
 }
@@ -809,7 +854,7 @@ fun ChatInputBar(
                             // This must come first to override listening/responding states
                             Tuple4(
                                 Icons.Filled.Send,
-                                "Send message",
+                                "Send typed message",
                                 onSendClick,
                                 MaterialTheme.colorScheme.primary
                             )
@@ -851,7 +896,7 @@ fun ChatInputBar(
                             // Show send button for voice text when continuous listening is OFF
                             Tuple4(
                                 Icons.Filled.Send,
-                                "Send message",
+                                "Send voice message",
                                 onSendClick,
                                 MaterialTheme.colorScheme.primary
                             )
@@ -876,7 +921,10 @@ fun ChatInputBar(
                     }
                     
                     // Debug logging for button decision
+                    val buttonInstanceId = "BTN_${System.currentTimeMillis()}_${hashCode()}"
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
+                    Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
+                    Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled
@@ -902,7 +950,7 @@ fun ChatInputBar(
                     ) {
                         Icon(
                             imageVector = icon,
-                            contentDescription = description,
+                            contentDescription = null, // Remove duplicate accessibility description
                             tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                     }

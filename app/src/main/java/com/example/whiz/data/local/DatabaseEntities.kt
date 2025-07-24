@@ -46,7 +46,8 @@ data class MessageEntity(
     val chatId: Long,
     val content: String,
     val type: MessageType,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val requestId: String? = null // 🔧 NEW: Link assistant messages to their user message request
 )
 
 class MessageTypeConverter {
