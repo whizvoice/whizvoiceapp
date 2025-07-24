@@ -677,21 +677,34 @@ fun TypingIndicator() {
                     
                     // LaunchedEffect to control the animation timing
                     LaunchedEffect(isAnimating) {
-                        delay(delay.toLong()) // Initial delay for staggered effect
+                        delay(delay.toLong()) // Initial stagger delay (0ms, 200ms, 400ms)
                         while (isAnimating) {
                             val cycleStart = System.currentTimeMillis()
                             dotVisible = true
-                                                      delay(600L) // Stay visible
-                          dotVisible = false
-                          delay(600L) // Stay dim
-                            val cycleEnd = System.currentTimeMillis()
                             
-                            // 🔧 DEBUG: Log animation cycle timing
-                            val cycleDuration = cycleEnd - cycleStart
-                            val expectedDuration = 1200L // 600ms visible + 600ms dim
-                            if (cycleDuration != expectedDuration) {
-                                Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${cycleDuration}ms (expected: ${expectedDuration}ms)")
+                            // 🔧 NON-BLOCKING WAIT: Use system time + yielding (immune to test framework acceleration)
+                            val visibleStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - visibleStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame (~60fps) - allows other coroutines to run
                             }
+                            
+                            // Early exit if animation stopped during visible phase
+                            if (!isAnimating) break
+                            
+                            dotVisible = false
+                            val dimStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - dimStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame
+                            }
+                            
+                            val cycleEnd = System.currentTimeMillis()
+                            val actualCycleDuration = cycleEnd - cycleStart
+                            val expectedDuration = 1200L // 600ms visible + 600ms dim
+                            
+                            Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${actualCycleDuration}ms (expected: ${expectedDuration}ms)")
+                            
+                            // Early exit if animation stopped during dim phase
+                            if (!isAnimating) break
                         }
                     }
                     
