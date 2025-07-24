@@ -21,14 +21,10 @@ class AppLifecycleService @Inject constructor() {
     val appBackgroundEvent: SharedFlow<Unit> = _appBackgroundEvent.asSharedFlow()
     
     fun notifyAppForegrounded() {
-        Log.d(TAG, "notifyAppForegrounded called")
-        val emitted = _appForegroundEvent.tryEmit(Unit)
-        Log.d(TAG, "Event emission result: $emitted, active collectors: ${_appForegroundEvent.subscriptionCount.value}")
+        _appForegroundEvent.tryEmit(Unit)
     }
     
     fun notifyAppBackgrounded() {
-        Log.d(TAG, "notifyAppBackgrounded called")
-        val emitted = _appBackgroundEvent.tryEmit(Unit)
-        Log.d(TAG, "Background event emission result: $emitted, active collectors: ${_appBackgroundEvent.subscriptionCount.value}")
+        _appBackgroundEvent.tryEmit(Unit)
     }
 } 

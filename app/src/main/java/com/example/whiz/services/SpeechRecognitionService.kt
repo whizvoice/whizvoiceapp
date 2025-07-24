@@ -64,7 +64,6 @@ class SpeechRecognitionService @Inject constructor(
             field = value
         }
         get() {
-            Log.d(TAG, "🔧 TEST_DEBUG: Getting continuousListeningEnabled = $field")
             return field
         }
 
@@ -122,35 +121,28 @@ class SpeechRecognitionService @Inject constructor(
 
 
     fun startListening(callback: (String) -> Unit) {
-        Log.d(TAG, "[DEBUG] startListening called. isInitialized=$isInitialized, isListening=${_isListening.value}")
-        
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
         
         if (!isInitialized) {
-            Log.w(TAG, "[DEBUG] SpeechRecognitionService not initialized")
             initialize() // Try to initialize if not initialized
             if (!isInitialized) {
-                Log.e(TAG, "[DEBUG] Failed to initialize speech recognition")
+                Log.e(TAG, "Failed to initialize speech recognition")
                 _errorState.value = "Failed to initialize speech recognition"
                 return
             }
         }
 
         if (_isListening.value) {
-            Log.w(TAG, "[DEBUG] startListening called but already listening. Callback updated, ignoring new start request.")
             return
         }
 
         try {
-            Log.d(TAG, "[DEBUG] Actually starting speech recognition")
-            
             // Ensure we have a clean state before starting
             if (speechRecognizer == null) {
-                Log.d(TAG, "[DEBUG] Creating new SpeechRecognizer instance")
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
                 if (speechRecognizer == null) {
-                    Log.e(TAG, "[DEBUG] Failed to create SpeechRecognizer instance")
+                    Log.e(TAG, "Failed to create SpeechRecognizer instance")
                     _errorState.value = "Failed to create speech recognizer"
                     return
                 }
@@ -160,7 +152,7 @@ class SpeechRecognitionService @Inject constructor(
 
             // Validate the recognizer is in a good state
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                Log.e(TAG, "[DEBUG] Speech recognition not available")
+                Log.e(TAG, "Speech recognition not available")
                 _errorState.value = "Speech recognition not available"
                 return
             }
@@ -171,18 +163,15 @@ class SpeechRecognitionService @Inject constructor(
             manualStopInProgress = false
 
             setupRecognizerIntent()
-            Log.d(TAG, "[DEBUG] Calling startListening on SpeechRecognizer")
             speechRecognizer?.startListening(recognizerIntent)
-            Log.d(TAG, "[DEBUG] Speech recognition started successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "[DEBUG] Error starting speech recognition", e)
+            Log.e(TAG, "Error starting speech recognition", e)
             _errorState.value = "Error starting speech recognition: ${e.message}"
             _isListening.value = false // Reset listening state on error
             recognitionCallback = null
             
             // Force cleanup and reinitialize on error
             cleanup()
-            Log.d(TAG, "[DEBUG] Cleaned up speech recognizer after error")
             
             // Try to reinitialize for next attempt
             initialize()
@@ -213,10 +202,8 @@ class SpeechRecognitionService @Inject constructor(
             
             // Clear transcription state
             _transcriptionState.value = ""
-            
-            Log.d(TAG, "[DEBUG] Speech recognition stopped successfully. continuousListeningEnabled now: $continuousListeningEnabled")
         } catch (e: Exception) {
-            Log.e(TAG, "[DEBUG] Error stopping speech recognition", e)
+            Log.e(TAG, "Error stopping speech recognition", e)
             _errorState.value = "Error stopping speech recognition: ${e.message}"
             _isListening.value = false
             // 🔧 BUG FIX: Don't clear callback on error either - let onResults() handle cleanup
@@ -316,8 +303,6 @@ class SpeechRecognitionService @Inject constructor(
                         _isListening.value = false
                         _errorState.value = "Error restarting listening: ${e.message}"
                     }
-                } else {
-                    Log.d(TAG, "[DEBUG] Not restarting - isListening: ${_isListening.value}, continuousListeningEnabled: $continuousListeningEnabled")
                 }
             }
 
@@ -334,21 +319,16 @@ class SpeechRecognitionService @Inject constructor(
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
                     else -> "Unknown speech recognition error (code: $error)"
                 }
-                Log.e(TAG, "[DEBUG] Speech recognition error: $errorMessage (code $error)")
-                
                 // Only show user-visible errors for critical issues, not for expected errors like NO_MATCH
                 if (shouldShowError(error, manualStopInProgress)) {
+                    Log.e(TAG, "Speech recognition error: $errorMessage (code $error)")
                     _errorState.value = errorMessage
-                } else {
-                    Log.d(TAG, "[DEBUG] Error $errorMessage (code $error) not shown to user due to shouldShowError policy")
                 }
                 
                 _isListening.value = false
 
                 // --- Continuous listening auto-restart logic with smart rate limiting ---
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled && !manualStopInProgress) {
-                    Log.d(TAG, "[LOG] Auto-restarting listening after error '$errorMessage' (code $error) because continuousListeningEnabled=true")
-                    
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
@@ -359,13 +339,10 @@ class SpeechRecognitionService @Inject constructor(
                     errorRestartCount++
                     
                     if (errorRestartCount <= MAX_ERROR_RESTARTS && continuousListeningEnabled && !manualStopInProgress) {
-                        Log.d(TAG, "[LOG] Error restart $errorRestartCount/$MAX_ERROR_RESTARTS - proceeding")
                         startListening(recognitionCallback ?: { })
                     } else {
-                        Log.w(TAG, "[LOG] Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
+                        Log.w(TAG, "Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
                     }
-                } else {
-                    Log.d(TAG, "[LOG] Not auto-restarting after error - continuousListeningEnabled: $continuousListeningEnabled, manualStopInProgress: $manualStopInProgress")
                 }
             }
 

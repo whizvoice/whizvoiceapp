@@ -90,7 +90,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-            Log.d(TAG, "Speaking: $text")
         } catch (e: Exception) {
             Log.e(TAG, "Error speaking text", e)
             onSpeechError?.invoke()
@@ -105,7 +104,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.setSpeechRate(speechRate)
-            Log.d(TAG, "Set speech rate to: $speechRate")
         } catch (e: Exception) {
             Log.e(TAG, "Error setting speech rate", e)
         }
@@ -119,7 +117,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.setPitch(pitch)
-            Log.d(TAG, "Set pitch to: $pitch")
         } catch (e: Exception) {
             Log.e(TAG, "Error setting pitch", e)
         }

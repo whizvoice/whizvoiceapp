@@ -64,7 +64,6 @@ class WhizRepository @Inject constructor(
     init {
         repositoryScope.launch {
             // Remove arbitrary delay - initialize immediately
-            Log.d(TAG, "Repository initialized")
             isInitialized = true
         }
         
@@ -76,17 +75,15 @@ class WhizRepository @Inject constructor(
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
                 delay(100) // Small delay to ensure app initialization is complete
-                Log.d(TAG, "Repository init: Starting initial conversations load")
                 
                 // Force a full sync on app startup to ensure we get all conversations
                 val conversations = getAllChatsIncremental(forceFullSync = true)
                 _conversations.value = conversations
-                Log.d(TAG, "Repository init: Loaded ${conversations.size} conversations on startup")
                 
                 // Trigger refresh to notify any observers
                 triggerConversationsRefresh()
             } catch (e: Exception) {
-                Log.e(TAG, "Repository init: Error during initial conversations load", e)
+                Log.e(TAG, "Error during initial conversations load", e)
                 // Fallback to normal trigger if initial load fails
                 triggerConversationsRefresh()
             }
@@ -101,24 +98,19 @@ class WhizRepository @Inject constructor(
     // Trigger refresh for conversations
     private fun triggerConversationsRefresh() {
         _conversationsRefreshTrigger.value = System.currentTimeMillis()
-        Log.d(TAG, "Triggered conversations refresh")
     }
 
     // Trigger refresh for messages
     private fun triggerMessagesRefresh() {
-        val newValue = System.currentTimeMillis()
-        _messagesRefreshTrigger.value = newValue
-        Log.d(TAG, "Triggered messages refresh with value: $newValue")
+        _messagesRefreshTrigger.value = System.currentTimeMillis()
     }
 
     // Chat operations
     suspend fun getAllChats(forceFullSync: Boolean = false): List<ChatEntity> {
-        Log.d(TAG, "getAllChats: fetching from API (triggered)")
         return try {
             // Use deduplication helper to prevent multiple concurrent API calls
             val result = fetchConversationsWithDeduplication(forceFullSync)
             _conversations.value = result
-            Log.d(TAG, "getAllChats: retrieved ${result.size} chats from API")
             result
         } catch (e: Exception) {
             Log.e(TAG, "Error getting chats from API", e)
@@ -129,10 +121,8 @@ class WhizRepository @Inject constructor(
 
     suspend fun getChatById(chatId: Long): ChatEntity? {
         return try {
-            Log.d(TAG, "getChatById: fetching chat $chatId from API")
             val conversation = apiService.getConversation(chatId)
             val chatEntity = conversation.toChatEntity()
-            Log.d(TAG, "getChatById: retrieved chat with id $chatId: ${chatEntity.title}")
             chatEntity
         } catch (e: Exception) {
             Log.e(TAG, "Error getting chat with id $chatId from API", e)
@@ -259,31 +249,9 @@ class WhizRepository @Inject constructor(
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
         return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            Log.d(TAG, "getMessagesForChat: 📨 Flow triggered for chat $chatId (trigger: $triggerValue)")
-            
-            // 🔧 DEBUG: Log all messages in database to debug missing messages
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val allMessages = messageDao.getAllMessages()
-                    Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
-                    if (allMessages.isNotEmpty()) {
-                        Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "getMessagesForChat: Error getting all messages for debug", e)
-                }
-            }
-            
             // 🔧 FIXED: Return local database messages immediately for optimistic UI
             // Background sync is handled separately to avoid race conditions
-            messageDao.getMessagesForChatFlow(chatId).onEach { localMessages ->
-                Log.d(TAG, "getMessagesForChat: 📨 Emitting ${localMessages.size} local messages for chat $chatId")
-                if (localMessages.isNotEmpty()) {
-                    Log.d(TAG, "getMessagesForChat: 📨 Messages: ${localMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-                } else {
-                    Log.d(TAG, "getMessagesForChat: 📨 No messages found for chat $chatId")
-                }
-            }
+            messageDao.getMessagesForChatFlow(chatId)
         }.catch { e ->
             Log.e(TAG, "Error in getMessagesForChat flow", e)
             emit(emptyList<MessageEntity>()) // Emit empty list on error
@@ -296,9 +264,7 @@ class WhizRepository @Inject constructor(
 
     suspend fun getMessageCountForChat(chatId: Long): Int {
         return try {
-            Log.d(TAG, "getMessageCountForChat: fetching count for chat $chatId from API")
             val response = apiService.getMessageCount(chatId)
-            Log.d(TAG, "getMessageCountForChat: chat $chatId has ${response.count} messages")
             response.count
         } catch (e: Exception) {
             Log.e(TAG, "Error getting message count for chat $chatId from API", e)

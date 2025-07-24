@@ -754,35 +754,12 @@ fun ChatInputBar(
     val hasTypedText = hasInputText && !isInputFromVoice
     val hasVoiceText = hasInputText && isInputFromVoice
     
-    // Debug logging for button logic and input state
-    Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
-    Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
-    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: TextField will be enabled=${!isInputDisabled}, isInputDisabled=$isInputDisabled")
-    
     // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
     // The issue was complex conditional logic that wasn't recomposing properly
     val displayValue = when {
         inputText.isNotBlank() -> inputText // Always show actual input text if present
         isListening && transcription.isNotBlank() -> transcription // Show live transcription when listening
         else -> inputText // Default to input text (could be empty)
-    }
-    
-    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription'")
-    
-    // 🔧 ENHANCED DEBUG LOGGING: Track displayValue changes and timing
-    val currentTimeMs = System.currentTimeMillis()
-    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription', isResponding=$isResponding")
-    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue.length=${displayValue.length}, inputText.length=${inputText.length}")
-    
-    // 🔧 CRITICAL DEBUG: Log every time displayValue changes
-    LaunchedEffect(displayValue) {
-        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: '$displayValue' (length=${displayValue.length})")
-        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: inputText='$inputText', isListening=$isListening, transcription='$transcription'")
-    }
-    
-    // 🔧 CRITICAL DEBUG: Log every time inputText changes
-    LaunchedEffect(inputText) {
-        Log.d("ChatInputBar", "🔥 INPUTTEXT CHANGE [${System.currentTimeMillis()}]: '$inputText' (length=${inputText.length})")
     }
     
     val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
@@ -806,10 +783,6 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = { newValue ->
-                    // 🔧 ENHANCED DEBUG: Log every onValueChange call
-                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: '$newValue' (prev: '$displayValue')")
-                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: newValue.length=${newValue.length}, displayValue.length=${displayValue.length}")
-                    
                     // Always allow input change - this enables manual typing to disable continuous listening
                     // The updateInputText method will handle stopping voice recognition when user types
                     onInputChange(newValue)

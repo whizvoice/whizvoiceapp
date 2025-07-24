@@ -129,8 +129,6 @@ class WhizServerRepository @Inject constructor(
                 WHIZ_SERVER_URL
             }
             
-            Log.d(TAG, "Attempting to connect to $websocketUrl with server token (conversation_id: $conversationId)")
-            
             val requestBuilder = Request.Builder().url(websocketUrl)
             requestBuilder.header("Authorization", "Bearer $serverToken")
             
@@ -152,15 +150,11 @@ class WhizServerRepository @Inject constructor(
                         scope.launch {
                             try {
                                 val success = authRepository.setUserTimezone(timezone)
-                                if (success) {
-                                    Log.i(TAG, "Successfully set timezone via API: $timezone")
-                                } else {
+                                if (!success) {
                                     Log.w(TAG, "Failed to set timezone via API: $timezone")
-                                    // Optionally, send an error event to the UI or retry
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error setting timezone via API", e)
-                                // Optionally, send an error event to the UI or retry
                             }
                         }
                     } catch (e: Exception) {
@@ -170,7 +164,6 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
-                        Log.i(TAG, "WebSocket message received: $text")
                         
                         var messageHandled = false
                         var requestId: String? = null
@@ -186,7 +179,6 @@ class WhizServerRepository @Inject constructor(
                             
                             // Check if this is a cancellation confirmation
                             if (jsonObject.has("type") && jsonObject.getString("type") == "cancelled") {
-                                Log.d(TAG, "Received cancellation confirmation with request_id: $requestId")
                                 val cancelledRequestId = if (jsonObject.has("cancelled_request_id")) {
                                     jsonObject.getString("cancelled_request_id")
                                 } else null
@@ -201,7 +193,6 @@ class WhizServerRepository @Inject constructor(
                             }
                             // Check if this is an interruption confirmation
                             else if (jsonObject.has("type") && jsonObject.getString("type") == "interrupted") {
-                                Log.d(TAG, "Received interruption confirmation with request_id: $requestId")
                                 val interruptedMessage = if (jsonObject.has("message")) {
                                     jsonObject.getString("message")
                                 } else "Request was interrupted"
@@ -212,7 +203,6 @@ class WhizServerRepository @Inject constructor(
                             // Handle structured errors with request_id
                             else if (jsonObject.has("error")) {
                                 val errorMessage = jsonObject.getString("error")
-                                Log.d(TAG, "Received structured error with request_id: $requestId, error: $errorMessage")
                                 
                                 // Emit the error message as a regular message for ChatViewModel to handle
                                 scope.launch { _webSocketEvents.emit(WebSocketEvent.Message(errorMessage, requestId)) }
@@ -224,14 +214,13 @@ class WhizServerRepository @Inject constructor(
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
-                                Log.d(TAG, "Received structured response with request_id: $requestId, conversation_id: $conversationId")
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
                                     _webSocketEvents.emit(WebSocketEvent.Message(responseText, requestId, conversationId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
                                     if (emitDuration > 50) {
-                                        Log.w(TAG, "⚠️ WebSocket emit delay: ${emitDuration}ms for structured response")
+                                        Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
                                     }
                                 }
                                 messageHandled = true
@@ -253,18 +242,18 @@ class WhizServerRepository @Inject constructor(
                             // If it's a plain text "Authentication failed. Please login again." and NOT JSON
                             // (this is a very specific legacy case)
                             if (text.contains("Authentication failed. Please login again.", ignoreCase = true) && !text.trimStart().startsWith("{")) {
-                                Log.w(TAG, "Received plain text legacy auth error: 'Authentication failed. Please login again.'")
+                                Log.w(TAG, "Received plain text legacy auth error")
                                 scope.launch { _webSocketEvents.emit(WebSocketEvent.AuthError("Authentication failed. Please login again.")) }
                             } else {
                                 // Default for any unhandled or plain text message
-                                Log.d(TAG, "Emitting as generic WebSocketEvent.Message: $text")
+
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
                                     _webSocketEvents.emit(WebSocketEvent.Message(text, requestId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
                                     if (emitDuration > 50) {
-                                        Log.w(TAG, "⚠️ WebSocket emit delay: ${emitDuration}ms for generic message")
+                                        Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
                                     }
                                 }
                             }
@@ -359,20 +348,18 @@ class WhizServerRepository @Inject constructor(
                     clientMessageId?.let { put("client_message_id", it) }
                 }
                 val jsonMessage = messageJson.toString()
-                Log.d(TAG, "Sending structured message: $jsonMessage")
                 
                 // Try to send the message
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
-                    Log.d(TAG, "Message sent successfully to WebSocket")
                     true
                 } else {
-                    Log.w(TAG, "WebSocket.send() returned false - queueing message for retry")
+                    Log.w(TAG, "WebSocket send failed - queueing message for retry")
                     queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                     false
                 }
             } else {
-                Log.w(TAG, "Cannot send message, WebSocket is not connected - queueing message for retry")
+                Log.w(TAG, "WebSocket not connected - queueing message for retry")
                 queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                 // Attempt to reconnect
                 if (!isManuallyDisconnected) {
