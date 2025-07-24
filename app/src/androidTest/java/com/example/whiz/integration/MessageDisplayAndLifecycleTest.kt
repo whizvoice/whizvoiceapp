@@ -217,7 +217,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @Test
     fun messageUI_sendMessage_appearsInChat() {
         // Declare variables in outer scope so they're accessible in exception handlers
-        val firstMessage = "$uniqueTestId: Hello, can you help me test this chat?"
+        val firstMessage = "$uniqueTestId: Help test this chat. Keep responses to 1 word."
         val secondMessage = "$uniqueTestId: Second message after navigation"
         var chatTitle: String? = null // Will store the chat title for later navigation
         
