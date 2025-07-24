@@ -75,10 +75,6 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
         Log.d(TAG, "🎙️ Granting microphone permission for rapid message tests")
         device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
         
-        // Grant permission to change system settings (needed for animation scale)
-        Log.d(TAG, "⚙️ Granting WRITE_SECURE_SETTINGS permission for animation scale control")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.WRITE_SECURE_SETTINGS")
-        
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
 
@@ -93,32 +89,19 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
         // 🔧 ANIMATION FIX: Restore normal animation timing for realistic testing
         if (animationScale != 1.0f) {
             Log.d(TAG, "🎬 FIXING: Restoring normal animation speed (was: $animationScale, setting to: 1.0)")
-            try {
-                Settings.Global.putFloat(
-                    context.contentResolver,
-                    Settings.Global.ANIMATOR_DURATION_SCALE,
-                    1.0f
-                )
-                
-                // Verify the change took effect
-                val newAnimationScale = Settings.Global.getFloat(
-                    context.contentResolver,
-                    Settings.Global.ANIMATOR_DURATION_SCALE,
-                    1.0f
-                )
-                Log.d(TAG, "✅ Animation scale after fix: $newAnimationScale")
-                
-                if (newAnimationScale == 1.0f) {
-                    Log.d(TAG, "🎉 SUCCESS: Animation scale successfully restored to normal speed!")
-                } else {
-                    Log.w(TAG, "⚠️ WARNING: Animation scale setting may not have taken effect (${newAnimationScale})")
-                }
-            } catch (e: SecurityException) {
-                Log.e(TAG, "❌ PERMISSION ERROR: Failed to set animation scale - WRITE_SECURE_SETTINGS permission not granted")
-                Log.e(TAG, "   This test will still run but with accelerated animations")
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ UNEXPECTED ERROR: Failed to set animation scale: ${e.message}")
-            }
+            Settings.Global.putFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            
+            // Verify the change took effect
+            val newAnimationScale = Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            Log.d(TAG, "✅ Animation scale after fix: $newAnimationScale")
         } else {
             Log.d(TAG, "✅ Animation scale already normal: $animationScale")
         }
