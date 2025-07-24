@@ -85,20 +85,33 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
         if (id != 0L) { // 🔧 OPTIMISTIC UI FIX: Handle both positive AND negative chat IDs
             repository.getMessagesForChat(id).onEach { messagesList ->
+                val flowProcessingStartTime = System.currentTimeMillis()
                 Log.d(TAG, "🔥 messages flow: Received ${messagesList.size} messages for chat $id")
                 messagesList.forEachIndexed { index, message ->
                     Log.d(TAG, "🔥 messages flow: [$index] ${message.type}: ${message.content.take(50)}...")
                 }
+                val flowProcessingDuration = System.currentTimeMillis() - flowProcessingStartTime
+                Log.d(TAG, "⏱️ FLOW TIMING: onEach processing took ${flowProcessingDuration}ms for ${messagesList.size} messages")
             }.map { messagesList ->
+                val mapProcessingStartTime = System.currentTimeMillis()
                 // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on content + timestamp + type
+                val deduplicationStartTime = System.currentTimeMillis()
                 val deduplicatedMessages = messagesList.distinctBy { message ->
                     // Create unique key from content, timestamp, and type to prevent optimistic UI duplicates
                     Triple(message.content.trim(), message.timestamp, message.type)
                 }
+                val deduplicationDuration = System.currentTimeMillis() - deduplicationStartTime
+                Log.d(TAG, "⏱️ DEDUPLICATION TIMING: distinctBy took ${deduplicationDuration}ms for ${messagesList.size} messages")
+                
                 if (deduplicatedMessages.size != messagesList.size) {
                     Log.w(TAG, "🔧 DEDUPLICATION: Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
                     Log.d(TAG, "🔧 DEDUPLICATION: Original ${messagesList.size} -> Deduplicated ${deduplicatedMessages.size}")
                 }
+                val mapProcessingDuration = System.currentTimeMillis() - mapProcessingStartTime
+                Log.d(TAG, "⏱️ FLOW TIMING: map processing (including deduplication) took ${mapProcessingDuration}ms")
+                
+                // 🎯 RECOMPOSITION TRACKING: Log when flow emits new data (triggers UI recomposition)
+                Log.d(TAG, "🎨 RECOMPOSITION TRIGGER: Emitting ${deduplicatedMessages.size} messages to UI (chat $id)")
                 deduplicatedMessages
             }
         } else {
@@ -668,10 +681,14 @@ class ChatViewModel @Inject constructor(
                                 if (!configUseRemoteAgent) {
                                     try {
                                         viewModelScope.launch {
+                                            val addMessageStartTime = System.currentTimeMillis()
+                                            Log.d(TAG, "$eventLogId ⏱️ REPO TIMING: Starting addAssistantMessage for chat $targetChatId")
                                             val messageId = repository.addAssistantMessage(
                                                 chatId = targetChatId,
                                                 content = messageContentForChat
                                             )
+                                            val addMessageDuration = System.currentTimeMillis() - addMessageStartTime
+                                            Log.d(TAG, "$eventLogId ⏱️ REPO TIMING: addAssistantMessage took ${addMessageDuration}ms (messageId: $messageId)")
                                             Log.d(TAG, "$eventLogId POST-CALL addAssistantMessage. Message ID: $messageId added to chat: $targetChatId")
                                         }
                                     } catch (e: Exception) {
@@ -1173,16 +1190,32 @@ class ChatViewModel @Inject constructor(
                     // For remote agent: Create optimistic chat only for the first message
                     // Let the WebSocket server create it and then sync
                     Log.d(TAG, "sendUserInput: 🔧 FIXED: First message - creating optimistic chat for remote agent")
+                    val deriveTitleStartTime = System.currentTimeMillis()
                     val tempTitle = repository.deriveChatTitle(trimmedText)
+                    val deriveTitleDuration = System.currentTimeMillis() - deriveTitleStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: deriveChatTitle took ${deriveTitleDuration}ms")
+                    
+                    val createChatStartTime = System.currentTimeMillis()
                     val tempChatId = repository.createChatOptimistic(tempTitle)
+                    val createChatDuration = System.currentTimeMillis() - createChatStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: createChatOptimistic took ${createChatDuration}ms")
+                    
                     _chatId.value = tempChatId
                     _chatTitle.value = tempTitle
                     currentChatId = tempChatId
                     Log.d(TAG, "sendUserInput: 🔧 FIXED: Created optimistic chat $tempChatId for first message")
                 } else {
                     // For local agent: Create conversation locally as before
+                    val deriveTitleStartTime = System.currentTimeMillis()
                     val chatTitle = repository.deriveChatTitle(trimmedText)
+                    val deriveTitleDuration = System.currentTimeMillis() - deriveTitleStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: deriveChatTitle took ${deriveTitleDuration}ms")
+                    
+                    val createChatStartTime = System.currentTimeMillis()
                     val newChatId = repository.createChat(chatTitle)
+                    val createChatDuration = System.currentTimeMillis() - createChatStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: createChat took ${createChatDuration}ms")
+                    
                     _chatId.value = newChatId
                     _chatTitle.value = chatTitle
                     currentChatId = newChatId
@@ -1207,11 +1240,19 @@ class ChatViewModel @Inject constructor(
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
                     Log.d(TAG, "sendUserInput: 💬 Adding optimistic user message to chatId: $actualChatId with requestId: $requestId")
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
+                    val addOptimisticStartTime = System.currentTimeMillis()
+                    val messageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
+                    val addOptimisticDuration = System.currentTimeMillis() - addOptimisticStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: addUserMessageOptimistic took ${addOptimisticDuration}ms")
+                    messageId
                 } else {
                     // For local agent: use regular method (creates via API)
                     Log.d(TAG, "sendUserInput: 💬 Adding regular user message to chatId: $actualChatId")
-                    repository.addUserMessage(actualChatId, trimmedText)
+                    val addUserMessageStartTime = System.currentTimeMillis()
+                    val messageId = repository.addUserMessage(actualChatId, trimmedText)
+                    val addUserMessageDuration = System.currentTimeMillis() - addUserMessageStartTime
+                    Log.d(TAG, "sendUserInput: ⏱️ REPO TIMING: addUserMessage took ${addUserMessageDuration}ms")
+                    messageId
                 }
                 Log.d(TAG, "sendUserInput: 💬 Added ${if (configUseRemoteAgent) "optimistic" else "regular"} user message (chatId: $actualChatId, messageId: $localMessageId, agent: ${if (configUseRemoteAgent) "remote" else "local"})")
                 
