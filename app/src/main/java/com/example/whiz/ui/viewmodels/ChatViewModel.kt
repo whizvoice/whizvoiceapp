@@ -14,7 +14,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.* // ktlint-disable no-wildcard-imports
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import javax.inject.Inject
@@ -230,7 +231,9 @@ class ChatViewModel @Inject constructor(
         // Start observing messages immediately
         if (configUseRemoteAgent) {
             Log.d(TAG, "Init: Using remote agent. Attempting WebSocket connection.")
-            whizServerRepository.connect()
+            viewModelScope.launch {
+                whizServerRepository.connect()
+            }
             // Enhanced server message collection with interrupt handling - moved inline above
         }
         
@@ -561,17 +564,17 @@ class ChatViewModel @Inject constructor(
 
                                 
                                 // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
-                                // Use runBlocking to ensure migration completes before chat ID update
+                                // Use withContext(Dispatchers.IO) to move database operations to background thread
                                 try {
                                     Log.d(TAG, "$eventLogId 🔄 MIGRATION: Migrating messages from local chat $originalChatId to server conversation $effectiveConversationId")
-                                    Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: About to runBlocking on thread: ${Thread.currentThread().name}")
+                                    Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: About to withContext(Dispatchers.IO) on thread: ${Thread.currentThread().name}")
                                     val migrationStartTime = System.currentTimeMillis()
-                                    val migrationSuccess = runBlocking {
-                                        Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: Inside runBlocking on thread: ${Thread.currentThread().name}")
+                                    val migrationSuccess = withContext(Dispatchers.IO) {
+                                        Log.d(TAG, "$eventLogId 🧵 THREAD DEBUG: Inside withContext(Dispatchers.IO) on thread: ${Thread.currentThread().name}")
                                         repository.migrateChatMessages(originalChatId, effectiveConversationId)
                                     }
                                     val migrationDuration = System.currentTimeMillis() - migrationStartTime
-                                    Log.d(TAG, "$eventLogId ⏱️ TIMING DEBUG: runBlocking migration took ${migrationDuration}ms on thread: ${Thread.currentThread().name}")
+                                    Log.d(TAG, "$eventLogId ⏱️ TIMING DEBUG: withContext(Dispatchers.IO) migration took ${migrationDuration}ms on thread: ${Thread.currentThread().name}")
                                     if (migrationSuccess) {
                                         Log.d(TAG, "$eventLogId ✅ MIGRATION SUCCESS: Successfully migrated messages from chat $originalChatId to $effectiveConversationId")
                                         

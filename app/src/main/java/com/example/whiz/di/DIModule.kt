@@ -27,6 +27,8 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import okhttp3.Interceptor
 
@@ -103,7 +105,9 @@ object AppModule {
                     val authRepository = authRepositoryProvider.get()
                     // Get token asynchronously but don't block if it's null
                     val token: String? = runBlocking { 
-                        authRepository.serverToken.first() // Get current token, could be null
+                        withContext(Dispatchers.IO) {
+                            authRepository.serverToken.first() // Get current token, could be null
+                        }
                     }
 
                     if (token != null) {

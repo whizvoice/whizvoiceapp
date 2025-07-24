@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -76,7 +76,7 @@ class WhizServerRepository @Inject constructor(
     private var retryJob: Job? = null
     private var currentConversationId: Long? = null
 
-    fun connect(conversationId: Long? = null) {
+    suspend fun connect(conversationId: Long? = null) {
         currentConversationId = conversationId
         
         if (webSocket != null && webSocket?.send("") == true) { // Crude check if socket is still valid
@@ -95,11 +95,9 @@ class WhizServerRepository @Inject constructor(
         reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
 
         try {
-            // Only use server token, no fallback to Google token
-            val serverToken = runBlocking { 
-                withContext(Dispatchers.IO) {
-                    authRepository.serverToken.firstOrNull()
-                }
+            // Only use server token, no fallback to Google token  
+            val serverToken = withContext(Dispatchers.IO) {
+                authRepository.serverToken.firstOrNull()
             }
             
             if (serverToken == null) {
