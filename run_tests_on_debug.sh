@@ -492,22 +492,14 @@ run_integration_tests_with_logcat() {
     echo "🔍 Discovered test log tags: $(echo $discovered_tags | tr '\n' ' ')" >> test_summary.log
     echo "📱 Starting logcat with tags: $discovered_tags" >> test_summary.log
     
-    # Start logcat capture with proper tag handling - include more error levels
-    if [[ -n "$discovered_tags" ]]; then
-        # Create logcat command with proper argument structure - capture more error types
-        # Capture directly to the complete logcat file
-        {
-            adb logcat -v time "*:S" $discovered_tags "TestRunner:E" "AssertionError:E" "RuntimeException:E" >> test_logcat_output.log 2>&1 &
-            local logcat_pid=$!
-        }
-        echo "📱 Logcat started with PID: $logcat_pid" >> test_summary.log
-        echo "🔍 Using tags: $discovered_tags TestRunner:E AssertionError:E RuntimeException:E" >> test_summary.log
-    else
-        # Fallback to basic logcat capture with more comprehensive error capture
-        adb logcat -v time "*:S" "AndroidRuntime:E" "System.err:E" "TestRunner:*" "AssertionError:E" "RuntimeException:E" >> test_logcat_output.log 2>&1 &
+    # Start logcat capture with NO FILTER to see everything during the 3-second gaps
+    # TEMPORARILY REMOVED FILTER to debug UI blocking during server processing time
+    {
+        adb logcat -v time >> test_logcat_output.log 2>&1 &
         local logcat_pid=$!
-        echo "📱 Logcat started with enhanced error tags (PID: $logcat_pid)" >> test_summary.log
-    fi
+    }
+    echo "📱 Logcat started with PID: $logcat_pid (NO FILTER - showing ALL logs)" >> test_summary.log
+    echo "🔍 Capturing ALL system activity to debug 3-second UI blocking" >> test_summary.log
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
     local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
