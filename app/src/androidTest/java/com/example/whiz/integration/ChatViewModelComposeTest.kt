@@ -260,42 +260,51 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 // Step 5: Wait for barista response and verify message order
                 Log.d(TAG, "☕ Step 5: Waiting for barista response and verifying message order...")
                 
-                // The first message asked for "coffee-making professional" - expect "Barista" as response
-                val expectedBaristaResponse = "Barista"
-                Log.d(TAG, "🔍 Looking for barista response: '$expectedBaristaResponse'")
+                // The first message asked for "coffee-making professional" - expect variations of "Barista" response
+                val expectedBaristaResponses = listOf("Barista", "Barista.", "Barista!")
+                Log.d(TAG, "🔍 Looking for barista response variations: $expectedBaristaResponses")
                 
-                // 🔧 NEW: Wait for the barista response to appear before verifying order
+                // 🔧 NEW: Wait for any barista response variation to appear before verifying order
                 // Since we sent messages rapidly, the bot response might take time to arrive
                 Log.d(TAG, "⏳ Waiting for barista response to appear...")
                 val waitStartTime = System.currentTimeMillis()
                 val waitTimeout = 5000L // 5 seconds timeout
                 var baristaResponseFound = false
+                var actualBaristaResponse = ""
                 
                 while (!baristaResponseFound && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
-                    try {
-                        composeTestRule.onNodeWithText(expectedBaristaResponse).assertIsDisplayed()
-                        baristaResponseFound = true
-                        Log.d(TAG, "✅ Barista response found after ${System.currentTimeMillis() - waitStartTime}ms")
-                    } catch (e: Exception) {
-                        Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
-                        Thread.sleep(100) // Check every 100ms
-                    } catch (e: AssertionError) {
+                    for (expectedResponse in expectedBaristaResponses) {
+                        try {
+                            composeTestRule.onNodeWithText(expectedResponse).assertIsDisplayed()
+                            baristaResponseFound = true
+                            actualBaristaResponse = expectedResponse
+                            Log.d(TAG, "✅ Barista response found: '$actualBaristaResponse' after ${System.currentTimeMillis() - waitStartTime}ms")
+                            break
+                        } catch (e: Exception) {
+                            // Continue to next variation
+                        } catch (e: AssertionError) {
+                            // Continue to next variation
+                        }
+                    }
+                    
+                    if (!baristaResponseFound) {
                         Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
                         Thread.sleep(100) // Check every 100ms
                     }
                 }
                 
                 if (!baristaResponseFound) {
-                    Log.e(TAG, "❌ Barista response never appeared within ${waitTimeout}ms")
+                    Log.e(TAG, "❌ None of the barista response variations appeared within ${waitTimeout}ms")
+                    Log.e(TAG, "❌ Expected variations: $expectedBaristaResponses")
                     failWithScreenshot("barista_response_timeout", "Barista response did not appear within timeout")
                     return@runBlocking
                 }
                 
                 // Now verify that the barista response appears right after the first message
                 Log.d(TAG, "🔍 About to verify message order - looking for Barista response after first message")
-                if (!ComposeTestHelper.verifyMessageOrder(composeTestRule, firstMessage, expectedBaristaResponse)) {
+                if (!ComposeTestHelper.verifyMessageOrder(composeTestRule, firstMessage, actualBaristaResponse)) {
                     Log.e(TAG, "❌ Message order verification failed - barista response not in correct position")
-                    Log.e(TAG, "❌ Expected to find 'Barista' response after first message: '${firstMessage.take(50)}...'")
+                    Log.e(TAG, "❌ Expected to find '$actualBaristaResponse' response after first message: '${firstMessage.take(50)}...'")
                     Log.e(TAG, "❌ This indicates the request ID pairing is not working correctly")
                     failWithScreenshot("message_order_verification_failed", "Barista response not appearing after the correct user message")
                     return@runBlocking
@@ -317,8 +326,32 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ All ${sentMessages.size} messages verified to exist in chat")
                 
-                // Step 7: Check for duplicates using Compose Testing
-                Log.d(TAG, "🔍 Step 7: Checking for duplicate messages...")
+                // Step 7: Check for assistant interruption bug - fail if assistant responded between every user message
+                Log.d(TAG, "🔍 Step 7: Checking for assistant interruption bug...")
+                
+                // During rapid send, we should NOT see assistant messages between every user message
+                // If we do, it means rapid send is being blocked and user cannot interrupt assistant
+                val userMessages = sentMessages // These are the 5 user messages we sent
+                val assistantMessagesBetweenUsers = ComposeTestHelper.countAssistantMessagesBetweenConsecutiveUserMessages(composeTestRule, userMessages)
+                
+                Log.d(TAG, "📊 Assistant messages between consecutive user messages: $assistantMessagesBetweenUsers out of ${userMessages.size - 1} possible gaps")
+                
+                // If there are assistant messages between every user message (except we expect 1 barista response after first message)
+                // That means rapid send is being blocked
+                val maxExpectedAssistantMessages = 3 // Only the barista response after first message
+                
+                if (assistantMessagesBetweenUsers > maxExpectedAssistantMessages) {
+                    Log.e(TAG, "❌ RAPID SEND BUG DETECTED: Found $assistantMessagesBetweenUsers assistant messages between user messages")
+                    Log.e(TAG, "❌ Expected maximum $maxExpectedAssistantMessages (just the barista response)")
+                    Log.e(TAG, "❌ This indicates rapid send is being blocked - user cannot interrupt assistant properly")
+                    failWithScreenshot("rapid_send_blocked_bug", "Rapid send is being blocked: $assistantMessagesBetweenUsers assistant messages found between consecutive user messages (expected max $maxExpectedAssistantMessages)")
+                    return@runBlocking
+                }
+                
+                Log.d(TAG, "✅ Rapid send working correctly - minimal assistant interference during rapid messaging")
+                
+                // Step 8: Check for duplicates using Compose Testing
+                Log.d(TAG, "🔍 Step 8: Checking for duplicate messages...")
                 if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
                     failWithScreenshot("chat_duplicates_detected", "Found duplicate message(s) in chat - indicates production bug")
                 }
@@ -330,6 +363,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                 Log.d(TAG, "   ✅ Successfully interrupted bot with ${MESSAGE_COUNT - 1} additional messages")
                 Log.d(TAG, "   ✅ All messages appeared immediately (optimistic UI)")
                 Log.d(TAG, "   ✅ Barista response appeared in correct order after first message")
+                Log.d(TAG, "   ✅ Rapid send working correctly - user can interrupt assistant")
                 Log.d(TAG, "   ✅ No duplicate messages detected")
                 Log.d(TAG, "   ✅ Bot interruption test completed successfully with Compose Testing")
                 

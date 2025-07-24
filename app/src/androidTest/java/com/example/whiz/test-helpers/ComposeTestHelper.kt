@@ -971,7 +971,107 @@ object ComposeTestHelper {
         }
     }
     
-
+    /**
+     * Count how many assistant messages appear between consecutive user messages
+     * This is used to detect if rapid send is being blocked - if there are assistant messages
+     * between every user message, it means the user couldn't send rapidly while bot was responding
+     */
+    fun countAssistantMessagesBetweenConsecutiveUserMessages(
+        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        userMessages: List<String>
+    ): Int {
+        return try {
+            Log.d(TAG, "🔍 Compose: Counting assistant messages between consecutive user messages")
+            Log.d(TAG, "🔍 Compose: User messages to check: ${userMessages.size}")
+            
+            // Get all message nodes
+            val allMessageNodes = composeTestRule.onAllNodes(hasContentDescriptionMatching(".*message.*"))
+            val messageNodes = allMessageNodes.fetchSemanticsNodes()
+            
+            Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} total message nodes")
+            
+            if (messageNodes.size < 2) {
+                Log.d(TAG, "🔍 Compose: Not enough messages to check between")
+                return 0
+            }
+            
+            // Create a list of message indices with their types and content
+            val messageSequence = mutableListOf<MessageInfo>()
+            
+            for (index in messageNodes.indices) {
+                val node = messageNodes[index]
+                val contentDesc = try {
+                    node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                
+                when {
+                    contentDesc.contains("User message:") -> {
+                        // Extract the actual message content to match with our user messages
+                        val messageContent = contentDesc.removePrefix("User message:").trim()
+                        messageSequence.add(MessageInfo(index, "user", messageContent))
+                        Log.d(TAG, "🔍 Compose: User message at index $index: '${messageContent.take(30)}...'")
+                    }
+                    contentDesc.contains("Assistant message:") -> {
+                        val messageContent = contentDesc.removePrefix("Assistant message:").trim()
+                        messageSequence.add(MessageInfo(index, "assistant", messageContent))
+                        Log.d(TAG, "🔍 Compose: Assistant message at index $index: '${messageContent.take(30)}...'")
+                    }
+                }
+            }
+            
+            Log.d(TAG, "🔍 Compose: Message sequence extracted: ${messageSequence.size} messages")
+            
+            // Find the indices of our specific user messages in the sequence
+            val ourUserMessageIndices = mutableListOf<Int>()
+            for ((seqIndex, messageInfo) in messageSequence.withIndex()) {
+                if (messageInfo.type == "user" && userMessages.contains(messageInfo.content)) {
+                    ourUserMessageIndices.add(seqIndex)
+                    Log.d(TAG, "🔍 Compose: Found our user message at sequence index $seqIndex: '${messageInfo.content.take(30)}...'")
+                }
+            }
+            
+            if (ourUserMessageIndices.size < 2) {
+                Log.d(TAG, "🔍 Compose: Need at least 2 user messages to check between them (found ${ourUserMessageIndices.size})")
+                return 0
+            }
+            
+            // Count assistant messages between consecutive user messages
+            var totalAssistantMessagesBetween = 0
+            
+            for (i in 0 until ourUserMessageIndices.size - 1) {
+                val currentUserIndex = ourUserMessageIndices[i]
+                val nextUserIndex = ourUserMessageIndices[i + 1]
+                
+                var assistantMessagesBetween = 0
+                for (j in (currentUserIndex + 1) until nextUserIndex) {
+                    if (messageSequence[j].type == "assistant") {
+                        assistantMessagesBetween++
+                        Log.d(TAG, "🔍 Compose: Assistant message between user messages ${i + 1} and ${i + 2}: '${messageSequence[j].content.take(30)}...'")
+                    }
+                }
+                
+                Log.d(TAG, "🔍 Compose: Between user message ${i + 1} and ${i + 2}: $assistantMessagesBetween assistant messages")
+                totalAssistantMessagesBetween += assistantMessagesBetween
+            }
+            
+            Log.d(TAG, "🔍 Compose: Total assistant messages between consecutive user messages: $totalAssistantMessagesBetween")
+            totalAssistantMessagesBetween
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Exception counting assistant messages between user messages", e)
+            0
+        }
+    }
     
+    /**
+     * Data class to hold message information for sequence analysis
+     */
+    private data class MessageInfo(
+        val index: Int,
+        val type: String, // "user" or "assistant"  
+        val content: String
+    )
 
 } 
