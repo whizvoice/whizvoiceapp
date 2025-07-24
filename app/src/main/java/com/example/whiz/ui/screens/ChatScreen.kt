@@ -103,6 +103,16 @@ fun ChatScreen(
     // 🎨 RECOMPOSITION TRACKING: Log when ChatScreen recomposes and why
     Log.d("ChatScreen", "🎨 MAIN RECOMPOSITION: ChatScreen recomposing at ${System.currentTimeMillis()}")
     
+    // 🎨 RECOMPOSITION COUNTER: Track how often we recompose
+    val recompositionCount = remember { mutableStateOf(0) }
+    recompositionCount.value++
+    LaunchedEffect(recompositionCount.value) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION COUNT: This is recomposition #${recompositionCount.value}")
+        if (recompositionCount.value > 1) {
+            Log.w("ChatScreen", "⚠️ POTENTIAL OVER-RECOMPOSITION: ChatScreen has recomposed ${recompositionCount.value} times")
+        }
+    }
+    
     // ViewModel state collections
     val messages by viewModel.messages.collectAsState()
     
@@ -145,9 +155,27 @@ fun ChatScreen(
 
     // Voice state from VoiceManager (clean separation)
     val isListening by voiceManager.isListening.collectAsState()
+    
+    // 🎨 RECOMPOSITION TRACKING: Log listening state changes (high frequency)
+    LaunchedEffect(isListening) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: isListening changed to: $isListening at ${System.currentTimeMillis()}")
+    }
+    
     val transcription by voiceManager.transcriptionState.collectAsState()
+    
+    // 🎨 RECOMPOSITION TRACKING: Log transcription changes (very high frequency!)
+    LaunchedEffect(transcription) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: transcription changed to: '${transcription.take(30)}...' at ${System.currentTimeMillis()}")
+    }
+    
     val speechError by voiceManager.speechError.collectAsState()
     val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
+    
+    // 🎨 RECOMPOSITION TRACKING: Log TTS speaking state changes
+    LaunchedEffect(isSpeaking) {
+        Log.d("ChatScreen", "🎨 RECOMPOSITION: isSpeaking changed to: $isSpeaking at ${System.currentTimeMillis()}")
+    }
+    
     val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
     // UI State
@@ -549,6 +577,12 @@ fun MessagesList(
         deduplicated
     }
     
+    // 🎨 RECOMPOSITION TRACKING: Log when message list recomposes
+    LaunchedEffect(deduplicatedMessages.size, deduplicatedMessages.hashCode()) {
+        Log.d("ChatScreen", "🎨 LAZY COLUMN RECOMPOSITION: Message list recomposing with ${deduplicatedMessages.size} messages at ${System.currentTimeMillis()}")
+        Log.d("ChatScreen", "🎨 LAZY COLUMN RECOMPOSITION: Messages hash: ${deduplicatedMessages.hashCode()}")
+    }
+    
     LazyColumn(
         state = listState,
         modifier = modifier
@@ -582,6 +616,13 @@ fun MessagesList(
 
 @Composable
 fun MessageItem(message: MessageEntity) {
+    // 🎨 RECOMPOSITION TRACKING: Log when individual message items recompose
+    val messageItemRecompositions = remember { mutableStateOf(0) }
+    messageItemRecompositions.value++
+    if (messageItemRecompositions.value > 1) {
+        Log.d("ChatScreen", "🎨 MESSAGE ITEM RECOMPOSITION: Message '${message.content.take(20)}...' recomposed ${messageItemRecompositions.value} times")
+    }
+    
     val isUserMessage = message.type == MessageType.USER
 
     val backgroundColor = when (message.type) {
