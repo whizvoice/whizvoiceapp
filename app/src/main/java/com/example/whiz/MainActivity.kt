@@ -49,6 +49,9 @@ class MainActivity : ComponentActivity() {
     lateinit var permissionManager: PermissionManager
     
     @Inject
+    lateinit var ttsManager: com.example.whiz.services.TTSManager
+    
+    @Inject
     lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
     
     @Inject
@@ -426,6 +429,13 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
+        // Stop TTS when app is backgrounded to prevent speech continuing off-screen
+        try {
+            ttsManager.stop()
+            Log.d("MainActivity", "TTS stopped due to app backgrounding")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error stopping TTS on pause", e)
+        }
     }
 
     override fun onDestroy() {

@@ -1,6 +1,8 @@
 package com.example.whiz.integration
 
 import android.content.Intent
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
@@ -42,10 +44,10 @@ import android.util.Log
 @LargeTest
 @RunWith(AndroidJUnit4::class)
 @HiltAndroidTest
-class TTSBackgroundingBugTest : BaseIntegrationTest() {
+class TTSBackgroundingTest : BaseIntegrationTest() {
 
     companion object {
-        private val TAG = "TTSBackgroundingBugTest"
+        private val TAG = "TTSBackgroundingTest"
     }
 
     @Inject
@@ -146,8 +148,11 @@ class TTSBackgroundingBugTest : BaseIntegrationTest() {
         
         val testMessage = "Hey there, can you tell me a long story about space exploration and the future of humanity?"
         
+        // Get ChatViewModel via ViewModelProvider to avoid Hilt compilation errors with @HiltViewModel classes
+        val chatViewModel = ViewModelProvider(activity as ViewModelStoreOwner).get(com.example.whiz.ui.viewmodels.ChatViewModel::class.java)
+        
         // Simulate voice transcription and automatic sending (as voice input typically does)
-        val voiceSendSuccess = simulateVoiceTranscriptionAndSend(testMessage, rapid = false)
+        val voiceSendSuccess = simulateVoiceTranscriptionAndSend(testMessage, rapid = false, chatViewModel = chatViewModel)
         if (!voiceSendSuccess) {
             failWithScreenshot("Failed to send voice message via transcription simulation")
         }
