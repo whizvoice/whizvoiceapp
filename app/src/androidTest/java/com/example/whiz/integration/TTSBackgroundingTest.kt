@@ -59,6 +59,9 @@ class TTSBackgroundingBugTest : BaseIntegrationTest() {
     
     @Inject
     lateinit var permissionManager: PermissionManager
+    
+    // Note: ChatViewModel will be obtained via ViewModelProvider instead of direct injection
+    // to avoid Hilt compilation errors with @HiltViewModel classes
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     
@@ -66,7 +69,9 @@ class TTSBackgroundingBugTest : BaseIntegrationTest() {
     private val createdChatIds = mutableListOf<Long>()
 
     @Before
-    fun setUp() {
+    override fun setUpAuthentication() {
+        super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
+        
         // Grant microphone permission for voice tests
         Log.d(TAG, "🎙️ Granting microphone permission for TTS backgrounding test")
         device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
@@ -141,16 +146,10 @@ class TTSBackgroundingBugTest : BaseIntegrationTest() {
         
         val testMessage = "Hey there, can you tell me a long story about space exploration and the future of humanity?"
         
-        // Type the message as if it was transcribed from voice
-        val typingSuccess = typeMessageInInputField(testMessage, rapid = false)
-        if (!typingSuccess) {
-            failWithScreenshot("Failed to type voice message in input field")
-        }
-        
-        // Send the message (this simulates voice input auto-sending)
-        val sendingSuccess = clickSendButtonAndWaitForSent(testMessage, rapid = false)
-        if (!sendingSuccess) {
-            failWithScreenshot("Failed to send voice message")
+        // Simulate voice transcription and automatic sending (as voice input typically does)
+        val voiceSendSuccess = simulateVoiceTranscriptionAndSend(testMessage, rapid = false)
+        if (!voiceSendSuccess) {
+            failWithScreenshot("Failed to send voice message via transcription simulation")
         }
         
         Log.d(TAG, "✅ Step 2 Complete: Voice message sent successfully")

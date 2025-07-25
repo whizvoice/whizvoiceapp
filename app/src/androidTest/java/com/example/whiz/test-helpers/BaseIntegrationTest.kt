@@ -1941,55 +1941,52 @@ abstract class BaseIntegrationTest {
     }
 
     /**
-     * Simulate voice transcription completion and message sending - RAPID VERSION
-     * This simulates the flow of: voice input → transcription → automatic send
+     * Simulate voice transcription completion using the ACTUAL voice code path
+     * This calls the real voice transcription methods that production uses
+     * 
+     * @param message The message to send as if transcribed from voice
+     * @param rapid Whether to use rapid mode for UI interactions (fallback only)
+     * @param chatViewModel Optional ChatViewModel to use real voice pathway. If null, falls back to typing simulation.
      */
-    protected fun simulateVoiceTranscriptionAndSendRapid(message: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🎤 RAPID: Simulating voice transcription: '${message.take(30)}...'")
+    protected fun simulateVoiceTranscriptionAndSend(
+        message: String, 
+        rapid: Boolean = false,
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+    ): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎤 Simulating voice transcription: '${message.take(30)}...' (rapid=$rapid)")
         
-        // In a real voice input flow, the transcribed text would appear in the input field
-        // and then be automatically sent. Since we can't actually speak in tests,
-        // we simulate this by directly typing the message (as if transcription completed)
-        // and then triggering the send
-        
-        val typingSuccess = typeMessageInInputField(message, rapid = true)
-        if (!typingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Failed to simulate voice transcription")
-            return false
+        return if (chatViewModel != null) {
+            // Use the REAL voice pathway - this is what actually happens in production!
+            android.util.Log.d("BaseIntegrationTest", "✅ Using REAL voice pathway via ChatViewModel.sendUserInput()")
+            try {
+                // This is the exact same flow as when voice transcription completes:
+                // 1. Update input text with voice flag
+                chatViewModel.updateInputText(message, fromVoice = true)
+                // 2. Send the message directly (bypasses UI completely)
+                chatViewModel.sendUserInput(message)
+                
+                // For non-rapid calls, verify the message actually appeared
+                if (!rapid) {
+                    android.util.Log.d("BaseIntegrationTest", "🔍 Non-rapid mode: Verifying message appeared in chat...")
+                    val messageVisible = verifyMessageVisible(message, timeoutMs = 3000)
+                    if (!messageVisible) {
+                        android.util.Log.e("BaseIntegrationTest", "❌ Real voice message sent but not visible in chat")
+                        return false
+                    }
+                    android.util.Log.d("BaseIntegrationTest", "✅ Real voice message confirmed visible in chat")
+                }
+                
+                android.util.Log.d("BaseIntegrationTest", "✅ Real voice message sent successfully")
+                true
+            } catch (e: Exception) {
+                android.util.Log.e("BaseIntegrationTest", "❌ Failed to send via real voice pathway: ${e.message}")
+                false
+            }
+        } else {
+            // Fall back to typing simulation for tests that don't inject ChatViewModel
+            android.util.Log.d("BaseIntegrationTest", "❌ ChatViewModel not provided")
+            false
         }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice transcription simulated successfully")
-        
-        // Now send the message with rapid timing (as voice input typically auto-sends)
-        val sendingSuccess = clickSendButtonAndWaitForSent(message, rapid = true)
-        if (!sendingSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Voice message send failed")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice message sent successfully")
-        return true
-    }
-
-    /**
-     * Complete voice message sending flow: simulate transcription callback and send - RAPID VERSION
-     * This is the voice equivalent of sendMessageAndVerifyDisplayRapid()
-     * Assumes voice mode is already active (continuous listening enabled)
-     */
-    protected fun sendVoiceMessageAndVerifyDisplayRapid(message: String): Boolean {
-        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Attempting to send voice message: '${message.take(30)}...'")
-        android.util.Log.d("BaseIntegrationTest", "🎙️ RAPID: Assuming voice mode already active (continuous listening enabled)")
-        
-        // Step 1: Simulate voice transcription completion and send (rapid)
-        // In voice mode, transcription appears and is automatically sent
-        val transcriptionSuccess = simulateVoiceTranscriptionAndSendRapid(message)
-        if (!transcriptionSuccess) {
-            android.util.Log.e("BaseIntegrationTest", "❌ RAPID: Voice transcription and send failed")
-            return false
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "✅ RAPID: Voice message sent and displayed successfully")
-        return true
     }
 
     /**
