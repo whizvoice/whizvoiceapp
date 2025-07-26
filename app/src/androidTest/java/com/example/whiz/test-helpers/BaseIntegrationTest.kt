@@ -1961,7 +1961,10 @@ abstract class BaseIntegrationTest {
             android.util.Log.d("BaseIntegrationTest", "✅ Using ACTUAL SpeechRecognitionService callback mechanism")
             try {
                 // Ensure continuous listening is enabled (required for auto-send behavior)
-                chatViewModel.ensureContinuousListeningEnabled()
+                // Must run on main thread as SpeechRecognizer requires it
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    chatViewModel.ensureContinuousListeningEnabled()
+                }
                 
                 // Trigger the actual speech recognition callback by directly invoking the callback
                 // that was set when ChatViewModel called speechRecognitionService.startListening
