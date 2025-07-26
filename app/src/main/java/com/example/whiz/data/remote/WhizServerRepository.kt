@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.withContext
@@ -60,7 +62,11 @@ class WhizServerRepository @Inject constructor(
     private val _messageEvents = MutableSharedFlow<WebSocketEvent>(replay = 0) // No replay for messages
     
     // Combined flow for backward compatibility
-    val webSocketEvents: SharedFlow<WebSocketEvent> = merge(_connectionStateEvents, _messageEvents)
+    val webSocketEvents: SharedFlow<WebSocketEvent> = merge(_connectionStateEvents, _messageEvents).shareIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        replay = 0
+    )
     
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
@@ -117,7 +123,7 @@ class WhizServerRepository @Inject constructor(
         
         // 🔧 FIXED: Improved WebSocket connection state checking
         // Don't use the crude send("") check which can cause message loss
-        if (webSocket != null && _webSocketEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
+        if (webSocket != null && _connectionStateEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
             Log.w(TAG, "WebSocket already connected based on connection state.")
             // If successfully connected, reset manual disconnect flag
             isManuallyDisconnected = false

@@ -70,6 +70,14 @@ class SpeechRecognitionService @Inject constructor(
         }
 
     fun initialize() {
+        // Ensure initialization always happens on the main thread
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Handler(Looper.getMainLooper()).post {
+                initialize()
+            }
+            return
+        }
+        
         // Check availability first without doing anything that could crash
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e(TAG, "Speech recognition is not available on this device.")
