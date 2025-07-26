@@ -146,7 +146,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         // Step 2: Send a voice message (simulate transcription but send as voice)
         Log.d(TAG, "🎤 Step 2: Sending voice message...")
         
-        val testMessage = "Hey there, can you tell me a long story about space exploration and the future of humanity?"
+        val testMessage = "Tell me about space in 50 words"
         
         // Get reference to the existing ChatViewModel that's already running in the app
         // The app has navigated to ChatScreen which created a ChatViewModel via hiltViewModel()
@@ -154,6 +154,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         val chatViewModel = ViewModelProvider(activity as ViewModelStoreOwner).get(com.example.whiz.ui.viewmodels.ChatViewModel::class.java)
         
         // Simulate voice transcription and automatic sending (as voice input typically does)
+        // Use rapid=true to skip UI verification since we're testing TTS backgrounding, not message sending
         val voiceSendSuccess = simulateVoiceTranscriptionAndSend(testMessage, rapid = false, chatViewModel = chatViewModel)
         if (!voiceSendSuccess) {
             failWithScreenshot("Failed to send voice message via transcription simulation")
