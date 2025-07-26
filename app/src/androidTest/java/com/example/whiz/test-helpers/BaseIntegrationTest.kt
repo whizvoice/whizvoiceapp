@@ -1951,35 +1951,52 @@ abstract class BaseIntegrationTest {
     protected fun simulateVoiceTranscriptionAndSend(
         message: String, 
         rapid: Boolean = false,
-        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null,
+        speechRecognitionService: com.example.whiz.services.SpeechRecognitionService? = null
     ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🎤 Simulating voice transcription: '${message.take(30)}...' (rapid=$rapid)")
         
-        return if (chatViewModel != null) {
-            // Use the REAL voice pathway - this is what actually happens in production!
-            android.util.Log.d("BaseIntegrationTest", "✅ Using REAL voice pathway via ChatViewModel.sendUserInput()")
+        return if (chatViewModel != null && speechRecognitionService != null) {
+            // Use the ACTUAL SpeechRecognitionService callback mechanism
+            android.util.Log.d("BaseIntegrationTest", "✅ Using ACTUAL SpeechRecognitionService callback mechanism")
             try {
-                // This is the exact same flow as when voice transcription completes:
-                // 1. Update input text with voice flag
-                chatViewModel.updateInputText(message, fromVoice = true)
-                // 2. Send the message directly (bypasses UI completely)
-                chatViewModel.sendUserInput(message)
+                // Ensure continuous listening is enabled (required for auto-send behavior)
+                chatViewModel.ensureContinuousListeningEnabled()
+                
+                // Trigger the actual speech recognition callback by directly invoking the callback
+                // that was set when ChatViewModel called speechRecognitionService.startListening
+                android.util.Log.d("BaseIntegrationTest", "🎤 Triggering REAL speech recognition callback with: '$message'")
+                
+                // Access the private recognitionCallback field using reflection and invoke it
+                val callbackField = speechRecognitionService.javaClass.getDeclaredField("recognitionCallback")
+                callbackField.isAccessible = true
+                val callback = callbackField.get(speechRecognitionService) as? ((String) -> Unit)
+                
+                if (callback != null) {
+                    android.util.Log.d("BaseIntegrationTest", "✅ Found recognition callback, invoking with transcription")
+                    callback.invoke(message)
+                } else {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ No recognition callback found - continuous listening may not be active")
+                    // Fallback to direct method calls if callback not available
+                    chatViewModel.updateInputText(message, fromVoice = true)
+                    chatViewModel.sendUserInput(message)
+                }
                 
                 // For non-rapid calls, verify the message actually appeared
                 if (!rapid) {
                     android.util.Log.d("BaseIntegrationTest", "🔍 Non-rapid mode: Verifying message appeared in chat...")
-                    val messageVisible = verifyMessageVisible(message, timeoutMs = 3000)
+                    val messageVisible = verifyMessageVisible(message, timeoutMs = 1000)
                     if (!messageVisible) {
-                        android.util.Log.e("BaseIntegrationTest", "❌ Real voice message sent but not visible in chat")
+                        android.util.Log.e("BaseIntegrationTest", "❌ Speech recognition callback sent but not visible in chat")
                         return false
                     }
-                    android.util.Log.d("BaseIntegrationTest", "✅ Real voice message confirmed visible in chat")
+                    android.util.Log.d("BaseIntegrationTest", "✅ Speech recognition callback confirmed visible in chat")
                 }
                 
-                android.util.Log.d("BaseIntegrationTest", "✅ Real voice message sent successfully")
+                android.util.Log.d("BaseIntegrationTest", "✅ Speech recognition callback simulation completed successfully")
                 true
             } catch (e: Exception) {
-                android.util.Log.e("BaseIntegrationTest", "❌ Failed to send via real voice pathway: ${e.message}")
+                android.util.Log.e("BaseIntegrationTest", "❌ Failed to simulate speech recognition callback: ${e.message}", e)
                 false
             }
         } else {
