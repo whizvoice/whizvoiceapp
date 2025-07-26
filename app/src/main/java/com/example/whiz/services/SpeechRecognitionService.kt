@@ -3,6 +3,8 @@ package com.example.whiz.services
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -224,39 +226,59 @@ class SpeechRecognitionService @Inject constructor(
 
     /**
      * Safely cleanup SpeechRecognizer and related resources
+     * Ensures all SpeechRecognizer operations run on the main thread
      */
     private fun cleanup() {
         try {
             speechRecognizer?.let { recognizer ->
-                try {
-                    recognizer.cancel() // Cancel any ongoing recognition
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error cancelling speech recognizer", e)
-                }
-                
-                try {
-                    recognizer.setRecognitionListener(null) // Clear listener before destroy
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error clearing recognition listener", e)
-                }
-                
-                try {
-                    recognizer.destroy() // Destroy the recognizer
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error destroying speech recognizer", e)
+                // Ensure SpeechRecognizer operations run on main thread
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    // Already on main thread, proceed directly
+                    performCleanupOperations(recognizer)
+                } else {
+                    // Post to main thread
+                    Handler(Looper.getMainLooper()).post {
+                        performCleanupOperations(recognizer)
+                    }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error during cleanup", e)
-        } finally {
-            speechRecognizer = null
-            recognitionListener = null
-            _isListening.value = false
-            _transcriptionState.value = ""
-            manualStopInProgress = false
-            utteranceFinalized = false
-            recognizerIntent = null
+            Log.w(TAG, "Error during cleanup", e)
         }
+        
+        // Clear the reference regardless of thread
+        speechRecognizer = null
+        recognitionListener = null
+    }
+    
+    /**
+     * Perform the actual cleanup operations on the main thread
+     */
+    private fun performCleanupOperations(recognizer: SpeechRecognizer) {
+        try {
+            recognizer.cancel() // Cancel any ongoing recognition
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cancelling speech recognizer", e)
+        }
+        
+        try {
+            recognizer.setRecognitionListener(null) // Clear listener before destroy
+        } catch (e: Exception) {
+            Log.w(TAG, "Error clearing recognition listener", e)
+        }
+        
+        try {
+            recognizer.destroy() // Destroy the recognizer
+        } catch (e: Exception) {
+            Log.w(TAG, "Error destroying speech recognizer", e)
+        }
+        
+        // Reset state flags
+        _isListening.value = false
+        _transcriptionState.value = ""
+        manualStopInProgress = false
+        utteranceFinalized = false
+        recognizerIntent = null
     }
 
     private fun releaseInternal(isReinitializing: Boolean) {

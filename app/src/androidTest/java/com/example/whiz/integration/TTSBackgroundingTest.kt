@@ -148,7 +148,9 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         val testMessage = "Hey there, can you tell me a long story about space exploration and the future of humanity?"
         
-        // Get ChatViewModel via ViewModelProvider to avoid Hilt compilation errors with @HiltViewModel classes
+        // Get reference to the existing ChatViewModel that's already running in the app
+        // The app has navigated to ChatScreen which created a ChatViewModel via hiltViewModel()
+        // ViewModelProvider.get() returns that same existing instance from the activity's ViewModelStore
         val chatViewModel = ViewModelProvider(activity as ViewModelStoreOwner).get(com.example.whiz.ui.viewmodels.ChatViewModel::class.java)
         
         // Simulate voice transcription and automatic sending (as voice input typically does)
