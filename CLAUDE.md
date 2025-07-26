@@ -8,7 +8,9 @@ This project has two folders: whizvoice which has the webapp code, and whizvoice
 - Don't do git operations; user prefers to do it themselves
 - Don't try to run the webserver. It's on a different machine.
 
-## Test Debugging Resources
+## Testing
+
+You can run tests with run_tests_on_debug.sh script. Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests.
 
 When investigating test failures, check these log files for detailed information:
 

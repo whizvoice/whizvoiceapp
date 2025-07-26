@@ -592,6 +592,24 @@ run_integration_tests_with_logcat() {
             echo "" >> test_summary.log
         fi
         
+        # Extract specific assertion error messages (like from failWithScreenshot calls)
+        local assertion_errors=$(grep -A 2 -B 1 "java.lang.AssertionError:" test_gradle_output.log || echo "")
+        if [[ -n "$assertion_errors" ]]; then
+            echo "⚠️ Assertion Error Messages:" >> test_summary.log
+            echo "$assertion_errors" >> test_summary.log
+            echo "" >> test_summary.log
+        fi
+        
+        # Extract the specific error message text from AssertionError lines
+        local error_messages=$(grep "java.lang.AssertionError:" test_gradle_output.log | sed 's/.*java.lang.AssertionError: //' || echo "")
+        if [[ -n "$error_messages" ]]; then
+            echo "💥 Specific Error Messages:" >> test_summary.log
+            while IFS= read -r line; do
+                echo "   • $line" >> test_summary.log
+            done <<< "$error_messages"
+            echo "" >> test_summary.log
+        fi
+        
         # Extract specific failing test names with better pattern matching
         echo "🎯 FAILING TESTS IDENTIFIED:" >> test_summary.log
         echo "=================================================================================" >> test_summary.log
