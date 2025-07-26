@@ -518,9 +518,17 @@ class ChatViewModel @Inject constructor(
 
                             // 🔧 Enhanced request ID validation with error handling and conversation_id sync
                             val targetChatId = try {
+                                // 🔧 VOICE MESSAGE DEBUG: Comprehensive logging for targetChatId calculation
+                                Log.d(TAG, "🐛 VOICE_DEBUG: Starting targetChatId calculation")
+                                Log.d(TAG, "🐛 VOICE_DEBUG: event.requestId = ${event.requestId}")
+                                Log.d(TAG, "🐛 VOICE_DEBUG: effectiveConversationId = $effectiveConversationId")
+                                Log.d(TAG, "🐛 VOICE_DEBUG: current _chatId.value = ${_chatId.value}")
+                                Log.d(TAG, "🐛 VOICE_DEBUG: pendingRequests = $pendingRequests")
+                                
                                 if (event.requestId != null) {
                                     if (pendingRequests.containsKey(event.requestId)) {
                                         val originalChatId = pendingRequests[event.requestId]!!
+                                        Log.d(TAG, "🐛 VOICE_DEBUG: Found requestId in pendingRequests, originalChatId = $originalChatId")
                                         // Remove completed request from pending requests
                                         pendingRequests.remove(event.requestId) // Remove completed request
                                         
@@ -593,13 +601,17 @@ class ChatViewModel @Inject constructor(
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
-                            effectiveConversationId
+                            val finalTargetChatId = effectiveConversationId
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: Migration scenario - returning effectiveConversationId = $finalTargetChatId")
+                                            finalTargetChatId
                                         } else {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: No migration needed - returning originalChatId = $originalChatId")
                                             originalChatId
                                         }
                                     } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "Request ID ${event.requestId} not found in pending requests")
+                                        Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests - returning _chatId.value = ${_chatId.value}")
                                         // This could be a race condition or resumed session response
                                         // Process the message for current chat as fallback instead of skipping entirely
                                         _chatId.value
@@ -607,6 +619,7 @@ class ChatViewModel @Inject constructor(
                                 } else {
                                     // No request ID - this is a legacy message or server-initiated message
                                     Log.w(TAG, "No request ID provided. Using current chat as fallback.")
+                                    Log.d(TAG, "🐛 VOICE_DEBUG: No requestId - returning _chatId.value = ${_chatId.value}")
                                     _chatId.value
                                 }
                             } catch (e: Exception) {
@@ -615,6 +628,9 @@ class ChatViewModel @Inject constructor(
                                 updateRespondingStateForCurrentChat()
                                 return@collect
                             }
+                            
+                            // 🔧 VOICE MESSAGE DEBUG: Log final calculated targetChatId
+                            Log.d(TAG, "🐛 VOICE_DEBUG: Final calculated targetChatId = $targetChatId")
                             
                             // 🔧 FIXED: Check if response is for current chat AFTER chat ID synchronization
                             val isResponseForCurrentChat = (targetChatId == _chatId.value)
