@@ -654,11 +654,38 @@ object ComposeTestHelper {
      * Since we've already verified all messages exist, we can assume no duplicates
      */
     fun noDuplicates(composeTestRule: ComposeTestRule, expectedMessages: List<String>): Boolean {
-        // Since we've already verified all messages exist in verifyAllMessagesExist(),
-        // and the app logic prevents duplicates, we can safely assume no duplicates
-        Log.d(TAG, "✅ Compose: Skipping duplicate check - all messages already verified to exist")
-        Log.d(TAG, "✅ Compose: No duplicates detected (assumed based on app logic)")
-        return true
+        Log.d(TAG, "🔍 Compose: Checking for duplicate messages in UI...")
+        
+        var duplicatesFound = false
+        val duplicateMessages = mutableListOf<String>()
+        
+        for ((index, message) in expectedMessages.withIndex()) {
+            val userMessageContentDesc = "User message: $message"
+            val nodes = composeTestRule.onAllNodesWithContentDescription(userMessageContentDesc)
+            val nodeCount = nodes.fetchSemanticsNodes().size
+            
+            if (nodeCount > 1) {
+                Log.w(TAG, "❌ Duplicate found: Message ${index + 1} appears $nodeCount times: '${message.take(30)}...'")
+                duplicatesFound = true
+                duplicateMessages.add(message.take(50))
+            } else if (nodeCount == 1) {
+                Log.d(TAG, "✅ No duplicate: Message ${index + 1} appears once: '${message.take(30)}...'")
+            } else {
+                Log.w(TAG, "⚠️ Message not found: '${message.take(30)}...' (this shouldn't happen if verifyAllMessagesExist passed)")
+            }
+        }
+        
+        if (duplicatesFound) {
+            Log.e(TAG, "❌ DUPLICATE MESSAGES DETECTED:")
+            duplicateMessages.forEach { msg ->
+                Log.e(TAG, "   🔄 Duplicate: '$msg...'")
+            }
+            Log.e(TAG, "❌ This indicates a message deduplication bug in production!")
+            return false
+        } else {
+            Log.d(TAG, "✅ No duplicate messages found - all messages appear exactly once")
+            return true
+        }
     }
     
     /**

@@ -578,6 +578,14 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ Both messages confirmed visible in final verification using Compose")
         }
         
+        // Step 12: Check for duplicates - fail test if found
+        Log.d(TAG, "🔍 Step 12: Checking for duplicate messages...")
+        val sentMessages = listOf(firstMessage, secondMessage)
+        if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
+            failWithScreenshot("message_duplicates_detected", "Found duplicate message(s) in chat after navigation - indicates production deduplication bug")
+        }
+        Log.d(TAG, "✅ Duplicate checking completed")
+        
         } catch (e: Exception) {
             Log.e(TAG, "❌ FAILURE: Exception during final verification")
             Log.e(TAG, "🔍 Exception type: ${e.javaClass.simpleName}")
