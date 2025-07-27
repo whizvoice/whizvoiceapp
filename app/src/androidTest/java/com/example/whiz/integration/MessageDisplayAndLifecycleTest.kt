@@ -2,7 +2,7 @@ package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -48,9 +48,9 @@ import com.example.whiz.data.local.ChatEntity
 @RunWith(AndroidJUnit4::class)
 class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     
-    // Add Compose test rule for hybrid UI testing
+    // Add Compose test rule for hybrid UI testing (app launched manually via BaseIntegrationTest)
     @get:Rule
-    val composeTestRule = createAndroidComposeRule<MainActivity>()
+    val composeTestRule = createEmptyComposeRule()
     
     @get:Rule
     val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
@@ -242,10 +242,16 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
         
-        // Step 1: Check if app is ready using ComposeTestHelper (app already launched by ComposeTestRule)
-        Log.d(TAG, "🚀 Checking if app is ready for comprehensive UI test...")
+        // Step 1: Launch app manually using BaseIntegrationTest method (ensures manual launch, not voice)
+        Log.d(TAG, "🚀 Launching app manually to ensure manual launch detection...")
+        if (!launchAppAndWaitForLoad()) {
+            failWithScreenshot("app_failed_to_load", "App failed to launch using manual launch method")
+        }
+        
+        // Step 1.5: Check if app is ready using ComposeTestHelper
+        Log.d(TAG, "🔍 Checking if app is ready for hybrid UI testing...")
         if (!ComposeTestHelper.isAppReady(composeTestRule)) {
-            failWithScreenshot("app_failed_to_load", "App failed to launch or load main UI using Compose")
+            failWithScreenshot("app_failed_to_load", "App launched but main UI not ready for Compose testing")
         }
         
         // Step 2: Navigate to new chat if needed using ComposeTestHelper

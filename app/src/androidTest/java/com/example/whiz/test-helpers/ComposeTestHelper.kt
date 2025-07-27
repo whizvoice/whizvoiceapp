@@ -1,6 +1,7 @@
 package com.example.whiz.test_helpers
 
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertIsDisplayed
@@ -81,7 +82,7 @@ object ComposeTestHelper {
     /**
      * Check if the app is ready for testing (already launched by createAndroidComposeRule)
      */
-    fun isAppReady(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun isAppReady(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: Checking if app is ready...")
             
@@ -167,7 +168,7 @@ object ComposeTestHelper {
      * Works in any context (suspend or regular functions)
      */
     fun waitForElement(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        composeTestRule: ComposeTestRule,
         selector: () -> SemanticsNodeInteraction,
         timeoutMs: Long = 10000L,
         description: String = "UI element"
@@ -209,7 +210,7 @@ object ComposeTestHelper {
     /**
      * Find and interact with the message input field using Compose testing
      */
-    fun findMessageInputField(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
+    fun findMessageInputField(composeTestRule: ComposeTestRule): SemanticsNodeInteraction? {
         composeTestRule.mainClock.autoAdvance = true
         
         return try {
@@ -235,7 +236,7 @@ object ComposeTestHelper {
     /**
      * Find and interact with the send button using Compose testing
      */
-    fun findSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
+    fun findSendButton(composeTestRule: ComposeTestRule): SemanticsNodeInteraction? {
         return try {
             Log.d(TAG, "🔍 Compose: Finding send button with ContentDescription('Send typed message')")
             
@@ -259,7 +260,7 @@ object ComposeTestHelper {
     /**
      * Type text into the message input field using Compose testing
      */
-    fun typeMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String): Boolean {
+    fun typeMessage(composeTestRule: ComposeTestRule, message: String): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: typeMessage - Looking for input field...")
             val inputField = findMessageInputField(composeTestRule)
@@ -289,7 +290,7 @@ object ComposeTestHelper {
     /**
      * Click the send button using Compose testing
      */
-    fun clickSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun clickSendButton(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: clickSendButton - Looking for send button...")
             val sendButton = findSendButton(composeTestRule)
@@ -316,7 +317,7 @@ object ComposeTestHelper {
      * Send a complete message (type + send) using Compose testing
      */
     fun sendMessage(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         message: String, 
         rapid: Boolean = false
     ): Boolean {
@@ -406,7 +407,7 @@ object ComposeTestHelper {
      * Wait for a message to appear in the chat using Compose testing
      */
     fun waitForMessageToAppear(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         message: String, 
         timeoutMs: Long,
         onFailure: ((String, String) -> Unit)? = null
@@ -509,7 +510,7 @@ object ComposeTestHelper {
     /**
      * Verify all expected messages exist using Compose testing
      */
-    fun verifyAllMessagesExist(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): List<String> {
+    fun verifyAllMessagesExist(composeTestRule: ComposeTestRule, expectedMessages: List<String>): List<String> {
         val missingMessages = mutableListOf<String>()
         
         for ((index, expectedMessage) in expectedMessages.withIndex()) {
@@ -545,7 +546,7 @@ object ComposeTestHelper {
      * Check for duplicates using Compose testing
      * Since we've already verified all messages exist, we can assume no duplicates
      */
-    fun noDuplicates(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): Boolean {
+    fun noDuplicates(composeTestRule: ComposeTestRule, expectedMessages: List<String>): Boolean {
         // Since we've already verified all messages exist in verifyAllMessagesExist(),
         // and the app logic prevents duplicates, we can safely assume no duplicates
         Log.d(TAG, "✅ Compose: Skipping duplicate check - all messages already verified to exist")
@@ -559,7 +560,7 @@ object ComposeTestHelper {
      * The bug was that responses were appearing chronologically instead of being paired with their user messages
      */
     fun verifyMessageOrder(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         userMessage: String, 
         expectedResponse: String
     ): Boolean {
@@ -698,7 +699,7 @@ object ComposeTestHelper {
     /**
      * Navigate to new chat using Compose Testing
      */
-    fun navigateToNewChat(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun navigateToNewChat(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🎯 Compose: Attempting to navigate to new chat...")
             
@@ -766,7 +767,7 @@ object ComposeTestHelper {
     /**
      * Check if currently on chat screen by looking for message input field
      */
-    fun isOnChatScreen(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun isOnChatScreen(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: Checking if on chat screen...")
             
@@ -803,7 +804,7 @@ object ComposeTestHelper {
     /**
      * Navigate back to chats list from chat screen
      */
-    fun navigateBackToChatsList(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun navigateBackToChatsList(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔙 Compose: Attempting to navigate back to chats list...")
             
@@ -844,7 +845,7 @@ object ComposeTestHelper {
      * It sends a message via UI and verifies a new request was added to pendingRequests
      */
     fun sendMessageWithWebSocketVerification(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         message: String,
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel
     ): Boolean {
@@ -927,7 +928,7 @@ object ComposeTestHelper {
      * This checks message ordering to ensure the bot response is related to our message
      */
     private fun verifyBotResponseAfterMessage(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         userMessage: String
     ): Boolean {
         return try {
@@ -996,7 +997,7 @@ object ComposeTestHelper {
      * between every user message, it means the user couldn't send rapidly while bot was responding
      */
     fun countAssistantMessagesBetweenConsecutiveUserMessages(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        composeTestRule: ComposeTestRule,
         userMessages: List<String>
     ): Int {
         return try {

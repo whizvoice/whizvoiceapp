@@ -1386,7 +1386,8 @@ class ChatViewModel @Inject constructor(
         // Allow multiple concurrent messages to be sent
 
         viewModelScope.launch {
-            if (_chatId.value <= 0) {
+            if (_chatId.value == -1L) {
+                // Note: Only treat -1 as "new chat", not all negative numbers (optimistic IDs are negative)
                 if (configUseRemoteAgent) {
                     // For remote agent: Don't create conversation locally
                     // Let the WebSocket server create it and then sync
@@ -1406,7 +1407,8 @@ class ChatViewModel @Inject constructor(
             
             // Always save user message for immediate display (optimistic UI)
             // Repository will handle deduplication when server messages arrive
-            if (_chatId.value > 0) {
+            if (_chatId.value != -1L) {
+                // Note: Accept optimistic chat IDs (negative numbers) as valid, only reject -1
                 if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
                     // Note: sendInputText doesn't have requestId, so we'll use the old method
@@ -1433,7 +1435,8 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // For new chats, refresh conversations after server creates it
-                if (_chatId.value <= 0) {
+                if (_chatId.value == -1L) {
+                    // Note: Only refresh for truly new chats (-1), not optimistic IDs
                     try {
                         viewModelScope.launch {
                             // Remove arbitrary delay - server should acknowledge immediately
