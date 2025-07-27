@@ -2,9 +2,14 @@ package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.example.whiz.BaseIntegrationTest
+import com.example.whiz.MainActivity
+import com.example.whiz.test_helpers.ComposeTestHelper
 import dagger.hilt.android.testing.HiltAndroidTest
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Assert
@@ -42,6 +47,10 @@ import com.example.whiz.data.local.ChatEntity
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
+    
+    // Add Compose test rule for hybrid UI testing
+    @get:Rule
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
     
     @get:Rule
     val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
@@ -233,25 +242,38 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
         
-        // Step 1: Launch the app for our UI test
-        Log.d(TAG, "🚀 Launching app for comprehensive UI test...")
-        if (!launchAppAndWaitForLoad()) {
-            failWithScreenshot("app_failed_to_load", "App failed to launch or load main UI")
+        // Step 1: Check if app is ready using ComposeTestHelper (app already launched by ComposeTestRule)
+        Log.d(TAG, "🚀 Checking if app is ready for comprehensive UI test...")
+        if (!ComposeTestHelper.isAppReady(composeTestRule)) {
+            failWithScreenshot("app_failed_to_load", "App failed to launch or load main UI using Compose")
         }
         
-        // Step 2: Navigate to new chat if needed
+        // Step 2: Navigate to new chat if needed using ComposeTestHelper
         Log.d(TAG, "📱 App loaded successfully, navigating to new chat...")
         
         // Capture initial chats before UI navigation
         val initialUIChats = repository.getAllChats()
         
-        if (!clickNewChatButtonAndWaitForChatScreen()) {
-            // Check if already in chat by looking for message input field
-            val alreadyInChat = device.hasObject(androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg(packageName))
-            if (!alreadyInChat) {
-                failWithScreenshot("new_chat_failed", "Failed to navigate to new chat and not already in chat")
+        // Check if already on chat screen using ComposeTestHelper
+        if (!ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+            // Navigate to new chat using ComposeTestHelper
+            if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
+                failWithScreenshot("new_chat_failed", "Failed to navigate to new chat using Compose")
             }
-            Log.w(TAG, "⚠️ Already in chat, continuing with test...")
+            
+            // Wait for chat screen to load
+            val chatScreenLoaded = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+                timeoutMs = 5000L,
+                description = "chat input field after navigation"
+            )
+            
+            if (!chatScreenLoaded) {
+                failWithScreenshot("chat_screen_not_loaded", "Chat screen did not load after navigation")
+            }
+        } else {
+            Log.d(TAG, "✅ Already on chat screen, continuing with test...")
         }
         
         // Track any UI-created chat for cleanup
@@ -268,20 +290,24 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ Could not track UI-created chat: ${e.message}")
         }
         
-        // Step 3: Send first message and verify optimistic UI
-        Log.d(TAG, "💬 Sending first message and verifying optimistic UI...")
-        if (!sendMessageAndVerifyDisplay(firstMessage)) {
-            failWithScreenshot("first_message_failed", "Failed to send first message or verify optimistic UI")
+        // Step 3: Send first message and verify optimistic UI using ComposeTestHelper
+        Log.d(TAG, "💬 Sending first message and verifying optimistic UI using Compose...")
+        val messageSentSuccessfully = ComposeTestHelper.sendMessage(composeTestRule, firstMessage, rapid = false)
+        if (!messageSentSuccessfully) {
+            failWithScreenshot("first_message_failed", "Failed to send first message or verify optimistic UI with Compose")
         }
         Log.d(TAG, "✅ SUCCESS: First message appears in chat UI immediately!")
         
-        // Step 6: Wait for server/bot response by looking for the "Whiz" assistant label
-        Log.d(TAG, "🔍 Waiting for server/bot response by looking for assistant message structure...")
+        // Step 6: Wait for server/bot response using ComposeTestHelper
+        Log.d(TAG, "🔍 Waiting for server/bot response using Compose...")
         
-        // Look for the "Whiz" label that appears in bot messages (from production MessageItem composable)
-        val botResponseAppeared = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.text("Whiz").pkg("com.example.whiz.debug")
-        ), 10000) // Reasonable timeout for server response
+        // Use ComposeTestHelper to wait for bot response indicator
+        val botResponseAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Whiz") },
+            timeoutMs = 10000L,
+            description = "bot response indicator"
+        )
         
         val finalBotResponse = botResponseAppeared
         
@@ -334,12 +360,25 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         Log.d(TAG, "✅ Expected chat title: '$chatTitle'")
         Log.d(TAG, "   (Derived from first line: '${firstLine.take(30)}...')")
         
-        // Step 7: Navigate back to chat list
-        Log.d(TAG, "🔍 Navigating back to chat list...")
-        if (!navigateBackToChatsListFromChat()) {
-            Log.d(TAG, "🚫 Could not navigate back to chat list")
+        // Step 7: Navigate back to chat list using ComposeTestHelper
+        Log.d(TAG, "🔍 Navigating back to chat list using Compose...")
+        if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+            Log.d(TAG, "🚫 Could not navigate back to chat list using Compose")
             failWithScreenshot("chat_list_not_loaded", "Could not navigate back to chat list - back navigation may be broken")
         }
+        
+        // Wait for chats list to load using ComposeTestHelper
+        val chatsListLoaded = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("My Chats") },
+            timeoutMs = 5000L,
+            description = "chats list indicator"
+        )
+        
+        if (!chatsListLoaded) {
+            failWithScreenshot("chats_list_not_loaded", "Chats list did not load after navigation")
+        }
+        
         Log.d(TAG, "✅ Successfully returned to chat list")
         
         // Step 7.5: Wait for incremental sync to update chat list
@@ -369,26 +408,39 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ Chat list may not have fully loaded, but continuing...")
         }
         
-        // Find our chat by unique test identifier (this always works based on logs)
-        Log.d(TAG, "🔍 Looking for chat containing unique test identifier: '$uniqueTestId'...")
+        // Find our chat by unique test identifier using ComposeTestHelper
+        Log.d(TAG, "🔍 Looking for chat containing unique test identifier using Compose: '$uniqueTestId'...")
         
-        val ourChat = device.findObject(
-            androidx.test.uiautomator.UiSelector()
-                .textContains(uniqueTestId.take(15)) // Use first 15 chars of identifier
-                .packageName("com.example.whiz.debug")
+        // Wait for the chat to appear in the list using ComposeTestHelper
+        val chatFoundInList = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText(uniqueTestId.take(15), substring = true) },
+            timeoutMs = 10000L,
+            description = "chat with test identifier in list"
         )
         
-        if (!ourChat.waitForExists(5000)) {
-            failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$uniqueTestId' in the chat list")
+        if (!chatFoundInList) {
+            failWithScreenshot("chat_not_found_in_list", "Could not find our chat by identifier '$uniqueTestId' in the chat list using Compose")
         }
         
-        Log.d(TAG, "✅ Found our chat by test identifier, clicking to re-enter...")
-        ourChat.click()
+        Log.d(TAG, "✅ Found our chat by test identifier using Compose, clicking to re-enter...")
         
-        // Wait for chat to reload
-        val chatReloaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.clazz("android.widget.EditText").pkg("com.example.whiz.debug")
-        ), 5000)
+        // Click on the chat using Compose
+        try {
+            composeTestRule.onNodeWithText(uniqueTestId.take(15), substring = true).performClick()
+            Log.d(TAG, "✅ Clicked on chat using Compose")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to click on chat using Compose: ${e.message}")
+            failWithScreenshot("chat_click_failed", "Failed to click on chat using Compose")
+        }
+        
+        // Wait for chat to reload using ComposeTestHelper
+        val chatReloaded = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+            timeoutMs = 5000L,
+            description = "chat input field after re-entering chat"
+        )
         
         if (!chatReloaded) {
             Log.e(TAG, "❌ FAILURE: Chat failed to reload after re-entering")
@@ -397,59 +449,43 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "✅ Successfully re-entered the chat")
         
-        // Step 9: Wait for chat history to load, then verify the first message is still visible
-        Log.d(TAG, "🔍 Waiting for chat history to load after re-entering...")
+        // Step 9: Wait for chat history to load, then verify the first message is still visible using ComposeTestHelper
+        Log.d(TAG, "🔍 Waiting for chat history to load after re-entering using Compose...")
         
-        // Wait for chat content to load - look for any message content
-        val chatContentLoaded = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains("Hello").pkg("com.example.whiz.debug")
-        ), 5000) || device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains("test").pkg("com.example.whiz.debug")
-        ), 2000)
+        // Wait for chat content to load using ComposeTestHelper
+        var chatContentLoaded = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText(firstMessage) },
+            timeoutMs = 5000L,
+            description = "first message in chat history"
+        )
         
+        // If full message not found, try with unique test identifier
         if (!chatContentLoaded) {
-            Log.w(TAG, "⚠️ Chat content may not have loaded yet, waiting a bit more...")
-            // Wait for any substantial text content that looks like a message
-            val anyMessageContent = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.clazz("android.widget.TextView")
-                    .pkg("com.example.whiz.debug")
-            ), 3000)
-            
-            if (!anyMessageContent) {
-                Log.w(TAG, "⚠️ No message content visible after waiting")
-            }
+            Log.w(TAG, "⚠️ Full message not found, trying with test identifier...")
+            chatContentLoaded = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(uniqueTestId, substring = true) },
+                timeoutMs = 3000L,
+                description = "message with test identifier"
+            )
         }
         
-        Log.d(TAG, "🔍 Verifying first message is still visible after navigation...")
-        
-        // Look for our unique test identifier in the message content
-        var firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(uniqueTestId).pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        // If not found by test identifier, try the full message
-        if (!firstMessageStillVisible) {
-            Log.w(TAG, "🔍 Test identifier not found, trying full message...")
-            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains(firstMessage).pkg("com.example.whiz.debug")
-            ), 2000)
+        // If still not found, try with partial content
+        if (!chatContentLoaded) {
+            Log.w(TAG, "⚠️ Test identifier not found, trying partial message content...")
+            chatContentLoaded = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("test this chat", substring = true) },
+                timeoutMs = 2000L,
+                description = "partial message content"
+            )
         }
         
-        // If not found by full text, try looking for key parts of the message
-        if (!firstMessageStillVisible) {
-            Log.w(TAG, "🔍 Full message not found, trying to find by 'Hello' keyword...")
-            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains("Hello").pkg("com.example.whiz.debug")
-            ), 2000)
-        }
+        Log.d(TAG, "🔍 Verifying first message is still visible after navigation using Compose...")
         
-        // If still not found, try looking for "test this chat" phrase
-        if (!firstMessageStillVisible) {
-            Log.w(TAG, "🔍 'Hello' not found, trying 'test this chat' phrase...")
-            firstMessageStillVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains("test this chat").pkg("com.example.whiz.debug")
-            ), 2000)
-        }
+        // Final verification using ComposeTestHelper
+        val firstMessageStillVisible = chatContentLoaded
         
         if (!firstMessageStillVisible) {
             Log.e(TAG, "❌ FAILURE: First message no longer visible after navigation")
@@ -471,86 +507,68 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ First message confirmed still visible after navigation")
         }
         
-        // Step 10: Send a second message to test existing chat functionality - using RAPID method
-        Log.d(TAG, "💬 Sending second message in existing chat using rapid method...")
+        // Step 10: Send a second message to test existing chat functionality using ComposeTestHelper
+        Log.d(TAG, "💬 Sending second message in existing chat using ComposeTestHelper...")
         try {
-            if (!sendMessageAndVerifyDisplay(secondMessage, rapid = true)) {
-                Log.e(TAG, "❌ FAILURE: sendMessageAndVerifyDisplay returned false for second message")
+            val secondMessageSent = ComposeTestHelper.sendMessage(composeTestRule, secondMessage, rapid = true)
+            if (!secondMessageSent) {
+                Log.e(TAG, "❌ FAILURE: ComposeTestHelper.sendMessage returned false for second message")
                 Log.e(TAG, "🔍 Second message content: '$secondMessage'")
                 Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
                 
-                // Debug: Check what's currently visible in the UI
-                val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
-                val visibleTexts = allTextViews.mapNotNull { 
-                    try {
-                        it.text
-                    } catch (e: androidx.test.uiautomator.StaleObjectException) {
-                        Log.w(TAG, "⚠️ Stale UI element encountered during error text extraction, skipping")
-                        null
-                    }
-                }.filter { it.isNotBlank() && it.length > 5 }
-                Log.e(TAG, "🔍 Currently visible texts when second message failed: ${visibleTexts.joinToString(", ")}")
-                
-                failWithScreenshot("second_message_failed", "Failed to send second message in existing chat. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+                failWithScreenshot("second_message_failed_compose", "Failed to send second message in existing chat using Compose. Message: '${secondMessage.take(50)}...'")
             }
-            Log.d(TAG, "✅ Second message sent and visible successfully using rapid method")
+            Log.d(TAG, "✅ Second message sent and visible successfully using ComposeTestHelper")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ EXCEPTION during second message send", e)
+            Log.e(TAG, "❌ EXCEPTION during second message send with Compose", e)
             Log.e(TAG, "🔍 Second message content: '$secondMessage'")
             Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
-            throw e
+            Log.e(TAG, "🔍 Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Exception message: ${e.message}")
+            
+            failWithScreenshot("second_message_exception_compose", "Exception during second message send using Compose: ${e.javaClass.simpleName} - ${e.message}")
         }
         
-        // Step 11: Final verification - both messages should be visible
-        Log.d(TAG, "🔍 Final verification: checking if both messages are visible...")
+        // Step 11: Final verification - both messages should be visible using ComposeTestHelper
+        Log.d(TAG, "🔍 Final verification: checking if both messages are visible using Compose...")
         
-        // Use the same reliable detection method that worked earlier
-        val firstMessageVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(uniqueTestId).pkg("com.example.whiz.debug")
-        ), 3000)
+        // Use ComposeTestHelper to verify both messages exist
+        val expectedMessages = listOf(firstMessage, secondMessage)
+        val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, expectedMessages)
         
-        val secondMessageVisible = device.wait(androidx.test.uiautomator.Until.hasObject(
-            androidx.test.uiautomator.By.textContains(secondMessage).pkg("com.example.whiz.debug")
-        ), 3000)
-        
-        if (!firstMessageVisible || !secondMessageVisible) {
-            Log.w(TAG, "⚠️ One or both messages not found by exact text, trying partial matches...")
+        if (missingMessages.isNotEmpty()) {
+            Log.w(TAG, "⚠️ Some messages not found by exact text, trying partial matches...")
             
-            // Try partial matches as fallback
-            val firstMessagePartial = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains("Hello").pkg("com.example.whiz.debug")
-            ), 2000)
+            // Try partial matches as fallback using ComposeTestHelper
+            val firstMessagePartial = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("test this chat", substring = true) },
+                timeoutMs = 2000L,
+                description = "first message partial"
+            )
             
-            val secondMessagePartial = device.wait(androidx.test.uiautomator.Until.hasObject(
-                androidx.test.uiautomator.By.textContains("Second message").pkg("com.example.whiz.debug")
-            ), 2000)
+            val secondMessagePartial = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Second message", substring = true) },
+                timeoutMs = 2000L,
+                description = "second message partial"
+            )
             
-                    if (!firstMessagePartial || !secondMessagePartial) {
-            Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
-            Log.e(TAG, "🔍 First message visible: $firstMessageVisible (partial: $firstMessagePartial)")
-            Log.e(TAG, "🔍 Second message visible: $secondMessageVisible (partial: $secondMessagePartial)")
-            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
-            Log.e(TAG, "🔍 First message content: '$firstMessage'")
-            Log.e(TAG, "🔍 Second message content: '$secondMessage'")
-            
-            // Debug: Check what's currently visible in the UI
-            val allTextViews = device.findObjects(androidx.test.uiautomator.By.clazz("android.widget.TextView").pkg("com.example.whiz.debug"))
-            val visibleTexts = allTextViews.mapNotNull { 
-                try {
-                    it.text
-                } catch (e: androidx.test.uiautomator.StaleObjectException) {
-                    Log.w(TAG, "⚠️ Stale UI element encountered during final error text extraction, skipping")
-                    null
-                }
-            }.filter { it.isNotBlank() && it.length > 5 }
-            Log.e(TAG, "🔍 Currently visible texts in final verification: ${visibleTexts.joinToString(", ")}")
-            
-            failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification - message persistence in existing chats may be broken. Visible texts: ${visibleTexts.take(5).joinToString(", ")}")
+            if (!firstMessagePartial || !secondMessagePartial) {
+                Log.e(TAG, "❌ FAILURE: Not all messages visible in final verification")
+                Log.e(TAG, "🔍 First message partial visible: $firstMessagePartial")
+                Log.e(TAG, "🔍 Second message partial visible: $secondMessagePartial")
+                Log.e(TAG, "🔍 Missing messages: ${missingMessages.joinToString(", ")}")
+                Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+                Log.e(TAG, "🔍 First message content: '$firstMessage'")
+                Log.e(TAG, "🔍 Second message content: '$secondMessage'")
+                
+                failWithScreenshot("messages_not_all_visible", "Not all messages are visible in the final verification using Compose - message persistence in existing chats may be broken. Missing: ${missingMessages.take(2).joinToString(", ")}")
+            } else {
+                Log.d(TAG, "✅ Both messages found using partial matches with Compose")
+            }
         } else {
-            Log.d(TAG, "✅ Both messages found using partial matches")
-        }
-        } else {
-            Log.d(TAG, "✅ Both messages confirmed visible in final verification")
+            Log.d(TAG, "✅ Both messages confirmed visible in final verification using Compose")
         }
         
         // Capture the server chat ID for cleanup
