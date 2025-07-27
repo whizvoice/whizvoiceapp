@@ -1960,22 +1960,18 @@ abstract class BaseIntegrationTest {
             // Use DIRECT ChatViewModel methods for reliable voice message sending
             android.util.Log.d("BaseIntegrationTest", "✅ Using DIRECT ChatViewModel voice message approach")
             try {
-                // Ensure continuous listening is enabled (required for voice mode context)
-                // Must run on main thread as SpeechRecognizer requires it
-                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                    chatViewModel.ensureContinuousListeningEnabled()
-                }
+                // No need to start speech recognition - directly simulate what happens after silence detection
                 
                 // Direct approach: Bypass speech recognition callback complexity
                 // This simulates the exact same flow as voice transcription but more reliably
                 android.util.Log.d("BaseIntegrationTest", "🎤 Directly sending voice message: '$message'")
                 
-                // Must run on main thread to avoid threading issues
+                // Directly simulate what happens after speech recognition detects silence
+                // This bypasses the unreliable silence detection timing for tests
                 androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                    // Step 1: Set the transcribed text with voice context
-                    chatViewModel.updateInputText(message, fromVoice = true)
-                    // Step 2: Send the message (same as auto-send mechanism)
-                    chatViewModel.sendUserInput(message)
+                    // Simulate the exact callback sequence from SpeechRecognitionService.onResults()
+                    chatViewModel.updateInputText(message, fromVoice = true)  // Set voice context
+                    chatViewModel.sendUserInput(message)                     // Auto-send (same as line 1085 in ChatViewModel)
                 }
                 
                 // For non-rapid calls, verify the message actually appeared

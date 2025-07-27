@@ -151,10 +151,21 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         val testMessage = "Tell me about space in 50 words"
         
-        // Get reference to the existing ChatViewModel that's already running in the app
-        // The app has navigated to ChatScreen which created a ChatViewModel via hiltViewModel()
-        // ViewModelProvider.get() returns that same existing instance from the activity's ViewModelStore
-        val chatViewModel = ViewModelProvider(activity as ViewModelStoreOwner).get(com.example.whiz.ui.viewmodels.ChatViewModel::class.java)
+        // Get reference to the ChatViewModel that's actually being used by the ChatScreen
+        // The ChatScreen uses hiltViewModel() which is scoped to the current NavBackStackEntry
+        // We need to get the same ChatViewModel instance from the navigation scope, not activity scope
+        
+        // First, try to get the NavController from the activity
+        val navControllerField = activity::class.java.getDeclaredField("navController")
+        navControllerField.isAccessible = true
+        val navController = navControllerField.get(activity) as androidx.navigation.NavHostController
+        
+        // Get the current back stack entry's ViewModelStore
+        val currentBackStackEntry = navController.currentBackStackEntry
+        requireNotNull(currentBackStackEntry) { "No current back stack entry found" }
+        
+        // Get the ChatViewModel from the navigation scope (same as hiltViewModel() in ChatScreen)
+        val chatViewModel = ViewModelProvider(currentBackStackEntry).get(com.example.whiz.ui.viewmodels.ChatViewModel::class.java)
         
         // Simulate voice transcription and automatic sending (as voice input typically does)
         // Use rapid=false to verify the message actually appears, and pass SpeechRecognitionService for real callback mechanism
