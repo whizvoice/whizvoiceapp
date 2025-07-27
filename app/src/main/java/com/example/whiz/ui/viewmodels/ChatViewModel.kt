@@ -819,8 +819,9 @@ class ChatViewModel @Inject constructor(
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
                 }
 
-                if (chatId <= 0) {
+                if (chatId == -1L) {
                     // Handle new chat creation - immediately reset responding state since this is a fresh chat
+                    // Note: Only treat -1 as "new chat", not all negative numbers (optimistic IDs are negative)
                     _chatId.value = -1
                     _chatTitle.value = "New Chat"
                     _isResponding.value = false // 🔧 Immediately set to false for new chats
@@ -1025,7 +1026,13 @@ class ChatViewModel @Inject constructor(
 
     // Method specifically for ensuring continuous listening is enabled (for voice mode activation)
     fun ensureContinuousListeningEnabled() {
+        // Add stack trace to debug why this is called during typing
+        val stackTrace = Thread.currentThread().stackTrace
         Log.d(TAG, "[LOG] ensureContinuousListeningEnabled called. micPermissionGranted=${_micPermissionGranted.value}, continuousListeningEnabled=$continuousListeningEnabled, isListening=${isListening.value}, isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}")
+        Log.d(TAG, "[LOG] STACK TRACE: Called from:")
+        for (i in 3..minOf(8, stackTrace.size - 1)) { // Show 5 levels of stack trace
+            Log.d(TAG, "[LOG]   ${stackTrace[i].className}.${stackTrace[i].methodName}:${stackTrace[i].lineNumber}")
+        }
         
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission")

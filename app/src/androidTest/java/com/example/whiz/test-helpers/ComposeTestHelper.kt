@@ -261,21 +261,27 @@ object ComposeTestHelper {
      */
     fun typeMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String): Boolean {
         return try {
+            Log.d(TAG, "🔍 Compose: typeMessage - Looking for input field...")
             val inputField = findMessageInputField(composeTestRule)
             if (inputField == null) {
-                Log.e(TAG, "❌ Cannot type message - input field not found")
+                Log.e(TAG, "❌ Compose: typeMessage - input field not found by findMessageInputField")
                 return false
             }
+            Log.d(TAG, "✅ Compose: typeMessage - input field found successfully")
             
             // Clear existing text and type new message
+            Log.d(TAG, "🔍 Compose: typeMessage - Clearing existing text...")
             inputField.performTextReplacement("")
+            Log.d(TAG, "✅ Compose: typeMessage - Text cleared, now typing new message...")
             inputField.performTextInput(message)
             
-            Log.d(TAG, "✅ Message typed successfully with Compose: '${message.take(30)}...'")
+            Log.d(TAG, "✅ Compose: typeMessage - Message typed successfully: '${message.take(30)}...'")
             true
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception typing message with Compose", e)
+            Log.e(TAG, "❌ Compose: typeMessage - Exception during typing", e)
+            Log.e(TAG, "🔍 Compose: typeMessage - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: typeMessage - Exception message: ${e.message}")
             false
         }
     }
@@ -285,18 +291,23 @@ object ComposeTestHelper {
      */
     fun clickSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
         return try {
+            Log.d(TAG, "🔍 Compose: clickSendButton - Looking for send button...")
             val sendButton = findSendButton(composeTestRule)
             if (sendButton == null) {
-                Log.e(TAG, "❌ Cannot click send button - button not found")
+                Log.e(TAG, "❌ Compose: clickSendButton - send button not found by findSendButton")
                 return false
             }
+            Log.d(TAG, "✅ Compose: clickSendButton - send button found successfully")
             
+            Log.d(TAG, "🔍 Compose: clickSendButton - Performing click...")
             sendButton.performClick()
-            Log.d(TAG, "✅ Send button clicked successfully with Compose")
+            Log.d(TAG, "✅ Compose: clickSendButton - Send button clicked successfully")
             true
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception clicking send button with Compose", e)
+            Log.e(TAG, "❌ Compose: clickSendButton - Exception during click", e)
+            Log.e(TAG, "🔍 Compose: clickSendButton - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: clickSendButton - Exception message: ${e.message}")
             false
         }
     }
@@ -315,16 +326,22 @@ object ComposeTestHelper {
             
             // Type the message
             Log.d(TAG, "⌨️ Compose: Step 1 - Typing message...")
-            if (!typeMessage(composeTestRule, message)) {
-                Log.e(TAG, "❌ Compose: Failed to type message")
+            val typeSuccess = typeMessage(composeTestRule, message)
+            Log.d(TAG, "🔍 Compose: Step 1 result - typeMessage returned: $typeSuccess")
+            if (!typeSuccess) {
+                Log.e(TAG, "❌ Compose: FAILED at Step 1 - typeMessage returned false")
+                Log.e(TAG, "🔍 Compose: This means either input field not found or typing failed")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 1 - Message typed successfully")
             
             // Click send button
             Log.d(TAG, "📤 Compose: Step 2 - Clicking send button...")
-            if (!clickSendButton(composeTestRule)) {
-                Log.e(TAG, "❌ Compose: Failed to click send button")
+            val clickSuccess = clickSendButton(composeTestRule)
+            Log.d(TAG, "🔍 Compose: Step 2 result - clickSendButton returned: $clickSuccess")
+            if (!clickSuccess) {
+                Log.e(TAG, "❌ Compose: FAILED at Step 2 - clickSendButton returned false")
+                Log.e(TAG, "🔍 Compose: This means either send button not found or click failed")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
@@ -345,6 +362,8 @@ object ComposeTestHelper {
                 description = "message '${message.take(30)}...'"
             )
             
+            Log.d(TAG, "🔍 Compose: Step 3 result - waitForElement returned: $messageAppeared")
+            
             if (messageAppeared) {
                 Log.d(TAG, "✅ Compose: Step 3 - Message sent and displayed successfully")
                 if (rapid) {
@@ -352,8 +371,9 @@ object ComposeTestHelper {
                 }
                 true
             } else {
-                Log.e(TAG, "❌ Compose: Step 3 - Message not displayed after sending")
+                Log.e(TAG, "❌ Compose: FAILED at Step 3 - waitForElement returned false")
                 Log.e(TAG, "🔍 Compose: Message that failed to appear: '${message.take(50)}...'")
+                Log.e(TAG, "🔍 Compose: This means message was typed and sent but didn't appear in UI")
                 
                 if (rapid) {
                     Log.e(TAG, "🚨 RAPID FAILURE: Message took longer than ${timeout}ms to appear!")
@@ -375,6 +395,9 @@ object ComposeTestHelper {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during message sending", e)
+            Log.e(TAG, "🔍 Compose: Exception occurred at some step during sendMessage")
+            Log.e(TAG, "🔍 Compose: Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: Exception message: ${e.message}")
             false
         }
     }
