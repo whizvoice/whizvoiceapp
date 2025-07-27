@@ -575,12 +575,21 @@ class ChatViewModel @Inject constructor(
                                         val shouldSwitchToMigratedChat = currentChatIsOptimistic || _chatId.value == originalChatId
                                         
                                         if (shouldSwitchToMigratedChat) {
+                                            // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
+                                            val oldChatId = _chatId.value
+                                            if (oldChatId < 0 && effectiveConversationId > 0) {
+                                                repository.registerChatMigration(oldChatId, effectiveConversationId)
+                                                Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                            }
+                                            
                                             _chatId.value = effectiveConversationId
                                             
                                             // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
                                             // This ensures user's typing is preserved during migration
                                             if (preservedInputText.isNotBlank()) {
-                                                _inputText.value = preservedInputText
+                                                Log.d(TAG, "[RACE_DEBUG] Chat migration: Restoring preserved input text: '$preservedInputText'. Previous: '${_inputText.value}'")
+                                    _inputText.value = preservedInputText
+                                    Log.d(TAG, "[RACE_DEBUG] Chat migration: Input text restored to: '${_inputText.value}'")
                                                 _isInputFromVoice.value = preservedIsInputFromVoice
                                             }
                                             
@@ -595,6 +604,12 @@ class ChatViewModel @Inject constructor(
                             } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
                                 // 🔧 SCENARIO 2: Regular message processing with request ID pairing
                                 // This is NOT a migration - just updating chat ID for consistency
+                                
+                                // 🔧 REGISTER MIGRATION: Check if this is actually an optimistic→real conversion
+                                if (originalChatId < 0 && effectiveConversationId > 0) {
+                                    repository.registerChatMigration(originalChatId, effectiveConversationId)
+                                    Log.d(TAG, "🔄 Registered chat migration (scenario 2): $originalChatId → $effectiveConversationId")
+                                }
                                 
                                 // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
@@ -792,6 +807,7 @@ class ChatViewModel @Inject constructor(
     
     fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
+        Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode: Current input text: '${_inputText.value}'")
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
@@ -862,7 +878,9 @@ class ChatViewModel @Inject constructor(
                 
                 // Reset states
                 Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
+                Log.d(TAG, "[RACE_DEBUG] loadChat: About to clear input text due to chat load. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
                 _inputText.value = ""
+                Log.d(TAG, "[RACE_DEBUG] loadChat: Input text cleared, now: '${_inputText.value}'")
                 // 🔧 Update responding state based on current chat's pending requests
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
@@ -945,13 +963,16 @@ class ChatViewModel @Inject constructor(
                 }
             }
             Log.d(TAG, "🔥 loadChatWithVoiceMode COMPLETED for chatId: $chatId, final _chatId.value: ${_chatId.value}")
+            Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode COMPLETED: Final input text: '${_inputText.value}'")
         }
     }
 
     fun updateInputText(text: String, fromVoice: Boolean = false) {
         Log.d(TAG, "[LOG] updateInputText called. Setting text from '${_inputText.value}' to: '$text', fromVoice: $fromVoice")
+        Log.d(TAG, "[RACE_DEBUG] updateInputText: Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
         
         _inputText.value = text
+        Log.d(TAG, "[RACE_DEBUG] updateInputText: Text actually set to: '${_inputText.value}'")
         _isInputFromVoice.value = fromVoice
         
         // 🔧 NEW: Auto-disable continuous listening when user starts typing
@@ -1005,7 +1026,9 @@ class ChatViewModel @Inject constructor(
         
         // Case 4: Enable continuous listening and start immediately unless TTS is active
         Log.d(TAG, "[LOG] Starting speech recognition and enabling continuous listening. Clearing _inputText.value. Previous value: '${_inputText.value}'")
+        Log.d(TAG, "[RACE_DEBUG] startContinuousListening: About to clear input text. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
         _inputText.value = ""
+        Log.d(TAG, "[RACE_DEBUG] startContinuousListening: Input text cleared to: '${_inputText.value}'")
         continuousListeningEnabled = true
         speechRecognitionService.continuousListeningEnabled = true
         
@@ -1051,7 +1074,17 @@ class ChatViewModel @Inject constructor(
         
         // Enable continuous listening if not already enabled
         Log.d(TAG, "[LOG] Enabling continuous listening for voice mode")
+        
+        // Double-check that continuous listening is still supposed to be enabled
+        // (user typing may have disabled it while this process was in flight)
+        if (!continuousListeningEnabled) {
+            Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: Continuous listening was disabled (user typed), aborting enable process")
+            return
+        }
+        
+        Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: About to clear input text. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
         _inputText.value = ""
+        Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: Input text cleared to: '${_inputText.value}'")
         continuousListeningEnabled = true
         speechRecognitionService.continuousListeningEnabled = true
         
@@ -1191,7 +1224,9 @@ class ChatViewModel @Inject constructor(
                 
                 if (_inputText.value.isNotBlank()) {
                     Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
+                    Log.d(TAG, "[RACE_DEBUG] sendUserInput: About to clear input text after message sent. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
                     _inputText.value = ""
+                    Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text cleared to: '${_inputText.value}'")
                     _isInputFromVoice.value = false
                 }
             } catch (e: Exception) {
@@ -1561,7 +1596,9 @@ class ChatViewModel @Inject constructor(
                             if (continuousListeningEnabled) {
                                 speechRecognitionService.startListening { finalText ->
                                     if (finalText.isNotBlank()) {
+                                        Log.d(TAG, "[RACE_DEBUG] Speech recognition: About to set input text to: '$finalText'. Previous: '${_inputText.value}'")
                                         _inputText.value = finalText
+                                        Log.d(TAG, "[RACE_DEBUG] Speech recognition: Input text set to: '${_inputText.value}'")
                                         if (continuousListeningEnabled) {
                                             sendUserInput(finalText)
                                         }

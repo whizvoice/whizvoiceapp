@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -286,6 +287,97 @@ object ComposeTestHelper {
             false
         }
     }
+
+    /**
+     * Compose version of BaseIntegrationTest.sendMessageAndVerifyDisplay()
+     * Types message, verifies it appears in input field, clicks send, waits for message in chat
+     */
+    fun sendMessageAndVerifyDisplay(composeTestRule: ComposeTestRule, message: String, rapid: Boolean = false): Boolean {
+        return try {
+            Log.d(TAG, "📝 Compose: sendMessageAndVerifyDisplay - attempting to send message: '${message.take(30)}...'")
+            Log.d(TAG, "⚡ Compose: sendMessageAndVerifyDisplay - Rapid mode: $rapid")
+            
+            // Step 1: Type message and verify it appears in input field
+            Log.d(TAG, "⌨️ Compose: sendMessageAndVerifyDisplay - Step 1: Typing message...")
+            val inputField = findMessageInputField(composeTestRule)
+            if (inputField == null) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - input field not found")
+                return false
+            }
+            
+            // Clear and type
+            inputField.performTextReplacement("")
+            inputField.performTextInput(message)
+            
+            // Verify text appears in input field by checking the EditText directly
+            Log.d(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Verifying text appears in input field...")
+            val timeout = if (rapid) 500L else 2000L
+            val searchText = message.take(30)
+            
+            // For EditText fields, we need to check the text value property instead of using onNodeWithText
+            val textAppeared = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    // Find the input field and check its text value
+                    val inputField = findMessageInputField(composeTestRule)
+                    if (inputField != null) {
+                        val currentText = inputField.fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text ?: ""
+                        Log.d(TAG, "🔍 Current input field text: '$currentText'")
+                        if (currentText.contains(searchText)) {
+                            inputField.assertIsDisplayed()
+                        } else {
+                            throw AssertionError("Input field text '$currentText' does not contain '$searchText'")
+                        }
+                    } else {
+                        throw AssertionError("Input field not found")
+                    }
+                },
+                timeoutMs = timeout,
+                description = "typed text to appear in input field: '$searchText'"
+            )
+            
+            if (!textAppeared) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 1 - text did not appear in input field")
+                return false
+            }
+            Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 1: Message typed and verified successfully")
+            
+            // Step 2: Click send button
+            Log.d(TAG, "📤 Compose: sendMessageAndVerifyDisplay - Step 2: Clicking send button...")
+            val clickSuccess = clickSendButton(composeTestRule)
+            if (!clickSuccess) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 2 - clickSendButton returned false")
+                return false
+            }
+            Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 2: Send button clicked successfully")
+            
+            // Step 3: Wait for message to appear in chat
+            val chatTimeout = if (rapid) 400L else 1000L
+            Log.d(TAG, "⏳ Compose: sendMessageAndVerifyDisplay - Step 3: Waiting for message to appear in chat (timeout: ${chatTimeout}ms)...")
+            
+            val messageAppeared = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(message) },
+                timeoutMs = chatTimeout,
+                description = "message '${message.take(30)}...' to appear in chat"
+            )
+            
+            if (messageAppeared) {
+                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 3: Message appeared in chat successfully")
+                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - All steps completed successfully")
+                true
+            } else {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 3 - message did not appear in chat within ${chatTimeout}ms")
+                false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - Exception during process", e)
+            Log.e(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Exception message: ${e.message}")
+            false
+        }
+    }
     
     /**
      * Click the send button using Compose testing
@@ -521,9 +613,13 @@ object ComposeTestHelper {
                 Log.d(TAG, "🔍 Compose: Verifying message ${index + 1}: '${expectedMessage.take(50)}...'")
                 Log.d(TAG, "🔍 Compose: Looking for text content: '${expectedMessage.take(50)}...'")
                 
-                // Use assertIsDisplayed() but catch the exception to avoid throwing AssertionError
-                composeTestRule.onNodeWithText(expectedMessage).assertIsDisplayed()
-                Log.d(TAG, "✅ Compose: Message ${index + 1} found: '${expectedMessage.take(30)}...'")
+                // Look specifically for user messages using content description
+                // This avoids finding the same text in other UI elements like input fields
+                val userMessageContentDesc = "User message: $expectedMessage"
+                Log.d(TAG, "🔍 Compose: Looking for node with content description: '${userMessageContentDesc.take(50)}...'")
+                
+                composeTestRule.onNodeWithContentDescription(userMessageContentDesc).assertIsDisplayed()
+                Log.d(TAG, "✅ Compose: Message ${index + 1} found as user message: '${expectedMessage.take(30)}...'")
                 
             } catch (e: Exception) {
                 Log.w(TAG, "❌ Compose: Message ${index + 1} missing: '${expectedMessage.take(30)}...'")

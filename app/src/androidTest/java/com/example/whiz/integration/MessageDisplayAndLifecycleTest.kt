@@ -296,9 +296,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ Could not track UI-created chat: ${e.message}")
         }
         
-        // Step 3: Send first message and verify optimistic UI using ComposeTestHelper
-        Log.d(TAG, "💬 Sending first message and verifying optimistic UI using Compose...")
-        val messageSentSuccessfully = ComposeTestHelper.sendMessage(composeTestRule, firstMessage, rapid = false)
+        // Step 3: Send first message and verify optimistic UI using ComposeTestHelper.sendMessageAndVerifyDisplay
+        Log.d(TAG, "💬 Sending first message and verifying optimistic UI using Compose with verification...")
+        val messageSentSuccessfully = ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, firstMessage, rapid = false)
         if (!messageSentSuccessfully) {
             failWithScreenshot("first_message_failed", "Failed to send first message or verify optimistic UI with Compose")
         }
@@ -513,18 +513,18 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ First message confirmed still visible after navigation")
         }
         
-        // Step 10: Send a second message to test existing chat functionality using ComposeTestHelper
-        Log.d(TAG, "💬 Sending second message in existing chat using ComposeTestHelper...")
+        // Step 10: Send a second message to test existing chat functionality using ComposeTestHelper.sendMessageAndVerifyDisplay
+        Log.d(TAG, "💬 Sending second message in existing chat using Compose with verification...")
         try {
-            val secondMessageSent = ComposeTestHelper.sendMessage(composeTestRule, secondMessage, rapid = true)
+            val secondMessageSent = ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, secondMessage, rapid = true)
             if (!secondMessageSent) {
-                Log.e(TAG, "❌ FAILURE: ComposeTestHelper.sendMessage returned false for second message")
+                Log.e(TAG, "❌ FAILURE: ComposeTestHelper.sendMessageAndVerifyDisplay returned false for second message")
                 Log.e(TAG, "🔍 Second message content: '$secondMessage'")
                 Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
                 
-                failWithScreenshot("second_message_failed_compose", "Failed to send second message in existing chat using Compose. Message: '${secondMessage.take(50)}...'")
+                failWithScreenshot("second_message_failed_compose", "Failed to send second message in existing chat using Compose with verification. Message: '${secondMessage.take(50)}...'")
             }
-            Log.d(TAG, "✅ Second message sent and visible successfully using ComposeTestHelper")
+            Log.d(TAG, "✅ Second message sent and visible successfully using Compose with verification")
         } catch (e: Exception) {
             Log.e(TAG, "❌ EXCEPTION during second message send with Compose", e)
             Log.e(TAG, "🔍 Second message content: '$secondMessage'")
@@ -532,7 +532,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.e(TAG, "🔍 Exception type: ${e.javaClass.simpleName}")
             Log.e(TAG, "🔍 Exception message: ${e.message}")
             
-            failWithScreenshot("second_message_exception_compose", "Exception during second message send using Compose: ${e.javaClass.simpleName} - ${e.message}")
+            failWithScreenshot("second_message_exception_compose", "Exception during second message send using Compose with verification: ${e.javaClass.simpleName} - ${e.message}")
         }
         
         // Step 11: Final verification - both messages should be visible using ComposeTestHelper

@@ -58,6 +58,10 @@ class WhizRepository @Inject constructor(
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
+    // Track optimistic chat ID → real chat ID migrations for deduplication
+    private val chatMigrationMapping = mutableMapOf<Long, Long>()
+    private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
     
@@ -628,6 +632,50 @@ class WhizRepository @Inject constructor(
     }
 
     /**
+     * Register that an optimistic chat has been migrated to a real server chat.
+     * This mapping is used for cross-chat deduplication.
+     */
+    fun registerChatMigration(optimisticChatId: Long, realChatId: Long) {
+        if (optimisticChatId >= 0) {
+            Log.w(TAG, "registerChatMigration: optimisticChatId $optimisticChatId is not negative, ignoring")
+            return
+        }
+        if (realChatId <= 0) {
+            Log.w(TAG, "registerChatMigration: realChatId $realChatId is not positive, ignoring")
+            return
+        }
+        
+        chatMigrationMapping[optimisticChatId] = realChatId
+        migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
+        Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        
+        // Clean up old mappings (older than 1 hour)
+        cleanupOldMigrations()
+    }
+    
+    /**
+     * Clean up old migration mappings to prevent memory leaks.
+     */
+    private fun cleanupOldMigrations() {
+        val oneHourAgo = System.currentTimeMillis() - 3600000 // 1 hour
+        val toRemove = migrationTimestamps.filterValues { it < oneHourAgo }.keys
+        toRemove.forEach { optimisticChatId ->
+            chatMigrationMapping.remove(optimisticChatId)
+            migrationTimestamps.remove(optimisticChatId)
+        }
+        if (toRemove.isNotEmpty()) {
+            Log.d(TAG, "cleanupOldMigrations: Cleaned up ${toRemove.size} old migration mappings")
+        }
+    }
+    
+    /**
+     * Get the optimistic chat ID that was migrated to this real chat ID.
+     */
+    private fun getOptimisticChatId(realChatId: Long): Long? {
+        return chatMigrationMapping.entries.find { it.value == realChatId }?.key
+    }
+
+    /**
      * Deduplicate server messages with local optimistic messages.
      * Removes local optimistic messages that have corresponding server messages.
      */
@@ -655,15 +703,29 @@ class WhizRepository @Inject constructor(
                 }
             }
             
-            // Get current local messages
+            // Get current local messages for this chat
             val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            
+            // Check if this real chat was migrated from an optimistic chat
+            val optimisticChatId = getOptimisticChatId(chatId)
+            val optimisticMessages = if (optimisticChatId != null) {
+                Log.d(TAG, "deduplicateMessages: Found migration mapping $optimisticChatId → $chatId, checking optimistic messages")
+                messageDao.getMessagesForChatFlow(optimisticChatId).first()
+            } else {
+                Log.d(TAG, "deduplicateMessages: No migration mapping found for chat $chatId")
+                emptyList()
+            }
+            
+            // Combine messages from both current chat and migrated optimistic chat
+            val allLocalMessages = localMessages + optimisticMessages
+            Log.d(TAG, "deduplicateMessages: Checking ${localMessages.size} current + ${optimisticMessages.size} optimistic = ${allLocalMessages.size} total local messages")
             
             // Find optimistic messages that have server counterparts
             val messagesToRemove = mutableListOf<Long>()
             
             for (serverMessage in serverMessages) {
                 // Look for local messages with same content and type that could be duplicates
-                val duplicateLocal = localMessages.find { localMsg ->
+                val duplicateLocal = allLocalMessages.find { localMsg ->
                     localMsg.content.trim() == serverMessage.content.trim() &&
                     localMsg.type == serverMessage.type &&
                     // Only consider recent local messages as potential optimistic duplicates
@@ -673,7 +735,7 @@ class WhizRepository @Inject constructor(
                 }
                 
                 if (duplicateLocal != null) {
-                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
+                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} (from chat ${duplicateLocal.chatId}) for server message ${serverMessage.id}")
                     messagesToRemove.add(duplicateLocal.id)
                 }
             }
