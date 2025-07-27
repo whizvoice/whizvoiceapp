@@ -538,9 +538,10 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         // Step 11: Final verification - both messages should be visible using ComposeTestHelper
         Log.d(TAG, "🔍 Final verification: checking if both messages are visible using Compose...")
         
-        // Use ComposeTestHelper to verify both messages exist
-        val expectedMessages = listOf(firstMessage, secondMessage)
-        val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, expectedMessages)
+        try {
+            // Use ComposeTestHelper to verify both messages exist
+            val expectedMessages = listOf(firstMessage, secondMessage)
+            val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, expectedMessages)
         
         if (missingMessages.isNotEmpty()) {
             Log.w(TAG, "⚠️ Some messages not found by exact text, trying partial matches...")
@@ -575,6 +576,15 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             }
         } else {
             Log.d(TAG, "✅ Both messages confirmed visible in final verification using Compose")
+        }
+        
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ FAILURE: Exception during final verification")
+            Log.e(TAG, "🔍 Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Exception message: ${e.message}")
+            Log.e(TAG, "🔍 Test identifier: '$uniqueTestId'")
+            
+            failWithScreenshot("final_verification_exception", "Exception during final message verification: ${e.javaClass.simpleName} - ${e.message}")
         }
         
         // Capture the server chat ID for cleanup
