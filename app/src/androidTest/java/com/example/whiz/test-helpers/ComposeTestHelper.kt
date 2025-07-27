@@ -632,7 +632,7 @@ object ComposeTestHelper {
                     throw AssertionError("User message not found with content description: $userMessageContentDesc")
                 }
                 
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "❌ Compose: Message ${index + 1} missing: '${expectedMessage.take(30)}...'")
                 Log.w(TAG, "   🔍 Looking for text content: '${expectedMessage.take(50)}...'")
                 Log.w(TAG, "   ❌ Exception: ${e.message}")

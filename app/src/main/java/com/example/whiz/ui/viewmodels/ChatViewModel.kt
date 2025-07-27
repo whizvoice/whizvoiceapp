@@ -99,13 +99,34 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
         if (id != 0L) { // 🔧 OPTIMISTIC UI FIX: Handle both positive AND negative chat IDs
             repository.getMessagesForChat(id).map { messagesList ->
+                // 🔧 DEDUPLICATION DEBUG: Log all messages before deduplication
+                Log.d(TAG, "🔍 DEDUP_DEBUG: Processing ${messagesList.size} messages for chat $id:")
+                messagesList.forEachIndexed { index, message ->
+                    Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
+                }
+                
                 // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on content + timestamp + type
                 val deduplicatedMessages = messagesList.distinctBy { message ->
                     // Create unique key from content, timestamp, and type to prevent optimistic UI duplicates
-                    Triple(message.content.trim(), message.timestamp, message.type)
+                    val key = Triple(message.content.trim(), message.timestamp, message.type)
+                    Log.d(TAG, "🔍 DEDUP_DEBUG: Creating key for message ID:${message.id} RequestID:${message.requestId} -> $key")
+                    key
                 }
+                
                 if (deduplicatedMessages.size != messagesList.size) {
-                    Log.w(TAG, "Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
+                    Log.w(TAG, "🔍 DEDUP_DEBUG: Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
+                    
+                    // Log which messages were removed
+                    val removedMessages = messagesList - deduplicatedMessages.toSet()
+                    removedMessages.forEach { removed ->
+                        Log.w(TAG, "🔍 DEDUP_DEBUG: REMOVED -> ID:${removed.id} Type:${removed.type} RequestID:${removed.requestId} Timestamp:${removed.timestamp} Content:'${removed.content.take(30)}...'")
+                    }
+                    
+                    // Log final deduplicated list
+                    Log.d(TAG, "🔍 DEDUP_DEBUG: Final deduplicated list (${deduplicatedMessages.size} messages):")
+                    deduplicatedMessages.forEachIndexed { index, message ->
+                        Log.d(TAG, "🔍 DEDUP_DEBUG:   FINAL[$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
+                    }
                 }
                 deduplicatedMessages
             }
@@ -1412,92 +1433,6 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
     }
 
-    // Moved sendInputText here and made explicitly public
-    public fun sendInputText() {
-        val textToSend = _inputText.value.trim()
-        if (textToSend.isBlank()) return
-
-        // 🔧 CONCURRENT MODE: Don't block UI with _isResponding = true
-        // Allow multiple concurrent messages to be sent
-
-        viewModelScope.launch {
-            if (_chatId.value == -1L) {
-                // Note: Only treat -1 as "new chat", not all negative numbers (optimistic IDs are negative)
-                if (configUseRemoteAgent) {
-                    // For remote agent: Don't create conversation locally
-                    // Let the WebSocket server create it and then sync
-                    // Keep _chatId.value as -1 for now
-                } else {
-                    // For local agent: Create conversation locally as before
-                    val newChatId = repository.createChat(repository.deriveChatTitle(textToSend))
-                    _chatId.value = newChatId
-                    if (newChatId <=0) {
-                        Log.e(TAG, "Failed to create new chat.")
-                        updateRespondingStateForCurrentChat() // Update based on remaining requests
-                        _errorState.value = "Failed to create chat. Please try again."
-                        return@launch
-                    }
-                }
-            }
-            
-            // Always save user message for immediate display (optimistic UI)
-            // Repository will handle deduplication when server messages arrive
-            if (_chatId.value != -1L) {
-                // Note: Accept optimistic chat IDs (negative numbers) as valid, only reject -1
-                if (configUseRemoteAgent) {
-                    // For remote agent: use optimistic UI (local only, no API call)
-                    // Note: sendInputText doesn't have requestId, so we'll use the old method
-                    repository.addUserMessageOptimistic(_chatId.value, textToSend)
-                } else {
-                    // For local agent: use regular method (creates via API)
-                    repository.addUserMessage(_chatId.value, textToSend)
-                }
-            }
-
-            if (configUseRemoteAgent) {
-                // Generate request ID and track this request
-                val requestId = java.util.UUID.randomUUID().toString()
-                pendingRequests[requestId] = _chatId.value
-                
-                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
-                updateRespondingStateForCurrentChat()
-                
-                val success = whizServerRepository.sendMessage(textToSend, requestId, _chatId.value)
-                if (!success) {
-                    // Message was queued for retry, don't clear the request tracking yet
-                    // The retry mechanism will handle this transparently
-                    Log.d(TAG, "Message queued for retry")
-                }
-                
-                // For new chats, refresh conversations after server creates it
-                if (_chatId.value == -1L) {
-                    // Note: Only refresh for truly new chats (-1), not optimistic IDs
-                    try {
-                        viewModelScope.launch {
-                            // Remove arbitrary delay - server should acknowledge immediately
-                            repository.refreshConversations()
-                            Log.d(TAG, "sendInputText: Triggered conversations refresh for new chat")
-                            
-                            // Try to find the newly created conversation and switch to it
-                            val conversations = repository.conversations.value
-                            if (conversations.isNotEmpty()) {
-                                val newestConversation = conversations.first() // Most recent
-                                _chatId.value = newestConversation.id
-                                _chatTitle.value = newestConversation.title
-                                Log.d(TAG, "sendInputText: Switched to new conversation ${newestConversation.id}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "sendInputText: Error refreshing conversations for new chat", e)
-                    }
-                }
-            } else {
-                updateRespondingStateForCurrentChat() // Update based on remaining requests (should be none for local)
-            }
-        }
-        // 🔧 Don't clear input when sending - will be cleared when bot responds
-        Log.d(TAG, "[LOG] sendInputText: NOT clearing input (better UX - kept for feedback)")
-    }
 
     // Called when permission is granted from UI
     fun onMicrophonePermissionGranted() {

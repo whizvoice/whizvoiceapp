@@ -586,7 +586,12 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         }
         Log.d(TAG, "✅ Duplicate checking completed")
         
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Don't catch AssertionErrors from failWithScreenshot() calls - those are intentional test failures
+            if (e is AssertionError) {
+                throw e // Re-throw AssertionErrors from failWithScreenshot() calls
+            }
+            
             Log.e(TAG, "❌ FAILURE: Exception during final verification")
             Log.e(TAG, "🔍 Exception type: ${e.javaClass.simpleName}")
             Log.e(TAG, "🔍 Exception message: ${e.message}")
