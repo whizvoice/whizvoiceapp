@@ -2195,37 +2195,73 @@ abstract class BaseIntegrationTest {
 
     /**
      * Bring the app to foreground if it gets backgrounded
+     * Uses recent apps to avoid triggering new voice launches
      */
     protected fun bringAppToForeground() {
         android.util.Log.d("BaseIntegrationTest", "🔄 Bringing app to foreground...")
         try {
-            // Method 1: Use recent apps and click on our app
+            // Method 1: Use recent apps and click on our app (preferred - no new launch)
             device.pressRecentApps()
-            Thread.sleep(1000)
             
-            // Look for our app in recent apps
-            val whizVoiceApp = device.findObject(UiSelector().textContains("Whiz Voice"))
-            if (whizVoiceApp.exists()) {
-                whizVoiceApp.click()
-                android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked WhizVoice in recent apps")
-            } else {
-                // Method 2: Launch via package name
-                android.util.Log.d("BaseIntegrationTest", "⚠️ App not found in recent apps, launching directly")
-                val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    context.startActivity(intent)
-                    android.util.Log.d("BaseIntegrationTest", "✅ Launched app directly via intent")
-                } else {
-                    // Method 3: Use adb to launch
-                    android.util.Log.d("BaseIntegrationTest", "⚠️ Intent not found, using adb to launch")
-                    device.executeShellCommand("am start -n $packageName/com.example.whiz.MainActivity")
+            // Wait for recent apps screen to appear instead of Thread.sleep
+            val recentAppsLoaded = device.wait(Until.hasObject(
+                By.res("com.android.systemui", "task_view_bar")
+            ), 3000) || device.wait(Until.hasObject(
+                By.textContains("Whiz Voice")
+            ), 3000)
+            
+            if (recentAppsLoaded) {
+                // Create UI dump for debugging recent apps structure
+                try {
+                    val timestamp = System.currentTimeMillis()
+                    val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
+                    device.dumpWindowHierarchy(dumpFile)
+                    android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging: $dumpFile")
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
                 }
+                
+                // Try multiple approaches to find our app in recent apps
+                val selectors = listOf(
+                    UiSelector().textContains("Whiz Voice"),
+                    UiSelector().descriptionContains("Whiz Voice"),
+                    UiSelector().textContains("Whiz"),
+                    UiSelector().descriptionContains("Whiz"),
+                    UiSelector().packageName(packageName),
+                    // Try to find the first clickable item in recent apps (often our app)
+                    UiSelector().className("android.widget.FrameLayout").clickable(true).index(0)
+                )
+                
+                for ((index, selector) in selectors.withIndex()) {
+                    val appCard = device.findObject(selector)
+                    if (appCard.exists()) {
+                        try {
+                            appCard.click()
+                            android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked app using selector $index in recent apps")
+                            return
+                        } catch (e: Exception) {
+                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to click app with selector $index: ${e.message}")
+                        }
+                    }
+                }
+                
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find app with any selector in recent apps")
             }
             
+            android.util.Log.w("BaseIntegrationTest", "⚠️ App not found in recent apps, trying alternative methods")
+            
+            // Method 2: Try to use task switching to return to existing instance
+            // This avoids creating a new activity instance
+            device.executeShellCommand("am start -n $packageName/com.example.whiz.MainActivity -f 0x20000000") // FLAG_ACTIVITY_SINGLE_TOP
+            android.util.Log.d("BaseIntegrationTest", "✅ Attempted to return to existing activity instance")
+            
             // Wait for app to come to foreground
-            Thread.sleep(2000)
-            android.util.Log.d("BaseIntegrationTest", "✅ App brought to foreground")
+            val appReturned = device.wait(Until.hasObject(By.pkg(packageName)), 5000)
+            if (appReturned) {
+                android.util.Log.d("BaseIntegrationTest", "✅ App brought to foreground")
+            } else {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ App may not have returned to foreground")
+            }
         } catch (e: Exception) {
             android.util.Log.e("BaseIntegrationTest", "❌ Failed to bring app to foreground: ${e.message}")
         }

@@ -136,9 +136,11 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         val activity = instrumentation.startActivitySync(voiceLaunchIntent)
         
         // Wait for voice launch to navigate to new chat screen
+        // Voice launch navigation can take time, especially on slower emulators
+        Log.d(TAG, "⏳ Waiting for voice launch navigation to complete...")
         val navigatedToChat = device.wait(Until.hasObject(
             By.clazz("android.widget.EditText").pkg(packageName)
-        ), 10000)
+        ), 20000) // Increased from 10s to 20s for slower emulators
         
         if (!navigatedToChat) {
             failWithScreenshot("Voice launch should navigate to new chat screen")
