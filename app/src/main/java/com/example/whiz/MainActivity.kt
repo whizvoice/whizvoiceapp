@@ -242,40 +242,29 @@ class MainActivity : ComponentActivity() {
         val initialTranscription = intent?.getStringExtra("INITIAL_TRANSCRIPTION")
         
         if (createNewChatOnStart && ::navController.isInitialized) {
-            Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, creating new chat")
-            Log.d(TAG, "🚨 WARNING: This will create a new optimistic chat and navigate away from current chat!")
-            Log.d(TAG, "🚨 Current nav destination before new chat: ${navController.currentDestination?.route}")
-            lifecycleScope.launch {
-                try {
-                    // Use optimistic chat creation for voice launches for immediate feedback
-                    val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
-                    Log.d(TAG, "New optimistic chat created with ID: $newChatId for CREATE_NEW_CHAT_ON_START")
-                    if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
-                        // Wait for NavController to be ready instead of arbitrary delay
-                        navigateWhenReady("chat/$newChatId") {
-                            // Pass the voice mode flag and initial transcription to the ChatScreen
-                            if (enableVoiceMode) {
-                                Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
-                                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
-                            }
-                            initialTranscription?.let {
-                                Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
-                                navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
-                            }
-                            // Clear the extras
-                            Log.d(TAG, "🧹 CLEARING intent extras after new chat creation")
-                            getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
-                            getIntent().removeExtra("FROM_ASSISTANT")
-                            getIntent().removeExtra("ENABLE_VOICE_MODE")
-                            getIntent().removeExtra("INITIAL_TRANSCRIPTION")
-                            Log.d(TAG, "🧹 Intent extras cleared - future resume should not create new chat")
-                        }
-                    } else {
-                        Log.e(TAG, "Failed to create new chat from CREATE_NEW_CHAT_ON_START, staying on home screen")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error creating new chat from CREATE_NEW_CHAT_ON_START", e)
+            Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen")
+            Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
+            Log.d(TAG, "🚨 Current nav destination before navigation: ${navController.currentDestination?.route}")
+            
+            // Navigate to new chat screen without pre-creating optimistic chat
+            // This makes voice launch consistent with manual launch (clicking "New Chat" button)
+            navigateWhenReady(Screen.AssistantChat.route) {
+                // Pass the voice mode flag and initial transcription to the ChatScreen
+                if (enableVoiceMode) {
+                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
                 }
+                initialTranscription?.let {
+                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                }
+                // Clear the extras
+                Log.d(TAG, "🧹 CLEARING intent extras after new chat navigation")
+                getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
+                getIntent().removeExtra("FROM_ASSISTANT")
+                getIntent().removeExtra("ENABLE_VOICE_MODE")
+                getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+                Log.d(TAG, "🧹 Intent extras cleared - future resume should not create new chat")
             }
         } else {
             intent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->

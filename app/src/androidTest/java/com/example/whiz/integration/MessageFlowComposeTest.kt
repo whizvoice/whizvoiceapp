@@ -194,6 +194,17 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             trackNewChats(initialChats)
             
             // CAPTURE OPTIMISTIC ID HERE - right after navigation (Suggestion 1)
+            // First verify chat ID is initially -1 for new chat (before any messages)
+            val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
+            val initialChatId = chatViewModel.chatId.value
+            if (initialChatId != -1L) {
+                Log.e(TAG, "❌ FAILURE: New chat should have ID -1 but has ID: $initialChatId")
+                failWithScreenshot("new_chat_wrong_initial_id", "New chat should have ID -1 but has ID: $initialChatId")
+                return@runBlocking
+            } else {
+                Log.d(TAG, "✅ Confirmed: New chat initially has ID -1 (no optimistic chat created yet)")
+            }
+            
             optimisticChatId = getCurrentOptimisticChatId()
             if (optimisticChatId != null) {
                 Log.d(TAG, "🔍 Captured optimistic chat ID after navigation: $optimisticChatId")
@@ -238,12 +249,32 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             if (optimisticChatId == null) {
                 optimisticChatId = getCurrentOptimisticChatId()
                 if (optimisticChatId != null) {
-                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId")
+                    // Verify it's negative but not exactly -1
+                    if (optimisticChatId!! >= 0) {
+                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
+                        failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
+                        return@runBlocking
+                    } else if (optimisticChatId == -1L) {
+                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                        failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                        return@runBlocking
+                    }
+                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId (negative, not -1)")
                 } else {
                     Log.w(TAG, "⚠️ could not capture optimistic chat ID - migration likely happened too quickly")
                 }
             } else {
-                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId")
+                // Verify the previously captured ID is negative but not -1
+                if (optimisticChatId!! >= 0) {
+                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
+                    failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
+                    return@runBlocking
+                } else if (optimisticChatId == -1L) {
+                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    return@runBlocking
+                }
+                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId (negative, not -1)")
             }
             
             // step 4: confirm bot is responding (thinking indicator visible)
@@ -746,6 +777,173 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             Log.w(TAG, "error checking UI stability: ${e.message}")
             true // assume settled if we can't check
+        }
+    }
+
+    @Test
+    fun fullMessageFlowTest_voiceLaunchAndVoiceInput(): Unit = runBlocking {
+        Log.d(TAG, "🚀 starting comprehensive message flow voice test")
+        
+        val credentials = TestCredentialsManager.credentials
+        Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
+        
+        try {
+            // Capture initial chats before voice launch
+            val initialChats = try {
+                repository.getAllChats()
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
+                emptyList()
+            }
+            
+            // step 1: Voice launch the app (simulates "Hey Google, talk to WhizVoice")
+            Log.d(TAG, "🎤 step 1: Voice launching app...")
+            val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
+                putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID
+            }
+            
+            // Launch through real Android system like Google Assistant would
+            val activity = instrumentation.startActivitySync(voiceLaunchIntent)
+            
+            // Wait for voice launch to navigate to new chat screen
+            Log.d(TAG, "⏳ Waiting for voice launch navigation to complete...")
+            val navigatedToChat = device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName)
+            ), 20000) // Increased timeout for slower emulators
+            
+            if (!navigatedToChat) {
+                Log.e(TAG, "❌ FAILURE at step 1: Voice launch failed to navigate to chat screen")
+                failWithScreenshot("voice_launch_navigation_failed", "Voice launch failed to navigate to chat screen")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "✅ Step 1 Complete: Voice launch successful, navigated to chat")
+            
+            // Track the newly created chat immediately after voice launch
+            trackNewChats(initialChats)
+            
+            // Verify chat ID is initially -1 for voice launch (should be same as manual)
+            val chatViewModel = androidx.lifecycle.ViewModelProvider(activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
+            val initialChatId = chatViewModel.chatId.value
+            if (initialChatId != -1L) {
+                Log.e(TAG, "❌ FAILURE: Voice launched chat should have ID -1 but has ID: $initialChatId")
+                failWithScreenshot("voice_chat_wrong_initial_id", "Voice launched chat should have ID -1 but has ID: $initialChatId")
+                return@runBlocking
+            } else {
+                Log.d(TAG, "✅ Confirmed: Voice launched chat initially has ID -1 (no optimistic chat created yet)")
+            }
+            
+            // step 2: Send first voice message
+            val firstMessage = "Voice test message 1 - $uniqueTestId"
+            Log.d(TAG, "🎤 step 2: sending first voice message")
+            
+            // Wait for chat UI to be ready
+            if (!waitForChatUIReady()) {
+                Log.e(TAG, "❌ FAILURE: Chat UI not ready for voice input")
+                failWithScreenshot("voice_chat_ui_not_ready", "Chat UI not ready for voice input")
+                return@runBlocking
+            }
+            
+            // Send voice message using simulation (like TTSBackgroundingTest)
+            if (!simulateVoiceTranscriptionAndSend(firstMessage)) {
+                Log.e(TAG, "❌ FAILURE at step 2: First voice message failed to send")
+                failWithScreenshot("voice_first_message_failed", "First voice message failed to send")
+                return@runBlocking
+            }
+            
+            // Verify message is visible
+            if (!verifyMessageVisible(firstMessage)) {
+                Log.e(TAG, "❌ first voice message not visible")
+                failWithScreenshot("voice_first_message_not_visible", "first voice message not visible")
+                return@runBlocking
+            }
+            
+            // step 2.5: capture and verify optimistic chat ID
+            Log.d(TAG, "🔍 step 2.5: checking optimistic chat ID after voice message")
+            optimisticChatId = getCurrentOptimisticChatId()
+            if (optimisticChatId != null) {
+                // Verify it's negative but not exactly -1
+                if (optimisticChatId!! >= 0) {
+                    Log.e(TAG, "❌ FAILURE: Voice optimistic chat ID should be negative but is: $optimisticChatId")
+                    failWithScreenshot("voice_optimistic_chat_id_not_negative", "Voice optimistic chat ID should be negative but is: $optimisticChatId")
+                    return@runBlocking
+                } else if (optimisticChatId == -1L) {
+                    Log.e(TAG, "❌ FAILURE: Voice optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    failWithScreenshot("voice_optimistic_chat_id_is_minus_one", "Voice optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    return@runBlocking
+                }
+                Log.d(TAG, "✅ captured voice optimistic chat ID: $optimisticChatId (negative, not -1)")
+            } else {
+                Log.w(TAG, "⚠️ could not capture optimistic chat ID - migration likely happened too quickly")
+            }
+            
+            // step 3: wait for bot response
+            Log.d(TAG, "🤖 step 3: waiting for bot response to voice message")
+            if (!waitForBotThinkingIndicator()) {
+                Log.e(TAG, "❌ FAILURE at step 3: bot not responding to voice message")
+                failWithScreenshot("voice_bot_not_responding", "bot not responding to voice message")  
+                return@runBlocking
+            }
+            
+            // step 4: send second voice message while bot is responding
+            val secondMessage = "Voice test message 2 - $uniqueTestId"  
+            Log.d(TAG, "🎤 step 4: sending second voice message while bot is responding")
+            
+            if (!simulateVoiceTranscriptionAndSend(secondMessage)) {
+                Log.e(TAG, "❌ FAILURE at step 4: Second voice message failed to send during bot response")
+                failWithScreenshot("voice_second_message_failed", "Second voice message failed during bot response")
+                return@runBlocking
+            }
+            
+            // step 5: wait for bot response to complete
+            Log.d(TAG, "⏳ step 5: waiting for bot response to complete")
+            if (!waitForBotThinkingToFinishCompose()) {
+                Log.w(TAG, "⚠️ thinking indicator still visible after timeout")
+            }
+            
+            val botResponseDetected = waitForBotResponseCompose(3000)
+            if (!botResponseDetected) {
+                Log.e(TAG, "❌ FAILURE at step 5: bot response not detected")
+                failWithScreenshot("voice_no_bot_response", "bot response not detected")
+                return@runBlocking
+            }
+            
+            // step 6: send third voice message after bot response
+            val thirdMessage = "Voice test message 3 - $uniqueTestId"
+            Log.d(TAG, "🎤 step 6: sending third voice message after bot response")
+            
+            if (!simulateVoiceTranscriptionAndSend(thirdMessage)) {
+                Log.e(TAG, "❌ FAILURE at step 6: Third voice message failed to send")
+                failWithScreenshot("voice_third_message_failed", "Third voice message failed to send")
+                return@runBlocking
+            }
+            
+            // step 7: verify all voice messages are showing properly
+            Log.d(TAG, "✅ step 7: verifying all voice messages display correctly")
+            val sentMessages = listOf(firstMessage, secondMessage, thirdMessage)
+            if (!verifyAllMessagesDisplayCorrectly(sentMessages)) {
+                failWithScreenshot("Missing voice messages from chat", "voice_messages_missing")
+                return@runBlocking
+            }
+            
+            // step 8: wait for chat migration and final verification
+            Log.d(TAG, "🔍 step 8: waiting for chat migration and final verification")
+            waitForChatMigrationCompletion()
+            
+            if (!verifyFinalMessageState(sentMessages)) {
+                failWithScreenshot("Voice final message verification failed", "voice_final_verification_failed")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "🎉 comprehensive voice message flow test PASSED!")
+            Log.d(TAG, "✅ Test validated: Voice launch, voice input, optimistic UI, bot interruption via voice, chat migration")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "comprehensive voice message flow test FAILED", e)
+            throw e
         }
     }
 } 
