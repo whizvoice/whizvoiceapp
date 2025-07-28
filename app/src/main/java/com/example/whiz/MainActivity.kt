@@ -41,6 +41,20 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
     }
+    
+    // Flag to prevent multiple voice launch navigations from the same intent
+    // Use SharedPreferences to persist across Activity recreations
+    private var voiceLaunchNavigationCompleted: Boolean
+        get() = getSharedPreferences("voice_launch", MODE_PRIVATE).getBoolean("navigation_completed", false)
+        set(value) = getSharedPreferences("voice_launch", MODE_PRIVATE).edit().putBoolean("navigation_completed", value).apply()
+    
+    private var lastIntentTraceId: Long?
+        get() {
+            val prefs = getSharedPreferences("voice_launch", MODE_PRIVATE)
+            val id = prefs.getLong("last_trace_id", -1L)
+            return if (id == -1L) null else id
+        }
+        set(value) = getSharedPreferences("voice_launch", MODE_PRIVATE).edit().putLong("last_trace_id", value ?: -1L).apply()
 
     @Inject
     lateinit var preloadManager: PreloadManager
@@ -212,7 +226,33 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntentNavigation(intent: Intent?) {
-        Log.d(TAG, "🔍 handleIntentNavigation called with intent: $intent")
+        // Always use getIntent() to ensure we're working with the current activity intent
+        val currentIntent = getIntent()
+        Log.d(TAG, "🔍 handleIntentNavigation called - using getIntent(): $currentIntent")
+        
+        // 🕵️ DEBUG: Check if intent extras are actually cleared
+        val createNewChat = currentIntent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
+        Log.d(TAG, "🔍 DEBUG: CREATE_NEW_CHAT_ON_START flag at start of handleIntentNavigation: $createNewChat")
+        
+        // Reset voice launch flag ONLY if this is a genuinely new intent (different trace ID)
+        val currentTraceId = currentIntent?.getLongExtra("tracing_intent_id", -1L)
+        Log.d(TAG, "🔍 TRACE ID DEBUG: currentTraceId = $currentTraceId, lastIntentTraceId = $lastIntentTraceId, voiceLaunchNavigationCompleted = $voiceLaunchNavigationCompleted")
+        
+        if (currentTraceId != null && currentTraceId != -1L) {
+            // Only reset flag if we have a DIFFERENT valid trace ID (new voice launch)
+            if (lastIntentTraceId != null && currentTraceId != lastIntentTraceId) {
+                Log.d(TAG, "🔄 NEW voice launch detected (trace ID: $currentTraceId, previous: $lastIntentTraceId) - resetting voice launch flag")
+                voiceLaunchNavigationCompleted = false
+            } else if (lastIntentTraceId == null) {
+                Log.d(TAG, "🔍 First time seeing trace ID $currentTraceId - no flag reset needed")
+            } else {
+                Log.d(TAG, "🔍 Same trace ID ($currentTraceId) - keeping voiceLaunchNavigationCompleted as $voiceLaunchNavigationCompleted")
+            }
+            lastIntentTraceId = currentTraceId
+        } else {
+            // No valid trace ID - DON'T reset the flag, just keep current state
+            Log.d(TAG, "🔍 TRACE ID DEBUG: No valid trace ID found - preserving voiceLaunchNavigationCompleted as $voiceLaunchNavigationCompleted")
+        }
         
         // 🕵️ DEBUG: Track why we're processing this intent
         val stackTrace = Thread.currentThread().stackTrace
@@ -220,7 +260,7 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "🔍 handleIntentNavigation called from: $caller")
         
         // Handle sign-out action first
-        val actionSignOut = intent?.getStringExtra("action")
+        val actionSignOut = currentIntent?.getStringExtra("action")
         if (actionSignOut == "sign_out") {
             Log.d(TAG, "Sign-out action detected - triggering Firebase sign-out")
             lifecycleScope.launch {
@@ -235,20 +275,34 @@ class MainActivity : ComponentActivity() {
             return // Don't process other intent extras after sign-out
         }
         
-        val createNewChatOnStart = intent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
-        val fromAssistant = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
-        val fromPowerButton = intent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
-        val enableVoiceMode = intent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
-        val initialTranscription = intent?.getStringExtra("INITIAL_TRANSCRIPTION")
+        val createNewChatOnStart = currentIntent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
+        val fromAssistant = currentIntent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
+        val fromPowerButton = currentIntent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
+        val enableVoiceMode = currentIntent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
+        val initialTranscription = currentIntent?.getStringExtra("INITIAL_TRANSCRIPTION")
         
         if (createNewChatOnStart && ::navController.isInitialized) {
+            // Prevent multiple voice launch navigations from the same intent - CHECK THIS FIRST!
+            if (voiceLaunchNavigationCompleted) {
+                Log.d(TAG, "🚨 Voice launch navigation already completed - ignoring duplicate call")
+                return
+            }
+            
             Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen")
+            
+            // Mark navigation as completed IMMEDIATELY to prevent race conditions
+            voiceLaunchNavigationCompleted = true
+            Log.d(TAG, "🔒 DUPLICATE PREVENTION: Set voiceLaunchNavigationCompleted = true")
+            
+            Log.d(TAG, "🚨 Voice launch navigation trigger - this should only happen once per voice launch")
             Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
             Log.d(TAG, "🚨 Current nav destination before navigation: ${navController.currentDestination?.route}")
             
             // Navigate to new chat screen without pre-creating optimistic chat
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
+            Log.d(TAG, "🚨 About to call navigateWhenReady for ${Screen.AssistantChat.route}")
             navigateWhenReady(Screen.AssistantChat.route) {
+                Log.d(TAG, "🚨 Inside navigateWhenReady callback - navigation should be complete")
                 // Pass the voice mode flag and initial transcription to the ChatScreen
                 if (enableVoiceMode) {
                     Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
@@ -267,13 +321,13 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "🧹 Intent extras cleared - future resume should not create new chat")
             }
         } else {
-            intent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
+            currentIntent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
                 Log.d(TAG, "Intent to navigate to chat ID: $chatId")
                 if (::navController.isInitialized) {
-                val fromAssistant = intent.getBooleanExtra("FROM_ASSISTANT", false)
-                val forceNavigation = intent.getBooleanExtra("FORCE_NAVIGATION", false)
-                val delayNavigation = intent.getBooleanExtra("DELAY_NAVIGATION", false)
-                val initialTranscription = intent.getStringExtra("INITIAL_TRANSCRIPTION")
+                val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false)
+                val forceNavigation = currentIntent.getBooleanExtra("FORCE_NAVIGATION", false)
+                val delayNavigation = currentIntent.getBooleanExtra("DELAY_NAVIGATION", false)
+                val initialTranscription = currentIntent.getStringExtra("INITIAL_TRANSCRIPTION")
                 
                 Log.d(TAG, "Navigation params - fromAssistant: $fromAssistant, forceNavigation: $forceNavigation, enableVoiceMode: $enableVoiceMode, delayNavigation: $delayNavigation, initialTranscription: $initialTranscription")
                 
@@ -316,7 +370,7 @@ class MainActivity : ComponentActivity() {
             }
         } ?: run {
             // Handle power button transcription
-            val transcription = intent?.getStringExtra("TRANSCRIPTION")
+            val transcription = currentIntent?.getStringExtra("TRANSCRIPTION")
             
             Log.d(TAG, "Power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, enableVoiceMode: $enableVoiceMode")
             
@@ -370,7 +424,8 @@ class MainActivity : ComponentActivity() {
                 try {
                     // Wait for NavController to be in a stable state
                     if (::navController.isInitialized && navController.currentDestination != null) {
-                        Log.d(TAG, "Navigating to $route (clearBackStack: $clearBackStack)")
+                        Log.d(TAG, "🚨 NAVIGATE: About to navigate to $route (clearBackStack: $clearBackStack)")
+                        Log.d(TAG, "🚨 NAVIGATE: Current destination before nav: ${navController.currentDestination?.route}")
                         
                         if (clearBackStack) {
                             navController.navigate(route) {
@@ -383,6 +438,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         
+                        Log.d(TAG, "🚨 NAVIGATE: Navigation completed, current destination: ${navController.currentDestination?.route}")
                         // Execute callback after successful navigation
                         onNavigated()
                     } else {

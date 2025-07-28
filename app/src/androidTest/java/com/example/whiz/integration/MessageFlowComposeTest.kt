@@ -36,6 +36,9 @@ import com.example.whiz.MainActivity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.Until
+import androidx.test.uiautomator.By
 
 /**
  * Compose-based comprehensive UI integration test for complete message flow including:
@@ -85,6 +88,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
 
 
     // device is inherited from BaseIntegrationTest
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val uniqueTestId = System.currentTimeMillis()
     
     // track chats created during tests for cleanup
@@ -801,8 +805,9 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
-                putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch specific flags
+                putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID for voice detection
+                // Don't set sourceBounds for voice launch (manual launches have bounds, voice launches don't)
             }
             
             // Launch through real Android system like Google Assistant would
@@ -812,7 +817,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ Waiting for voice launch navigation to complete...")
             val navigatedToChat = device.wait(Until.hasObject(
                 By.clazz("android.widget.EditText").pkg(packageName)
-            ), 20000) // Increased timeout for slower emulators
+            ), 3000) // Quick timeout - should navigate immediately
             
             if (!navigatedToChat) {
                 Log.e(TAG, "❌ FAILURE at step 1: Voice launch failed to navigate to chat screen")
@@ -826,7 +831,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             trackNewChats(initialChats)
             
             // Verify chat ID is initially -1 for voice launch (should be same as manual)
-            val chatViewModel = androidx.lifecycle.ViewModelProvider(activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
+            val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
             val initialChatId = chatViewModel.chatId.value
             if (initialChatId != -1L) {
                 Log.e(TAG, "❌ FAILURE: Voice launched chat should have ID -1 but has ID: $initialChatId")
