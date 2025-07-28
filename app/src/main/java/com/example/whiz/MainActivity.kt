@@ -212,7 +212,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntentNavigation(intent: Intent?) {
-        Log.d(TAG, "handleIntentNavigation called with intent: $intent")
+        Log.d(TAG, "🔍 handleIntentNavigation called with intent: $intent")
+        
+        // 🕵️ DEBUG: Track why we're processing this intent
+        val stackTrace = Thread.currentThread().stackTrace
+        val caller = stackTrace.getOrNull(3)?.methodName ?: "unknown"
+        Log.d(TAG, "🔍 handleIntentNavigation called from: $caller")
         
         // Handle sign-out action first
         val actionSignOut = intent?.getStringExtra("action")
@@ -237,7 +242,9 @@ class MainActivity : ComponentActivity() {
         val initialTranscription = intent?.getStringExtra("INITIAL_TRANSCRIPTION")
         
         if (createNewChatOnStart && ::navController.isInitialized) {
-            Log.d(TAG, "CREATE_NEW_CHAT_ON_START flag detected, creating new chat")
+            Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, creating new chat")
+            Log.d(TAG, "🚨 WARNING: This will create a new optimistic chat and navigate away from current chat!")
+            Log.d(TAG, "🚨 Current nav destination before new chat: ${navController.currentDestination?.route}")
             lifecycleScope.launch {
                 try {
                     // Use optimistic chat creation for voice launches for immediate feedback
@@ -256,10 +263,12 @@ class MainActivity : ComponentActivity() {
                                 navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
                             }
                             // Clear the extras
+                            Log.d(TAG, "🧹 CLEARING intent extras after new chat creation")
                             getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
                             getIntent().removeExtra("FROM_ASSISTANT")
                             getIntent().removeExtra("ENABLE_VOICE_MODE")
                             getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+                            Log.d(TAG, "🧹 Intent extras cleared - future resume should not create new chat")
                         }
                     } else {
                         Log.e(TAG, "Failed to create new chat from CREATE_NEW_CHAT_ON_START, staying on home screen")
@@ -408,12 +417,35 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
+        
+        // 🕵️ DEBUG: Log intent state when resuming to understand chat ID issue
+        Log.d(TAG, "🔍 RESUME DEBUG: Checking intent state after returning from background")
+        val currentIntent = intent
+        Log.d(TAG, "🔍 RESUME DEBUG: Intent = $currentIntent")
+        if (currentIntent != null) {
+            val createNewChat = currentIntent.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false)
+            val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false) 
+            val enableVoice = currentIntent.getBooleanExtra("ENABLE_VOICE_MODE", false)
+            val navToChatId = currentIntent.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)
+            Log.d(TAG, "🔍 RESUME DEBUG: CREATE_NEW_CHAT_ON_START = $createNewChat")
+            Log.d(TAG, "🔍 RESUME DEBUG: FROM_ASSISTANT = $fromAssistant")
+            Log.d(TAG, "🔍 RESUME DEBUG: ENABLE_VOICE_MODE = $enableVoice")
+            Log.d(TAG, "🔍 RESUME DEBUG: NAVIGATE_TO_CHAT_ID = $navToChatId")
+            
+            // Also log current navigation state
+            if (::navController.isInitialized) {
+                val currentDestination = navController.currentDestination?.route
+                Log.d(TAG, "🔍 RESUME DEBUG: Current nav destination = $currentDestination")
+            }
+        }
+        
         // Re-check permission when activity resumes in case it was changed in settings
         permissionManager.checkMicrophonePermission()
         // If NavController is initialized, handle current intent again in case it was delivered while paused
         // and MainActivity wasn't recreated but onNewIntent wasn't called (e.g. returning to app)
         // This is a bit of an edge case, but ensures the navigation occurs if pending.
         if (::navController.isInitialized) {
+             Log.d(TAG, "🔍 RESUME DEBUG: About to call handleIntentNavigation() - this might create new chat!")
              handleIntentNavigation(intent) // Process current intent again
              
              // Check if we're currently in a chat screen and potentially restart continuous listening
