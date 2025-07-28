@@ -118,7 +118,8 @@ fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
         chatId = this.conversation_id,
         content = this.content,
         type = parseMessageType(this.message_type),
-        timestamp = parseTimestampToMillis(this.timestamp)
+        timestamp = parseTimestampToMillis(this.timestamp),
+        requestId = this.request_id  // 🔧 FIXED: Preserve request_id from server
     )
 }
 

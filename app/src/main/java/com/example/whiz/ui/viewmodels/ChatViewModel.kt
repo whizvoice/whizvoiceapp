@@ -105,10 +105,19 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                 }
                 
-                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on content + timestamp + type
+                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on request ID for user messages
                 val deduplicatedMessages = messagesList.distinctBy { message ->
-                    // Create unique key from content, timestamp, and type to prevent optimistic UI duplicates
-                    val key = Triple(message.content.trim(), message.timestamp, message.type)
+                    // Use request ID for user messages (when available) to handle optimistic UI transitions
+                    val key = when {
+                        message.type == MessageType.USER && message.requestId != null -> {
+                            // For user messages with request ID: use requestId + type as unique key
+                            Pair(message.requestId, message.type)
+                        }
+                        else -> {
+                            // For assistant messages or user messages without requestId: use content + type
+                            Pair(message.content.trim(), message.type)
+                        }
+                    }
                     Log.d(TAG, "🔍 DEDUP_DEBUG: Creating key for message ID:${message.id} RequestID:${message.requestId} -> $key")
                     key
                 }
