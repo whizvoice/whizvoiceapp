@@ -2203,33 +2203,62 @@ abstract class BaseIntegrationTest {
             // Method 1: Use recent apps and click on our app (preferred - no new launch)
             device.pressRecentApps()
             
-            // Wait for recent apps screen to appear instead of Thread.sleep
+            // Wait for recent apps screen to appear - try multiple indicators
             val recentAppsLoaded = device.wait(Until.hasObject(
+                // Pixel launcher recent apps indicators
+                By.res("com.google.android.apps.nexuslauncher", "overview_panel")
+            ), 3000) || device.wait(Until.hasObject(
+                By.res("com.google.android.apps.nexuslauncher", "task_view_single")
+            ), 3000) || device.wait(Until.hasObject(
+                // Legacy systemui indicators  
                 By.res("com.android.systemui", "task_view_bar")
             ), 3000) || device.wait(Until.hasObject(
                 By.textContains("Whiz Voice")
             ), 3000)
             
+            // Always create UI dump for debugging recent apps structure, regardless of detection result
+            try {
+                val timestamp = System.currentTimeMillis()
+                val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
+                device.dumpWindowHierarchy(dumpFile)
+                android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging (loaded=$recentAppsLoaded): $dumpFile")
+            } catch (e: Exception) {
+                android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
+            }
+            
             if (recentAppsLoaded) {
-                // Create UI dump for debugging recent apps structure
+                
+                // First try to find our app by looking for the WhizVoice content description
+                // and then clicking its parent task_view_single
                 try {
-                    val timestamp = System.currentTimeMillis()
-                    val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
-                    device.dumpWindowHierarchy(dumpFile)
-                    android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging: $dumpFile")
+                    val whizVoiceSnapshot = device.findObject(UiSelector().descriptionContains("WhizVoice"))
+                    if (whizVoiceSnapshot.exists()) {
+                        android.util.Log.d("BaseIntegrationTest", "🔍 Found WhizVoice snapshot, clicking parent task view...")
+                        // Click on the task view that contains this snapshot
+                        val taskViews = device.findObjects(By.res("com.google.android.apps.nexuslauncher", "task_view_single"))
+                        for (taskView in taskViews) {
+                            // Check if this task view contains our WhizVoice snapshot
+                            if (taskView.hasObject(By.descContains("WhizVoice"))) {
+                                taskView.click()
+                                android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked WhizVoice task view in recent apps")
+                                return
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
-                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ WhizVoice-specific approach failed: ${e.message}")
                 }
                 
-                // Try multiple approaches to find our app in recent apps
+                // Fallback to trying other selectors
                 val selectors = listOf(
-                    UiSelector().textContains("Whiz Voice"),
-                    UiSelector().descriptionContains("Whiz Voice"),
-                    UiSelector().textContains("Whiz"),
+                    UiSelector().descriptionContains("WhizVoice DEBUG"),
+                    UiSelector().descriptionContains("WhizVoice"),
                     UiSelector().descriptionContains("Whiz"),
+                    UiSelector().textContains("Whiz Voice"),
+                    UiSelector().textContains("Whiz"),
                     UiSelector().packageName(packageName),
-                    // Try to find the first clickable item in recent apps (often our app)
-                    UiSelector().className("android.widget.FrameLayout").clickable(true).index(0)
+                    // Try to find the first clickable task view in recent apps (often our app)
+                    UiSelector().resourceId("com.google.android.apps.nexuslauncher:id/task_view_single").clickable(true).index(0)
                 )
                 
                 for ((index, selector) in selectors.withIndex()) {
