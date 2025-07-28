@@ -356,9 +356,22 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         Log.d(TAG, "✅ Step 6 Complete: TTS remains not active after returning to foreground")
         
+        // Step 7: Verify the original message is still visible using UIAutomator
+        Log.d(TAG, "🔍 Step 7: Verifying original message is still visible after returning from background...")
+        
+        val originalMessageVisible = device.wait(Until.hasObject(
+            By.textContains(testMessage).pkg(packageName)
+        ), 3000)
+        
+        if (!originalMessageVisible) {
+            failWithScreenshot("Original message '$testMessage' should still be visible after returning from background")
+        }
+        
+        Log.d(TAG, "✅ Step 7 Complete: Original message still visible after returning from background")
+        
         // Clean up
         activity.finish()
         
-        Log.d(TAG, "🎉 TTS backgrounding bug test PASSED - TTS correctly stops when app is backgrounded")
+        Log.d(TAG, "🎉 TTS backgrounding bug test PASSED - TTS correctly stops when app is backgrounded and original message remains visible")
     }
 } 
