@@ -42,19 +42,7 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
     }
     
-    // Flag to prevent multiple voice launch navigations from the same intent
-    // Use SharedPreferences to persist across Activity recreations
-    private var voiceLaunchNavigationCompleted: Boolean
-        get() = getSharedPreferences("voice_launch", MODE_PRIVATE).getBoolean("navigation_completed", false)
-        set(value) = getSharedPreferences("voice_launch", MODE_PRIVATE).edit().putBoolean("navigation_completed", value).apply()
-    
-    private var lastIntentTraceId: Long?
-        get() {
-            val prefs = getSharedPreferences("voice_launch", MODE_PRIVATE)
-            val id = prefs.getLong("last_trace_id", -1L)
-            return if (id == -1L) null else id
-        }
-        set(value) = getSharedPreferences("voice_launch", MODE_PRIVATE).edit().putLong("last_trace_id", value ?: -1L).apply()
+    // No longer needed - using idempotent navigation instead of duplicate prevention
 
     @Inject
     lateinit var preloadManager: PreloadManager
@@ -234,25 +222,7 @@ class MainActivity : ComponentActivity() {
         val createNewChat = currentIntent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
         Log.d(TAG, "🔍 DEBUG: CREATE_NEW_CHAT_ON_START flag at start of handleIntentNavigation: $createNewChat")
         
-        // Reset voice launch flag ONLY if this is a genuinely new intent (different trace ID)
-        val currentTraceId = currentIntent?.getLongExtra("tracing_intent_id", -1L)
-        Log.d(TAG, "🔍 TRACE ID DEBUG: currentTraceId = $currentTraceId, lastIntentTraceId = $lastIntentTraceId, voiceLaunchNavigationCompleted = $voiceLaunchNavigationCompleted")
-        
-        if (currentTraceId != null && currentTraceId != -1L) {
-            // Only reset flag if we have a DIFFERENT valid trace ID (new voice launch)
-            if (lastIntentTraceId != null && currentTraceId != lastIntentTraceId) {
-                Log.d(TAG, "🔄 NEW voice launch detected (trace ID: $currentTraceId, previous: $lastIntentTraceId) - resetting voice launch flag")
-                voiceLaunchNavigationCompleted = false
-            } else if (lastIntentTraceId == null) {
-                Log.d(TAG, "🔍 First time seeing trace ID $currentTraceId - no flag reset needed")
-            } else {
-                Log.d(TAG, "🔍 Same trace ID ($currentTraceId) - keeping voiceLaunchNavigationCompleted as $voiceLaunchNavigationCompleted")
-            }
-            lastIntentTraceId = currentTraceId
-        } else {
-            // No valid trace ID - DON'T reset the flag, just keep current state
-            Log.d(TAG, "🔍 TRACE ID DEBUG: No valid trace ID found - preserving voiceLaunchNavigationCompleted as $voiceLaunchNavigationCompleted")
-        }
+        // No longer need complex trace ID logic - using idempotent navigation instead
         
         // 🕵️ DEBUG: Track why we're processing this intent
         val stackTrace = Thread.currentThread().stackTrace
@@ -282,21 +252,34 @@ class MainActivity : ComponentActivity() {
         val initialTranscription = currentIntent?.getStringExtra("INITIAL_TRANSCRIPTION")
         
         if (createNewChatOnStart && ::navController.isInitialized) {
-            // Prevent multiple voice launch navigations from the same intent - CHECK THIS FIRST!
-            if (voiceLaunchNavigationCompleted) {
-                Log.d(TAG, "🚨 Voice launch navigation already completed - ignoring duplicate call")
+            Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen")
+            
+            // Check if we're already at the target destination (idempotent navigation)
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute == Screen.AssistantChat.route) {
+                Log.d(TAG, "🔄 Already at assistant_chat screen - navigation is idempotent, no action needed")
+                
+                // Still need to clear intent extras and set voice mode flags even if we don't navigate
+                if (enableVoiceMode) {
+                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle (idempotent)")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                }
+                initialTranscription?.let {
+                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle (idempotent): $it")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                }
+                
+                // Clear the extras to prevent future duplicate processing
+                Log.d(TAG, "🧹 CLEARING intent extras after idempotent navigation")
+                getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
+                getIntent().removeExtra("FROM_ASSISTANT")
+                getIntent().removeExtra("ENABLE_VOICE_MODE")
+                getIntent().removeExtra("INITIAL_TRANSCRIPTION")
                 return
             }
             
-            Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen")
-            
-            // Mark navigation as completed IMMEDIATELY to prevent race conditions
-            voiceLaunchNavigationCompleted = true
-            Log.d(TAG, "🔒 DUPLICATE PREVENTION: Set voiceLaunchNavigationCompleted = true")
-            
-            Log.d(TAG, "🚨 Voice launch navigation trigger - this should only happen once per voice launch")
+            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to ${Screen.AssistantChat.route}")
             Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
-            Log.d(TAG, "🚨 Current nav destination before navigation: ${navController.currentDestination?.route}")
             
             // Navigate to new chat screen without pre-creating optimistic chat
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
