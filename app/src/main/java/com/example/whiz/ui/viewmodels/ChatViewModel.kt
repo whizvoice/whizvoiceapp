@@ -189,6 +189,7 @@ class ChatViewModel @Inject constructor(
 
     // --- Text-to-Speech State ---
     private val _isTTSInitialized = MutableStateFlow(false)
+    val isTTSInitialized = _isTTSInitialized.asStateFlow() // Expose for testing
     private val _isSpeaking = MutableStateFlow(false) // Track if TTS is currently speaking
     val isSpeaking = _isSpeaking.asStateFlow()
 
