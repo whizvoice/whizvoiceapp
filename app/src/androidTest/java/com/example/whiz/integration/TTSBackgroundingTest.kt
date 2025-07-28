@@ -89,7 +89,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = emptyList(),
-                additionalPatterns = listOf("backgrounding test", "tts test", "voice launch"),
+                additionalPatterns = listOf("backgrounding test", "tts test", "voice launch", "Assistant Chat"),
                 enablePatternFallback = false
             )
         }
@@ -105,7 +105,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = listOf("backgrounding test", "tts test", "voice launch"),
+                    additionalPatterns = listOf("backgrounding test", "tts test", "voice launch", "Assistant Chat", "space"),
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
@@ -145,6 +145,21 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "✅ Step 1 Complete: Voice launch successful, navigated to chat")
+        
+        // Track the newly created chat immediately after voice launch
+        try {
+            val currentChats = runBlocking { repository.getAllChats() }
+            val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
+            newChats.forEach { chat ->
+                createdChatIds.add(chat.id)
+                Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
+            }
+            if (newChats.isEmpty()) {
+                Log.w(TAG, "⚠️ Warning: No new chat detected after voice launch")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error tracking new chat after voice launch", e)
+        }
         
         // Step 2: Send a voice message (simulate transcription but send as voice)
         Log.d(TAG, "🎤 Step 2: Sending voice message...")
@@ -338,18 +353,6 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "✅ Step 6 Complete: TTS remains not active after returning to foreground")
-        
-        // Track any chats created for cleanup
-        try {
-            val currentChats = runBlocking { repository.getAllChats() }
-            val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
-            newChats.forEach { chat ->
-                createdChatIds.add(chat.id)
-                Log.d(TAG, "📝 Tracked chat for cleanup: ${chat.id} ('${chat.title}')")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "⚠️ Could not track created chats: ${e.message}")
-        }
         
         // Clean up
         activity.finish()
