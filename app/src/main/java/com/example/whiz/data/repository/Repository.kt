@@ -103,23 +103,7 @@ class WhizRepository @Inject constructor(
     private fun triggerConversationsRefresh() {
         _conversationsRefreshTrigger.value = System.currentTimeMillis()
     }
-
-    // Force refresh messages for a chat (e.g., from pull-to-refresh)
-    suspend fun forceRefreshMessages(chatId: Long) {
-        Log.d(TAG, "forceRefreshMessages: Force refreshing messages for chat $chatId")
-        try {
-            // Fetch fresh messages from server
-            val serverMessages = fetchMessagesWithDeduplication(chatId)
-            Log.d(TAG, "forceRefreshMessages: Fetched ${serverMessages.size} messages from server")
-            
-            // The deduplication process will update Room, which will auto-notify the Flow
-        } catch (e: Exception) {
-            Log.e(TAG, "forceRefreshMessages: Error refreshing messages for chat $chatId", e)
-            throw e // Let the UI handle the error
-        }
-    }
     
-    // Legacy trigger method - kept for backward compatibility but no longer used
     private fun triggerMessagesRefresh() {
         _messagesRefreshTrigger.value = System.currentTimeMillis()
     }

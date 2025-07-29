@@ -899,16 +899,35 @@ class ChatViewModel @Inject constructor(
                             // 🔧 For existing chats, update based on actual pending requests
                             updateRespondingStateForCurrentChat()
                         } else {
-                            _chatId.value = -1
-                            _chatTitle.value = "New Chat"
-                            _isResponding.value = false // 🔧 Immediately set to false for new chats
-                            Log.d(TAG, "🔥 loadChat: Chat not found, creating new chat, responding state reset to false")
+                            // Check if this is an optimistic chat ID (negative but not -1)
+                            if (chatId < -1) {
+                                // This is an optimistic chat that hasn't been persisted yet
+                                // Keep the optimistic ID - don't reset to -1
+                                _chatId.value = chatId
+                                _chatTitle.value = "New Chat"
+                                Log.d(TAG, "🔥 loadChat: Optimistic chat ID $chatId - keeping it, not resetting to -1")
+                                updateRespondingStateForCurrentChat()
+                            } else {
+                                // Only reset to -1 if we couldn't find a positive chat ID
+                                _chatId.value = -1
+                                _chatTitle.value = "New Chat"
+                                _isResponding.value = false // 🔧 Immediately set to false for new chats
+                                Log.d(TAG, "🔥 loadChat: Chat not found, creating new chat, responding state reset to false")
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error loading chat from repository", e)
-                        _chatId.value = -1
-                        _chatTitle.value = "New Chat"
-                        _isResponding.value = false // 🔧 Immediately set to false on error
+                        // Keep optimistic chat IDs even on error
+                        if (chatId < -1) {
+                            _chatId.value = chatId
+                            _chatTitle.value = "New Chat"
+                            Log.d(TAG, "🔥 loadChat error: Keeping optimistic chat ID $chatId")
+                            updateRespondingStateForCurrentChat()
+                        } else {
+                            _chatId.value = -1
+                            _chatTitle.value = "New Chat"
+                            _isResponding.value = false // 🔧 Immediately set to false on error
+                        }
                         _errorState.value = "Error loading chat: ${e.message}"
                     }
                 }
