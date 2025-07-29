@@ -38,6 +38,7 @@ fun WhizNavHost(
     preloadManager: PreloadManager,
     permissionManager: PermissionManager,
     voiceManager: VoiceManager,
+    chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
     isVoiceLaunch: Boolean = false
@@ -260,6 +261,7 @@ fun WhizNavHost(
                 voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
+                viewModel = chatViewModel,
                 navController = navController
             )
         }
@@ -300,6 +302,7 @@ fun WhizNavHost(
                 voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
+                viewModel = chatViewModel,
                 navController = navController
             )
         }

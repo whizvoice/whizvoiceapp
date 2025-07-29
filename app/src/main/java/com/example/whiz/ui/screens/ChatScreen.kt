@@ -120,6 +120,9 @@ fun ChatScreen(
     val speechError by voiceManager.speechError.collectAsState()
     val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
     val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
+    
+    // Debug log UI state changes
+    Log.d("ChatScreen", "🎤 UI_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking")
 
     // UI State
     val listState = rememberLazyListState()
@@ -911,6 +914,7 @@ fun ChatInputBar(
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
                     Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
                     Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
+                    Log.d("ChatInputBar", "🎤 VOICE_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking")
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled

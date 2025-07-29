@@ -98,24 +98,24 @@ class SpeechCallbackPreservationTest {
     }
 
     @Test
-    fun speechService_continuousListeningState_handlesCorrectly() = runTest {
-        // Test continuous listening state management - part of the original bug scenario
+    fun speechService_continuousListeningCallback_handlesCorrectly() = runTest {
+        // Test continuous listening callback mechanism - continuous listening state is now managed by VoiceManager
         speechService.initialize()
         
-        // Test continuous listening enable/disable
-        speechService.continuousListeningEnabled = true
-        assert(speechService.continuousListeningEnabled) {
-            "Should be able to enable continuous listening"
+        // Test setting continuous listening callback
+        speechService.continuousListeningCallback = { true }
+        assert(speechService.continuousListeningCallback?.invoke() == true) {
+            "Should be able to set continuous listening callback"
         }
         
-        speechService.continuousListeningEnabled = false  
-        assert(!speechService.continuousListeningEnabled) {
-            "Should be able to disable continuous listening"
+        speechService.continuousListeningCallback = { false }  
+        assert(speechService.continuousListeningCallback?.invoke() == false) {
+            "Should be able to change continuous listening callback result"
         }
         
-        Log.d("SPEECH_TEST", "✅ Continuous listening state management works correctly:")
-        Log.d("SPEECH_TEST", "   ✓ Can enable/disable continuous listening")
-        Log.d("SPEECH_TEST", "   ✓ State persists correctly")
+        Log.d("SPEECH_TEST", "✅ Continuous listening callback mechanism works correctly:")
+        Log.d("SPEECH_TEST", "   ✓ Can set/change continuous listening callback")
+        Log.d("SPEECH_TEST", "   ✓ Callback returns expected values")
     }
 
     @Test

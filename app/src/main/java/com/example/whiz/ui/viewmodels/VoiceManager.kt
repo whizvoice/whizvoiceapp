@@ -61,7 +61,6 @@ class VoiceManager @Inject constructor(
         get() = _isContinuousListeningEnabled.value
         set(value) {
             _isContinuousListeningEnabled.value = value
-            speechRecognitionService.continuousListeningEnabled = value
         }
 
     init {
@@ -69,6 +68,9 @@ class VoiceManager @Inject constructor(
         observeVoiceSettings()
         observePermissionChanges()
         observeAppLifecycle()
+        
+        // Set up callback for SpeechRecognitionService to get continuous listening state
+        speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
     }
 
     private fun initializeTTS() {

@@ -129,7 +129,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 
                 // 1. Stop any ongoing speech recognition
                 try {
-                    speechRecognitionService.continuousListeningEnabled = false
+                    // Stop listening through VoiceManager instead of directly setting property
+                    voiceManager.updateContinuousListeningEnabled(false)
                     Log.d(TAG, "✅ Disabled speech recognition")
                 } catch (e: Exception) {
                     Log.w(TAG, "⚠️ Could not disable speech recognition: ${e.message}")

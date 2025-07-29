@@ -60,14 +60,9 @@ class SpeechRecognitionService @Inject constructor(
         get() = _isInitialized
 
     // --- Continuous Listening State ---
-    var continuousListeningEnabled: Boolean = false
-        set(value) {
-            Log.d(TAG, "🔧 TEST_DEBUG: Setting continuousListeningEnabled from ${field} to $value")
-            field = value
-        }
-        get() {
-            return field
-        }
+    // Note: Continuous listening state is now managed by VoiceManager
+    // This callback provides the current state when needed
+    var continuousListeningCallback: (() -> Boolean)? = null
 
     fun initialize() {
         // Ensure initialization always happens on the main thread
@@ -195,8 +190,7 @@ class SpeechRecognitionService @Inject constructor(
             Log.d(TAG, "[DEBUG] Stopping speech recognition forcefully")
             manualStopInProgress = true
             
-            // CRITICAL: Disable continuous listening first to prevent callbacks from restarting
-            continuousListeningEnabled = false
+            // Note: Continuous listening is now managed by VoiceManager
             
             // First cancel any ongoing recognition
             speechRecognizer?.cancel()
@@ -218,7 +212,7 @@ class SpeechRecognitionService @Inject constructor(
             _isListening.value = false
             // 🔧 BUG FIX: Don't clear callback on error either - let onResults() handle cleanup
             // recognitionCallback = null  // ← REMOVED: This was preventing final results delivery
-            continuousListeningEnabled = false
+            // Note: Continuous listening is now managed by VoiceManager
             // Try to clean up
             cleanup()
         }
@@ -313,26 +307,30 @@ class SpeechRecognitionService @Inject constructor(
             override fun onBufferReceived(buffer: ByteArray?) { /* ... */ }
 
             override fun onEndOfSpeech() {
-                Log.d(TAG, "[DEBUG] onEndOfSpeech - manualStopInProgress: $manualStopInProgress, continuousListeningEnabled: $continuousListeningEnabled")
+                val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
+                Log.d(TAG, "🔄 RESTART_DEBUG: onEndOfSpeech - manualStopInProgress: $manualStopInProgress, continuousListeningEnabled: $continuousListeningEnabled, _isListening: ${_isListening.value}")
                 // User stopped talking or recognizer hit a silence timeout.
                 if (manualStopInProgress || !continuousListeningEnabled) {
-                    Log.d(TAG, "[DEBUG] EndOfSpeech - not restarting (manual stop or continuous listening disabled)")
+                    Log.d(TAG, "🔄 RESTART_DEBUG: EndOfSpeech - not restarting (manual stop or continuous listening disabled)")
                     _isListening.value = false
                     manualStopInProgress = false
                     return
                 }
                 
                 // If still in voice mode and continuous listening is enabled, restart listening
-                Log.d(TAG, "[DEBUG] Natural end of speech detected, checking if should restart...")
+                Log.d(TAG, "🔄 RESTART_DEBUG: Natural end of speech detected, checking if should restart...")
                 if(_isListening.value && continuousListeningEnabled) {
                     try {
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech")
                         speechRecognizer?.startListening(recognizerIntent)
-                        Log.d(TAG, "[DEBUG] Restarted listening after end of speech")
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech")
                     } catch (e: Exception) {
-                        Log.e(TAG, "[DEBUG] Error restarting listening after end of speech", e)
+                        Log.e(TAG, "🔄 RESTART_DEBUG: Error restarting listening after end of speech", e)
                         _isListening.value = false
                         _errorState.value = "Error restarting listening: ${e.message}"
                     }
+                } else {
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Not restarting - _isListening=${_isListening.value}, continuousListeningEnabled=$continuousListeningEnabled")
                 }
             }
 
@@ -349,6 +347,9 @@ class SpeechRecognitionService @Inject constructor(
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
                     else -> "Unknown speech recognition error (code: $error)"
                 }
+                
+                Log.d(TAG, "🔄 RESTART_DEBUG: onError called - error=$error ($errorMessage), manualStopInProgress=$manualStopInProgress")
+                
                 // Only show user-visible errors for critical issues, not for expected errors like NO_MATCH
                 if (shouldShowError(error, manualStopInProgress)) {
                     Log.e(TAG, "Speech recognition error: $errorMessage (code $error)")
@@ -358,6 +359,9 @@ class SpeechRecognitionService @Inject constructor(
                 _isListening.value = false
 
                 // --- Continuous listening auto-restart logic with smart rate limiting ---
+                val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
+                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
+                
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled && !manualStopInProgress) {
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
@@ -368,11 +372,16 @@ class SpeechRecognitionService @Inject constructor(
                     lastErrorTime = currentTime
                     errorRestartCount++
                     
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Error qualifies for restart - errorRestartCount=$errorRestartCount, MAX_ERROR_RESTARTS=$MAX_ERROR_RESTARTS")
+                    
                     if (errorRestartCount <= MAX_ERROR_RESTARTS && continuousListeningEnabled && !manualStopInProgress) {
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
                         startListening(recognitionCallback ?: { })
                     } else {
-                        Log.w(TAG, "Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
+                        Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
                     }
+                } else {
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restart conditions not met - skipping restart")
                 }
             }
 
