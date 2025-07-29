@@ -280,7 +280,13 @@ fun WhizNavHost(
             },
             popEnterTransition = { null },
             popExitTransition = { null }
-        ) {
+        ) { backStackEntry ->
+            // For voice launch, we need to enable voice mode
+            if (isVoiceLaunch) {
+                // Set ENABLE_VOICE_MODE for voice launches immediately
+                backStackEntry.savedStateHandle["ENABLE_VOICE_MODE"] = true
+            }
+            
             ChatScreen(
                 chatId = -1L, // -1 indicates a new chat
                 onChatsListClick = {

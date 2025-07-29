@@ -139,6 +139,10 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             }
             Log.d(TAG, "✅ New chat has correct initial ID: $initialChatId")
 
+            // Wait a moment for services to initialize
+            Log.d(TAG, "⏳ Waiting for services to initialize...")
+            Thread.sleep(1000) // Give WebSocket time to connect
+            
             // step 2: Send voice message using voice input simulation
             Log.d(TAG, "🎤 step 2: Sending voice message...")
             val testMessage = "Hello from voice launch test using ActivityScenarioRule - this should work without authentication issues!"

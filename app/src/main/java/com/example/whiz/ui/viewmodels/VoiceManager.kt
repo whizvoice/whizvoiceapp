@@ -228,11 +228,13 @@ class VoiceManager @Inject constructor(
     private var transcriptionCallback: ((String) -> Unit)? = null
     
     fun startContinuousListening() {
+        Log.d(TAG, "[DEBUG] startContinuousListening() called, continuousListeningEnabled=$continuousListeningEnabled")
         if (!continuousListeningEnabled) {
             Log.d(TAG, "startContinuousListening called but continuous listening is disabled")
             return
         }
 
+        Log.d(TAG, "[DEBUG] About to call startListening()")
         startListening { finalText ->
             Log.d(TAG, "startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
             
@@ -267,12 +269,15 @@ class VoiceManager @Inject constructor(
     }
 
     fun updateContinuousListeningEnabled(enabled: Boolean) {
+        Log.d(TAG, "[DEBUG] updateContinuousListeningEnabled called with: $enabled (was: $continuousListeningEnabled)")
         continuousListeningEnabled = enabled
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
         
         if (enabled) {
+            Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
             // Start continuous listening immediately
             startContinuousListening()
+            Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
             // Stop listening if disabled
             stopListening()

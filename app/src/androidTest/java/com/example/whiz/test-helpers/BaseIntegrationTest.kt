@@ -1978,26 +1978,43 @@ abstract class BaseIntegrationTest {
                 if (!rapid) {
                     android.util.Log.d("BaseIntegrationTest", "🔍 Non-rapid mode: Verifying message appeared in chat...")
                     
-                    // Retry with delays to allow optimistic UI to update
+                    // Retry with delays to allow optimistic UI to update, but with a time limit
                     var messageVisible = false
-                    val maxRetries = 5 // 5 retries over 500ms total
-                    val delayMs = 100L // 100ms between retries
+                    val startTime = System.currentTimeMillis()
+                    val maxWaitTime = 3000L // 3 seconds max
+                    val retryDelayMs = 100L // 100ms between retries
+                    var attempt = 0
                     
-                    for (attempt in 1..maxRetries) {
-                        android.util.Log.d("BaseIntegrationTest", "🔍 Verification attempt $attempt/$maxRetries...")
-                        messageVisible = verifyMessageVisible(message, timeoutMs = 100) // Quick check each time
+                    while (System.currentTimeMillis() - startTime < maxWaitTime && !messageVisible) {
+                        attempt++
+                        val elapsedTime = System.currentTimeMillis() - startTime
+                        android.util.Log.d("BaseIntegrationTest", "🔍 Verification attempt $attempt (${elapsedTime}ms elapsed)...")
+                        
+                        // Quick check without scrolling
+                        val searchText = message.take(20)
+                        messageVisible = device.hasObject(By.textContains(searchText).pkg(packageName))
+                        
                         if (messageVisible) {
-                            android.util.Log.d("BaseIntegrationTest", "✅ Message found on attempt $attempt")
+                            android.util.Log.d("BaseIntegrationTest", "✅ Message found on attempt $attempt after ${elapsedTime}ms")
                             break
                         }
-                        if (attempt < maxRetries) {
-                            android.util.Log.d("BaseIntegrationTest", "⏳ Message not found, waiting ${delayMs}ms before retry...")
-                            Thread.sleep(delayMs)
+                        
+                        // Only sleep if we haven't exceeded the time limit
+                        if (elapsedTime + retryDelayMs < maxWaitTime) {
+                            android.util.Log.d("BaseIntegrationTest", "⏳ Message not found, waiting ${retryDelayMs}ms before retry...")
+                            Thread.sleep(retryDelayMs)
                         }
                     }
                     
                     if (!messageVisible) {
-                        android.util.Log.e("BaseIntegrationTest", "❌ Message not visible after $maxRetries attempts over ${maxRetries * delayMs}ms")
+                        val totalTime = System.currentTimeMillis() - startTime
+                        android.util.Log.e("BaseIntegrationTest", "❌ Message not visible after $attempt attempts over ${totalTime}ms")
+                        // Log the current state of the UI
+                        val allText = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
+                        android.util.Log.e("BaseIntegrationTest", "📱 Current visible text elements: ${allText.size}")
+                        allText.take(5).forEach { textView ->
+                            android.util.Log.e("BaseIntegrationTest", "   - ${textView.text?.take(50)}")
+                        }
                         return false
                     }
                     android.util.Log.d("BaseIntegrationTest", "✅ Direct voice message confirmed visible in chat")

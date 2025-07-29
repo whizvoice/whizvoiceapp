@@ -247,12 +247,31 @@ fun ChatScreen(
         // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
         if (effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
-            kotlinx.coroutines.delay(500L) // Wait for UI to be ready
             
-            // Always enable continuous listening for all chats (voice app default)
-            // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
-            voiceManager.updateContinuousListeningEnabled(true)
-            viewModel.ensureContinuousListeningEnabled()
+            // For voice launches with TTS mode, set up continuous listening immediately
+            if (enableTTSMode) {
+                Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
+                // Always enable continuous listening for all chats (voice app default)
+                // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
+                Log.d("ChatScreen", "[LOG] About to call voiceManager.updateContinuousListeningEnabled(true)")
+                voiceManager.updateContinuousListeningEnabled(true)
+                Log.d("ChatScreen", "[LOG] Called voiceManager.updateContinuousListeningEnabled(true)")
+                
+                Log.d("ChatScreen", "[LOG] About to call viewModel.ensureContinuousListeningEnabled()")
+                viewModel.ensureContinuousListeningEnabled()
+                Log.d("ChatScreen", "[LOG] Called viewModel.ensureContinuousListeningEnabled()")
+            } else {
+                // For non-voice launches, use delay
+                kotlinx.coroutines.delay(500L) // Wait for UI to be ready
+                
+                Log.d("ChatScreen", "[LOG] About to call voiceManager.updateContinuousListeningEnabled(true) after delay")
+                voiceManager.updateContinuousListeningEnabled(true)
+                Log.d("ChatScreen", "[LOG] Called voiceManager.updateContinuousListeningEnabled(true)")
+                
+                Log.d("ChatScreen", "[LOG] About to call viewModel.ensureContinuousListeningEnabled()")
+                viewModel.ensureContinuousListeningEnabled()
+                Log.d("ChatScreen", "[LOG] Called viewModel.ensureContinuousListeningEnabled()")
+            }
             
             // Set up transcription callback for chat integration
             voiceManager.setTranscriptionCallback { transcription ->

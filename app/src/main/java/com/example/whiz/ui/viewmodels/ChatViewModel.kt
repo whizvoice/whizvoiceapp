@@ -1043,7 +1043,6 @@ class ChatViewModel @Inject constructor(
         if (continuousListeningEnabled) {
             Log.d(TAG, "[LOG] Disabling continuous listening mode (was enabled but not actively listening)")
             continuousListeningEnabled = false
-            speechRecognitionService.continuousListeningEnabled = false
             return
         }
         
@@ -1061,7 +1060,6 @@ class ChatViewModel @Inject constructor(
         _inputText.value = ""
         Log.d(TAG, "[RACE_DEBUG] startContinuousListening: Input text cleared to: '${_inputText.value}'")
         continuousListeningEnabled = true
-        speechRecognitionService.continuousListeningEnabled = true
         
         // 🔧 IMPROVED: Start listening immediately unless TTS is speaking
         // Allow listening during server responses for better UX
@@ -1105,13 +1103,6 @@ class ChatViewModel @Inject constructor(
         
         // Enable continuous listening if not already enabled
         Log.d(TAG, "[LOG] Enabling continuous listening for voice mode")
-        
-        // Double-check that continuous listening is still supposed to be enabled
-        // (user typing may have disabled it while this process was in flight)
-        if (!continuousListeningEnabled) {
-            Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: Continuous listening was disabled (user typed), aborting enable process")
-            return
-        }
         
         Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: About to clear input text. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
         _inputText.value = ""
