@@ -68,6 +68,12 @@ class WhizServerRepository @Inject constructor(
         replay = 0
     )
     
+    // Expose connection state for synchronous checking
+    fun isConnected(): Boolean {
+        val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
+        return lastEvent is WebSocketEvent.Connected && webSocket != null
+    }
+    
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
         when (event) {

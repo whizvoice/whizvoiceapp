@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -24,7 +25,8 @@ class VoiceManager @Inject constructor(
     private val permissionManager: PermissionManager,
     private val speechRecognitionService: SpeechRecognitionService,
     private val ttsManager: TTSManager,
-    private val userPreferences: UserPreferences
+    private val userPreferences: UserPreferences,
+    private val appLifecycleService: AppLifecycleService
 ) : ViewModel() {
 
     private val TAG = "VoiceManager"
@@ -66,6 +68,7 @@ class VoiceManager @Inject constructor(
         initializeTTS()
         observeVoiceSettings()
         observePermissionChanges()
+        observeAppLifecycle()
     }
 
     private fun initializeTTS() {
@@ -184,6 +187,48 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error applying voice settings", e)
         }
+    }
+
+    private fun observeAppLifecycle() {
+        // Handle app background events
+        viewModelScope.launch {
+            appLifecycleService.appBackgroundEvent.collect {
+                Log.d(TAG, "App backgrounded - stopping continuous listening")
+                onAppBackgrounded()
+            }
+        }
+        
+        // Handle app foreground events
+        viewModelScope.launch {
+            appLifecycleService.appForegroundEvent.collect {
+                Log.d(TAG, "App foregrounded")
+                onAppForegrounded()
+            }
+        }
+    }
+    
+    private fun onAppBackgrounded() {
+        Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Stop continuous listening cleanly
+        if (continuousListeningEnabled) {
+            Log.d(TAG, "Stopping continuous listening due to app backgrounded")
+            try {
+                // Update state and stop listening
+                continuousListeningEnabled = false
+                speechRecognitionService.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping continuous listening on background", e)
+            }
+        }
+    }
+    
+    private fun onAppForegrounded() {
+        Log.d(TAG, "onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Note: We don't automatically restart continuous listening here
+        // It should be restarted by ChatScreen when appropriate
+        // This prevents unwanted mic activation when returning to non-chat screens
     }
 
     fun speak(text: String) {
