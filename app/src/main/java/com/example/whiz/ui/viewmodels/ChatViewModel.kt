@@ -1479,61 +1479,33 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
         Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${_isSpeaking.value}, isResponding: ${_isResponding.value}")
         
-        // Only restart if we have permission, are in a chat, and we're in voice mode
-        if (_micPermissionGranted.value && _chatId.value > 0) {
+        // Only restart if we have permission, are in a chat, and continuous listening was enabled before backgrounding
+        if (_micPermissionGranted.value && _chatId.value > 0 && voiceManager.isContinuousListeningEnabled.value) {
             try {
-                // Re-enable continuous listening
-                voiceManager.updateContinuousListeningEnabled(true)
-                // continuousListeningEnabled is already set via voiceManager
-                
-                // More aggressive restart logic to handle edge cases
+                // Clean up any stuck states that might prevent restart
                 viewModelScope.launch {
-                    delay(300L) // Slightly longer delay to ensure app is fully resumed
+                    delay(200L) // Brief delay to ensure app is fully resumed
                     
-                    // Reset potentially stuck states that might prevent restart
+                    // Reset potentially stuck speaking state
                     if (_isSpeaking.value) {
-                        Log.d(TAG, "[LOG] Detected stuck speaking state, clearing it")
+                        Log.d(TAG, "[LOG] Detected stuck speaking state on foreground, clearing it")
                         _isSpeaking.value = false
                         ttsManager.stop() // Force stop TTS to clear speaking state
                     }
                     
-                    // Double-check conditions and force restart if needed
-                    if (voiceManager.isContinuousListeningEnabled.value && !isListening.value) {
-                        Log.d(TAG, "[LOG] Force restarting continuous listening after app foregrounded")
-                        try {
-                            // Force stop any existing listening first
-                            voiceManager.stopListening()
-                            delay(100L) // Brief pause
-                            startContinuousListening()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "[LOG] Error in force restart, trying direct service restart", e)
-                            // Fallback: try direct service restart
-                            voiceManager.stopListening()
-                            delay(100L)
-                            if (voiceManager.isContinuousListeningEnabled.value) {
-                                voiceManager.startListening { finalText ->
-                                    if (finalText.isNotBlank()) {
-                                        Log.d(TAG, "[RACE_DEBUG] Speech recognition: About to set input text to: '$finalText'. Previous: '${_inputText.value}'")
-                                        _inputText.value = finalText
-                                        Log.d(TAG, "[RACE_DEBUG] Speech recognition: Input text set to: '${_inputText.value}'")
-                                        if (voiceManager.isContinuousListeningEnabled.value) {
-                                            sendUserInput(finalText)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if (isListening.value) {
-                        Log.d(TAG, "[LOG] Already listening, no restart needed")
+                    // Restart continuous listening if it's not already active
+                    if (!isListening.value) {
+                        Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
+                        startContinuousListening()
                     } else {
-                        Log.d(TAG, "[LOG] Not restarting - continuousListeningEnabled: ${voiceManager.isContinuousListeningEnabled.value}, isListening: ${isListening.value}")
+                        Log.d(TAG, "[LOG] Already listening, no restart needed")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error restarting continuous listening after app foregrounded", e)
             }
         } else {
-            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}")
+            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}, continuousEnabled: ${voiceManager.isContinuousListeningEnabled.value}")
         }
     }
 
