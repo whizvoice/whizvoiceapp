@@ -95,7 +95,8 @@ class ChatViewModel @Inject constructor(
 
 
     // Messages in the current chat with deduplication to handle optimistic UI transitions
-    val messages = _chatId.flatMapLatest { id ->
+    val messages = _chatId
+        .flatMapLatest { id ->
         Log.d(TAG, "🔥 messages flow: Chat ID changed to $id")
         if (id != 0L) { // 🔧 OPTIMISTIC UI FIX: Handle both positive AND negative chat IDs
             repository.getMessagesForChat(id).map { messagesList ->

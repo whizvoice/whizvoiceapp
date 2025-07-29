@@ -106,12 +106,16 @@ fun ChatScreen(
     // Use the ViewModel's chat ID for display once it changes from -1
     val effectiveChatId = if (chatId == -1L && viewModelChatId != -1L) viewModelChatId else chatId
     
+    LaunchedEffect(viewModelChatId) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (nav chatId=$chatId, effectiveChatId=$effectiveChatId)")
+    }
+    
     val messages by viewModel.messages.collectAsState(initial = emptyList())
     
     LaunchedEffect(messages, effectiveChatId) {
         Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for effectiveChatId=$effectiveChatId (nav chatId=$chatId, vm chatId=$viewModelChatId)")
         messages.forEachIndexed { index, msg ->
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}..."
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
         }
     }
     Log.d("ChatScreen", "🔥 UI_DEBUG: ChatScreen recomposed with ${messages.size} messages, chatId=$chatId, viewModelChatId=$viewModelChatId, viewModel=${viewModel.hashCode()}")
