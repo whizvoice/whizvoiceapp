@@ -39,7 +39,8 @@ fun WhizNavHost(
     permissionManager: PermissionManager,
     voiceManager: VoiceManager,
     hasPermission: Boolean = false,
-    onRequestPermission: () -> Unit = {}
+    onRequestPermission: () -> Unit = {},
+    isVoiceLaunch: Boolean = false
 ) {
     // Get authentication state
     val authViewModel: AuthViewModel = hiltViewModel()
@@ -50,11 +51,12 @@ fun WhizNavHost(
     val previousFromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false
     val currentVoiceMode = currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true
     val currentFromAssistant = currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
-    val fromAssistant = previousFromAssistant || currentVoiceMode || currentFromAssistant
+    val fromAssistant = isVoiceLaunch || previousFromAssistant || currentVoiceMode || currentFromAssistant
     val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
     
     // Debug logging for voice launch detection
     Log.d("WhizNavHost", "🔍 Voice launch detection:")
+    Log.d("WhizNavHost", "  isVoiceLaunch (parameter): $isVoiceLaunch")
     Log.d("WhizNavHost", "  previousFromAssistant: $previousFromAssistant")
     Log.d("WhizNavHost", "  currentVoiceMode: $currentVoiceMode") 
     Log.d("WhizNavHost", "  currentFromAssistant: $currentFromAssistant")

@@ -94,13 +94,18 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     navController = rememberNavController()
+                    
+                    // Check if this is a voice launch
+                    val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
+                    
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
                         permissionManager = permissionManager,
                         voiceManager = voiceManager,
                         hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
-                        onRequestPermission = { requestMicrophonePermission() }
+                        onRequestPermission = { requestMicrophonePermission() },
+                        isVoiceLaunch = isVoiceLaunch
                     )
                     
                     // Handle navigation after navController is initialized

@@ -18,6 +18,8 @@ You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note tha
 cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.TTSBackgroundingTest
 ```
 
+the tests take a long time so please run it with your max timeout (10mins)
+
 **IMPORTANT:** Always run tests without timeout as they can take several minutes to complete.
 
 When investigating test failures, check these log files for detailed information:

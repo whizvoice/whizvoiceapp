@@ -63,22 +63,6 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    // Create voice launch intent for ActivityScenarioRule
-    private fun createVoiceLaunchIntent(): Intent {
-        return Intent(instrumentation.targetContext, MainActivity::class.java).apply {
-            action = Intent.ACTION_MAIN
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch specific flags
-            putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID for voice detection
-            // Don't set sourceBounds for voice launch (manual launches have bounds, voice launches don't)
-            // Voice launch flags (FROM_ASSISTANT, ENABLE_VOICE_MODE, CREATE_NEW_CHAT_ON_START) 
-            // will be automatically added by detectVoiceLaunch() in MainActivity
-        }
-    }
-
-    @get:Rule
-    val activityScenarioRule = ActivityScenarioRule<MainActivity>(createVoiceLaunchIntent())
-
     @get:Rule
     val composeTestRule = createComposeRule()
 
@@ -97,18 +81,12 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
-    // Helper method to get MainActivity instance from ActivityScenarioRule
-    private fun getActivity(): MainActivity {
-        var activity: MainActivity? = null
-        activityScenarioRule.scenario.onActivity { 
-            activity = it 
-        }
-        return activity ?: throw IllegalStateException("Activity not available")
-    }
+    @Inject
+    lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
 
     @Test
     fun fullMessageFlowTest_voiceLaunchAndVoiceInput(): Unit = runBlocking {
-        Log.d(TAG, "🚀 starting comprehensive message flow voice test with ActivityScenarioRule")
+        Log.d(TAG, "🚀 starting comprehensive message flow voice test with direct activity launch")
         
         val credentials = TestCredentialsManager.credentials
         Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
@@ -122,18 +100,26 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
                 emptyList()
             }
             
-            // step 1: Activity already launched with voice intent - wait for navigation to complete
-            Log.d(TAG, "🎤 step 1: Voice launch complete - waiting for navigation...")
+            // step 1: Create voice launch intent and launch activity
+            Log.d(TAG, "🎤 step 1: Voice launching app...")
+            val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch specific flags
+                putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID for voice detection
+                // Don't set sourceBounds for voice launch (manual launches have bounds, voice launches don't)
+                // Voice launch flags (FROM_ASSISTANT, ENABLE_VOICE_MODE, CREATE_NEW_CHAT_ON_START) 
+                // will be automatically added by detectVoiceLaunch() in MainActivity
+            }
             
-            // Wait for UI to stabilize after voice launch navigation
-            composeTestRule.waitForIdle()
-            Thread.sleep(2000) // Allow time for async navigation and authentication to complete
+            // Launch through real Android system like Google Assistant would
+            val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
             
             // Wait for voice launch to navigate to new chat screen
             Log.d(TAG, "⏳ Waiting for voice launch navigation to complete...")
             val navigatedToChat = device.wait(Until.hasObject(
                 By.clazz("android.widget.EditText").pkg(packageName)
-            ), 8000) // Longer timeout to allow for auth + navigation
+            ), 5000) // Reduced timeout since navigation seems to be working
             
             if (!navigatedToChat) {
                 Log.e(TAG, "❌ FAILURE at step 1: Voice launch failed to navigate to chat screen")
@@ -144,7 +130,6 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "✅ Voice launch navigation successful - found EditText")
 
             // First verify chat ID is initially -1 for new chat (before any messages)
-            val activity = getActivity()
             val chatViewModel = androidx.lifecycle.ViewModelProvider(activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
             val initialChatId = chatViewModel.chatId.value
             if (initialChatId != -1L) {
@@ -158,26 +143,20 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "🎤 step 2: Sending voice message...")
             val testMessage = "Hello from voice launch test using ActivityScenarioRule - this should work without authentication issues!"
             
-            // Use UI Automator to find and interact with the EditText
-            val editText = device.findObject(By.clazz("android.widget.EditText").pkg(packageName))
-            if (editText == null) {
-                Log.e(TAG, "❌ FAILURE at step 2: Could not find EditText")
-                failWithScreenshot("edittext_not_found", "Could not find EditText")
+            // Simulate voice transcription and automatic sending (as voice input typically does)
+            // Use simulateVoiceTranscriptionAndSend which directly calls ChatViewModel methods
+            val voiceSendSuccess = simulateVoiceTranscriptionAndSend(
+                testMessage, 
+                rapid = false, 
+                chatViewModel = chatViewModel,
+                speechRecognitionService = speechRecognitionService
+            )
+            if (!voiceSendSuccess) {
+                Log.e(TAG, "❌ FAILURE at step 2: Failed to send voice message via transcription simulation")
+                failWithScreenshot("voice_send_failed", "Failed to send voice message via transcription simulation")
                 return@runBlocking
             }
             
-            // Simulate voice input by setting text and triggering send
-            editText.text = testMessage
-            
-            // Find and click send button
-            val sendButton = device.findObject(By.desc("Send message").pkg(packageName))
-            if (sendButton == null) {
-                Log.e(TAG, "❌ FAILURE at step 2: Could not find send button")
-                failWithScreenshot("send_button_not_found", "Could not find send button")
-                return@runBlocking
-            }
-            
-            sendButton.click()
             Log.d(TAG, "✅ Voice message sent: $testMessage")
 
             // step 3: Wait for message to appear and verify optimistic chat ID
