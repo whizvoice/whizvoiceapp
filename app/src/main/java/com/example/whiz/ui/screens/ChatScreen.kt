@@ -86,10 +86,16 @@ fun ChatScreen(
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
-    navController: NavController
+    navController: NavController,
+    onViewModelReady: ((ChatViewModel) -> Unit)? = null // Test hook for accessing navigation-scoped ViewModel
 ) {
     // Handle permission state - moved to top
     var showPermissionDialog by remember { mutableStateOf(false) }
+    
+    // Call the test hook once when ViewModel is ready
+    LaunchedEffect(viewModel) {
+        onViewModelReady?.invoke(viewModel)
+    }
 
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
@@ -103,17 +109,14 @@ fun ChatScreen(
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
     
-    // Use the ViewModel's chat ID for display once it changes from -1
-    val effectiveChatId = if (chatId == -1L && viewModelChatId != -1L) viewModelChatId else chatId
-    
     LaunchedEffect(viewModelChatId) {
-        Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (nav chatId=$chatId, effectiveChatId=$effectiveChatId)")
+        Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (provided chatId=$chatId)")
     }
     
     val messages by viewModel.messages.collectAsState(initial = emptyList())
     
-    LaunchedEffect(messages, effectiveChatId) {
-        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for effectiveChatId=$effectiveChatId (nav chatId=$chatId, vm chatId=$viewModelChatId)")
+    LaunchedEffect(messages) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for chatId=$chatId (vm chatId=$viewModelChatId)")
         messages.forEachIndexed { index, msg ->
             Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
         }
@@ -381,12 +384,12 @@ fun ChatScreen(
         Box(
             modifier = Modifier.weight(1f)
         ) {
-            key(effectiveChatId) {
+            key(chatId) {
                 if (messages.isEmpty() && !isResponding && !isSpeaking) {
-                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, effectiveChatId=$effectiveChatId")
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, chatId=$chatId")
                     EmptyChatPlaceholder()
                 } else {
-                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for effectiveChatId=$effectiveChatId")
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
                     MessagesList(
                         messages = messages,
                         listState = listState,

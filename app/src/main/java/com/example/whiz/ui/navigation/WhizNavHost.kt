@@ -38,10 +38,10 @@ fun WhizNavHost(
     preloadManager: PreloadManager,
     permissionManager: PermissionManager,
     voiceManager: VoiceManager,
-    chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
-    isVoiceLaunch: Boolean = false
+    isVoiceLaunch: Boolean = false,
+    onChatViewModelReady: ((com.example.whiz.ui.viewmodels.ChatViewModel) -> Unit)? = null // Test hook
 ) {
     // Get authentication state
     val authViewModel: AuthViewModel = hiltViewModel()
@@ -261,8 +261,8 @@ fun WhizNavHost(
                 voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
-                viewModel = chatViewModel,
-                navController = navController
+                navController = navController,
+                onViewModelReady = onChatViewModelReady
             )
         }
 
@@ -289,8 +289,10 @@ fun WhizNavHost(
                 backStackEntry.savedStateHandle["ENABLE_VOICE_MODE"] = true
             }
             
+            // For assistant chat (new chat), use SavedStateHandle
+            // Pass -1 initially, but ViewModel can update it via SavedStateHandle
             ChatScreen(
-                chatId = -1L, // -1 indicates a new chat
+                chatId = -1L, // Initial value, will be updated via SavedStateHandle
                 onChatsListClick = {
                     // Preload chats list before navigating
                     preloadManager.preloadChatsList()
@@ -302,8 +304,8 @@ fun WhizNavHost(
                 voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
-                viewModel = chatViewModel,
-                navController = navController
+                navController = navController,
+                onViewModelReady = onChatViewModelReady
             )
         }
     }

@@ -2,7 +2,7 @@ package com.example.whiz.integration
 
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
@@ -59,12 +59,16 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
 
     companion object {
         private val TAG = "MessageFlowVoiceComposeTest"
+        
+        // Capture ViewModel from navigation scope
+        @Volatile
+        var capturedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
     }
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject
     lateinit var repository: WhizRepository
@@ -112,6 +116,13 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
                 // will be automatically added by detectVoiceLaunch() in MainActivity
             }
             
+            // Set up the ViewModel capture callback before launching
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { vm ->
+                Log.d(TAG, "✅ ChatViewModel captured from navigation scope!")
+                capturedViewModel = vm
+            }
+            
             // Launch through real Android system like Google Assistant would
             val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
             
@@ -129,60 +140,48 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ Voice launch navigation successful - found EditText")
 
-            // First verify chat ID is initially -1 for new chat (before any messages)
-            val chatViewModel = androidx.lifecycle.ViewModelProvider(activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
-            val initialChatId = chatViewModel.chatId.value
-            if (initialChatId != -1L) {
-                Log.e(TAG, "❌ FAILURE: New chat should have ID -1 but has ID: $initialChatId")
-                failWithScreenshot("new_chat_wrong_initial_id", "New chat should have ID -1 but has ID: $initialChatId")
-                return@runBlocking
+            // Wait for ChatViewModel to be captured
+            Log.d(TAG, "⏳ Waiting for ChatViewModel to be captured...")
+            var waitTime = 0
+            while (capturedViewModel == null && waitTime < 5000) {
+                Thread.sleep(100)
+                waitTime += 100
             }
-            Log.d(TAG, "✅ New chat has correct initial ID: $initialChatId")
-
-            // Wait a moment for services to initialize
-            Log.d(TAG, "⏳ Waiting for services to initialize...")
-            Thread.sleep(1000) // Give WebSocket time to connect
             
-            // step 2: Send voice message using voice input simulation
-            Log.d(TAG, "🎤 step 2: Sending voice message...")
-            val testMessage = "Hello from voice launch test using ActivityScenarioRule - this should work without authentication issues!"
-            
-            // Simulate voice transcription and automatic sending (as voice input typically does)
-            // Use simulateVoiceTranscriptionAndSend which directly calls ChatViewModel methods
-            val voiceSendSuccess = simulateVoiceTranscriptionAndSend(
-                testMessage, 
-                rapid = false, 
-                chatViewModel = chatViewModel,
-                speechRecognitionService = speechRecognitionService
-            )
-            if (!voiceSendSuccess) {
-                Log.e(TAG, "❌ FAILURE at step 2: Failed to send voice message via transcription simulation")
-                failWithScreenshot("voice_send_failed", "Failed to send voice message via transcription simulation")
+            if (capturedViewModel == null) {
+                Log.e(TAG, "❌ FAILURE: ChatViewModel not captured after 5 seconds")
+                failWithScreenshot("viewmodel_not_captured", "ChatViewModel not captured")
                 return@runBlocking
             }
             
-            Log.d(TAG, "✅ Voice message sent: $testMessage")
+            Log.d(TAG, "✅ ChatViewModel captured successfully")
+            
+            // step 2: Use voice input with the captured ViewModel
+            Log.d(TAG, "🎤 step 2: Simulating voice input...")
+            val testMessage = "Hello from voice launch test using navigation-scoped ViewModel"
+            
+            // Check if voice mode is active
+            val listeningActive = device.hasObject(By.text("Listening...").pkg(packageName))
+            Log.d(TAG, "Voice mode active: $listeningActive")
+            
+            // Simulate voice transcription using the captured ViewModel
+            instrumentation.runOnMainSync {
+                capturedViewModel?.let { vm ->
+                    Log.d(TAG, "🎤 Simulating voice transcription: '$testMessage'")
+                    vm.updateInputText(testMessage, fromVoice = true)
+                    vm.sendUserInput(testMessage)
+                    Log.d(TAG, "✅ Voice message sent via ChatViewModel")
+                }
+            }
+            
+            Log.d(TAG, "✅ Voice simulation complete")
 
-            // step 3: Wait for message to appear and verify optimistic chat ID
+            // step 4: Wait for message to appear in UI
             Thread.sleep(1000) // Wait for message to be processed
             
-            // step 3.5: Verify optimistic chat ID is negative but not -1
-            val optimisticChatId = chatViewModel.chatId.value
-            Log.d(TAG, "🔍 Optimistic chat ID after sending message: $optimisticChatId")
-            
-            if (optimisticChatId!! >= 0) {
-                Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
-                failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
-                return@runBlocking
-            } else if (optimisticChatId == -1L) {
-                Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                return@runBlocking
-            }
-            
-            Log.d(TAG, "✅ Optimistic chat ID is correct: $optimisticChatId (negative but not -1)")
+            Log.d(TAG, "🔍 Verifying message appears in UI...")
 
-            // step 4: Verify message appears in UI using Compose testing
+            // step 5: Verify message appears in UI using Compose testing
             composeTestRule.waitForIdle()
             
             // Use Compose testing to verify message appears

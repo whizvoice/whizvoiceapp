@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.SavedStateHandle
 import com.example.whiz.data.repository.WhizRepository
 // SpeechRecognitionService is now accessed via VoiceManager
 import com.example.whiz.services.TTSManager
@@ -42,6 +43,7 @@ class ChatViewModel @Inject constructor(
     private val whizServerRepository: WhizServerRepository,
     private val authRepository: AuthRepository, // Add this
     private val userPreferences: UserPreferences,
+    savedStateHandle: SavedStateHandle,
     private val ttsManager: TTSManager,
     private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
     private val voiceManager: VoiceManager,
@@ -52,8 +54,9 @@ class ChatViewModel @Inject constructor(
     // Config state
     val configUseRemoteAgent = true;
 
-    // Chat state
-    private val _chatId = MutableStateFlow<Long>(-1)
+    // Chat state - initialize from navigation argument
+    private val initialChatId = savedStateHandle.get<Long>("chatId") ?: -1L
+    private val _chatId = MutableStateFlow<Long>(initialChatId)
     val chatId: StateFlow<Long> = _chatId.asStateFlow()
     private val _chatTitle = MutableStateFlow<String>("New Chat")
     val chatTitle = _chatTitle.asStateFlow()

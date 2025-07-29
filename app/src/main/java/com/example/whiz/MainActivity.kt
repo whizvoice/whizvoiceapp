@@ -40,6 +40,10 @@ import androidx.lifecycle.Lifecycle
 class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
+        
+        // Test callback for capturing navigation-scoped ViewModels
+        @Volatile
+        var testViewModelCallback: ((com.example.whiz.ui.viewmodels.ChatViewModel) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -61,7 +65,6 @@ class MainActivity : ComponentActivity() {
     
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
-    private val chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel by viewModels()
     
     // Permission launcher
     private val requestPermissionLauncher = registerForActivityResult(
@@ -104,10 +107,13 @@ class MainActivity : ComponentActivity() {
                         preloadManager = preloadManager,
                         permissionManager = permissionManager,
                         voiceManager = voiceManager,
-                        chatViewModel = chatViewModel,
                         hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() },
-                        isVoiceLaunch = isVoiceLaunch
+                        isVoiceLaunch = isVoiceLaunch,
+                        onChatViewModelReady = { vm ->
+                            // Allow tests to capture the ViewModel
+                            testViewModelCallback?.invoke(vm)
+                        }
                     )
                     
                     // Handle navigation after navController is initialized
