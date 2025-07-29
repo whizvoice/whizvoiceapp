@@ -24,7 +24,7 @@ When investigating test failures, check these log files for detailed information
 
 - **test_gradle_output.log** - Gradle build output and test execution results
 - **test_logcat_output.log** - Android system logs during test execution (key for debugging runtime issues)
-- **test_summary_output.log** - High-level test results and summaries
+- **test_summary.log** - High-level test results and summaries
 
 Crucially, screenshots from failed tests will show up in whizvoiceapp/test_screenshots directory
 
