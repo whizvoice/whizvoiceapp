@@ -114,9 +114,17 @@ class MainActivity : ComponentActivity() {
     
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent) // Set intent first so logDetailedIntentInfo can use it
         logDetailedIntentInfo(intent, "onNewIntent")
-        setIntent(intent)
-        // Don't call handleIntentNavigation here, it will be handled by LaunchedEffect
+        
+        // If navController is already initialized, LaunchedEffect(navController) won't trigger
+        // So we need to manually call handleIntentNavigation
+        if (::navController.isInitialized) {
+            Log.d(TAG, "🎯 NavController already initialized - manually calling handleIntentNavigation")
+            handleIntentNavigation(intent)
+        } else {
+            Log.d(TAG, "🎯 NavController not initialized - LaunchedEffect will handle navigation")
+        }
     }
 
     private fun logDetailedIntentInfo(intent: Intent?, source: String) {
@@ -165,8 +173,8 @@ class MainActivity : ComponentActivity() {
             val isLikelyVoiceLaunch = detectVoiceLaunch()
             Log.d(TAG, "Likely voice launch: $isLikelyVoiceLaunch")
             
-            if (isLikelyVoiceLaunch && source == "onCreate") {
-                Log.d(TAG, "🎤 VOICE LAUNCH DETECTED - adding assistant flags")
+            if (isLikelyVoiceLaunch) {
+                Log.d(TAG, "🎤 VOICE LAUNCH DETECTED ($source) - adding assistant flags")
                 // Add the assistant flags that would normally come from AssistantActivity
                 i.putExtra("FROM_ASSISTANT", true)
                 i.putExtra("ENABLE_VOICE_MODE", true) 
@@ -183,8 +191,8 @@ class MainActivity : ComponentActivity() {
         return try {
             // PRIMARY DETECTION: Intent extras analysis (MOST RELIABLE!)
             // Voice launches ALWAYS have tracing_intent_id, manual launches NEVER do
-            val traceId = intent?.extras?.getLong("tracing_intent_id")
-            val hasTraceId = traceId != null && traceId > 0
+            val traceId = intent?.extras?.getLong("tracing_intent_id", 0L) ?: 0L
+            val hasTraceId = traceId > 0
             
                     // SECONDARY DETECTION: Intent flags analysis  
         // Voice: 0x10000000, Manual: 0x10200000

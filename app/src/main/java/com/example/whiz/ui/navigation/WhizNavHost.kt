@@ -45,15 +45,18 @@ fun WhizNavHost(
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
 
-    // Check if we're coming from assistant
-    val fromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false
+    // Check if we're coming from assistant or voice launch
+    val currentBackStackEntry = navController.currentBackStackEntry
+    val fromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false ||
+                       currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true ||
+                       currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
     val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
 
     // Monitor authentication state and navigate to login if user becomes unauthenticated
     LaunchedEffect(isAuthenticated) {
         Log.d("WhizNavHost", "🔐 Authentication state changed: isAuthenticated = $isAuthenticated")
         val currentRoute = navController.currentDestination?.route
-        Log.d("WhizNavHost", "🔐 Current route: $currentRoute")
+        Log.d("WhizNavHost", "🔐 Current route: $currentRoute, fromAssistant: $fromAssistant")
         
         if (!isAuthenticated) {
             // Only navigate to login if we're not already there
@@ -90,6 +93,10 @@ fun WhizNavHost(
         startDestination = if (isAuthenticated) {
             if (fromAssistant && chatId > 0) {
                 "chat/$chatId"
+            } else if (fromAssistant) {
+                // Voice launch to new chat (assistant_chat)
+                Log.d("WhizNavHost", "🎤 Voice launch detected - using assistant_chat as start destination")
+                Screen.AssistantChat.route
             } else {
                 Screen.Home.route
             }
