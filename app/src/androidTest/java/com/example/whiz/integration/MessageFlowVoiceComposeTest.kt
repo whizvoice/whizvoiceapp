@@ -87,6 +87,14 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
+    
+    @After
+    fun tearDown() {
+        Log.d(TAG, "TearDown: MessageFlowVoiceComposeTest")
+        // Clean up the test callback
+        MainActivity.testViewModelCallback = null
+        capturedViewModel = null
+    }
 
     @Test
     fun fullMessageFlowTest_voiceLaunchAndVoiceInput(): Unit = runBlocking {
@@ -185,8 +193,15 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             composeTestRule.waitForIdle()
             
             // Use Compose testing to verify message appears
-            composeTestRule.onNodeWithText(testMessage).assertIsDisplayed()
-            Log.d(TAG, "✅ Message verified in UI using Compose testing")
+            try {
+                composeTestRule.onNodeWithText(testMessage).assertIsDisplayed()
+                Log.d(TAG, "✅ Message verified in UI using Compose testing")
+            } catch (e: Throwable) {  // Changed from AssertionError to Throwable to catch all exceptions
+                Log.e(TAG, "❌ Message not found in UI: ${e.message}")
+                Log.e(TAG, "❌ Exception type: ${e.javaClass.name}")
+                failWithScreenshot("Message not displayed in UI after voice input", "message_not_displayed")
+                throw e
+            }
 
             Log.d(TAG, "🎉 Voice launch test completed successfully!")
             
