@@ -255,6 +255,7 @@ class WhizRepository @Inject constructor(
         return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
             // 🔧 FIXED: Return local database messages immediately for optimistic UI
             // Background sync is handled separately to avoid race conditions
+            Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId, triggerValue=$triggerValue")
             messageDao.getMessagesForChatFlow(chatId)
         }.catch { e ->
             Log.e(TAG, "Error in getMessagesForChat flow", e)
@@ -350,8 +351,9 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId with requestId: $requestId")
             
-            // Don't trigger API refresh - this is just for immediate UI
-            // The real message will come via WebSocket and trigger refresh
+            // Trigger messages refresh so the UI updates immediately
+            // Even though Room should auto-emit, the flatMapLatest wrapper requires a trigger
+            triggerMessagesRefresh()
             
             messageId
         } catch (e: Exception) {
@@ -417,6 +419,9 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId with requestId: $requestId")
             
+            // Trigger messages refresh so the UI updates immediately
+            triggerMessagesRefresh()
+            
             messageId
         } catch (e: Exception) {
             Log.e(TAG, "Error adding optimistic assistant message to chat $chatId: ${e.message}", e)
@@ -449,6 +454,10 @@ class WhizRepository @Inject constructor(
                 
                 val messageId = messageDao.insertMessage(assistantMessage)
                 Log.d(TAG, "addAssistantMessageAfterRequest: added assistant message $messageId after user message ${userMessage.id}")
+                
+                // Trigger messages refresh so the UI updates immediately
+                triggerMessagesRefresh()
+                
                 return messageId
             } else {
                 Log.w(TAG, "addAssistantMessageAfterRequest: no user message found with requestId $requestId, adding at end")

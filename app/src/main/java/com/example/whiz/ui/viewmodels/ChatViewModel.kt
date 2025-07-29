@@ -101,6 +101,7 @@ class ChatViewModel @Inject constructor(
             repository.getMessagesForChat(id).map { messagesList ->
                 // 🔧 DEDUPLICATION DEBUG: Log all messages before deduplication
                 Log.d(TAG, "🔍 DEDUP_DEBUG: Processing ${messagesList.size} messages for chat $id:")
+                Log.d(TAG, "🔥 MESSAGES_FLOW_DEBUG: Emitting ${messagesList.size} messages to UI for chat $id")
                 messagesList.forEachIndexed { index, message ->
                     Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                 }
@@ -477,6 +478,8 @@ class ChatViewModel @Inject constructor(
                             Log.w(TAG, "Message processing delay: ${processingDelay}ms")
                         }
                         
+                        Log.d(TAG, "🔧 WEBSOCKET_MESSAGE: Received message event with conversationId=${event.conversationId}, requestId=${event.requestId}")
+                        
                         try {
                             var isErrorHandled = false
                             var messageContentForChat = event.text
@@ -572,6 +575,7 @@ class ChatViewModel @Inject constructor(
                             val hasServerId = effectiveConversationId > 0
                             val isChatTransition = isOptimisticChat && hasServerId && originalChatId != effectiveConversationId
                             
+                            Log.d(TAG, "🔧 CHAT_TRANSITION_CHECK: isOptimisticChat=$isOptimisticChat, hasServerId=$hasServerId, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId, isChatTransition=$isChatTransition")
                             
                             if (isChatTransition) {
                                 // Starting migration to sync with server conversation ID
@@ -599,6 +603,8 @@ class ChatViewModel @Inject constructor(
                                         val currentChatIsOptimistic = _chatId.value < 0
                                         val shouldSwitchToMigratedChat = currentChatIsOptimistic || _chatId.value == originalChatId
                                         
+                                        Log.d(TAG, "🔧 CHAT_ID_UPDATE: currentChatIsOptimistic=$currentChatIsOptimistic, shouldSwitch=$shouldSwitchToMigratedChat, _chatId=${_chatId.value}, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId")
+                                        
                                         if (shouldSwitchToMigratedChat) {
                                             // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
                                             val oldChatId = _chatId.value
@@ -607,6 +613,7 @@ class ChatViewModel @Inject constructor(
                                                 Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
                                             }
                                             
+                                            Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
                                             
                                             // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
@@ -1182,9 +1189,15 @@ class ChatViewModel @Inject constructor(
                     // Let the WebSocket server create it and then sync
                     val tempTitle = repository.deriveChatTitle(trimmedText)
                     val tempChatId = repository.createChatOptimistic(tempTitle)
+                    // Don't update _chatId yet to avoid race condition
+                    currentChatId = tempChatId
+                    
+                    // Add the message first
+                    val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId)
+                    
+                    // Now update the chat ID - the message is already in the database
                     _chatId.value = tempChatId
                     _chatTitle.value = tempTitle
-                    currentChatId = tempChatId
                 } else {
                     // For local agent: Create conversation locally as before
                     val chatTitle = repository.deriveChatTitle(trimmedText)
@@ -1199,13 +1212,8 @@ class ChatViewModel @Inject constructor(
                     // For new chats, we don't have a conversation_id yet, so pass null
                     whizServerRepository.connect(null)
                 }
-            }
-
-            // 🔧 OPTIMISTIC UI: Always show user messages immediately for good UX
-            // Repository will handle deduplication when server messages arrive
-            try {
-                // 🔧 FIXED: Use the current chat ID from _chatId.value to handle migration correctly
-                // This ensures optimistic messages go to the right chat even during migration
+            } else {
+                // Existing chat - add message normally
                 val actualChatId = _chatId.value
                 val localMessageId = if (configUseRemoteAgent) {
                     // For remote agent: use optimistic UI (local only, no API call)
@@ -1214,37 +1222,35 @@ class ChatViewModel @Inject constructor(
                     // For local agent: use regular method (creates via API)
                     repository.addUserMessage(actualChatId, trimmedText)
                 }
-                
-                // Clear input text after optimistic message is added (consistent UX for all input types)
-                // Wait for the message to actually appear in the messages flow rather than using a fixed delay
-                try {
-                    Log.d(TAG, "🧵 THREAD DEBUG: About to wait for message in flow on thread: ${Thread.currentThread().name}")
-                    val flowWaitStartTime = System.currentTimeMillis()
-                    withTimeout(1000) {
-                        // Wait for the messages to be updated with our new message
-                        messages.first { messageList ->
-                            messageList.any { message -> 
-                                message.content.trim() == trimmedText.trim() && 
-                                message.type == com.example.whiz.data.local.MessageType.USER
-                            }
+            }
+            
+            // Clear input text after optimistic message is added (consistent UX for all input types)
+            // Wait for the message to actually appear in the messages flow rather than using a fixed delay
+            try {
+                Log.d(TAG, "🧵 THREAD DEBUG: About to wait for message in flow on thread: ${Thread.currentThread().name}")
+                val flowWaitStartTime = System.currentTimeMillis()
+                withTimeout(1000) {
+                    // Wait for the messages to be updated with our new message
+                    messages.first { messageList ->
+                        messageList.any { message -> 
+                            message.content.trim() == trimmedText.trim() && 
+                            message.type == com.example.whiz.data.local.MessageType.USER
                         }
-                        val flowWaitDuration = System.currentTimeMillis() - flowWaitStartTime
-                        Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow after ${flowWaitDuration}ms, clearing input field")
-                        Log.d(TAG, "🧵 THREAD DEBUG: Message appeared on thread: ${Thread.currentThread().name}")
                     }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
+                    val flowWaitDuration = System.currentTimeMillis() - flowWaitStartTime
+                    Log.d(TAG, "[LOG] sendUserInput: Message appeared in flow after ${flowWaitDuration}ms, clearing input field")
+                    Log.d(TAG, "🧵 THREAD DEBUG: Message appeared on thread: ${Thread.currentThread().name}")
                 }
-                
-                if (_inputText.value.isNotBlank()) {
-                    Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
-                    Log.d(TAG, "[RACE_DEBUG] sendUserInput: About to clear input text after message sent. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
-                    _inputText.value = ""
-                    Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text cleared to: '${_inputText.value}'")
-                    _isInputFromVoice.value = false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "sendUserInput: Failed to add optimistic user message", e)
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
+            }
+            
+            if (_inputText.value.isNotBlank()) {
+                Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: About to clear input text after message sent. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
+                _inputText.value = ""
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text cleared to: '${_inputText.value}'")
+                _isInputFromVoice.value = false
             }
 
             // Send to agent (local or remote)

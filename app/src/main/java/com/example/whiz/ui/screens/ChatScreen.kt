@@ -101,7 +101,16 @@ fun ChatScreen(
     Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
     
     // ViewModel state collections
-    val messages by viewModel.messages.collectAsState()
+    val viewModelChatId by viewModel.chatId.collectAsState()
+    val messages by viewModel.messages.collectAsState(initial = emptyList())
+    
+    LaunchedEffect(messages) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for chatId=$viewModelChatId")
+        messages.forEachIndexed { index, msg ->
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
+        }
+    }
+    Log.d("ChatScreen", "🔥 UI_DEBUG: ChatScreen recomposed with ${messages.size} messages, chatId=$chatId, viewModelChatId=$viewModelChatId, viewModel=${viewModel.hashCode()}")
     val inputText by viewModel.inputText.collectAsState()
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
@@ -201,14 +210,30 @@ fun ChatScreen(
     // .compositeOver(MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.1f))
 
 
-    // Load chat data when chatId changes
+    // Load initial chat data
     LaunchedEffect(chatId) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Initial load - navigation chatId=$chatId")
         // Use TTS-mode-aware loading if TTS mode is enabled
         if (enableTTSMode) {
-            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness")
+            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness, chatId=$chatId")
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
+        }
+    }
+    
+    // Reload when ViewModel's chat ID changes (e.g., after optimistic chat migration)
+    LaunchedEffect(viewModelChatId) {
+        // Only reload if the chat ID has actually changed and is valid
+        if (viewModelChatId > 0 && viewModelChatId != chatId) {
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID changed in ViewModel - reloading. Old: $chatId, New: $viewModelChatId")
+            // Reload with the new chat ID
+            if (enableTTSMode) {
+                Log.d("ChatScreen", "[LOG] Reloading chat after migration with TTS mode awareness, chatId=$viewModelChatId")
+                viewModel.loadChatWithVoiceMode(viewModelChatId, true)
+            } else {
+                viewModel.loadChat(viewModelChatId)
+            }
         }
     }
 
@@ -259,8 +284,8 @@ fun ChatScreen(
     }
 
     // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
-    LaunchedEffect(chatId, enableTTSMode, effectiveHasPermission) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$chatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+    LaunchedEffect(viewModelChatId, enableTTSMode, effectiveHasPermission) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
         
         // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
         if (effectiveHasPermission) {
@@ -347,8 +372,10 @@ fun ChatScreen(
             modifier = Modifier.weight(1f)
         ) {
             if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking")
                 EmptyChatPlaceholder()
             } else {
+                Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages")
                 MessagesList(
                     messages = messages,
                     listState = listState,
