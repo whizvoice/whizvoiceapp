@@ -102,12 +102,16 @@ fun ChatScreen(
     
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
+    
+    // Use the ViewModel's chat ID for display once it changes from -1
+    val effectiveChatId = if (chatId == -1L && viewModelChatId != -1L) viewModelChatId else chatId
+    
     val messages by viewModel.messages.collectAsState(initial = emptyList())
     
-    LaunchedEffect(messages) {
-        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for chatId=$viewModelChatId")
+    LaunchedEffect(messages, effectiveChatId) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for effectiveChatId=$effectiveChatId (nav chatId=$chatId, vm chatId=$viewModelChatId)")
         messages.forEachIndexed { index, msg ->
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}..."
         }
     }
     Log.d("ChatScreen", "🔥 UI_DEBUG: ChatScreen recomposed with ${messages.size} messages, chatId=$chatId, viewModelChatId=$viewModelChatId, viewModel=${viewModel.hashCode()}")
@@ -224,8 +228,9 @@ fun ChatScreen(
     
     // Reload when ViewModel's chat ID changes (e.g., after optimistic chat migration)
     LaunchedEffect(viewModelChatId) {
-        // Only reload if the chat ID has actually changed and is valid
-        if (viewModelChatId > 0 && viewModelChatId != chatId) {
+        // Reload if the chat ID has actually changed from the initial -1
+        // This handles both optimistic IDs (negative) and real IDs (positive)
+        if (chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
             Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID changed in ViewModel - reloading. Old: $chatId, New: $viewModelChatId")
             // Reload with the new chat ID
             if (enableTTSMode) {
@@ -368,22 +373,25 @@ fun ChatScreen(
         )
         
         // Messages area - takes remaining space above input
+        // Use key to force recomposition when effective chat ID changes
         Box(
             modifier = Modifier.weight(1f)
         ) {
-            if (messages.isEmpty() && !isResponding && !isSpeaking) {
-                Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking")
-                EmptyChatPlaceholder()
-            } else {
-                Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages")
-                MessagesList(
-                    messages = messages,
-                    listState = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                    showTypingIndicator = isResponding && !isSpeaking
-                )
+            key(effectiveChatId) {
+                if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, effectiveChatId=$effectiveChatId")
+                    EmptyChatPlaceholder()
+                } else {
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for effectiveChatId=$effectiveChatId")
+                    MessagesList(
+                        messages = messages,
+                        listState = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                        showTypingIndicator = isResponding && !isSpeaking
+                    )
+                }
             }
         }
         

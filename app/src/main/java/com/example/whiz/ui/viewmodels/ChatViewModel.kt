@@ -143,7 +143,8 @@ class ChatViewModel @Inject constructor(
         } else {
             flowOf(emptyList())
         }
-    }.stateIn(
+    }.distinctUntilChanged() // Prevent duplicate emissions
+    .stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly, // Changed from WhileSubscribed to Eagerly
         initialValue = emptyList()

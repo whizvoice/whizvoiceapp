@@ -104,7 +104,22 @@ class WhizRepository @Inject constructor(
         _conversationsRefreshTrigger.value = System.currentTimeMillis()
     }
 
-    // Trigger refresh for messages
+    // Force refresh messages for a chat (e.g., from pull-to-refresh)
+    suspend fun forceRefreshMessages(chatId: Long) {
+        Log.d(TAG, "forceRefreshMessages: Force refreshing messages for chat $chatId")
+        try {
+            // Fetch fresh messages from server
+            val serverMessages = fetchMessagesWithDeduplication(chatId)
+            Log.d(TAG, "forceRefreshMessages: Fetched ${serverMessages.size} messages from server")
+            
+            // The deduplication process will update Room, which will auto-notify the Flow
+        } catch (e: Exception) {
+            Log.e(TAG, "forceRefreshMessages: Error refreshing messages for chat $chatId", e)
+            throw e // Let the UI handle the error
+        }
+    }
+    
+    // Legacy trigger method - kept for backward compatibility but no longer used
     private fun triggerMessagesRefresh() {
         _messagesRefreshTrigger.value = System.currentTimeMillis()
     }
@@ -252,19 +267,18 @@ class WhizRepository @Inject constructor(
 
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
-        return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            // 🔧 FIXED: Return local database messages immediately for optimistic UI
-            // Background sync is handled separately to avoid race conditions
-            Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId, triggerValue=$triggerValue")
-            messageDao.getMessagesForChatFlow(chatId)
-        }.catch { e ->
-            Log.e(TAG, "Error in getMessagesForChat flow", e)
-            emit(emptyList<MessageEntity>()) // Emit empty list on error
-        }.shareIn(
-            scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
-            started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
-            replay = 1 // Always replay the latest value to new subscribers
-        )
+        // 🔧 SIMPLIFIED: Remove flatMapLatest to allow Room's automatic updates
+        // Room will automatically emit when messages are inserted/updated/deleted
+        Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId")
+        return messageDao.getMessagesForChatFlow(chatId)
+            .catch { e ->
+                Log.e(TAG, "Error in getMessagesForChat flow", e)
+                emit(emptyList<MessageEntity>()) // Emit empty list on error
+            }.shareIn(
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+                started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
+                replay = 1 // Always replay the latest value to new subscribers
+            )
     }
 
     suspend fun getMessageCountForChat(chatId: Long): Int {
@@ -351,9 +365,7 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId with requestId: $requestId")
             
-            // Trigger messages refresh so the UI updates immediately
-            // Even though Room should auto-emit, the flatMapLatest wrapper requires a trigger
-            triggerMessagesRefresh()
+            // Room will automatically notify the Flow - no manual trigger needed
             
             messageId
         } catch (e: Exception) {
@@ -419,8 +431,7 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId with requestId: $requestId")
             
-            // Trigger messages refresh so the UI updates immediately
-            triggerMessagesRefresh()
+            // Room will automatically notify the Flow - no manual trigger needed
             
             messageId
         } catch (e: Exception) {
@@ -455,8 +466,7 @@ class WhizRepository @Inject constructor(
                 val messageId = messageDao.insertMessage(assistantMessage)
                 Log.d(TAG, "addAssistantMessageAfterRequest: added assistant message $messageId after user message ${userMessage.id}")
                 
-                // Trigger messages refresh so the UI updates immediately
-                triggerMessagesRefresh()
+                // Room will automatically notify the Flow - no manual trigger needed
                 
                 return messageId
             } else {
