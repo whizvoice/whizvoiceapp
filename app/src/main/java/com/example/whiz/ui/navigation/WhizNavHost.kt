@@ -47,10 +47,19 @@ fun WhizNavHost(
 
     // Check if we're coming from assistant or voice launch
     val currentBackStackEntry = navController.currentBackStackEntry
-    val fromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false ||
-                       currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true ||
-                       currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
+    val previousFromAssistant = navController.previousBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") ?: false
+    val currentVoiceMode = currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true
+    val currentFromAssistant = currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
+    val fromAssistant = previousFromAssistant || currentVoiceMode || currentFromAssistant
     val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
+    
+    // Debug logging for voice launch detection
+    Log.d("WhizNavHost", "🔍 Voice launch detection:")
+    Log.d("WhizNavHost", "  previousFromAssistant: $previousFromAssistant")
+    Log.d("WhizNavHost", "  currentVoiceMode: $currentVoiceMode") 
+    Log.d("WhizNavHost", "  currentFromAssistant: $currentFromAssistant")
+    Log.d("WhizNavHost", "  final fromAssistant: $fromAssistant")
+    Log.d("WhizNavHost", "  chatId: $chatId")
 
     // Monitor authentication state and navigate to login if user becomes unauthenticated
     LaunchedEffect(isAuthenticated) {
@@ -88,21 +97,29 @@ fun WhizNavHost(
         navigate(route)
     }
 
+    // Determine start destination with detailed logging
+    val startDestination = if (isAuthenticated) {
+        Log.d("WhizNavHost", "🎯 User is authenticated, determining start destination:")
+        if (fromAssistant && chatId > 0) {
+            Log.d("WhizNavHost", "  ✅ Voice launch with specific chat ID: chat/$chatId")
+            "chat/$chatId"
+        } else if (fromAssistant) {
+            Log.d("WhizNavHost", "  🎤 Voice launch to new chat - using assistant_chat")
+            Screen.AssistantChat.route
+        } else {
+            Log.d("WhizNavHost", "  🏠 Regular launch - using home screen")
+            Screen.Home.route
+        }
+    } else {
+        Log.d("WhizNavHost", "🔐 User not authenticated - using login screen")
+        Screen.Login.route
+    }
+    
+    Log.d("WhizNavHost", "🎯 Final startDestination: $startDestination")
+
     NavHost(
         navController = navController,
-        startDestination = if (isAuthenticated) {
-            if (fromAssistant && chatId > 0) {
-                "chat/$chatId"
-            } else if (fromAssistant) {
-                // Voice launch to new chat (assistant_chat)
-                Log.d("WhizNavHost", "🎤 Voice launch detected - using assistant_chat as start destination")
-                Screen.AssistantChat.route
-            } else {
-                Screen.Home.route
-            }
-        } else {
-            Screen.Login.route
-        }
+        startDestination = startDestination
     ) {
         // Login Screen
         composable(
