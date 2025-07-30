@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -24,7 +25,8 @@ class VoiceManager @Inject constructor(
     private val permissionManager: PermissionManager,
     private val speechRecognitionService: SpeechRecognitionService,
     private val ttsManager: TTSManager,
-    private val userPreferences: UserPreferences
+    private val userPreferences: UserPreferences,
+    private val appLifecycleService: AppLifecycleService
 ) : ViewModel() {
 
     private val TAG = "VoiceManager"
@@ -38,8 +40,8 @@ class VoiceManager @Inject constructor(
     private val _isTTSInitialized = MutableStateFlow(false)
     val isTTSInitialized: StateFlow<Boolean> = _isTTSInitialized.asStateFlow()
     
-    private val _isSpeaking = MutableStateFlow(false)
-    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+    // Derive speaking state directly from TTSManager (single source of truth)
+    val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
 
     // Voice Response Setting
     private val _isVoiceResponseEnabled = MutableStateFlow(false)
@@ -59,13 +61,16 @@ class VoiceManager @Inject constructor(
         get() = _isContinuousListeningEnabled.value
         set(value) {
             _isContinuousListeningEnabled.value = value
-            speechRecognitionService.continuousListeningEnabled = value
         }
 
     init {
         initializeTTS()
         observeVoiceSettings()
         observePermissionChanges()
+        observeAppLifecycle()
+        
+        // Set up callback for SpeechRecognitionService to get continuous listening state
+        speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
     }
 
     private fun initializeTTS() {
@@ -90,11 +95,11 @@ class VoiceManager @Inject constructor(
         ttsManager.setAudioEventCallbacks(
             onStarted = {
                 Log.d(TAG, "TTS started - was listening before: $wasListeningBeforeTTS")
-                _isSpeaking.value = true
+                // No need to set _isSpeaking - TTSManager handles it
             },
             onCompleted = {
                 Log.d(TAG, "TTS completed - continuous listening enabled: $continuousListeningEnabled")
-                _isSpeaking.value = false
+                // No need to set _isSpeaking - TTSManager handles it
                 
                 // Auto-restart continuous listening after TTS completes if it was enabled
                 // Use state observation instead of delay - the TTS callback guarantees TTS is done
@@ -104,7 +109,7 @@ class VoiceManager @Inject constructor(
             },
             onError = {
                 Log.e(TAG, "TTS error occurred")
-                _isSpeaking.value = false
+                // No need to set _isSpeaking - TTSManager handles it
                 
                 // Also handle continuous listening restart on error if needed
                 if (continuousListeningEnabled) {
@@ -186,6 +191,48 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    private fun observeAppLifecycle() {
+        // Handle app background events
+        viewModelScope.launch {
+            appLifecycleService.appBackgroundEvent.collect {
+                Log.d(TAG, "App backgrounded - stopping continuous listening")
+                onAppBackgrounded()
+            }
+        }
+        
+        // Handle app foreground events
+        viewModelScope.launch {
+            appLifecycleService.appForegroundEvent.collect {
+                Log.d(TAG, "App foregrounded")
+                onAppForegrounded()
+            }
+        }
+    }
+    
+    private fun onAppBackgrounded() {
+        Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Stop listening but preserve the setting
+        if (isListening.value) {
+            Log.d(TAG, "Stopping speech recognition due to app backgrounded (preserving continuous listening setting)")
+            try {
+                // Stop listening but DON'T change continuousListeningEnabled
+                // This way when the app returns to foreground, continuous listening will resume
+                speechRecognitionService.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping speech recognition on background", e)
+            }
+        }
+    }
+    
+    private fun onAppForegrounded() {
+        Log.d(TAG, "onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Note: We don't automatically restart continuous listening here
+        // It should be restarted by ChatScreen when appropriate
+        // This prevents unwanted mic activation when returning to non-chat screens
+    }
+
     fun speak(text: String) {
         if (_isTTSInitialized.value && text.isNotBlank()) {
             // Remember if we were listening before TTS starts
@@ -202,7 +249,7 @@ class VoiceManager @Inject constructor(
 
     fun stopSpeaking() {
         ttsManager.stop()
-        _isSpeaking.value = false
+        // No need to set _isSpeaking - TTSManager handles it
     }
 
     fun testVoiceSettings(settings: com.example.whiz.data.preferences.VoiceSettings) {
@@ -228,11 +275,13 @@ class VoiceManager @Inject constructor(
     private var transcriptionCallback: ((String) -> Unit)? = null
     
     fun startContinuousListening() {
+        Log.d(TAG, "[DEBUG] startContinuousListening() called, continuousListeningEnabled=$continuousListeningEnabled")
         if (!continuousListeningEnabled) {
             Log.d(TAG, "startContinuousListening called but continuous listening is disabled")
             return
         }
 
+        Log.d(TAG, "[DEBUG] About to call startListening()")
         startListening { finalText ->
             Log.d(TAG, "startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
             
@@ -246,7 +295,7 @@ class VoiceManager @Inject constructor(
                     viewModelScope.launch {
                         // Small delay to ensure the previous listening session is fully stopped
                         delay(100L)
-                        if (continuousListeningEnabled && !_isSpeaking.value) {
+                        if (continuousListeningEnabled && !ttsManager.isSpeaking.value) {
                             startContinuousListening() // This will check isSpeaking again
                         }
                     }
@@ -267,12 +316,15 @@ class VoiceManager @Inject constructor(
     }
 
     fun updateContinuousListeningEnabled(enabled: Boolean) {
+        Log.d(TAG, "[DEBUG] updateContinuousListeningEnabled called with: $enabled (was: $continuousListeningEnabled)")
         continuousListeningEnabled = enabled
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
         
         if (enabled) {
+            Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
             // Start continuous listening immediately
             startContinuousListening()
+            Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
             // Stop listening if disabled
             stopListening()
@@ -290,7 +342,7 @@ class VoiceManager @Inject constructor(
 
     // Handle mic button click during TTS - pause TTS and start listening
     fun handleMicClickDuringTTS() {
-        if (_isSpeaking.value && !ttsManager.areHeadphonesConnected()) {
+        if (ttsManager.isSpeaking.value && !ttsManager.areHeadphonesConnected()) {
             Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening")
             
             // Pause/stop TTS (but keep voice response enabled for future messages)
@@ -302,7 +354,7 @@ class VoiceManager @Inject constructor(
             // Use reactive state observation instead of delay
             // Observe when TTS actually stops speaking, but only check once
             viewModelScope.launch {
-                isSpeaking.first { !it } // Wait for first emission where isSpeaking is false
+                ttsManager.isSpeaking.first { !it } // Wait for first emission where isSpeaking is false
                 if (continuousListeningEnabled) {
                     startContinuousListening()
                 }

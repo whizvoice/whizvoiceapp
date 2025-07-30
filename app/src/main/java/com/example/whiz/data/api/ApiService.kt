@@ -50,7 +50,8 @@ interface ApiService {
     data class MessageCreate(
         val conversation_id: Long,
         val content: String,
-        val message_type: String  // 'USER' or 'ASSISTANT'
+        val message_type: String,  // 'USER' or 'ASSISTANT'
+        val request_id: String? = null  // Client-generated UUID for request tracking
     )
 
     data class MessageResponse(
@@ -58,7 +59,8 @@ interface ApiService {
         val conversation_id: Long,
         val content: String,
         val message_type: String,
-        val timestamp: String
+        val timestamp: String,
+        val request_id: String? = null  // Request ID for tracking request/response pairs
     )
 
     data class MessageCountResponse(

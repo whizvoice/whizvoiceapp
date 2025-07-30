@@ -86,10 +86,16 @@ fun ChatScreen(
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
-    navController: NavController
+    navController: NavController,
+    onViewModelReady: ((ChatViewModel) -> Unit)? = null // Test hook for accessing navigation-scoped ViewModel
 ) {
     // Handle permission state - moved to top
     var showPermissionDialog by remember { mutableStateOf(false) }
+    
+    // Call the test hook once when ViewModel is ready
+    LaunchedEffect(viewModel) {
+        onViewModelReady?.invoke(viewModel)
+    }
 
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
@@ -101,7 +107,21 @@ fun ChatScreen(
     Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
     
     // ViewModel state collections
-    val messages by viewModel.messages.collectAsState()
+    val viewModelChatId by viewModel.chatId.collectAsState()
+    
+    LaunchedEffect(viewModelChatId) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (provided chatId=$chatId)")
+    }
+    
+    val messages by viewModel.messages.collectAsState(initial = emptyList())
+    
+    LaunchedEffect(messages) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for chatId=$chatId (vm chatId=$viewModelChatId)")
+        messages.forEachIndexed { index, msg ->
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
+        }
+    }
+    Log.d("ChatScreen", "🔥 UI_DEBUG: ChatScreen recomposed with ${messages.size} messages, chatId=$chatId, viewModelChatId=$viewModelChatId, viewModel=${viewModel.hashCode()}")
     val inputText by viewModel.inputText.collectAsState()
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
@@ -130,6 +150,24 @@ fun ChatScreen(
     
     // Use reactive permission state for UI decisions (dialog, mic button, etc.)
     val effectiveHasPermission = hasPermissionReactive
+    
+    // Compute microphone button state based on all conditions
+    val shouldShowMuteButton = isListening || isContinuousListeningEnabled || (enableTTSMode && effectiveHasPermission)
+    
+    // Compute TTS state - should be enabled for voice launches
+    val shouldEnableTTS = enableTTSMode && effectiveHasPermission
+    
+    // Debug log UI state changes
+    Log.d("ChatScreen", "🎤 UI_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton, shouldEnableTTS=$shouldEnableTTS")
+    
+    // Enable TTS immediately for voice launches (without delay that can be interrupted)
+    LaunchedEffect(shouldEnableTTS) {
+        if (shouldEnableTTS && !isVoiceResponseEnabled) {
+            Log.d("ChatScreen", "[LOG] Enabling TTS immediately for voice launch (computed state approach)")
+            viewModel.toggleVoiceResponse()
+            voiceManager.setVoiceResponseEnabled(true)
+        }
+    }
     
     // Auto-prompt for microphone permission when app opens (if not already granted)
     LaunchedEffect(effectiveHasPermission) {
@@ -183,14 +221,27 @@ fun ChatScreen(
     // .compositeOver(MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.1f))
 
 
-    // Load chat data when chatId changes
+    // Load initial chat data
     LaunchedEffect(chatId) {
+        Log.d("ChatScreen", "🔥 UI_DEBUG: Initial load - navigation chatId=$chatId")
         // Use TTS-mode-aware loading if TTS mode is enabled
         if (enableTTSMode) {
-            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness")
+            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness, chatId=$chatId")
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
+        }
+    }
+    
+    // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
+    LaunchedEffect(viewModelChatId) {
+        // Handle migration if the chat ID has changed from the initial -1
+        // This handles both optimistic IDs (negative) and real IDs (positive)
+        if (chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
+            // This is a migration (new chat creation), not a chat switch
+            // Use migrateChatId to avoid disconnecting WebSocket
+            viewModel.migrateChatId(chatId, viewModelChatId)
         }
     }
 
@@ -241,18 +292,31 @@ fun ChatScreen(
     }
 
     // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
-    LaunchedEffect(chatId, enableTTSMode, effectiveHasPermission) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$chatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+    LaunchedEffect(viewModelChatId, enableTTSMode, effectiveHasPermission) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
         
         // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
         if (effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
-            kotlinx.coroutines.delay(500L) // Wait for UI to be ready
             
-            // Always enable continuous listening for all chats (voice app default)
-            // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
-            voiceManager.updateContinuousListeningEnabled(true)
-            viewModel.ensureContinuousListeningEnabled()
+            // For voice launches with TTS mode, set up continuous listening immediately
+            if (enableTTSMode) {
+                Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
+                // Enable continuous listening via VoiceManager (single source of truth)
+                voiceManager.updateContinuousListeningEnabled(true)
+                
+                // Ensure ChatViewModel starts listening
+                viewModel.ensureContinuousListeningEnabled()
+            } else {
+                // For non-voice launches, use delay
+                kotlinx.coroutines.delay(500L) // Wait for UI to be ready
+                
+                // Enable continuous listening via VoiceManager (single source of truth)
+                voiceManager.updateContinuousListeningEnabled(true)
+                
+                // Ensure ChatViewModel starts listening
+                viewModel.ensureContinuousListeningEnabled()
+            }
             
             // Set up transcription callback for chat integration
             voiceManager.setTranscriptionCallback { transcription ->
@@ -268,47 +332,8 @@ fun ChatScreen(
             Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
         }
         
-        // 🔊 GOOGLE ASSISTANT BEHAVIOR: Additionally enable TTS mode if triggered by Assistant
-        if (enableTTSMode == true) {
-            Log.d("ChatScreen", "[LOG] Google Assistant launch detected - enabling FULL voice mode (microphone + TTS)")
-            if (effectiveHasPermission) {
-                kotlinx.coroutines.delay(500L) // Wait for UI to be fully composed
-                
-                // Enable voice responses for hands-free Google Assistant experience
-                Log.d("ChatScreen", "[LOG] Enabling voice responses for Assistant-triggered launch (current: $isVoiceResponseEnabled)")
-                if (!isVoiceResponseEnabled) {
-                    Log.d("ChatScreen", "[LOG] Toggling voice response from OFF to ON for Assistant")
-                    viewModel.toggleVoiceResponse()
-                    voiceManager.setVoiceResponseEnabled(true)
-                } else {
-                    Log.d("ChatScreen", "[LOG] Voice response already enabled")
-                }
-                
-                // Ensure continuous listening is enabled (should already be set above for new chats)
-                Log.d("ChatScreen", "[LOG] Ensuring continuous listening for Assistant launch")
-                // 🔧 Enable continuous listening in BOTH VoiceManager and ChatViewModel
-                voiceManager.updateContinuousListeningEnabled(true)
-                viewModel.ensureContinuousListeningEnabled()
-                
-                // Set up transcription callback if not already done
-                voiceManager.setTranscriptionCallback { transcription ->
-                    if (transcription.isNotBlank()) {
-                        Log.d("ChatScreen", "[LOG] Assistant transcription received: '$transcription'")
-                        viewModel.updateInputText(transcription, fromVoice = true)
-                        viewModel.sendUserInput(transcription)
-                    }
-                }
-                
-                // Clear the TTS mode flag to prevent persistence across navigation
-                Log.d("ChatScreen", "[LOG] Assistant voice setup complete - clearing ENABLE_VOICE_MODE flag")
-                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
-            } else {
-                Log.d("ChatScreen", "[LOG] No microphone permission for Assistant launch - showing dialog")
-                showPermissionDialog = true
-                // Clear flag even without permission to prevent persistence
-                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", false)
-            }
-        }
+        // Note: TTS enabling is now handled by the separate LaunchedEffect above
+        // using computed state to avoid coroutine cancellation issues
     }
 
     // 🔧 PRODUCTION BUG FIX: Eliminate Scaffold completely to prevent touch interception
@@ -351,20 +376,25 @@ fun ChatScreen(
         )
         
         // Messages area - takes remaining space above input
+        // Use key to force recomposition when effective chat ID changes
         Box(
             modifier = Modifier.weight(1f)
         ) {
-            if (messages.isEmpty() && !isResponding && !isSpeaking) {
-                EmptyChatPlaceholder()
-            } else {
-                MessagesList(
-                    messages = messages,
-                    listState = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                    showTypingIndicator = isResponding && !isSpeaking
-                )
+            key(chatId) {
+                if (messages.isEmpty() && !isResponding && !isSpeaking) {
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, chatId=$chatId")
+                    EmptyChatPlaceholder()
+                } else {
+                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
+                    MessagesList(
+                        messages = messages,
+                        listState = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                        showTypingIndicator = isResponding && !isSpeaking
+                    )
+                }
             }
         }
         
@@ -386,6 +416,7 @@ fun ChatScreen(
                 isContinuousListeningEnabled = isContinuousListeningEnabled,
                 isSpeaking = isSpeaking,
                 shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
+                shouldShowMuteButton = shouldShowMuteButton,
                 onInputChange = viewModel::updateInputText,
                 onSendClick = { 
                     // Always send regular messages - let server handle interruption logic
@@ -742,6 +773,7 @@ fun ChatInputBar(
     isContinuousListeningEnabled: Boolean, // Add continuous listening state
     isSpeaking: Boolean = false, // Add TTS speaking state
     shouldShowMicDuringTTS: Boolean, // New parameter for headphone-aware behavior
+    shouldShowMuteButton: Boolean = false, // Computed state for when to show mute button
     onInputChange: (String) -> Unit,
     onSendClick: () -> Unit,
     onInterruptClick: () -> Unit = {}, // New callback for interrupts
@@ -754,11 +786,6 @@ fun ChatInputBar(
     val hasTypedText = hasInputText && !isInputFromVoice
     val hasVoiceText = hasInputText && isInputFromVoice
     
-    // Debug logging for button logic and input state
-    Log.d("ChatInputBar", "🔍 Button logic state: inputText='$inputText', hasInputText=$hasInputText, hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isInputFromVoice=$isInputFromVoice, isContinuousListeningEnabled=$isContinuousListeningEnabled, isListening=$isListening, isResponding=$isResponding")
-    Log.d("ChatInputBar", "🔍 Input field state: isInputDisabled=$isInputDisabled, isSpeaking=$isSpeaking, enabled=${!isInputDisabled}")
-    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: TextField will be enabled=${!isInputDisabled}, isInputDisabled=$isInputDisabled")
-    
     // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
     // The issue was complex conditional logic that wasn't recomposing properly
     val displayValue = when {
@@ -767,25 +794,7 @@ fun ChatInputBar(
         else -> inputText // Default to input text (could be empty)
     }
     
-    Log.d("ChatInputBar", "🔍 PRODUCTION BUG DEBUG: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription'")
-    
-    // 🔧 ENHANCED DEBUG LOGGING: Track displayValue changes and timing
-    val currentTimeMs = System.currentTimeMillis()
-    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue='$displayValue', inputText='$inputText', isListening=$isListening, transcription='$transcription', isResponding=$isResponding")
-    Log.d("ChatInputBar", "🔍 ENHANCED DEBUG [${currentTimeMs}]: displayValue.length=${displayValue.length}, inputText.length=${inputText.length}")
-    
-    // 🔧 CRITICAL DEBUG: Log every time displayValue changes
-    LaunchedEffect(displayValue) {
-        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: '$displayValue' (length=${displayValue.length})")
-        Log.d("ChatInputBar", "🔥 DISPLAYVALUE CHANGE [${System.currentTimeMillis()}]: inputText='$inputText', isListening=$isListening, transcription='$transcription'")
-    }
-    
-    // 🔧 CRITICAL DEBUG: Log every time inputText changes
-    LaunchedEffect(inputText) {
-        Log.d("ChatInputBar", "🔥 INPUTTEXT CHANGE [${System.currentTimeMillis()}]: '$inputText' (length=${inputText.length})")
-    }
-    
-    val placeholderText = if (isListening && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else "Type or tap mic..."
     
 
 
@@ -806,10 +815,6 @@ fun ChatInputBar(
             OutlinedTextField(
                 value = displayValue,
                 onValueChange = { newValue ->
-                    // 🔧 ENHANCED DEBUG: Log every onValueChange call
-                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: '$newValue' (prev: '$displayValue')")
-                    Log.d("ChatInputBar", "🔥 TEXTFIELD onValueChange [${System.currentTimeMillis()}]: newValue.length=${newValue.length}, displayValue.length=${displayValue.length}")
-                    
                     // Always allow input change - this enables manual typing to disable continuous listening
                     // The updateInputText method will handle stopping voice recognition when user types
                     onInputChange(newValue)
@@ -859,7 +864,7 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        isListening -> {
+                        shouldShowMuteButton -> {
                             Tuple4(
                                 Icons.Filled.MicOff,
                                 "Stop listening",
@@ -876,7 +881,7 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        isResponding && isContinuousListeningEnabled -> {
+                        isResponding && shouldShowMuteButton -> {
                             Tuple4(
                                 Icons.Filled.MicOff,
                                 "Turn off continuous listening",
@@ -901,7 +906,7 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.primary
                             )
                         }
-                        isContinuousListeningEnabled && !hasInputText -> {
+                        shouldShowMuteButton && !hasInputText -> {
                             // Show mic off button only when no text is present
                             Tuple4(
                                 Icons.Filled.MicOff,
@@ -925,6 +930,7 @@ fun ChatInputBar(
                     Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
                     Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
                     Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
+                    Log.d("ChatInputBar", "🎤 VOICE_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton")
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled

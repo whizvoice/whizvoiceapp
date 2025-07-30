@@ -41,6 +41,13 @@ import retrofit2.http.*
  * NO MORE MOCKING - Always use production APIs with whizvoicetest user
  */
 
+/**
+ * Interface for capturing ViewModels in tests
+ */
+interface ViewModelCapture {
+    fun onChatViewModelReady(viewModel: com.example.whiz.ui.viewmodels.ChatViewModel)
+}
+
 @Module
 @TestInstallIn(
     components = [SingletonComponent::class],

@@ -24,6 +24,10 @@ class TTSManager @Inject constructor(
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
     
+    // Expose initialization error state for testing (especially on emulators)
+    private val _initializationError = MutableStateFlow(false)
+    val initializationError: StateFlow<Boolean> = _initializationError.asStateFlow()
+    
     // Event callbacks for audio coordination
     private var onSpeechStarted: (() -> Unit)? = null
     private var onSpeechCompleted: (() -> Unit)? = null
@@ -33,11 +37,13 @@ class TTSManager @Inject constructor(
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 isInitialized = true
+                _initializationError.value = false
                 setupUtteranceListener()
                 Log.d(TAG, "TTS initialized successfully")
                 onInitialized(true)
             } else {
                 Log.e(TAG, "TTS initialization failed")
+                _initializationError.value = true
                 onInitialized(false)
             }
         }
@@ -90,7 +96,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-            Log.d(TAG, "Speaking: $text")
         } catch (e: Exception) {
             Log.e(TAG, "Error speaking text", e)
             onSpeechError?.invoke()
@@ -105,7 +110,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.setSpeechRate(speechRate)
-            Log.d(TAG, "Set speech rate to: $speechRate")
         } catch (e: Exception) {
             Log.e(TAG, "Error setting speech rate", e)
         }
@@ -119,7 +123,6 @@ class TTSManager @Inject constructor(
         
         try {
             tts?.setPitch(pitch)
-            Log.d(TAG, "Set pitch to: $pitch")
         } catch (e: Exception) {
             Log.e(TAG, "Error setting pitch", e)
         }

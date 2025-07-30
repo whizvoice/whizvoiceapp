@@ -2,6 +2,8 @@ package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -36,6 +38,9 @@ import com.example.whiz.MainActivity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.Until
+import androidx.test.uiautomator.By
 
 /**
  * Compose-based comprehensive UI integration test for complete message flow including:
@@ -66,6 +71,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+    
 
     @Inject
     lateinit var repository: WhizRepository
@@ -85,6 +91,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
 
 
     // device is inherited from BaseIntegrationTest
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val uniqueTestId = System.currentTimeMillis()
     
     // track chats created during tests for cleanup
@@ -194,6 +201,17 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             trackNewChats(initialChats)
             
             // CAPTURE OPTIMISTIC ID HERE - right after navigation (Suggestion 1)
+            // First verify chat ID is initially -1 for new chat (before any messages)
+            val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
+            val initialChatId = chatViewModel.chatId.value
+            if (initialChatId != -1L) {
+                Log.e(TAG, "❌ FAILURE: New chat should have ID -1 but has ID: $initialChatId")
+                failWithScreenshot("new_chat_wrong_initial_id", "New chat should have ID -1 but has ID: $initialChatId")
+                return@runBlocking
+            } else {
+                Log.d(TAG, "✅ Confirmed: New chat initially has ID -1 (no optimistic chat created yet)")
+            }
+            
             optimisticChatId = getCurrentOptimisticChatId()
             if (optimisticChatId != null) {
                 Log.d(TAG, "🔍 Captured optimistic chat ID after navigation: $optimisticChatId")
@@ -238,12 +256,32 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             if (optimisticChatId == null) {
                 optimisticChatId = getCurrentOptimisticChatId()
                 if (optimisticChatId != null) {
-                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId")
+                    // Verify it's negative but not exactly -1
+                    if (optimisticChatId!! >= 0) {
+                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
+                        failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
+                        return@runBlocking
+                    } else if (optimisticChatId == -1L) {
+                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                        failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                        return@runBlocking
+                    }
+                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId (negative, not -1)")
                 } else {
                     Log.w(TAG, "⚠️ could not capture optimistic chat ID - migration likely happened too quickly")
                 }
             } else {
-                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId")
+                // Verify the previously captured ID is negative but not -1
+                if (optimisticChatId!! >= 0) {
+                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
+                    failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
+                    return@runBlocking
+                } else if (optimisticChatId == -1L) {
+                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
+                    return@runBlocking
+                }
+                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId (negative, not -1)")
             }
             
             // step 4: confirm bot is responding (thinking indicator visible)
@@ -748,4 +786,5 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             true // assume settled if we can't check
         }
     }
+
 } 

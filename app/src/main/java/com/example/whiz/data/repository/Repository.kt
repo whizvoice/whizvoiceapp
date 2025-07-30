@@ -58,13 +58,16 @@ class WhizRepository @Inject constructor(
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
+    // Track optimistic chat ID → real chat ID migrations for deduplication
+    private val chatMigrationMapping = mutableMapOf<Long, Long>()
+    private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
     
     init {
         repositoryScope.launch {
             // Remove arbitrary delay - initialize immediately
-            Log.d(TAG, "Repository initialized")
             isInitialized = true
         }
         
@@ -76,17 +79,15 @@ class WhizRepository @Inject constructor(
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
                 delay(100) // Small delay to ensure app initialization is complete
-                Log.d(TAG, "Repository init: Starting initial conversations load")
                 
                 // Force a full sync on app startup to ensure we get all conversations
                 val conversations = getAllChatsIncremental(forceFullSync = true)
                 _conversations.value = conversations
-                Log.d(TAG, "Repository init: Loaded ${conversations.size} conversations on startup")
                 
                 // Trigger refresh to notify any observers
                 triggerConversationsRefresh()
             } catch (e: Exception) {
-                Log.e(TAG, "Repository init: Error during initial conversations load", e)
+                Log.e(TAG, "Error during initial conversations load", e)
                 // Fallback to normal trigger if initial load fails
                 triggerConversationsRefresh()
             }
@@ -101,24 +102,18 @@ class WhizRepository @Inject constructor(
     // Trigger refresh for conversations
     private fun triggerConversationsRefresh() {
         _conversationsRefreshTrigger.value = System.currentTimeMillis()
-        Log.d(TAG, "Triggered conversations refresh")
     }
-
-    // Trigger refresh for messages
+    
     private fun triggerMessagesRefresh() {
-        val newValue = System.currentTimeMillis()
-        _messagesRefreshTrigger.value = newValue
-        Log.d(TAG, "Triggered messages refresh with value: $newValue")
+        _messagesRefreshTrigger.value = System.currentTimeMillis()
     }
 
     // Chat operations
     suspend fun getAllChats(forceFullSync: Boolean = false): List<ChatEntity> {
-        Log.d(TAG, "getAllChats: fetching from API (triggered)")
         return try {
             // Use deduplication helper to prevent multiple concurrent API calls
             val result = fetchConversationsWithDeduplication(forceFullSync)
             _conversations.value = result
-            Log.d(TAG, "getAllChats: retrieved ${result.size} chats from API")
             result
         } catch (e: Exception) {
             Log.e(TAG, "Error getting chats from API", e)
@@ -129,10 +124,8 @@ class WhizRepository @Inject constructor(
 
     suspend fun getChatById(chatId: Long): ChatEntity? {
         return try {
-            Log.d(TAG, "getChatById: fetching chat $chatId from API")
             val conversation = apiService.getConversation(chatId)
             val chatEntity = conversation.toChatEntity()
-            Log.d(TAG, "getChatById: retrieved chat with id $chatId: ${chatEntity.title}")
             chatEntity
         } catch (e: Exception) {
             Log.e(TAG, "Error getting chat with id $chatId from API", e)
@@ -258,47 +251,23 @@ class WhizRepository @Inject constructor(
 
     // Message operations with reactive updates
     fun getMessagesForChat(chatId: Long): Flow<List<MessageEntity>> {
-        return _messagesRefreshTrigger.flatMapLatest { triggerValue ->
-            Log.d(TAG, "getMessagesForChat: 📨 Flow triggered for chat $chatId (trigger: $triggerValue)")
-            
-            // 🔧 DEBUG: Log all messages in database to debug missing messages
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val allMessages = messageDao.getAllMessages()
-                    Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
-                    if (allMessages.isNotEmpty()) {
-                        Log.d(TAG, "getMessagesForChat: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "getMessagesForChat: Error getting all messages for debug", e)
-                }
-            }
-            
-            // 🔧 FIXED: Return local database messages immediately for optimistic UI
-            // Background sync is handled separately to avoid race conditions
-            messageDao.getMessagesForChatFlow(chatId).onEach { localMessages ->
-                Log.d(TAG, "getMessagesForChat: 📨 Emitting ${localMessages.size} local messages for chat $chatId")
-                if (localMessages.isNotEmpty()) {
-                    Log.d(TAG, "getMessagesForChat: 📨 Messages: ${localMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-                } else {
-                    Log.d(TAG, "getMessagesForChat: 📨 No messages found for chat $chatId")
-                }
-            }
-        }.catch { e ->
-            Log.e(TAG, "Error in getMessagesForChat flow", e)
-            emit(emptyList<MessageEntity>()) // Emit empty list on error
-        }.shareIn(
-            scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
-            started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
-            replay = 1 // Always replay the latest value to new subscribers
-        )
+        // 🔧 SIMPLIFIED: Remove flatMapLatest to allow Room's automatic updates
+        // Room will automatically emit when messages are inserted/updated/deleted
+        Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId")
+        return messageDao.getMessagesForChatFlow(chatId)
+            .catch { e ->
+                Log.e(TAG, "Error in getMessagesForChat flow", e)
+                emit(emptyList<MessageEntity>()) // Emit empty list on error
+            }.shareIn(
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+                started = SharingStarted.WhileSubscribed(5000L), // Keep active for 5 seconds after last subscriber
+                replay = 1 // Always replay the latest value to new subscribers
+            )
     }
 
     suspend fun getMessageCountForChat(chatId: Long): Int {
         return try {
-            Log.d(TAG, "getMessageCountForChat: fetching count for chat $chatId from API")
             val response = apiService.getMessageCount(chatId)
-            Log.d(TAG, "getMessageCountForChat: chat $chatId has ${response.count} messages")
             response.count
         } catch (e: Exception) {
             Log.e(TAG, "Error getting message count for chat $chatId from API", e)
@@ -380,8 +349,7 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId with requestId: $requestId")
             
-            // Don't trigger API refresh - this is just for immediate UI
-            // The real message will come via WebSocket and trigger refresh
+            // Room will automatically notify the Flow - no manual trigger needed
             
             messageId
         } catch (e: Exception) {
@@ -447,6 +415,8 @@ class WhizRepository @Inject constructor(
             val messageId = messageDao.insertMessage(messageEntity)
             Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId with requestId: $requestId")
             
+            // Room will automatically notify the Flow - no manual trigger needed
+            
             messageId
         } catch (e: Exception) {
             Log.e(TAG, "Error adding optimistic assistant message to chat $chatId: ${e.message}", e)
@@ -479,6 +449,9 @@ class WhizRepository @Inject constructor(
                 
                 val messageId = messageDao.insertMessage(assistantMessage)
                 Log.d(TAG, "addAssistantMessageAfterRequest: added assistant message $messageId after user message ${userMessage.id}")
+                
+                // Room will automatically notify the Flow - no manual trigger needed
+                
                 return messageId
             } else {
                 Log.w(TAG, "addAssistantMessageAfterRequest: no user message found with requestId $requestId, adding at end")
@@ -662,6 +635,50 @@ class WhizRepository @Inject constructor(
     }
 
     /**
+     * Register that an optimistic chat has been migrated to a real server chat.
+     * This mapping is used for cross-chat deduplication.
+     */
+    fun registerChatMigration(optimisticChatId: Long, realChatId: Long) {
+        if (optimisticChatId >= 0) {
+            Log.w(TAG, "registerChatMigration: optimisticChatId $optimisticChatId is not negative, ignoring")
+            return
+        }
+        if (realChatId <= 0) {
+            Log.w(TAG, "registerChatMigration: realChatId $realChatId is not positive, ignoring")
+            return
+        }
+        
+        chatMigrationMapping[optimisticChatId] = realChatId
+        migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
+        Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        
+        // Clean up old mappings (older than 1 hour)
+        cleanupOldMigrations()
+    }
+    
+    /**
+     * Clean up old migration mappings to prevent memory leaks.
+     */
+    private fun cleanupOldMigrations() {
+        val oneHourAgo = System.currentTimeMillis() - 3600000 // 1 hour
+        val toRemove = migrationTimestamps.filterValues { it < oneHourAgo }.keys
+        toRemove.forEach { optimisticChatId ->
+            chatMigrationMapping.remove(optimisticChatId)
+            migrationTimestamps.remove(optimisticChatId)
+        }
+        if (toRemove.isNotEmpty()) {
+            Log.d(TAG, "cleanupOldMigrations: Cleaned up ${toRemove.size} old migration mappings")
+        }
+    }
+    
+    /**
+     * Get the optimistic chat ID that was migrated to this real chat ID.
+     */
+    private fun getOptimisticChatId(realChatId: Long): Long? {
+        return chatMigrationMapping.entries.find { it.value == realChatId }?.key
+    }
+
+    /**
      * Deduplicate server messages with local optimistic messages.
      * Removes local optimistic messages that have corresponding server messages.
      */
@@ -689,15 +706,29 @@ class WhizRepository @Inject constructor(
                 }
             }
             
-            // Get current local messages
+            // Get current local messages for this chat
             val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            
+            // Check if this real chat was migrated from an optimistic chat
+            val optimisticChatId = getOptimisticChatId(chatId)
+            val optimisticMessages = if (optimisticChatId != null) {
+                Log.d(TAG, "deduplicateMessages: Found migration mapping $optimisticChatId → $chatId, checking optimistic messages")
+                messageDao.getMessagesForChatFlow(optimisticChatId).first()
+            } else {
+                Log.d(TAG, "deduplicateMessages: No migration mapping found for chat $chatId")
+                emptyList()
+            }
+            
+            // Combine messages from both current chat and migrated optimistic chat
+            val allLocalMessages = localMessages + optimisticMessages
+            Log.d(TAG, "deduplicateMessages: Checking ${localMessages.size} current + ${optimisticMessages.size} optimistic = ${allLocalMessages.size} total local messages")
             
             // Find optimistic messages that have server counterparts
             val messagesToRemove = mutableListOf<Long>()
             
             for (serverMessage in serverMessages) {
                 // Look for local messages with same content and type that could be duplicates
-                val duplicateLocal = localMessages.find { localMsg ->
+                val duplicateLocal = allLocalMessages.find { localMsg ->
                     localMsg.content.trim() == serverMessage.content.trim() &&
                     localMsg.type == serverMessage.type &&
                     // Only consider recent local messages as potential optimistic duplicates
@@ -707,7 +738,7 @@ class WhizRepository @Inject constructor(
                 }
                 
                 if (duplicateLocal != null) {
-                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
+                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} (from chat ${duplicateLocal.chatId}) for server message ${serverMessage.id}")
                     messagesToRemove.add(duplicateLocal.id)
                 }
             }

@@ -32,13 +32,12 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
-                    Log.d("WhizApplication", "Screen turned off - stopping continuous listening")
+                    Log.d("WhizApplication", "Screen turned off - notifying app background")
                     try {
-                        speechRecognitionService.continuousListeningEnabled = false
-                        speechRecognitionService.stopListening()
+                        // Just notify - let VoiceManager handle stopping continuous listening
                         appLifecycleService.notifyAppBackgrounded()
                     } catch (e: Exception) {
-                        Log.e("WhizApplication", "Error stopping speech recognition on screen off", e)
+                        Log.e("WhizApplication", "Error notifying background on screen off", e)
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
@@ -93,15 +92,12 @@ class WhizApplication : Application(), DefaultLifecycleObserver {
     
     override fun onStop(owner: LifecycleOwner) {
         super<DefaultLifecycleObserver>.onStop(owner)
-        Log.d("WhizApplication", "App moved to background - stopping continuous listening")
+        Log.d("WhizApplication", "App moved to background")
         try {
-            // Stop continuous listening to prevent microphone staying active when app is in background
-            speechRecognitionService.continuousListeningEnabled = false
-            speechRecognitionService.stopListening()
-            // Notify through the service that app went to background
+            // Just notify - let VoiceManager handle stopping continuous listening
             appLifecycleService.notifyAppBackgrounded()
         } catch (e: Exception) {
-            Log.e("WhizApplication", "Error stopping speech recognition on background", e)
+            Log.e("WhizApplication", "Error notifying app background", e)
         }
     }
     

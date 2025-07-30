@@ -1,6 +1,7 @@
 package com.example.whiz.test_helpers
 
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertIsDisplayed
@@ -12,12 +13,12 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ActivityTestRule
 import android.util.Log
-import kotlinx.coroutines.delay
 import com.example.whiz.MainActivity
 
 /**
@@ -82,14 +83,14 @@ object ComposeTestHelper {
     /**
      * Check if the app is ready for testing (already launched by createAndroidComposeRule)
      */
-    fun isAppReady(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun isAppReady(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: Checking if app is ready...")
             
             // Wait for the app to be fully loaded by checking for common UI elements
             // The app can launch either to chats list or directly to chat screen (voice launch)
             Log.d(TAG, "🔍 Compose: Looking for chats list indicator ('My Chats')...")
-            val chatsListFound = waitForElementEfficient(
+            val chatsListFound = waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("My Chats") },
                 timeoutMs = 3000L,
@@ -98,7 +99,7 @@ object ComposeTestHelper {
             Log.d(TAG, "🔍 Compose: Chats list indicator found: $chatsListFound")
             
             Log.d(TAG, "🔍 Compose: Looking for new chat button...")
-            val newChatButtonFound = waitForElementEfficient(
+            val newChatButtonFound = waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
                 timeoutMs = 2000L,
@@ -107,7 +108,7 @@ object ComposeTestHelper {
             Log.d(TAG, "🔍 Compose: New chat button found: $newChatButtonFound")
             
             Log.d(TAG, "🔍 Compose: Looking for chat input field...")
-            val chatInputFieldFound = waitForElementEfficient(
+            val chatInputFieldFound = waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
                 timeoutMs = 3000L,
@@ -116,7 +117,7 @@ object ComposeTestHelper {
             Log.d(TAG, "🔍 Compose: Chat input field found: $chatInputFieldFound")
             
             Log.d(TAG, "🔍 Compose: Looking for chat input placeholder...")
-            val chatInputPlaceholderFound = waitForElementEfficient(
+            val chatInputPlaceholderFound = waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Type or tap mic...") },
                 timeoutMs = 2000L,
@@ -164,10 +165,11 @@ object ComposeTestHelper {
     
     /**
      * Wait for a specific UI element to appear using Compose Testing
-     * This is much better than Thread.sleep() as it waits for the actual dependency
+     * Uses fast polling for reliable detection on slow emulators
+     * Works in any context (suspend or regular functions)
      */
-    suspend fun waitForElement(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+    fun waitForElement(
+        composeTestRule: ComposeTestRule,
         selector: () -> SemanticsNodeInteraction,
         timeoutMs: Long = 10000L,
         description: String = "UI element"
@@ -178,48 +180,20 @@ object ComposeTestHelper {
             while ((System.currentTimeMillis() - startTime) < timeoutMs) {
                 try {
                     val node = selector()
-                    node.assertIsDisplayed()
-                    Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
-                    return true
+                    // Check if the node exists without using assertion
+                    val semanticsNode = node.fetchSemanticsNode()
+                    if (semanticsNode != null) {
+                        Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
+                        return true
+                    }
                 } catch (e: Exception) {
-                    Log.d(TAG, "⏳ Waiting for $description... (${System.currentTimeMillis() - startTime}ms elapsed)")
-                    delay(100)
-                }
-            }
-            
-            Log.e(TAG, "❌ $description not found within ${timeoutMs}ms")
-            false
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception waiting for $description", e)
-            false
-        }
-    }
-    
-    /**
-     * Wait for a specific UI element using efficient polling
-     * This is much better than Thread.sleep() as it waits for the actual dependency
-     */
-    fun waitForElementEfficient(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
-        selector: () -> SemanticsNodeInteraction,
-        timeoutMs: Long = 10000L,
-        description: String = "UI element"
-    ): Boolean {
-        return try {
-            val startTime = System.currentTimeMillis()
-            
-            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
-                try {
-                    val node = selector()
-                    node.assertIsDisplayed()
-                    Log.d(TAG, "✅ Found $description after ${System.currentTimeMillis() - startTime}ms")
-                    return true
-                } catch (e: Exception) {
-                    Thread.sleep(50) // Use shorter sleep for more responsive waiting
+                    // Node not found or not ready, continue waiting
+                    Log.v(TAG, "⏳ $description not ready yet: ${e.javaClass.simpleName}")
                 } catch (e: AssertionError) {
-                    Thread.sleep(50) // Use shorter sleep for more responsive waiting
+                    // Node not found or not ready, continue waiting  
+                    Log.v(TAG, "⏳ $description assertion failed: ${e.javaClass.simpleName}")
                 }
+                Thread.sleep(50) // Use shorter sleep for more responsive waiting
             }
             
             Log.e(TAG, "❌ $description not found within ${timeoutMs}ms")
@@ -237,17 +211,22 @@ object ComposeTestHelper {
     /**
      * Find and interact with the message input field using Compose testing
      */
-    fun findMessageInputField(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
+    fun findMessageInputField(composeTestRule: ComposeTestRule): SemanticsNodeInteraction? {
         composeTestRule.mainClock.autoAdvance = true
         
         return try {
             Log.d(TAG, "🔍 Compose: Finding input field with ContentDescription('Message input field')")
             
             val node = composeTestRule.onNodeWithContentDescription("Message input field")
-            node.assertIsDisplayed()
-            
-            Log.d(TAG, "✅ Compose: Found input field successfully")
-            node
+            // Check if node exists by catching any exception
+            try {
+                node.fetchSemanticsNode()
+                Log.d(TAG, "✅ Compose: Found input field successfully")
+                return node
+            } catch (e: Throwable) {
+                Log.e(TAG, "❌ Compose: Input field not found: ${e.javaClass.simpleName} - ${e.message}")
+                return null
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Failed to find input field: ${e.message}")
@@ -258,15 +237,20 @@ object ComposeTestHelper {
     /**
      * Find and interact with the send button using Compose testing
      */
-    fun findSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): SemanticsNodeInteraction? {
+    fun findSendButton(composeTestRule: ComposeTestRule): SemanticsNodeInteraction? {
         return try {
             Log.d(TAG, "🔍 Compose: Finding send button with ContentDescription('Send typed message')")
             
             val node = composeTestRule.onNodeWithContentDescription("Send typed message")
-            node.assertIsDisplayed()
-            
-            Log.d(TAG, "✅ Compose: Found send button successfully")
-            node
+            // Check if node exists by catching any exception
+            try {
+                node.fetchSemanticsNode()
+                Log.d(TAG, "✅ Compose: Found send button successfully")
+                return node
+            } catch (e: Throwable) {
+                Log.e(TAG, "❌ Compose: Send button not found: ${e.javaClass.simpleName} - ${e.message}")
+                return null
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Failed to find send button: ${e.message}")
@@ -277,23 +261,120 @@ object ComposeTestHelper {
     /**
      * Type text into the message input field using Compose testing
      */
-    fun typeMessage(composeTestRule: AndroidComposeTestRule<*, MainActivity>, message: String): Boolean {
+    fun typeMessage(composeTestRule: ComposeTestRule, message: String): Boolean {
         return try {
+            Log.d(TAG, "🔍 Compose: typeMessage - Looking for input field...")
             val inputField = findMessageInputField(composeTestRule)
             if (inputField == null) {
-                Log.e(TAG, "❌ Cannot type message - input field not found")
+                Log.e(TAG, "❌ Compose: typeMessage - input field not found by findMessageInputField")
                 return false
             }
+            Log.d(TAG, "✅ Compose: typeMessage - input field found successfully")
             
             // Clear existing text and type new message
+            Log.d(TAG, "🔍 Compose: typeMessage - Clearing existing text...")
             inputField.performTextReplacement("")
+            Log.d(TAG, "✅ Compose: typeMessage - Text cleared, now typing new message...")
             inputField.performTextInput(message)
             
-            Log.d(TAG, "✅ Message typed successfully with Compose: '${message.take(30)}...'")
+            Log.d(TAG, "✅ Compose: typeMessage - Message typed successfully: '${message.take(30)}...'")
             true
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception typing message with Compose", e)
+            Log.e(TAG, "❌ Compose: typeMessage - Exception during typing", e)
+            Log.e(TAG, "🔍 Compose: typeMessage - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: typeMessage - Exception message: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Compose version of BaseIntegrationTest.sendMessageAndVerifyDisplay()
+     * Types message, verifies it appears in input field, clicks send, waits for message in chat
+     */
+    fun sendMessageAndVerifyDisplay(composeTestRule: ComposeTestRule, message: String, rapid: Boolean = false): Boolean {
+        return try {
+            Log.d(TAG, "📝 Compose: sendMessageAndVerifyDisplay - attempting to send message: '${message.take(30)}...'")
+            Log.d(TAG, "⚡ Compose: sendMessageAndVerifyDisplay - Rapid mode: $rapid")
+            
+            // Step 1: Type message and verify it appears in input field
+            Log.d(TAG, "⌨️ Compose: sendMessageAndVerifyDisplay - Step 1: Typing message...")
+            val inputField = findMessageInputField(composeTestRule)
+            if (inputField == null) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - input field not found")
+                return false
+            }
+            
+            // Clear and type
+            inputField.performTextReplacement("")
+            inputField.performTextInput(message)
+            
+            // Verify text appears in input field by checking the EditText directly
+            Log.d(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Verifying text appears in input field...")
+            val timeout = if (rapid) 500L else 2000L
+            val searchText = message.take(30)
+            
+            // For EditText fields, we need to check the text value property instead of using onNodeWithText
+            val textAppeared = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    // Find the input field and check its text value
+                    val inputField = findMessageInputField(composeTestRule)
+                    if (inputField != null) {
+                        val currentText = inputField.fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text ?: ""
+                        Log.d(TAG, "🔍 Current input field text: '$currentText'")
+                        if (currentText.contains(searchText)) {
+                            inputField.assertIsDisplayed()
+                        } else {
+                            throw AssertionError("Input field text '$currentText' does not contain '$searchText'")
+                        }
+                    } else {
+                        throw AssertionError("Input field not found")
+                    }
+                },
+                timeoutMs = timeout,
+                description = "typed text to appear in input field: '$searchText'"
+            )
+            
+            if (!textAppeared) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 1 - text did not appear in input field")
+                return false
+            }
+            Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 1: Message typed and verified successfully")
+            
+            // Step 2: Click send button
+            Log.d(TAG, "📤 Compose: sendMessageAndVerifyDisplay - Step 2: Clicking send button...")
+            val clickSuccess = clickSendButton(composeTestRule)
+            if (!clickSuccess) {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 2 - clickSendButton returned false")
+                return false
+            }
+            Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 2: Send button clicked successfully")
+            
+            // Step 3: Wait for message to appear in chat
+            val chatTimeout = if (rapid) 400L else 1000L
+            Log.d(TAG, "⏳ Compose: sendMessageAndVerifyDisplay - Step 3: Waiting for message to appear in chat (timeout: ${chatTimeout}ms)...")
+            
+            val messageAppeared = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(message) },
+                timeoutMs = chatTimeout,
+                description = "message '${message.take(30)}...' to appear in chat"
+            )
+            
+            if (messageAppeared) {
+                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 3: Message appeared in chat successfully")
+                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - All steps completed successfully")
+                true
+            } else {
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 3 - message did not appear in chat within ${chatTimeout}ms")
+                false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - Exception during process", e)
+            Log.e(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Exception message: ${e.message}")
             false
         }
     }
@@ -301,20 +382,25 @@ object ComposeTestHelper {
     /**
      * Click the send button using Compose testing
      */
-    fun clickSendButton(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun clickSendButton(composeTestRule: ComposeTestRule): Boolean {
         return try {
+            Log.d(TAG, "🔍 Compose: clickSendButton - Looking for send button...")
             val sendButton = findSendButton(composeTestRule)
             if (sendButton == null) {
-                Log.e(TAG, "❌ Cannot click send button - button not found")
+                Log.e(TAG, "❌ Compose: clickSendButton - send button not found by findSendButton")
                 return false
             }
+            Log.d(TAG, "✅ Compose: clickSendButton - send button found successfully")
             
+            Log.d(TAG, "🔍 Compose: clickSendButton - Performing click...")
             sendButton.performClick()
-            Log.d(TAG, "✅ Send button clicked successfully with Compose")
+            Log.d(TAG, "✅ Compose: clickSendButton - Send button clicked successfully")
             true
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception clicking send button with Compose", e)
+            Log.e(TAG, "❌ Compose: clickSendButton - Exception during click", e)
+            Log.e(TAG, "🔍 Compose: clickSendButton - Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: clickSendButton - Exception message: ${e.message}")
             false
         }
     }
@@ -322,8 +408,8 @@ object ComposeTestHelper {
     /**
      * Send a complete message (type + send) using Compose testing
      */
-    suspend fun sendMessage(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+    fun sendMessage(
+        composeTestRule: ComposeTestRule, 
         message: String, 
         rapid: Boolean = false
     ): Boolean {
@@ -333,16 +419,22 @@ object ComposeTestHelper {
             
             // Type the message
             Log.d(TAG, "⌨️ Compose: Step 1 - Typing message...")
-            if (!typeMessage(composeTestRule, message)) {
-                Log.e(TAG, "❌ Compose: Failed to type message")
+            val typeSuccess = typeMessage(composeTestRule, message)
+            Log.d(TAG, "🔍 Compose: Step 1 result - typeMessage returned: $typeSuccess")
+            if (!typeSuccess) {
+                Log.e(TAG, "❌ Compose: FAILED at Step 1 - typeMessage returned false")
+                Log.e(TAG, "🔍 Compose: This means either input field not found or typing failed")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 1 - Message typed successfully")
             
             // Click send button
             Log.d(TAG, "📤 Compose: Step 2 - Clicking send button...")
-            if (!clickSendButton(composeTestRule)) {
-                Log.e(TAG, "❌ Compose: Failed to click send button")
+            val clickSuccess = clickSendButton(composeTestRule)
+            Log.d(TAG, "🔍 Compose: Step 2 result - clickSendButton returned: $clickSuccess")
+            if (!clickSuccess) {
+                Log.e(TAG, "❌ Compose: FAILED at Step 2 - clickSendButton returned false")
+                Log.e(TAG, "🔍 Compose: This means either send button not found or click failed")
                 return false
             }
             Log.d(TAG, "✅ Compose: Step 2 - Send button clicked successfully")
@@ -355,13 +447,15 @@ object ComposeTestHelper {
                 Log.d(TAG, "🚨 RAPID MODE: Message must appear within ${timeout}ms or test will fail!")
             }
             
-            // Use existing waitForElement method which provides timing info
+            // Use waitForElement method which provides timing info
             val messageAppeared = waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText(message) },
                 timeoutMs = timeout,
                 description = "message '${message.take(30)}...'"
             )
+            
+            Log.d(TAG, "🔍 Compose: Step 3 result - waitForElement returned: $messageAppeared")
             
             if (messageAppeared) {
                 Log.d(TAG, "✅ Compose: Step 3 - Message sent and displayed successfully")
@@ -370,8 +464,9 @@ object ComposeTestHelper {
                 }
                 true
             } else {
-                Log.e(TAG, "❌ Compose: Step 3 - Message not displayed after sending")
+                Log.e(TAG, "❌ Compose: FAILED at Step 3 - waitForElement returned false")
                 Log.e(TAG, "🔍 Compose: Message that failed to appear: '${message.take(50)}...'")
+                Log.e(TAG, "🔍 Compose: This means message was typed and sent but didn't appear in UI")
                 
                 if (rapid) {
                     Log.e(TAG, "🚨 RAPID FAILURE: Message took longer than ${timeout}ms to appear!")
@@ -393,6 +488,9 @@ object ComposeTestHelper {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception during message sending", e)
+            Log.e(TAG, "🔍 Compose: Exception occurred at some step during sendMessage")
+            Log.e(TAG, "🔍 Compose: Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "🔍 Compose: Exception message: ${e.message}")
             false
         }
     }
@@ -400,8 +498,8 @@ object ComposeTestHelper {
     /**
      * Wait for a message to appear in the chat using Compose testing
      */
-    suspend fun waitForMessageToAppear(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+    fun waitForMessageToAppear(
+        composeTestRule: ComposeTestRule, 
         message: String, 
         timeoutMs: Long,
         onFailure: ((String, String) -> Unit)? = null
@@ -454,7 +552,7 @@ object ComposeTestHelper {
                 }
                 
                 // Brief wait before next check
-                delay(10)
+                Thread.sleep(10)
             }
             
             Log.e(TAG, "❌ Compose: Message not found within ${timeoutMs}ms")
@@ -504,7 +602,7 @@ object ComposeTestHelper {
     /**
      * Verify all expected messages exist using Compose testing
      */
-    fun verifyAllMessagesExist(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): List<String> {
+    fun verifyAllMessagesExist(composeTestRule: ComposeTestRule, expectedMessages: List<String>): List<String> {
         val missingMessages = mutableListOf<String>()
         
         for ((index, expectedMessage) in expectedMessages.withIndex()) {
@@ -515,11 +613,26 @@ object ComposeTestHelper {
                 Log.d(TAG, "🔍 Compose: Verifying message ${index + 1}: '${expectedMessage.take(50)}...'")
                 Log.d(TAG, "🔍 Compose: Looking for text content: '${expectedMessage.take(50)}...'")
                 
-                // Use assertIsDisplayed() but catch the exception to avoid throwing AssertionError
-                composeTestRule.onNodeWithText(expectedMessage).assertIsDisplayed()
-                Log.d(TAG, "✅ Compose: Message ${index + 1} found: '${expectedMessage.take(30)}...'")
+                // Look specifically for user messages using content description
+                // This avoids finding the same text in other UI elements like input fields
+                val userMessageContentDesc = "User message: $expectedMessage"
+                Log.d(TAG, "🔍 Compose: Looking for node with content description: '${userMessageContentDesc.take(50)}...'")
                 
-            } catch (e: Exception) {
+                // Instead of using assertIsDisplayed which fails with multiple nodes,
+                // check if at least one node exists with the content description
+                val nodes = composeTestRule.onAllNodesWithContentDescription(userMessageContentDesc)
+                val nodeCount = nodes.fetchSemanticsNodes().size
+                
+                if (nodeCount > 0) {
+                    Log.d(TAG, "✅ Compose: Message ${index + 1} found as user message ($nodeCount occurrences): '${expectedMessage.take(30)}...'")
+                    if (nodeCount > 1) {
+                        Log.w(TAG, "⚠️ Warning: Found $nodeCount nodes with same content description. This might indicate a duplication issue.")
+                    }
+                } else {
+                    throw AssertionError("User message not found with content description: $userMessageContentDesc")
+                }
+                
+            } catch (e: Throwable) {
                 Log.w(TAG, "❌ Compose: Message ${index + 1} missing: '${expectedMessage.take(30)}...'")
                 Log.w(TAG, "   🔍 Looking for text content: '${expectedMessage.take(50)}...'")
                 Log.w(TAG, "   ❌ Exception: ${e.message}")
@@ -540,12 +653,39 @@ object ComposeTestHelper {
      * Check for duplicates using Compose testing
      * Since we've already verified all messages exist, we can assume no duplicates
      */
-    fun noDuplicates(composeTestRule: AndroidComposeTestRule<*, MainActivity>, expectedMessages: List<String>): Boolean {
-        // Since we've already verified all messages exist in verifyAllMessagesExist(),
-        // and the app logic prevents duplicates, we can safely assume no duplicates
-        Log.d(TAG, "✅ Compose: Skipping duplicate check - all messages already verified to exist")
-        Log.d(TAG, "✅ Compose: No duplicates detected (assumed based on app logic)")
-        return true
+    fun noDuplicates(composeTestRule: ComposeTestRule, expectedMessages: List<String>): Boolean {
+        Log.d(TAG, "🔍 Compose: Checking for duplicate messages in UI...")
+        
+        var duplicatesFound = false
+        val duplicateMessages = mutableListOf<String>()
+        
+        for ((index, message) in expectedMessages.withIndex()) {
+            val userMessageContentDesc = "User message: $message"
+            val nodes = composeTestRule.onAllNodesWithContentDescription(userMessageContentDesc)
+            val nodeCount = nodes.fetchSemanticsNodes().size
+            
+            if (nodeCount > 1) {
+                Log.w(TAG, "❌ Duplicate found: Message ${index + 1} appears $nodeCount times: '${message.take(30)}...'")
+                duplicatesFound = true
+                duplicateMessages.add(message.take(50))
+            } else if (nodeCount == 1) {
+                Log.d(TAG, "✅ No duplicate: Message ${index + 1} appears once: '${message.take(30)}...'")
+            } else {
+                Log.w(TAG, "⚠️ Message not found: '${message.take(30)}...' (this shouldn't happen if verifyAllMessagesExist passed)")
+            }
+        }
+        
+        if (duplicatesFound) {
+            Log.e(TAG, "❌ DUPLICATE MESSAGES DETECTED:")
+            duplicateMessages.forEach { msg ->
+                Log.e(TAG, "   🔄 Duplicate: '$msg...'")
+            }
+            Log.e(TAG, "❌ This indicates a message deduplication bug in production!")
+            return false
+        } else {
+            Log.d(TAG, "✅ No duplicate messages found - all messages appear exactly once")
+            return true
+        }
     }
     
     /**
@@ -554,7 +694,7 @@ object ComposeTestHelper {
      * The bug was that responses were appearing chronologically instead of being paired with their user messages
      */
     fun verifyMessageOrder(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         userMessage: String, 
         expectedResponse: String
     ): Boolean {
@@ -693,7 +833,7 @@ object ComposeTestHelper {
     /**
      * Navigate to new chat using Compose Testing
      */
-    fun navigateToNewChat(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun navigateToNewChat(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🎯 Compose: Attempting to navigate to new chat...")
             
@@ -761,7 +901,7 @@ object ComposeTestHelper {
     /**
      * Check if currently on chat screen by looking for message input field
      */
-    fun isOnChatScreen(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun isOnChatScreen(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔍 Compose: Checking if on chat screen...")
             
@@ -798,7 +938,7 @@ object ComposeTestHelper {
     /**
      * Navigate back to chats list from chat screen
      */
-    fun navigateBackToChatsList(composeTestRule: AndroidComposeTestRule<*, MainActivity>): Boolean {
+    fun navigateBackToChatsList(composeTestRule: ComposeTestRule): Boolean {
         return try {
             Log.d(TAG, "🔙 Compose: Attempting to navigate back to chats list...")
             
@@ -838,8 +978,8 @@ object ComposeTestHelper {
      * This function handles both UI interactions and WebSocket verification
      * It sends a message via UI and verifies a new request was added to pendingRequests
      */
-    suspend fun sendMessageWithWebSocketVerification(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+    fun sendMessageWithWebSocketVerification(
+        composeTestRule: ComposeTestRule, 
         message: String,
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel
     ): Boolean {
@@ -922,7 +1062,7 @@ object ComposeTestHelper {
      * This checks message ordering to ensure the bot response is related to our message
      */
     private fun verifyBotResponseAfterMessage(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>, 
+        composeTestRule: ComposeTestRule, 
         userMessage: String
     ): Boolean {
         return try {
@@ -991,7 +1131,7 @@ object ComposeTestHelper {
      * between every user message, it means the user couldn't send rapidly while bot was responding
      */
     fun countAssistantMessagesBetweenConsecutiveUserMessages(
-        composeTestRule: AndroidComposeTestRule<*, MainActivity>,
+        composeTestRule: ComposeTestRule,
         userMessages: List<String>
     ): Int {
         return try {
