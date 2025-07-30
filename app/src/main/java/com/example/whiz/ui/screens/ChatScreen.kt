@@ -75,6 +75,58 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Refresh
+
+@Composable
+fun ChatLoadErrorView(
+    onRetry: () -> Unit,
+    onGoBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // Error icon
+        Icon(
+            imageVector = Icons.Default.Refresh,
+            contentDescription = null,
+            modifier = Modifier
+                .size(64.dp)
+                .padding(bottom = 16.dp),
+            tint = MaterialTheme.colorScheme.error
+        )
+        
+        // Error message
+        Text(
+            text = "Couldn't load this chat",
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        // Retry button (prominent)
+        Button(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        ) {
+            Text("Retry")
+        }
+        
+        // Go back link (secondary)
+        TextButton(
+            onClick = onGoBack,
+            modifier = Modifier.padding(top = 4.dp)
+        ) {
+            Text("Go back", color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,6 +183,7 @@ fun ChatScreen(
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
+    val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
     
 
 
@@ -381,27 +434,46 @@ fun ChatScreen(
             modifier = Modifier.weight(1f)
         ) {
             key(chatId) {
-                if (messages.isEmpty() && !isResponding && !isSpeaking) {
-                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, chatId=$chatId")
-                    EmptyChatPlaceholder()
-                } else {
-                    Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
-                    MessagesList(
-                        messages = messages,
-                        listState = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                        showTypingIndicator = isResponding && !isSpeaking
-                    )
+                when {
+                    // Show error state if there's a chat load error
+                    chatLoadError != null -> {
+                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing ChatLoadErrorView - error: $chatLoadError")
+                        ChatLoadErrorView(
+                            onRetry = {
+                                viewModel.retryChatLoad()
+                            },
+                            onGoBack = {
+                                onChatsListClick()
+                            }
+                        )
+                    }
+                    // Show empty placeholder when no messages
+                    messages.isEmpty() && !isResponding && !isSpeaking -> {
+                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, chatId=$chatId")
+                        EmptyChatPlaceholder()
+                    }
+                    // Show messages list normally
+                    else -> {
+                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
+                        MessagesList(
+                            messages = messages,
+                            listState = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                            showTypingIndicator = isResponding && !isSpeaking
+                        )
+                    }
                 }
             }
         }
         
         // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
-        run {
-            // Never disable text input - users should always be able to type
-            val isTextInputDisabled = false
+        // Hide input bar when there's a chat load error
+        if (chatLoadError == null) {
+            run {
+                // Never disable text input - users should always be able to type
+                val isTextInputDisabled = false
             // Only disable mic during TTS when no headphones (to prevent audio feedback)
             val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
             
@@ -426,6 +498,7 @@ fun ChatScreen(
                 onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
+            }
         }
         
         // Snackbar host at bottom

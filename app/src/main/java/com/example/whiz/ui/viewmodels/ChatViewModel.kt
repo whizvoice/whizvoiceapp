@@ -219,6 +219,10 @@ class ChatViewModel @Inject constructor(
     // Error state for the view model
     private val _errorState = MutableStateFlow<String?>(null)
     val errorState = _errorState.asStateFlow()
+    
+    // Chat loading error state - separate from general errors
+    private val _chatLoadError = MutableStateFlow<String?>(null)
+    val chatLoadError = _chatLoadError.asStateFlow()
 
     // Connection error state
     private val _connectionError = MutableStateFlow<String?>(null)
@@ -921,18 +925,12 @@ class ChatViewModel @Inject constructor(
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error loading chat from repository", e)
-                        // Keep optimistic chat IDs even on error
-                        if (chatId < -1) {
-                            _chatId.value = chatId
-                            _chatTitle.value = "New Chat"
-                            Log.d(TAG, "🔥 loadChat error: Keeping optimistic chat ID $chatId")
-                            updateRespondingStateForCurrentChat()
-                        } else {
-                            _chatId.value = -1
-                            _chatTitle.value = "New Chat"
-                            _isResponding.value = false // 🔧 Immediately set to false on error
-                        }
-                        _errorState.value = "Error loading chat: ${e.message}"
+                        // Set chat load error instead of starting new chat
+                        _chatLoadError.value = "Couldn't load this chat"
+                        _chatId.value = chatId // Keep the requested chat ID
+                        _chatTitle.value = "Chat"
+                        _isResponding.value = false
+                        _errorState.value = null // Clear general error state
                     }
                 }
                 
@@ -945,6 +943,7 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
                 _connectionError.value = null // 🔧 Clear connection errors too
+                _chatLoadError.value = null // 🔧 Clear chat load errors when switching chats
                 
                 // 🔧 Reset voice responses to default (off) when loading a chat, UNLESS voice mode is being activated
                 // This prevents voice responses from staying on from previous sessions
@@ -1606,6 +1605,14 @@ class ChatViewModel @Inject constructor(
 
     fun onAuthErrorDialogDismissed() {
         _showAuthErrorDialog.value = null
+    }
+    
+    fun retryChatLoad() {
+        _chatLoadError.value = null
+        val currentChatId = _chatId.value
+        if (currentChatId > 0) {
+            loadChat(currentChatId)
+        }
     }
 
     private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
