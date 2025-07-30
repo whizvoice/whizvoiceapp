@@ -233,19 +233,15 @@ fun ChatScreen(
         }
     }
     
-    // Reload when ViewModel's chat ID changes (e.g., after optimistic chat migration)
+    // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
     LaunchedEffect(viewModelChatId) {
-        // Reload if the chat ID has actually changed from the initial -1
+        // Handle migration if the chat ID has changed from the initial -1
         // This handles both optimistic IDs (negative) and real IDs (positive)
         if (chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID changed in ViewModel - reloading. Old: $chatId, New: $viewModelChatId")
-            // Reload with the new chat ID
-            if (enableTTSMode) {
-                Log.d("ChatScreen", "[LOG] Reloading chat after migration with TTS mode awareness, chatId=$viewModelChatId")
-                viewModel.loadChatWithVoiceMode(viewModelChatId, true)
-            } else {
-                viewModel.loadChat(viewModelChatId)
-            }
+            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
+            // This is a migration (new chat creation), not a chat switch
+            // Use migrateChatId to avoid disconnecting WebSocket
+            viewModel.migrateChatId(chatId, viewModelChatId)
         }
     }
 

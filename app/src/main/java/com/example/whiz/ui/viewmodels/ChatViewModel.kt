@@ -251,6 +251,10 @@ class ChatViewModel @Inject constructor(
     // Track whether current input text is from typing vs voice
     private val _isInputFromVoice = MutableStateFlow(false)
     val isInputFromVoice = _isInputFromVoice.asStateFlow()
+    
+    // Track message currently being sent to handle race conditions during migrations
+    @Volatile
+    private var messageBeingSent: String? = null
 
     init {
         // Check if the app already has microphone permission
@@ -1023,6 +1027,47 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Migrate chat ID without disconnecting WebSocket - used for chat state transitions
+     * like -1 to negative (new chat creation) or negative to positive (optimistic to server-backed)
+     */
+    fun migrateChatId(oldId: Long, newId: Long) {
+        Log.d(TAG, "📝 Migrating chat ID from $oldId to $newId (keeping WebSocket connected)")
+        
+        // Check if there's a message currently being sent
+        val messageInFlight = messageBeingSent
+        if (messageInFlight != null) {
+            Log.d(TAG, "⚠️ Migration detected while sending message: '$messageInFlight'")
+            // We'll re-send this message after migration
+        }
+        
+        // Just update the chat ID - the messages flow will automatically update
+        // since it's derived from _chatId
+        _chatId.value = newId
+        
+        // Note: Messages are stored in the database and automatically filtered by chatId
+        // through the messages flow, so we don't need to update them manually
+        
+        // The WebSocket connection remains intact, which is the key benefit
+        Log.d(TAG, "✅ Chat ID migration complete. WebSocket remains connected: ${_isConnectedToServer.value}")
+        
+        // If there was a message being sent during migration, re-send it to the new chat
+        if (messageInFlight != null) {
+            Log.d(TAG, "🔄 Re-sending message to new chat after migration: '$messageInFlight'")
+            viewModelScope.launch {
+                // Small delay to let the migration fully complete
+                delay(100)
+                // Check if the message is still in the input field (not sent yet)
+                if (_inputText.value == messageInFlight) {
+                    Log.d(TAG, "📤 Message still in input field, sending now to chat $newId")
+                    sendUserInput(messageInFlight)
+                } else {
+                    Log.d(TAG, "✅ Message already sent or cleared, no need to re-send")
+                }
+            }
+        }
+    }
+
     fun updateInputText(text: String, fromVoice: Boolean = false) {
         Log.d(TAG, "[LOG] updateInputText called. Setting text from '${_inputText.value}' to: '$text', fromVoice: $fromVoice")
         Log.d(TAG, "[RACE_DEBUG] updateInputText: Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
@@ -1071,7 +1116,7 @@ class ChatViewModel @Inject constructor(
         
         // Case 3: Want to enable continuous listening - only block during TTS speaking
         // 🔧 FIXED: Allow microphone during server responses, only block during TTS
-        if (_isSpeaking.value) {
+        if (ttsManager.isSpeaking.value) {
             Log.d(TAG, "[LOG] Cannot start listening while assistant is speaking (TTS)")
             _errorState.value = "Cannot start listening while assistant is speaking"
             return
@@ -1143,7 +1188,7 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, isResponding=${_isResponding.value}")
         
         // Headphone-aware listening behavior
-        if (_isSpeaking.value) {
+        if (ttsManager.isSpeaking.value) {
             val headphonesConnected = ttsManager.areHeadphonesConnected()
             if (!headphonesConnected) {
                 // Without headphones: Don't listen during TTS to prevent feedback
@@ -1193,9 +1238,13 @@ class ChatViewModel @Inject constructor(
         val trimmedText = text.trim()
         if (trimmedText.isBlank()) return
         
+        // Track the message being sent for migration handling
+        messageBeingSent = trimmedText
+        
         // Always send messages - server will handle interrupts automatically based on its state
 
         viewModelScope.launch {
+            try {
             // 🔧 CRITICAL FIX: Capture chat ID at the start and use it consistently
             // This prevents race conditions where _chatId.value changes during execution
             val originalChatId = _chatId.value
@@ -1343,6 +1392,10 @@ class ChatViewModel @Inject constructor(
             // Schedule persistence check (only for local agent)
             if (!configUseRemoteAgent && currentChatId > 0) {
                 schedulePersistenceCheck(currentChatId)
+            }
+            } finally {
+                // Clear the message being sent
+                messageBeingSent = null
             }
         }
     }
@@ -1517,7 +1570,7 @@ class ChatViewModel @Inject constructor(
                     delay(200L) // Brief delay to ensure app is fully resumed
                     
                     // Reset potentially stuck speaking state
-                    if (_isSpeaking.value) {
+                    if (ttsManager.isSpeaking.value) {
                         Log.d(TAG, "[LOG] Detected stuck speaking state on foreground, clearing it")
                         _isSpeaking.value = false
                         ttsManager.stop() // Force stop TTS to clear speaking state
