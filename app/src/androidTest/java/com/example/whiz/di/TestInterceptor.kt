@@ -40,10 +40,10 @@ class TestInterceptor @Inject constructor() : Interceptor {
         val request = chain.request()
         val url = request.url.toString()
         
-        // Only intercept chat GET requests
-        if (request.method == "GET" && url.contains("/chats/")) {
+        // Only intercept conversation GET requests
+        if (request.method == "GET" && url.contains("/api/conversations/") && !url.contains("/messages")) {
             // Extract chat ID from URL
-            val chatId = url.substringAfterLast("/chats/").substringBefore("?").toLongOrNull()
+            val chatId = url.substringAfterLast("/conversations/").substringBefore("?").toLongOrNull()
             
             Log.d(TAG, "Intercepting GET request for chat ID: $chatId")
             

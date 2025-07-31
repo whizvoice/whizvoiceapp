@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 abstract class BaseIntegrationTest {
     
-    @get:Rule
+    @get:Rule(order = 1)
     var hiltRule = HiltAndroidRule(this)
     
     @Inject

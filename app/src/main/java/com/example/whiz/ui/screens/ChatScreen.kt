@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.* // Use wildcard import for brevity
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.* // Use wildcard import for brevity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -92,7 +93,7 @@ fun ChatLoadErrorView(
     ) {
         // Error icon
         Icon(
-            imageVector = Icons.Default.Refresh,
+            imageVector = Icons.Outlined.ErrorOutline,
             contentDescription = null,
             modifier = Modifier
                 .size(64.dp)

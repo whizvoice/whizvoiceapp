@@ -853,6 +853,8 @@ class ChatViewModel @Inject constructor(
     fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
         Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode: Current input text: '${_inputText.value}'")
+        // Clear any previous chat load error when starting to load a new chat
+        _chatLoadError.value = null
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
@@ -943,7 +945,7 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
                 _connectionError.value = null // 🔧 Clear connection errors too
-                _chatLoadError.value = null // 🔧 Clear chat load errors when switching chats
+                // Don't clear _chatLoadError here - it may have been set in the catch block above
                 
                 // 🔧 Reset voice responses to default (off) when loading a chat, UNLESS voice mode is being activated
                 // This prevents voice responses from staying on from previous sessions

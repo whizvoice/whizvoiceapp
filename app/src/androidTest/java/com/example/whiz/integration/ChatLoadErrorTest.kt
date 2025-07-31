@@ -3,7 +3,7 @@ package com.example.whiz.integration
 import android.content.Intent
 import android.util.Log
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -13,6 +13,7 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.R
 import androidx.navigation.findNavController
+import androidx.navigation.Navigation
 import com.example.whiz.di.AppModule
 import com.example.whiz.di.TestInterceptor
 import com.example.whiz.di.TestAppModule
@@ -35,8 +36,8 @@ import javax.inject.Inject
 @RunWith(AndroidJUnit4::class)
 class ChatLoadErrorTest : BaseIntegrationTest() {
     
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule(order = 2)
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
     
     @Inject
     lateinit var repository: WhizRepository
@@ -73,11 +74,28 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
     fun test404Error_CreatesNewChat() {
         Log.d(TAG, "Starting test404Error_CreatesNewChat")
         
-        // Launch the app manually to avoid voice launch
-        launchAppAndWaitForLoad()
+        // App is already launched by createAndroidComposeRule
+        // Handle potential voice launch by checking if we're on chat screen
+        if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+            Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
+            if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
+                return
+            }
+        }
         
-        // Make sure we're on the chat list screen
-        ComposeTestHelper.navigateBackToChatsList(composeTestRule)
+        // Ensure we're on the chat list
+        val chatListReady = ComposeTestHelper.waitForElement(
+            composeTestRule,
+            { composeTestRule.onNodeWithText("My Chats") },
+            TEST_TIMEOUT,
+            "chat list to load"
+        )
+        
+        if (!chatListReady) {
+            failWithScreenshot("Chat list not ready", "chat_list_not_ready")
+            return
+        }
         
         // Navigate to the 404 chat
         navigateToChatId(TestInterceptor.CHAT_ID_404)
@@ -121,11 +139,28 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
     fun test500Error_ShowsErrorUI_and_check_retry_button() {
         Log.d(TAG, "Starting test500Error_ShowsErrorUI")
         
-        // Launch app and navigate to home
-        launchAppAndWaitForLoad()
+        // App is already launched by createAndroidComposeRule
+        // Handle potential voice launch by checking if we're on chat screen
+        if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+            Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
+            if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
+                return
+            }
+        }
         
-        // Make sure we're on the chat list screen
-        ComposeTestHelper.navigateBackToChatsList(composeTestRule)
+        // Ensure we're on the chat list
+        val chatListReady = ComposeTestHelper.waitForElement(
+            composeTestRule,
+            { composeTestRule.onNodeWithText("My Chats") },
+            TEST_TIMEOUT,
+            "chat list to load"
+        )
+        
+        if (!chatListReady) {
+            failWithScreenshot("Chat list not ready", "chat_list_not_ready")
+            return
+        }
         
         // Navigate to the 500 error chat
         navigateToChatId(TestInterceptor.CHAT_ID_500)
@@ -191,11 +226,28 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
     fun testGoBackButton_NavigatesToChatList() {
         Log.d(TAG, "Starting testGoBackButton_NavigatesToChatList")
         
-        // Launch app and navigate
-        launchAppAndWaitForLoad()
+        // App is already launched by createAndroidComposeRule
+        // Handle potential voice launch by checking if we're on chat screen
+        if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+            Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
+            if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
+                return
+            }
+        }
         
-        // Make sure we're on the chat list screen
-        ComposeTestHelper.navigateBackToChatsList(composeTestRule)
+        // Ensure we're on the chat list
+        val chatListReady = ComposeTestHelper.waitForElement(
+            composeTestRule,
+            { composeTestRule.onNodeWithText("My Chats") },
+            TEST_TIMEOUT,
+            "chat list to load"
+        )
+        
+        if (!chatListReady) {
+            failWithScreenshot("Chat list not ready", "chat_list_not_ready")
+            return
+        }
         
         // Navigate to the 403 error chat
         navigateToChatId(TestInterceptor.CHAT_ID_403)
@@ -251,24 +303,46 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         // - CHAT_ID_403 (403403) returns 403
         // - CHAT_ID_503 (503503) returns 503
         
-        // Since the MainActivity is already running from launchAppAndWaitForLoad(),
-        // we need to trigger navigation to the specific chat ID by sending a new intent
-        
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val intent = Intent(context, MainActivity::class.java).apply {
+        // Navigate by sending a new intent to the existing activity
+        // Since we can't create new activities, we'll use the test context and rely on SINGLE_TOP
+        val activity = composeTestRule.activity
+        val intent = Intent(activity, MainActivity::class.java).apply {
             putExtra("NAVIGATE_TO_CHAT_ID", chatId)
             putExtra("FORCE_NAVIGATION", true)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         
         Log.d(TAG, "Sending navigation intent with NAVIGATE_TO_CHAT_ID: $chatId")
+        // Use the activity context to start the activity, which should route to onNewIntent
+        // because of FLAG_ACTIVITY_SINGLE_TOP
+        activity.startActivity(intent)
         
-        // Launch the intent to navigate to the chat
-        context.startActivity(intent)
+        // Wait for navigation to complete by checking for chat screen elements
+        // For error cases, wait for error UI or for 404 wait for new chat UI
+        val navigationComplete = when (chatId) {
+            TestInterceptor.CHAT_ID_404 -> {
+                // For 404, we expect a new chat screen
+                ComposeTestHelper.waitForElement(
+                    composeTestRule,
+                    { composeTestRule.onNodeWithText("Start chatting with Whiz!\nType or tap the mic.") },
+                    5000,
+                    "new chat placeholder after navigation"
+                )
+            }
+            else -> {
+                // For other errors, we expect error UI
+                ComposeTestHelper.waitForElement(
+                    composeTestRule,
+                    { composeTestRule.onNodeWithText("Couldn't load this chat") },
+                    5000,
+                    "error UI after navigation"
+                )
+            }
+        }
         
-        // Wait for navigation to complete
-        Thread.sleep(2000)
-        composeTestRule.waitForIdle()
+        if (!navigationComplete) {
+            Log.w(TAG, "Navigation to chat $chatId may not have completed properly")
+        }
         
         Log.d(TAG, "Navigation to chat $chatId completed")
     }
