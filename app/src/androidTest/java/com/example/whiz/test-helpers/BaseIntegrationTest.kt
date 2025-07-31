@@ -126,6 +126,15 @@ abstract class BaseIntegrationTest {
     
     /**
      * Launch app and wait for it to be fully loaded
+     * 
+     * Note: If your test has a ComposeTestRule, consider using 
+     * ComposeTestHelper.launchAppAndWaitForLoad() instead, which provides:
+     * - Voice launch support via isVoiceLaunch parameter
+     * - Better integration with Compose UI testing
+     * - Same recovery and retry logic
+     * 
+     * Example:
+     * ComposeTestHelper.launchAppAndWaitForLoad(composeTestRule, isVoiceLaunch = false)
      */
     protected fun launchAppAndWaitForLoad(): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🚀 launching app")
