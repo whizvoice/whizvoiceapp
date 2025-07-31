@@ -1328,11 +1328,7 @@ class ChatViewModel @Inject constructor(
             }
 
             // Send to agent (local or remote)
-            if (configUseRemoteAgent && !whizServerRepository.isConnected()) {
-                Log.w(TAG, "sendUserInput: Remote agent not connected, cannot send message")
-                _errorState.value = "Not connected to server. Please check your connection."
-                return@launch
-            }
+            // Note: Don't return early if not connected - let sendMessage handle retry queueing
 
             if (configUseRemoteAgent) {
                 // 🔧 CRITICAL FIX: Check if we have a server token before attempting to send
