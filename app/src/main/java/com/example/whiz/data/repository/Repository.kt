@@ -377,14 +377,16 @@ class WhizRepository @Inject constructor(
 
     suspend fun addAssistantMessage(chatId: Long, content: String): Long {
         return try {
-            Log.d(TAG, "addAssistantMessage: adding assistant message to chat $chatId via API")
+            // 🔧 MIGRATION FIX: Get the actual chat ID in case of migration
+            val actualChatId = getActualChatId(chatId)
+            Log.d(TAG, "addAssistantMessage: adding assistant message to chat $actualChatId (original: $chatId) via API")
             val createRequest = ApiService.MessageCreate(
-                conversation_id = chatId,
+                conversation_id = actualChatId,
                 content = content,
                 message_type = MessageType.ASSISTANT.name
             )
             val message = apiService.createMessage(createRequest)
-            Log.d(TAG, "addAssistantMessage: added assistant message ${message.id} to chat $chatId")
+            Log.d(TAG, "addAssistantMessage: added assistant message ${message.id} to chat $actualChatId")
             
             // Remove arbitrary delay - trigger immediate refresh
             triggerMessagesRefresh()
@@ -403,26 +405,28 @@ class WhizRepository @Inject constructor(
      */
     suspend fun addAssistantMessageOptimistic(chatId: Long, content: String, requestId: String? = null): Long {
         return try {
-            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $chatId (local only) with requestId: $requestId")
+            // 🔧 MIGRATION FIX: Get the actual chat ID in case of migration
+            val actualChatId = getActualChatId(chatId)
+            Log.d(TAG, "addAssistantMessageOptimistic: adding optimistic assistant message to chat $actualChatId (original: $chatId) with requestId: $requestId")
             
             // 🔧 Ensure chat exists locally before adding optimistic message
-            val existingChat = chatDao.getChatById(chatId)
+            val existingChat = chatDao.getChatById(actualChatId)
             if (existingChat == null) {
-                Log.w(TAG, "addAssistantMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                Log.w(TAG, "addAssistantMessageOptimistic: Chat $actualChatId not found locally, creating placeholder chat for optimistic UI")
                 val placeholderChat = ChatEntity(
-                    id = chatId,
+                    id = actualChatId,
                     title = "Loading...",
                     createdAt = System.currentTimeMillis(),
                     lastMessageTime = System.currentTimeMillis()
                 )
                 chatDao.insertChat(placeholderChat)
-                Log.d(TAG, "addAssistantMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+                Log.d(TAG, "addAssistantMessageOptimistic: Created placeholder chat $actualChatId for optimistic UI")
             }
             
             // Create optimistic assistant message entity
             val messageEntity = MessageEntity(
                 id = 0,
-                chatId = chatId,
+                chatId = actualChatId,
                 content = content,
                 type = MessageType.ASSISTANT,
                 timestamp = System.currentTimeMillis(),
@@ -430,7 +434,7 @@ class WhizRepository @Inject constructor(
             )
             
             val messageId = messageDao.insertMessage(messageEntity)
-            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $chatId with requestId: $requestId")
+            Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message ${messageId} to chat $actualChatId with requestId: $requestId")
             
             // Room will automatically notify the Flow - no manual trigger needed
             
@@ -447,17 +451,19 @@ class WhizRepository @Inject constructor(
      */
     suspend fun addAssistantMessageAfterRequest(chatId: Long, content: String, requestId: String): Long {
         return try {
-            Log.d(TAG, "addAssistantMessageAfterRequest: adding assistant message after request $requestId in chat $chatId")
+            // 🔧 MIGRATION FIX: Get the actual chat ID in case of migration
+            val actualChatId = getActualChatId(chatId)
+            Log.d(TAG, "addAssistantMessageAfterRequest: adding assistant message after request $requestId in chat $actualChatId (original: $chatId)")
             
             // Find the user message with this requestId
-            val userMessage = messageDao.getUserMessageByRequestId(chatId, requestId)
+            val userMessage = messageDao.getUserMessageByRequestId(actualChatId, requestId)
             if (userMessage != null) {
                 Log.d(TAG, "addAssistantMessageAfterRequest: found user message ${userMessage.id} with requestId $requestId")
                 
                 // Create assistant message with timestamp after the user message
                 val assistantMessage = MessageEntity(
                     id = 0,
-                    chatId = chatId,
+                    chatId = actualChatId,
                     content = content,
                     type = MessageType.ASSISTANT,
                     timestamp = userMessage.timestamp + 1, // Ensure it goes after the user message
@@ -473,7 +479,7 @@ class WhizRepository @Inject constructor(
             } else {
                 Log.w(TAG, "addAssistantMessageAfterRequest: no user message found with requestId $requestId, adding at end")
                 // Fallback: add at the end if no matching user message found
-                return addAssistantMessageOptimistic(chatId, content, requestId)
+                return addAssistantMessageOptimistic(actualChatId, content, requestId)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error adding assistant message after request $requestId in chat $chatId: ${e.message}", e)
@@ -693,6 +699,36 @@ class WhizRepository @Inject constructor(
      */
     private fun getOptimisticChatId(realChatId: Long): Long? {
         return chatMigrationMapping.entries.find { it.value == realChatId }?.key
+    }
+    
+    /**
+     * Get the actual chat ID, checking if this chat was migrated.
+     * If the chat was migrated, returns the new chat ID, otherwise returns the original.
+     */
+    private fun getActualChatId(chatId: Long): Long {
+        // Check if this chat was migrated to a new ID
+        val migratedId = chatMigrationMapping[chatId]
+        if (migratedId != null) {
+            Log.d(TAG, "getActualChatId: Chat $chatId was migrated to $migratedId")
+            return migratedId
+        }
+        return chatId
+    }
+    
+    /**
+     * Check if two chat IDs are related through migration.
+     * Returns true if chatId1 was migrated to chatId2 or vice versa.
+     */
+    fun areChatsMigrated(chatId1: Long, chatId2: Long): Boolean {
+        // Check if chatId1 was migrated to chatId2
+        if (chatMigrationMapping[chatId1] == chatId2) {
+            return true
+        }
+        // Check if chatId2 was migrated to chatId1
+        if (chatMigrationMapping[chatId2] == chatId1) {
+            return true
+        }
+        return false
     }
 
     /**
