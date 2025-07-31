@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.* // Use wildcard import for brevity
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.* // Use wildcard import for brevity
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.* // Use wildcard import for brevity
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -42,6 +44,7 @@ import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -77,6 +80,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.filled.Refresh
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.unit.IntOffset
 
 @Composable
 fun ChatLoadErrorView(
@@ -144,6 +156,7 @@ fun ChatScreen(
 ) {
     // Handle permission state - moved to top
     var showPermissionDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     
     // Call the test hook once when ViewModel is ready
     LaunchedEffect(viewModel) {
@@ -198,6 +211,7 @@ fun ChatScreen(
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
     
     // Observe permission state directly from PermissionManager for reactive UI updates
     val hasPermissionReactive by permissionManager.microphonePermissionGranted.collectAsState()
@@ -245,6 +259,13 @@ fun ChatScreen(
             Log.d("ChatScreen", "[LOG] Mic clicked, toggling continuous listening via VoiceManager")
             voiceManager.toggleContinuousListening()
         }
+    }
+    
+    // Function to copy message to clipboard
+    fun copyMessageToClipboard(message: MessageEntity) {
+        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clipData = ClipData.newPlainText("Chat Message", message.content)
+        clipboardManager.setPrimaryClip(clipData)
     }
 
     // Microphone permission dialog
@@ -462,7 +483,8 @@ fun ChatScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                            showTypingIndicator = isResponding && !isSpeaking
+                            showTypingIndicator = isResponding && !isSpeaking,
+                            onLongPressMessage = ::copyMessageToClipboard
                         )
                     }
                 }
@@ -583,7 +605,8 @@ fun MessagesList(
     messages: List<MessageEntity>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     modifier: Modifier = Modifier,
-    showTypingIndicator: Boolean = false
+    showTypingIndicator: Boolean = false,
+    onLongPressMessage: ((MessageEntity) -> Unit)? = null
 ) {
     // 🔧 DEDUPLICATION FIX: Remove duplicate messages during chat ID migration race condition
     // The test countMessageOccurrences() uses UI Automator to scan screen text - during optimistic
@@ -640,7 +663,10 @@ fun MessagesList(
             // This ensures even if somehow duplicates slip through, they won't render as separate items
             "${message.content.hashCode()}_${message.timestamp}_${message.type}"
         }) { message ->
-            MessageItem(message = message)
+            MessageItem(
+                message = message,
+                onLongPress = onLongPressMessage
+            )
         }
         
         // Show typing indicator as a message when bot is responding
@@ -657,8 +683,15 @@ fun MessagesList(
 
 
 @Composable
-fun MessageItem(message: MessageEntity) {
+fun MessageItem(
+    message: MessageEntity,
+    onLongPress: ((MessageEntity) -> Unit)? = null
+) {
     val isUserMessage = message.type == MessageType.USER
+    
+    // State for showing context menu
+    var showContextMenu by remember { mutableStateOf(false) }
+    var contextMenuOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
 
     val backgroundColor = when (message.type) {
         MessageType.USER -> MaterialTheme.colorScheme.primary
@@ -677,7 +710,15 @@ fun MessageItem(message: MessageEntity) {
                 .padding(
                     start = if (isUserMessage) 56.dp else 0.dp, // More indentation for user messages
                     end = if (isUserMessage) 0.dp else 56.dp   // More indentation for assistant messages
-                ),
+                )
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = { offset ->
+                            contextMenuOffset = offset
+                            showContextMenu = true
+                        }
+                    )
+                },
             shape = RoundedCornerShape( // Slightly different shapes
                 topStart = if (!isUserMessage) 4.dp else 16.dp,
                 topEnd = if (isUserMessage) 4.dp else 16.dp,
@@ -716,6 +757,39 @@ fun MessageItem(message: MessageEntity) {
                     modifier = Modifier.fillMaxWidth(),
                     color = textColor.copy(alpha = 0.7f)
                 )
+            }
+        }
+        
+        // Context menu popup positioned at long-press location
+        if (showContextMenu) {
+            Popup(
+                offset = IntOffset(
+                    contextMenuOffset.x.toInt(),
+                    (contextMenuOffset.y - 100).toInt() // Show above the touch point
+                ),
+                onDismissRequest = { showContextMenu = false },
+                properties = PopupProperties(focusable = true)
+            ) {
+                Card(
+                    modifier = Modifier
+                        .wrapContentSize()
+                        .padding(4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    TextButton(
+                        onClick = {
+                            onLongPress?.invoke(message)
+                            showContextMenu = false
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    ) {
+                        Text("Copy", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         }
     }

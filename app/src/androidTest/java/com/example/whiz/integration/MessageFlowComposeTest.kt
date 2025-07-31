@@ -8,6 +8,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.performClick
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -35,12 +38,13 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
-import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.By
+import android.content.ClipboardManager
+import android.content.Context
 
 /**
  * Compose-based comprehensive UI integration test for complete message flow including:
@@ -376,6 +380,18 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                 failWithScreenshot("Missing messages from chat", "compose_messages_missing")
                 return@runBlocking
             }
+            
+            // step 8.5: test long-press to copy message functionality
+            Log.d(TAG, "📋 step 8.5: testing long-press to copy message functionality")
+            
+            // Long press on the first message to test copy functionality
+            val firstMessageCopied = testLongPressCopyMessage(firstMessage)
+            if (!firstMessageCopied) {
+                Log.e(TAG, "❌ FAILURE at step 8.5: Long-press copy functionality failed")
+                failWithScreenshot("compose_long_press_copy_failed", "Long-press copy functionality failed")
+                return@runBlocking
+            }
+            Log.d(TAG, "✅ Long-press copy functionality verified")
             
             // step 9: wait for chat migration to complete, then do comprehensive final verification
             Log.d(TAG, "🔍 step 9a: waiting for chat migration to complete...")
@@ -784,6 +800,68 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             Log.w(TAG, "error checking UI stability: ${e.message}")
             true // assume settled if we can't check
+        }
+    }
+    
+    /**
+     * Test long-press to copy message functionality
+     */
+    private fun testLongPressCopyMessage(messageText: String): Boolean {
+        return try {
+            Log.d(TAG, "🔍 Testing long-press copy for message: '${messageText.take(30)}...'")
+            
+            // Clear clipboard first to ensure our test is accurate
+            val context = instrumentation.targetContext
+            val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("test", ""))
+            
+            // Find the message node and perform long press
+            composeTestRule.onNodeWithText(messageText)
+                .performTouchInput {
+                    longClick()
+                }
+            
+            // Wait for the context menu to appear
+            Log.d(TAG, "⏳ Waiting for context menu to appear...")
+            val contextMenuAppeared = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Copy") },
+                timeoutMs = 2000L,
+                description = "context menu with Copy option"
+            )
+            
+            if (!contextMenuAppeared) {
+                Log.e(TAG, "❌ Context menu with Copy option not found")
+                return false
+            }
+            
+            Log.d(TAG, "✅ Context menu appeared, clicking Copy...")
+            
+            // Click the Copy option in the context menu
+            composeTestRule.onNodeWithText("Copy").performClick()
+            
+            // Small delay for clipboard operation to complete
+            Thread.sleep(200)
+            
+            // Check if the message was copied to clipboard
+            val clipData = clipboardManager.primaryClip
+            if (clipData != null && clipData.itemCount > 0) {
+                val copiedText = clipData.getItemAt(0).text.toString()
+                if (copiedText == messageText) {
+                    Log.d(TAG, "✅ Message successfully copied to clipboard")
+                    return true
+                } else {
+                    Log.e(TAG, "❌ Clipboard content doesn't match. Expected: '$messageText', Got: '$copiedText'")
+                    return false
+                }
+            } else {
+                Log.e(TAG, "❌ Clipboard is empty after long press")
+                return false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception during long-press copy test", e)
+            false
         }
     }
 
