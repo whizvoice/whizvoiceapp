@@ -15,7 +15,7 @@ On my phone, which is what I use for testing as well as running the production a
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.
 
 ```
-cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.TTSBackgroundingTest
+cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test "com.example.whiz.integration.ChatLoadErrorTest#test500Error_ShowsErrorUI_and_check_retry_button"
 ```
 
 the tests take a long time so please run it with your max timeout (10mins)

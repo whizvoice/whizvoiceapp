@@ -94,13 +94,22 @@ object TestAppModule {
 
     @Provides
     @Singleton
+    fun provideTestInterceptor(): TestInterceptor {
+        Log.d(TAG, "🔧 Creating TestInterceptor for simulating errors")
+        return TestInterceptor()
+    }
+    
+    @Provides
+    @Singleton
     fun provideOkHttpClient(
         authRepositoryProvider: Provider<AuthRepository>,
-        tokenAuthenticator: TokenAuthenticator
+        tokenAuthenticator: TokenAuthenticator,
+        testInterceptor: TestInterceptor
     ): OkHttpClient {
-        Log.d(TAG, "🔧 Creating OkHttpClient for REAL API calls...")
+        Log.d(TAG, "🔧 Creating OkHttpClient with TestInterceptor for controlled testing...")
         return OkHttpClient.Builder()
             .authenticator(tokenAuthenticator)
+            .addInterceptor(testInterceptor) // Add test interceptor first
             .addInterceptor(Interceptor { chain ->
                 val originalRequest = chain.request()
                 val requestBuilder = originalRequest.newBuilder()
@@ -123,9 +132,9 @@ object TestAppModule {
                 
                 chain.proceed(requestBuilder.build())
             })
-            .readTimeout(30, TimeUnit.SECONDS)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS) // Shorter timeout for tests
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
             .build()
     }
 

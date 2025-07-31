@@ -166,12 +166,12 @@ class ChatViewModel @Inject constructor(
             _isResponding.value = hasPendingRequests
             
             // 🔧 If we just finished responding and continuous listening is enabled, restart microphone immediately
-            if (wasResponding && !hasPendingRequests && voiceManager.isContinuousListeningEnabled.value && !_isSpeaking.value) {
+            if (wasResponding && !hasPendingRequests && voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
                 Log.d(TAG, "[LOG] Just finished computing - restarting continuous listening immediately")
                 viewModelScope.launch {
                     // Small delay to ensure state propagation
                     delay(50L)
-                    if (!_isResponding.value && !_isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
@@ -197,8 +197,8 @@ class ChatViewModel @Inject constructor(
     // --- Text-to-Speech State ---
     private val _isTTSInitialized = MutableStateFlow(false)
     val isTTSInitialized = _isTTSInitialized.asStateFlow() // Expose for testing
-    private val _isSpeaking = MutableStateFlow(false) // Track if TTS is currently speaking
-    val isSpeaking = _isSpeaking.asStateFlow()
+    // Derive speaking state from TTSManager (single source of truth)
+    val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
 
     // --- Voice Response Setting ---
     private val _isVoiceResponseEnabled = MutableStateFlow(false) // Default to off
@@ -219,6 +219,10 @@ class ChatViewModel @Inject constructor(
     // Error state for the view model
     private val _errorState = MutableStateFlow<String?>(null)
     val errorState = _errorState.asStateFlow()
+    
+    // Chat loading error state - separate from general errors
+    private val _chatLoadError = MutableStateFlow<String?>(null)
+    val chatLoadError = _chatLoadError.asStateFlow()
 
     // Connection error state
     private val _connectionError = MutableStateFlow<String?>(null)
@@ -765,15 +769,14 @@ class ChatViewModel @Inject constructor(
                                         voiceManager.stopListening() // Stop STT before TTS speaks
                                     }
                                     val utteranceId = UUID.randomUUID().toString()
-                                    _isSpeaking.value = true // Indicate TTS is starting
                                     ttsManager.speak(messageContentForChat, "chat_message")
-                                    // Note: _isSpeaking will be reset to false in UtteranceProgressListener callbacks
+                                    // TTSManager will handle the isSpeaking state
                                 } else {
                                     // Always restart continuous listening after assistant reply if enabled and not speaking
-                                    if (voiceManager.isContinuousListeningEnabled.value && !_isSpeaking.value) {
+                                    if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
                                         Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
                                         startContinuousListening()
-                                    } else if (wasListeningBeforeTTS && !_isSpeaking.value) {
+                                    } else if (wasListeningBeforeTTS && !isSpeaking.value) {
                                         Log.d(TAG, "[LOG] Not speaking, wasListeningBeforeTTS=true, restarting ASR.")
                                         voiceManager.startListening { finalTranscription ->
                                             if (finalTranscription.isNotBlank()) {
@@ -849,6 +852,8 @@ class ChatViewModel @Inject constructor(
     fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
         Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode: Current input text: '${_inputText.value}'")
+        // Clear any previous chat load error when starting to load a new chat
+        _chatLoadError.value = null
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
@@ -921,18 +926,12 @@ class ChatViewModel @Inject constructor(
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error loading chat from repository", e)
-                        // Keep optimistic chat IDs even on error
-                        if (chatId < -1) {
-                            _chatId.value = chatId
-                            _chatTitle.value = "New Chat"
-                            Log.d(TAG, "🔥 loadChat error: Keeping optimistic chat ID $chatId")
-                            updateRespondingStateForCurrentChat()
-                        } else {
-                            _chatId.value = -1
-                            _chatTitle.value = "New Chat"
-                            _isResponding.value = false // 🔧 Immediately set to false on error
-                        }
-                        _errorState.value = "Error loading chat: ${e.message}"
+                        // Set chat load error instead of starting new chat
+                        _chatLoadError.value = "Couldn't load this chat"
+                        _chatId.value = chatId // Keep the requested chat ID
+                        _chatTitle.value = "Chat"
+                        _isResponding.value = false
+                        _errorState.value = null // Clear general error state
                     }
                 }
                 
@@ -945,6 +944,7 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
                 _connectionError.value = null // 🔧 Clear connection errors too
+                // Don't clear _chatLoadError here - it may have been set in the catch block above
                 
                 // 🔧 Reset voice responses to default (off) when loading a chat, UNLESS voice mode is being activated
                 // This prevents voice responses from staying on from previous sessions
@@ -963,9 +963,8 @@ class ChatViewModel @Inject constructor(
                 try {
                     Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
                     voiceManager.stopListening()
-                    Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${_isSpeaking.value})")
+                    Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${isSpeaking.value})")
                     ttsManager.stop()
-                    _isSpeaking.value = false
                     Log.d(TAG, "loadChat: Speech services stopped successfully")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error stopping speech services during loadChat", e)
@@ -1091,7 +1090,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun toggleSpeechRecognition() {
-        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
+        Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
         if (!_micPermissionGranted.value) {
             Log.w(TAG, "[LOG] Microphone permission not granted")
             _errorState.value = "Microphone permission required" 
@@ -1131,8 +1130,8 @@ class ChatViewModel @Inject constructor(
         
         // 🔧 IMPROVED: Start listening immediately unless TTS is speaking
         // Allow listening during server responses for better UX
-        if (!_isSpeaking.value) {
-            Log.d(TAG, "[LOG] Starting microphone immediately (isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value})")
+        if (!isSpeaking.value) {
+            Log.d(TAG, "[LOG] Starting microphone immediately (isSpeaking=${isSpeaking.value}, isResponding=${_isResponding.value})")
             voiceManager.startListening { recognizedText ->
                 Log.d(TAG, "[LOG] toggleSpeechRecognition startListening callback. recognizedText: '$recognizedText'")
                 if (recognizedText.isNotBlank()) {
@@ -1140,7 +1139,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         } else {
-            Log.d(TAG, "[LOG] Delaying microphone start - TTS is speaking (${_isSpeaking.value})")
+            Log.d(TAG, "[LOG] Delaying microphone start - TTS is speaking (${isSpeaking.value})")
         }
     }
 
@@ -1148,7 +1147,7 @@ class ChatViewModel @Inject constructor(
     fun ensureContinuousListeningEnabled() {
         // Add stack trace to debug why this is called during typing
         val stackTrace = Thread.currentThread().stackTrace
-        Log.d(TAG, "[LOG] ensureContinuousListeningEnabled called. micPermissionGranted=${_micPermissionGranted.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, isListening=${isListening.value}, isSpeaking=${_isSpeaking.value}, isResponding=${_isResponding.value}")
+        Log.d(TAG, "[LOG] ensureContinuousListeningEnabled called. micPermissionGranted=${_micPermissionGranted.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, isListening=${isListening.value}, isSpeaking=${isSpeaking.value}, isResponding=${_isResponding.value}")
         Log.d(TAG, "[LOG] STACK TRACE: Called from:")
         for (i in 3..minOf(8, stackTrace.size - 1)) { // Show 5 levels of stack trace
             Log.d(TAG, "[LOG]   ${stackTrace[i].className}.${stackTrace[i].methodName}:${stackTrace[i].lineNumber}")
@@ -1163,7 +1162,7 @@ class ChatViewModel @Inject constructor(
         if (voiceManager.isContinuousListeningEnabled.value) {
             Log.d(TAG, "[LOG] Continuous listening already enabled, ensuring it's active")
             // If not currently listening and not busy, start listening
-            if (!isListening.value && !_isSpeaking.value && !_isResponding.value) {
+            if (!isListening.value && !isSpeaking.value && !_isResponding.value) {
                 startContinuousListening()
             }
             return
@@ -1179,7 +1178,7 @@ class ChatViewModel @Inject constructor(
         // continuousListeningEnabled is already set via voiceManager
         
         // Start listening if not busy
-        if (!_isSpeaking.value && !_isResponding.value) {
+        if (!isSpeaking.value && !_isResponding.value) {
             startContinuousListening()
         }
     }
@@ -1224,7 +1223,7 @@ class ChatViewModel @Inject constructor(
                 viewModelScope.launch {
                     // Small delay to ensure the previous listening session is fully stopped
                     delay(100L)
-                    if (voiceManager.isContinuousListeningEnabled.value && !_isSpeaking.value) {
+                    if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
                         startContinuousListening() // This will check isSpeaking again
                     }
                 }
@@ -1327,11 +1326,7 @@ class ChatViewModel @Inject constructor(
             }
 
             // Send to agent (local or remote)
-            if (configUseRemoteAgent && !whizServerRepository.isConnected()) {
-                Log.w(TAG, "sendUserInput: Remote agent not connected, cannot send message")
-                _errorState.value = "Not connected to server. Please check your connection."
-                return@launch
-            }
+            // Note: Don't return early if not connected - let sendMessage handle retry queueing
 
             if (configUseRemoteAgent) {
                 // 🔧 CRITICAL FIX: Check if we have a server token before attempting to send
@@ -1404,14 +1399,13 @@ class ChatViewModel @Inject constructor(
         _isVoiceResponseEnabled.update { !it }
         if (!_isVoiceResponseEnabled.value) {
             ttsManager.stop() // Stop speaking if toggled off
-            _isSpeaking.value = false
             
             // If continuous listening is enabled, restart it immediately when TTS is stopped
             if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
                 viewModelScope.launch {
                     delay(50L) // Very short delay to ensure TTS stop is processed
-                    if (!_isResponding.value && !_isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
@@ -1503,7 +1497,6 @@ class ChatViewModel @Inject constructor(
         // Reset states
         _isResponding.value = false
         _isConnectedToServer.value = false
-        _isSpeaking.value = false
         voiceManager.updateContinuousListeningEnabled(false)
         
         Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
@@ -1554,13 +1547,20 @@ class ChatViewModel @Inject constructor(
     // Called when app goes to background
     fun onAppBackgrounded() {
         Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
+        
+        // Stop TTS when app goes to background
+        if (ttsManager.isSpeaking.value) {
+            Log.d(TAG, "[LOG] Stopping TTS as app is going to background")
+            ttsManager.stop()
+        }
+        
         // VoiceManager now handles stopping continuous listening on background
     }
 
     // Called when app comes back to foreground - restart continuous listening if it was enabled
     fun onAppForegrounded() {
         Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
-        Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${_isSpeaking.value}, isResponding: ${_isResponding.value}")
+        Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${isSpeaking.value}, isResponding: ${_isResponding.value}")
         
         // Only restart if we have permission, are in a chat, and continuous listening was enabled before backgrounding
         if (_micPermissionGranted.value && _chatId.value > 0 && voiceManager.isContinuousListeningEnabled.value) {
@@ -1572,7 +1572,6 @@ class ChatViewModel @Inject constructor(
                     // Reset potentially stuck speaking state
                     if (ttsManager.isSpeaking.value) {
                         Log.d(TAG, "[LOG] Detected stuck speaking state on foreground, clearing it")
-                        _isSpeaking.value = false
                         ttsManager.stop() // Force stop TTS to clear speaking state
                     }
                     
@@ -1606,6 +1605,14 @@ class ChatViewModel @Inject constructor(
 
     fun onAuthErrorDialogDismissed() {
         _showAuthErrorDialog.value = null
+    }
+    
+    fun retryChatLoad() {
+        _chatLoadError.value = null
+        val currentChatId = _chatId.value
+        if (currentChatId > 0) {
+            loadChat(currentChatId)
+        }
     }
 
     private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
@@ -1682,20 +1689,20 @@ class ChatViewModel @Inject constructor(
                 ttsManager.setAudioEventCallbacks(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
-                        _isSpeaking.value = true
+                        // TTSManager handles its own isSpeaking state
                     },
                     onCompleted = {
                         Log.d(TAG, "TTS completed - audio focus released")
-                        _isSpeaking.value = false
-                                        // Handle continuous listening if enabled and headphones are connected
-                if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
-                    Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
-                    startContinuousListening()
-                }
+                        // TTSManager handles its own isSpeaking state
+                        // Handle continuous listening if enabled and headphones are connected
+                        if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
+                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                            startContinuousListening()
+                        }
                     },
                     onError = {
                         Log.e(TAG, "TTS error - audio focus released")
-                        _isSpeaking.value = false
+                        // TTSManager handles its own isSpeaking state
                     }
                 )
             } else {

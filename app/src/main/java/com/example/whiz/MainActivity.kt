@@ -66,6 +66,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     
+    // Expose NavController for testing
+    fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
+    
     // Permission launcher
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()

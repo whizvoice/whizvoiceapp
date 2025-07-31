@@ -397,8 +397,17 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         }
         
         // Verify TTS is still not active
-        val ttsStillNotActive = !voiceManager.isSpeaking.value && !ttsManager.isSpeaking.value
+        val voiceManagerSpeaking = voiceManager.isSpeaking.value
+        val ttsManagerSpeaking = ttsManager.isSpeaking.value
+        val ttsStillNotActive = !voiceManagerSpeaking && !ttsManagerSpeaking
+        
+        Log.d(TAG, "🔍 Post-foreground TTS state check: VoiceManager.isSpeaking=$voiceManagerSpeaking, TTSManager.isSpeaking=$ttsManagerSpeaking")
+        
         if (!ttsStillNotActive) {
+            Log.e(TAG, "❌ TTS UNEXPECTEDLY ACTIVE AFTER RETURNING TO FOREGROUND!")
+            Log.e(TAG, "   - VoiceManager.isSpeaking: $voiceManagerSpeaking")
+            Log.e(TAG, "   - TTSManager.isSpeaking: $ttsManagerSpeaking")
+            Log.e(TAG, "   - This indicates TTS may have resumed when app came back to foreground")
             failWithScreenshot("TTS should remain not active after returning to app")
         }
         

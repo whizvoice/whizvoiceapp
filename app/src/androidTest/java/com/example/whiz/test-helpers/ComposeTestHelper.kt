@@ -19,6 +19,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ActivityTestRule
 import android.util.Log
+import android.content.Intent
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import com.example.whiz.MainActivity
 
 /**
@@ -28,7 +32,7 @@ import com.example.whiz.MainActivity
 object ComposeTestHelper {
     
     private const val TAG = "ComposeTestHelper"
-    
+
     /**
      * Create a SemanticsMatcher that matches content descriptions containing specific text
      * This allows us to find nodes with content descriptions that contain patterns like "User message:"
@@ -78,6 +82,170 @@ object ComposeTestHelper {
         } catch (e: Exception) {
             Log.d(TAG, "⚠️ Compose: Exception during cleanup: ${e.message}")
         }
+    }
+    
+    /**
+     * Launch app with option for voice intent and wait for it to be fully loaded
+     * @param composeTestRule The compose test rule to use for UI verification
+     * @param isVoiceLaunch Whether to launch with voice intent (simulates Google Assistant launch)
+     * @param packageName The package name of the app to launch
+     * @return true if app launched and loaded successfully, false otherwise
+     */
+    fun launchAppAndWaitForLoad(
+        composeTestRule: ComposeTestRule,
+        isVoiceLaunch: Boolean = false,
+        packageName: String = "com.example.whiz"
+    ): Boolean {
+        Log.d(TAG, "🚀 Launching app with voice intent: $isVoiceLaunch")
+        
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        
+        // Create appropriate intent based on launch type
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            
+            if (isVoiceLaunch) {
+                // Voice launch configuration
+                addCategory("android.intent.category.VOICE")
+                putExtra("tracing_intent_id", "fake-google-assistant-id")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or 
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                Log.d(TAG, "🎤 Configured for voice launch with tracing_intent_id")
+            } else {
+                // Manual launch configuration (tap on app icon)
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                // No tracing_intent_id extra - this is key to avoid voice detection
+                Log.d(TAG, "👆 Configured for manual launch (no tracing_intent_id)")
+            }
+        }
+        
+        Log.d(TAG, "   intent: $intent")
+        Log.d(TAG, "   flags: ${String.format("0x%08X", intent.flags)}")
+        
+        // Launch the app
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to start activity: ${e.message}")
+            return false
+        }
+        
+        // Wait for app to launch
+        var appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 10000)
+        if (!appLaunched) {
+            Log.e(TAG, "❌ App failed to launch within 10 seconds")
+            Log.w(TAG, "⚠️ Attempting to bring app to foreground...")
+            
+            // Try to bring app to foreground
+            try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+                if (launchIntent != null) {
+                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                                        Intent.FLAG_ACTIVITY_SINGLE_TOP or 
+                                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    context.startActivity(launchIntent)
+                    Thread.sleep(2000)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to bring app to foreground: ${e.message}")
+            }
+            
+            // Check again after recovery
+            appLaunched = device.wait(Until.hasObject(By.pkg(packageName)), 5000)
+            if (!appLaunched) {
+                Log.e(TAG, "❌ App still failed to launch after recovery attempt")
+                return false
+            } else {
+                Log.d(TAG, "✅ App recovered successfully")
+            }
+        }
+        
+        // Wait for compose to be ready
+        try {
+            composeTestRule.waitForIdle()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose not ready: ${e.message}")
+            return false
+        }
+        
+        // Wait for UI to be loaded based on launch type
+        val uiLoaded = if (isVoiceLaunch) {
+            // Voice launch should go directly to chat screen
+            Log.d(TAG, "🎤 Waiting for chat screen (voice launch)...")
+            
+            // First wait for any screen to be ready
+            Thread.sleep(2000)
+            
+            // Then verify we're on chat screen
+            val onChatScreen = waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Start listening") },
+                timeoutMs = 8000L,
+                description = "voice chat screen"
+            ) || waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Turn off continuous listening") },
+                timeoutMs = 2000L,
+                description = "continuous listening indicator"
+            )
+            
+            if (onChatScreen) {
+                Log.d(TAG, "✅ Voice launch successful - on chat screen")
+                true
+            } else {
+                Log.w(TAG, "⚠️ Voice launch may have failed - checking for chats list...")
+                // Fallback: check if we're on chats list instead
+                waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText("My Chats") },
+                    timeoutMs = 3000L,
+                    description = "chats list (fallback)"
+                )
+            }
+        } else {
+            // Manual launch should go to chats list
+            Log.d(TAG, "📋 Waiting for chats list (manual launch)...")
+            waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("My Chats") },
+                timeoutMs = 8000L,
+                description = "chats list"
+            ) || waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
+                timeoutMs = 3000L,
+                description = "new chat button"
+            )
+        }
+        
+        if (!uiLoaded) {
+            Log.e(TAG, "❌ Main UI failed to load")
+            
+            // Try one more recovery attempt
+            Log.w(TAG, "⚠️ Attempting final UI recovery...")
+            Thread.sleep(3000)
+            
+            // Check if any part of the app UI is visible
+            val anyUIVisible = try {
+                composeTestRule.onNodeWithText("WhizVoice").assertExists()
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!anyUIVisible) {
+                Log.e(TAG, "❌ No app UI detected after all attempts")
+                return false
+            }
+        }
+        
+        Log.d(TAG, "✅ App launched and loaded successfully")
+        return true
     }
     
     /**

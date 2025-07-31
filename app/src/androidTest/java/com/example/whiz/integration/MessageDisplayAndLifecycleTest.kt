@@ -243,9 +243,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         Log.d(TAG, "🧪 Starting comprehensive conversation lifecycle test")
         
-        // Step 1: Launch app manually using BaseIntegrationTest method (ensures manual launch, not voice)
+        // Step 1: Launch app manually using ComposeTestHelper method (ensures manual launch, not voice)
         Log.d(TAG, "🚀 Launching app manually to ensure manual launch detection...")
-        if (!launchAppAndWaitForLoad()) {
+        if (!ComposeTestHelper.launchAppAndWaitForLoad(composeTestRule, isVoiceLaunch = false, packageName = packageName)) {
             failWithScreenshot("app_failed_to_load", "App failed to launch using manual launch method")
         }
         
