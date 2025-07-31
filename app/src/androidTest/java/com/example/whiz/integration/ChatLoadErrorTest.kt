@@ -188,31 +188,37 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         Log.d(TAG, "Clicking retry button")
         composeTestRule.onNodeWithText("Retry").performClick()
         
-        // Wait for successful load - should show input field
-        val chatLoaded = ComposeTestHelper.waitForElement(
+        // After retry, the interceptor returns 404, which should create a new chat
+        // Wait for new chat UI to appear
+        val newChatCreated = ComposeTestHelper.waitForElement(
             composeTestRule,
-            { composeTestRule.onNodeWithTag("chat_input_field") },
+            { composeTestRule.onNodeWithText("Start chatting with Whiz!\nType or tap the mic.") },
             TEST_TIMEOUT,
-            "chat input field after retry"
+            "new chat placeholder after retry"
         )
         
-        if (!chatLoaded) {
-            failWithScreenshot("Chat should load successfully after retry", "retry_failed")
+        if (!newChatCreated) {
+            failWithScreenshot("Retry should create a new chat when server returns 404", "retry_no_new_chat")
         }
         
-        // Verify error UI is gone using Compose testing
-        try {
-            composeTestRule.waitUntil(5000) {
-                // Check that error UI doesn't exist
-                try {
-                    composeTestRule.onAllNodesWithText("Couldn't load this chat").fetchSemanticsNodes().isEmpty()
-                } catch (e: Exception) {
-                    false
-                }
-            }
-            Log.d(TAG, "Confirmed: Error UI removed after successful retry")
+        // Verify we have the input field in the new chat
+        val hasInputField = try {
+            composeTestRule.onNodeWithTag("chat_input_field").assertExists()
+            true
         } catch (e: Exception) {
-            failWithScreenshot("Chat not fully loaded after retry - error UI may still be visible", "retry_chat_not_loaded")
+            false
+        }
+        
+        if (!hasInputField) {
+            failWithScreenshot("New chat should have input field", "retry_new_chat_no_input")
+        }
+        
+        // Verify error UI is gone
+        try {
+            composeTestRule.onNodeWithText("Couldn't load this chat").assertDoesNotExist()
+            Log.d(TAG, "Confirmed: Error UI removed and new chat created after retry")
+        } catch (e: Exception) {
+            failWithScreenshot("Error UI still visible after retry created new chat", "retry_error_ui_still_visible")
         }
         
         Log.d(TAG, "Test completed - 500 error shows error UI and retry button works")

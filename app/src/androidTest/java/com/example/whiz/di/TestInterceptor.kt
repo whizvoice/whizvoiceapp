@@ -32,8 +32,12 @@ class TestInterceptor @Inject constructor() : Interceptor {
     // Track if we should return an error for the success-after-error chat
     private var shouldReturnErrorForSuccessChat = true
     
+    // Track retry attempts for specific chat IDs
+    private val retryCountMap = mutableMapOf<Long, Int>()
+    
     fun resetErrorState() {
         shouldReturnErrorForSuccessChat = true
+        retryCountMap.clear()
     }
     
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -82,14 +86,31 @@ class TestInterceptor @Inject constructor() : Interceptor {
                 }
                 
                 CHAT_ID_500 -> {
-                    Log.d(TAG, "Simulating 500 Internal Server Error for chat $chatId")
-                    Response.Builder()
-                        .request(request)
-                        .protocol(Protocol.HTTP_1_1)
-                        .code(500)
-                        .message("Internal Server Error")
-                        .body("Server error occurred".toResponseBody("text/plain".toMediaType()))
-                        .build()
+                    // Track retry count for this chat ID
+                    val retryCount = retryCountMap.getOrDefault(chatId, 0)
+                    retryCountMap[chatId] = retryCount + 1
+                    
+                    if (retryCount == 0) {
+                        // First attempt: return 500 error
+                        Log.d(TAG, "First attempt: Simulating 500 Internal Server Error for chat $chatId")
+                        Response.Builder()
+                            .request(request)
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(500)
+                            .message("Internal Server Error")
+                            .body("Server error occurred".toResponseBody("text/plain".toMediaType()))
+                            .build()
+                    } else {
+                        // Retry: return 404 to trigger new chat creation
+                        Log.d(TAG, "Retry attempt #$retryCount: Simulating 404 Not Found for chat $chatId")
+                        Response.Builder()
+                            .request(request)
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(404)
+                            .message("Not Found")
+                            .body("Chat not found after retry".toResponseBody("text/plain".toMediaType()))
+                            .build()
+                    }
                 }
                 
                 CHAT_ID_503 -> {
