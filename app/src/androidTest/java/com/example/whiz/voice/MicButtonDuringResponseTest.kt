@@ -44,7 +44,7 @@ class MicButtonDuringResponseTest : BaseIntegrationTest() {
         System.out.println("🔥 SYSTEM.OUT INIT: MicButtonDuringResponseTest class initializing")
     }
 
-    @get:Rule(order = 1)
+    @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject

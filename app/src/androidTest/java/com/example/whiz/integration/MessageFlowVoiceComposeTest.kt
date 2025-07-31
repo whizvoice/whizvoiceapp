@@ -68,7 +68,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    @get:Rule
+    @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject
