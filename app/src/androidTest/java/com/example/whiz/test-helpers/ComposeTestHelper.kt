@@ -28,7 +28,7 @@ import com.example.whiz.MainActivity
 object ComposeTestHelper {
     
     private const val TAG = "ComposeTestHelper"
-    
+
     /**
      * Create a SemanticsMatcher that matches content descriptions containing specific text
      * This allows us to find nodes with content descriptions that contain patterns like "User message:"

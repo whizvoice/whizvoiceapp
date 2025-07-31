@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -127,9 +129,24 @@ class WhizRepository @Inject constructor(
             val conversation = apiService.getConversation(chatId)
             val chatEntity = conversation.toChatEntity()
             chatEntity
+        } catch (e: retrofit2.HttpException) {
+            // For 404, return null (chat doesn't exist)
+            if (e.code() == 404) {
+                Log.d(TAG, "Chat with id $chatId not found (404)")
+                null
+            } else {
+                // For other HTTP errors (500, 401, etc), throw to trigger error state
+                Log.e(TAG, "HTTP error getting chat with id $chatId: ${e.code()} ${e.message()}", e)
+                throw e
+            }
+        } catch (e: java.io.IOException) {
+            // Network errors should trigger error state
+            Log.e(TAG, "Network error getting chat with id $chatId", e)
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting chat with id $chatId from API", e)
-            null
+            // Other unexpected errors should also trigger error state
+            Log.e(TAG, "Unexpected error getting chat with id $chatId", e)
+            throw e
         }
     }
 
@@ -1025,4 +1042,7 @@ class WhizRepository @Inject constructor(
         Log.e(TAG, "Error in getAllChatsFlow", e)
         emit(_conversations.value) // Emit cached data on error
     }
+    
+    // Expose ChatDao for testing purposes
+    fun getChatDao(): com.example.whiz.data.local.ChatDao = chatDao
 }

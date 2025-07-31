@@ -221,6 +221,7 @@ dependencies {
     androidTestImplementation("androidx.navigation:navigation-testing:2.8.5")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("com.google.code.gson:gson:2.8.5")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     kaptAndroidTest("com.google.dagger:hilt-android-compiler:2.56")
     
 }

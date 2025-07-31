@@ -130,18 +130,14 @@ abstract class BaseIntegrationTest {
     protected fun launchAppAndWaitForLoad(): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🚀 launching app")
         
-        // Use UiDevice's built-in app launching mechanism which is more reliable
+        // Create intent that mimics manual app launch (tap on app icon)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-        
-        if (intent == null) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Could not get launch intent for package $packageName")
-            return false
+        val intent = Intent(context, com.example.whiz.MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            // No tracing_intent_id extra - this is key to avoid voice detection
         }
-        
-        // Add flags to match manual launch pattern (0x10200000) to avoid voice detection
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)         // 0x10000000
-        intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)  // 0x00200000
         
         android.util.Log.d("BaseIntegrationTest", "   intent: $intent")
         android.util.Log.d("BaseIntegrationTest", "   flags: ${String.format("0x%08X", intent.flags)}")
@@ -2233,16 +2229,6 @@ abstract class BaseIntegrationTest {
                 By.textContains("Whiz Voice")
             ), 3000)
             
-            // Always create UI dump for debugging recent apps structure, regardless of detection result
-            try {
-                val timestamp = System.currentTimeMillis()
-                val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
-                device.dumpWindowHierarchy(dumpFile)
-                android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging (loaded=$recentAppsLoaded): $dumpFile")
-            } catch (e: Exception) {
-                android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
-            }
-            
             if (recentAppsLoaded) {
                 
                 // First try to find our app by looking for the WhizVoice content description
@@ -2292,6 +2278,16 @@ abstract class BaseIntegrationTest {
                 }
                 
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find app with any selector in recent apps")
+            } else {
+                // Always create UI dump for debugging recent apps structure, regardless of detection result
+                try {
+                    val timestamp = System.currentTimeMillis()
+                    val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
+                    device.dumpWindowHierarchy(dumpFile)
+                    android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging (loaded=$recentAppsLoaded): $dumpFile")
+                } catch (e: Exception) {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
+                }
             }
             
             android.util.Log.w("BaseIntegrationTest", "⚠️ App not found in recent apps, trying alternative methods")
