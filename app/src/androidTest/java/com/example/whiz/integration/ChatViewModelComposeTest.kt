@@ -4,6 +4,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -360,7 +362,37 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             // Step 7: Verify all messages exist using Compose Testing
             Log.d(TAG, "🔍 Step 7: Verifying all messages exist using Compose Testing...")
             
-            val missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, sentMessages)
+            var missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, sentMessages)
+            
+            // If messages are missing, check if the last one is still in the input field (migration race condition)
+            if (missingMessages.isNotEmpty() && missingMessages.size == 1) {
+                val lastMessage = sentMessages.last()
+                if (missingMessages.contains(lastMessage)) {
+                    Log.d(TAG, "⚠️ Last message might be stuck in input field due to migration, checking...")
+                    
+                    // Check if the message is in the input field
+                    val inputField = ComposeTestHelper.findMessageInputField(composeTestRule)
+                    if (inputField != null) {
+                        try {
+                            val inputText = inputField.fetchSemanticsNode().config
+                                .getOrNull(SemanticsProperties.EditableText)
+                                ?.text ?: ""
+                            if (inputText == lastMessage) {
+                                Log.d(TAG, "🔄 Found last message in input field during migration: '$lastMessage'")
+                                Log.d(TAG, "⏳ Waiting 200ms for migration resend to complete...")
+                                Thread.sleep(200)
+                                
+                                // Re-check after wait
+                                missingMessages = ComposeTestHelper.verifyAllMessagesExist(composeTestRule, sentMessages)
+                                Log.d(TAG, "🔍 Re-checked after migration wait - missing messages: ${missingMessages.size}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Error checking input field: ${e.message}")
+                        }
+                    }
+                }
+            }
+            
             if (missingMessages.isNotEmpty()) {
                 Log.e(TAG, "❌ Missing messages detected:")
                 missingMessages.forEachIndexed { index, message ->

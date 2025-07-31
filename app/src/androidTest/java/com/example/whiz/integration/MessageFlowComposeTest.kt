@@ -69,7 +69,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
         private val TAG = "MessageFlowComposeTest"
     }
 
-    @get:Rule
+    @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
     
 
