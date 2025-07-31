@@ -303,19 +303,18 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         // - CHAT_ID_403 (403403) returns 403
         // - CHAT_ID_503 (503503) returns 503
         
-        // Navigate by sending a new intent to the existing activity
-        // Since we can't create new activities, we'll use the test context and rely on SINGLE_TOP
-        val activity = composeTestRule.activity
-        val intent = Intent(activity, MainActivity::class.java).apply {
-            putExtra("NAVIGATE_TO_CHAT_ID", chatId)
-            putExtra("FORCE_NAVIGATION", true)
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        // Use the NavController directly to avoid activity lifecycle issues
+        composeTestRule.runOnUiThread {
+            val navController = composeTestRule.activity.getNavController()
+            if (navController != null) {
+                Log.d(TAG, "Using NavController to navigate to chat/$chatId")
+                navController.navigate("chat/$chatId") {
+                    launchSingleTop = true
+                }
+            } else {
+                Log.e(TAG, "NavController not available, cannot navigate")
+            }
         }
-        
-        Log.d(TAG, "Sending navigation intent with NAVIGATE_TO_CHAT_ID: $chatId")
-        // Use the activity context to start the activity, which should route to onNewIntent
-        // because of FLAG_ACTIVITY_SINGLE_TOP
-        activity.startActivity(intent)
         
         // Wait for navigation to complete by checking for chat screen elements
         // For error cases, wait for error UI or for 404 wait for new chat UI
