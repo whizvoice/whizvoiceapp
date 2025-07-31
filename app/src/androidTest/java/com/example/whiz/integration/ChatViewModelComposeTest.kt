@@ -43,7 +43,7 @@ import com.example.whiz.MainActivity
 @RunWith(AndroidJUnit4::class)
 class ChatViewModelComposeTest : BaseIntegrationTest() {
     
-    @get:Rule
+    @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
     
     @Inject
