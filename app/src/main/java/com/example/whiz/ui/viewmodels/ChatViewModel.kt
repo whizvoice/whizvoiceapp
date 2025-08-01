@@ -241,6 +241,11 @@ class ChatViewModel @Inject constructor(
     val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
 
     private var isDisconnectingForAuthError = false
+    
+    // Track whether WebSocket is reconnecting (true) vs connecting fresh after chat load (false)
+    private var isReconnectingAfterDisconnect = false
+    // Track which chat was active when disconnection happened
+    private var chatIdWhenDisconnected: Long? = null
 
     // Expose VoiceManager's continuous listening state to UI
     val isContinuousListeningEnabled = voiceManager.isContinuousListeningEnabled
@@ -314,16 +319,54 @@ class ChatViewModel @Inject constructor(
                 Log.d(TAG, "🧵 THREAD DEBUG: Processing WebSocket event on thread: ${Thread.currentThread().name}")
                 when (event) {
                     is WebSocketEvent.Connected -> {
-                        Log.d(TAG, "WebSocketEvent.Connected: Called.")
+                        Log.d(TAG, "WebSocketEvent.Connected: Called. isReconnectingAfterDisconnect=$isReconnectingAfterDisconnect")
                         // Remove arbitrary delays and handle connection state immediately
                         _isConnectedToServer.value = true
                         _connectionError.value = null // Clear any connection errors when successfully connected
                         Log.d(TAG, "WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.")
                         isDisconnectingForAuthError = false
+                        
+                        // Only sync messages if this is a reconnection after disconnect
+                        // Skip sync if this is a fresh connection after loadChat (which already synced)
+                        if (isReconnectingAfterDisconnect) {
+                            val currentChatId = _chatId.value
+                            val disconnectedChatId = chatIdWhenDisconnected
+                            
+                            // Always sync the current chat on reconnection
+                            // The isReconnectingAfterDisconnect flag prevents double sync with loadChat
+                            if (currentChatId > 0) {
+                                Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for current chat $currentChatId after reconnection (was in chat $disconnectedChatId when disconnected)")
+                                viewModelScope.launch {
+                                    try {
+                                        // Fetch any messages we might have missed during disconnection
+                                        val serverMessages = repository.fetchMessagesWithDeduplication(currentChatId)
+                                        Log.d(TAG, "WebSocketEvent.Connected: Retrieved ${serverMessages.size} messages from server for chat $currentChatId")
+                                        
+                                        // The fetchMessagesWithDeduplication already handles storing messages
+                                        // Just trigger UI refresh
+                                        repository.refreshMessages()
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error syncing messages after reconnection for chat $currentChatId", e)
+                                        // Don't show error to user - this is a background sync
+                                    }
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "WebSocketEvent.Connected: Skipping message sync - this is a fresh connection after chat load")
+                        }
+                        
+                        // Reset the flags for next time
+                        isReconnectingAfterDisconnect = false
+                        chatIdWhenDisconnected = null
                     }
                     is WebSocketEvent.Reconnecting -> {
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Called.")
                         _isConnectedToServer.value = false
+                        // Mark that we're reconnecting so we know to sync messages when connected
+                        isReconnectingAfterDisconnect = true
+                        // Remember which chat was active when we disconnected
+                        chatIdWhenDisconnected = _chatId.value
+                        Log.d(TAG, "WebSocketEvent.Reconnecting: Saved chatIdWhenDisconnected=$chatIdWhenDisconnected")
                         // Don't show "Connection lost" message to user - handle reconnection silently
                         // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
@@ -332,16 +375,22 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
                         pendingRequests.clear() // 🔧 Clear all pending requests on connection close
+                        
+                        // Only set reconnecting flag if this is NOT an intentional disconnect
+                        // (loadChat calls disconnect() which is intentional)
                         if (isDisconnectingForAuthError) {
                             Log.d(TAG, "WebSocketEvent.Closed: Intentional disconnect due to AuthError. Not queueing further actions here.")
+                            isReconnectingAfterDisconnect = false
                         } else if (_navigateToLogin.value) {
                             Log.d(TAG, "WebSocketEvent.Closed: Not attempting client-side reconnect as navigation to login is pending.")
+                            isReconnectingAfterDisconnect = false
                         } else {
                             // Don't show "Connection closed" message to user - handle reconnection silently
                             // if (_connectionError.value == null || _connectionError.value?.contains("reconnect") == false) {
                             //     _connectionError.value = "Connection closed."
                             // }
                             Log.d(TAG, "WebSocketEvent.Closed: Repository should be handling retries if applicable.")
+                            // Note: isReconnectingAfterDisconnect will be set to true by WebSocketEvent.Reconnecting
                         }
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
@@ -862,6 +911,9 @@ class ChatViewModel @Inject constructor(
                 // Disconnect from server if switching chats or loading new
                 if (configUseRemoteAgent) {
                     try {
+                        // Clear reconnection flag since this is an intentional disconnect
+                        isReconnectingAfterDisconnect = false
+                        chatIdWhenDisconnected = null
                         whizServerRepository.disconnect()
                         _isConnectedToServer.value = false
                     } catch (e: Exception) {
@@ -1509,6 +1561,7 @@ class ChatViewModel @Inject constructor(
         // Reset states
         _isResponding.value = false
         _isConnectedToServer.value = false
+        isReconnectingAfterDisconnect = false
         voiceManager.updateContinuousListeningEnabled(false)
         
         Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
