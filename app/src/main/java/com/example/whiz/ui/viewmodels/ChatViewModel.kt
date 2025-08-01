@@ -1050,19 +1050,31 @@ class ChatViewModel @Inject constructor(
         // The WebSocket connection remains intact, which is the key benefit
         Log.d(TAG, "✅ Chat ID migration complete. WebSocket remains connected: ${_isConnectedToServer.value}")
         
-        // If there was a message being sent during migration, re-send it to the new chat
-        if (messageInFlight != null) {
+        // If there was a message being sent during migration, ensure it gets sent to the new chat
+        if (messageInFlight != null && configUseRemoteAgent) {
             Log.d(TAG, "🔄 Re-sending message to new chat after migration: '$messageInFlight'")
             viewModelScope.launch {
-                // Small delay to let the migration fully complete
-                delay(100)
-                // Check if the message is still in the input field (not sent yet)
-                if (_inputText.value == messageInFlight) {
-                    Log.d(TAG, "📤 Message still in input field, sending now to chat $newId")
-                    sendUserInput(messageInFlight)
+                // Generate a new request ID for the message
+                val requestId = java.util.UUID.randomUUID().toString()
+                
+                // Add the message to the new chat immediately
+                val localMessageId = repository.addUserMessageOptimistic(newId, messageInFlight, requestId)
+                
+                // Track the request and update responding state
+                pendingRequests[requestId] = newId
+                updateRespondingStateForCurrentChat()
+                
+                // Send via WebSocket
+                val success = whizServerRepository.sendMessage(messageInFlight, requestId, newId)
+                
+                if (success) {
+                    Log.d(TAG, "✅ Message re-sent successfully to new chat $newId")
                 } else {
-                    Log.d(TAG, "✅ Message already sent or cleared, no need to re-send")
+                    Log.d(TAG, "⚠️ Message queued for retry to new chat $newId")
                 }
+                
+                // Clear the messageBeingSent flag since we've handled it
+                messageBeingSent = null
             }
         }
     }
