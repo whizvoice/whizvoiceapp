@@ -59,13 +59,12 @@ import android.util.Log
 import androidx.navigation.NavHostController
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.sp
@@ -84,11 +83,337 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.round
+
+// Helper data class for the tuple
+private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+@Composable
+fun EmptyChatPlaceholder() {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "Start chatting with Whiz!\nType or tap the mic.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+fun TypingIndicator() {
+    // State for animation
+    var isAnimating by remember { mutableStateOf(true) }
+    
+    // 🔧 DEBUG: Track animation timing for test vs production comparison
+    val animationStartTime = remember { System.currentTimeMillis() }
+    
+    // Using Card for consistency
+    Card(
+        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp) // Match message padding
+        ) {
+            Text(
+                text = "Whiz is computing",
+                style = MaterialTheme.typography.bodyMedium // Consistent style
+            )
+            Spacer(modifier = Modifier.width(8.dp)) // Space before dots
+
+            // Animated dots with proper animation
+            val dotCount = 3
+            val dotSize = 6.dp
+            val dotSpacing = 4.dp
+
+            Row(horizontalArrangement = Arrangement.spacedBy(dotSpacing)) {
+                for (i in 0 until dotCount) {
+                    val delay = i * 200 // Delay between each dot
+                    
+                    // Each dot has its own animation state
+                    var dotVisible by remember { mutableStateOf(false) }
+                    val alpha by animateFloatAsState(
+                        targetValue = if (dotVisible) 1f else 0.3f,
+                                                  animationSpec = tween(durationMillis = 600),
+                        label = "dotAlpha$i"
+                    )
+                    
+                    // LaunchedEffect to control the animation timing
+                    LaunchedEffect(isAnimating) {
+                        delay(delay.toLong()) // Initial stagger delay (0ms, 200ms, 400ms)
+                        while (isAnimating) {
+                            val cycleStart = System.currentTimeMillis()
+                            dotVisible = true
+                            
+                            // 🔧 NON-BLOCKING WAIT: Use system time + yielding (immune to test framework acceleration)
+                            val visibleStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - visibleStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame (~60fps) - allows other coroutines to run
+                            }
+                            
+                            // Early exit if animation stopped during visible phase
+                            if (!isAnimating) break
+                            
+                            dotVisible = false
+                            val dimStart = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - dimStart < 600L && isAnimating) {
+                                delay(16L) // Yield every frame
+                            }
+                            
+                            val cycleEnd = System.currentTimeMillis()
+                            val actualCycleDuration = cycleEnd - cycleStart
+                            val expectedDuration = 1200L // 600ms visible + 600ms dim
+                            
+                            Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${actualCycleDuration}ms (expected: ${expectedDuration}ms)")
+                            
+                            // Early exit if animation stopped during dim phase
+                            if (!isAnimating) break
+                        }
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .size(dotSize)
+                            .clip(CircleShape)
+                            .background(
+                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha)
+                            )
+                    )
+                }
+            }
+        }
+    }
+    
+    // 🔧 DEBUG: Log total animation duration when component is disposed
+    DisposableEffect(Unit) {
+        onDispose {
+            val totalDuration = System.currentTimeMillis() - animationStartTime
+            Log.d("TypingIndicator", "🎬 TypingIndicator total duration: ${totalDuration}ms")
+        }
+    }
+}
+
+@Composable
+fun ChatInputBar(
+    inputText: String,
+    isInputFromVoice: Boolean,
+    transcription: String,
+    isListening: Boolean,
+    isInputDisabled: Boolean, // Text input disabled state
+    isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
+    isResponding: Boolean, // Bot is currently responding/thinking
+    isContinuousListeningEnabled: Boolean, // Add continuous listening state
+    isSpeaking: Boolean = false, // Add TTS speaking state
+    shouldShowMicDuringTTS: Boolean, // New parameter for headphone-aware behavior
+    shouldShowMuteButton: Boolean = false, // Computed state for when to show mute button
+    onInputChange: (String) -> Unit,
+    onSendClick: () -> Unit,
+    onInterruptClick: () -> Unit = {}, // New callback for interrupts
+    onMicClick: () -> Unit,
+    onMicClickDuringTTS: () -> Unit = {}, // New callback for TTS mic click
+    surfaceColor: Color,
+    shape: Shape = RectangleShape
+) {
+    val hasInputText = inputText.isNotBlank()
+    val hasTypedText = hasInputText && !isInputFromVoice
+    val hasVoiceText = hasInputText && isInputFromVoice
+    
+    // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
+    // The issue was complex conditional logic that wasn't recomposing properly
+    val displayValue = when {
+        inputText.isNotBlank() -> inputText // Always show actual input text if present
+        isListening && transcription.isNotBlank() -> transcription // Show live transcription when listening
+        else -> inputText // Default to input text (could be empty)
+    }
+    
+    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    
+
+
+    Surface(
+        color = surfaceColor,
+        //tonalElevation = 4.dp,
+        shape = shape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding() // Handles navigation bar insets
+            .imePadding() // Handles keyboard insets
+    ) {
+        Box( // Use Box to contain TextField and allow padding
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+        ) {
+            // 🔧 PRODUCTION BUG FIX: Remove key() block that was causing TextField recreation
+            // The key() block was destroying focus and text input handling on every character
+            OutlinedTextField(
+                value = displayValue,
+                onValueChange = { newValue ->
+                    // Always allow input change - this enables manual typing to disable continuous listening
+                    // The updateInputText method will handle stopping voice recognition when user types
+                    onInputChange(newValue)
+                },
+                modifier = Modifier
+                    .fillMaxWidth() // TextField fills the Box
+                    .semantics { 
+                        contentDescription = "Message input field"
+                        testTag = "chat_input_field"
+                        // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
+                        role = Role.Button
+                        focused = true
+                    }, // Add accessibility description for both users and testing
+                placeholder = { Text(placeholderText) },
+                readOnly = false, // Always allow text input for production bug fix
+                enabled = !isInputDisabled, // Respect the isInputDisabled parameter
+                singleLine = false,
+                maxLines = 5,
+                shape = RoundedCornerShape(24.dp), // Rounded corners
+                colors = OutlinedTextFieldDefaults.colors(
+                    // Define colors for different states - voice text appears gray
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    // Voice text is gray, typed text is normal color
+                    focusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    focusedContainerColor = surfaceColor,
+                    unfocusedContainerColor = surfaceColor,
+                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f),
+                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                ),
+                trailingIcon = { // Place the icon back inside the TextField
+                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
+                    val (icon, description, action, tint) = when {
+                        hasTypedText -> {
+                            // PRIORITY: Show send button for typed text (always needs manual send)
+                            // This must come first to override listening/responding states
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send typed message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        shouldShowMuteButton -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Stop listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        shouldShowMicDuringTTS -> {
+                            // Show mic button during TTS when headphones not connected (allows manual override)
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening during response",
+                                onMicClickDuringTTS,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        isResponding && shouldShowMuteButton -> {
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        isResponding -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Turn on continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        hasVoiceText && !isContinuousListeningEnabled -> {
+                            // Show send button for voice text when continuous listening is OFF
+                            Tuple4(
+                                Icons.Filled.Send,
+                                "Send voice message",
+                                onSendClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        shouldShowMuteButton && !hasInputText -> {
+                            // Show mic off button only when no text is present
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Turn off continuous listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
+                        else -> {
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Start listening",
+                                onMicClick,
+                                MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    
+                    // Debug logging for button decision
+                    val buttonInstanceId = "BTN_${System.currentTimeMillis()}_${hashCode()}"
+                    Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
+                    Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
+                    Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
+                    Log.d("ChatInputBar", "🎤 VOICE_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton")
+
+                    val isButtonEnabled = when {
+                        hasTypedText -> true  // Send button for typed text is ALWAYS enabled
+                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
+                        isListening -> !isMicDisabled
+                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
+                        isResponding -> !isMicDisabled
+                        else -> !isMicDisabled
+                    }
+                    
+                    IconButton(
+                        onClick = action,
+                        enabled = isButtonEnabled,
+                        modifier = Modifier.semantics { 
+                            contentDescription = description
+                            testTag = when {
+                                hasTypedText -> "send_button"
+                                hasVoiceText -> "send_button"
+                                isListening -> "mic_off_button"
+                                else -> "mic_button"
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null, // Remove duplicate accessibility description
+                            tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
+                    }
+                }
+            )
+        }
+    }
+}
 
 @Composable
 fun ChatLoadErrorView(
@@ -494,9 +819,8 @@ fun ChatScreen(
         // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
         // Hide input bar when there's a chat load error
         if (chatLoadError == null) {
-            run {
-                // Never disable text input - users should always be able to type
-                val isTextInputDisabled = false
+            // Never disable text input - users should always be able to type
+            val isTextInputDisabled = false
             // Only disable mic during TTS when no headphones (to prevent audio feedback)
             val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
             
@@ -521,7 +845,6 @@ fun ChatScreen(
                 onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
                 surfaceColor = inputSurfaceColor
             )
-            }
         }
         
         // Snackbar host at bottom
@@ -689,10 +1012,6 @@ fun MessageItem(
 ) {
     val isUserMessage = message.type == MessageType.USER
     
-    // State for showing context menu
-    var showContextMenu by remember { mutableStateOf(false) }
-    var contextMenuOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-
     val backgroundColor = when (message.type) {
         MessageType.USER -> MaterialTheme.colorScheme.primary
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
@@ -702,6 +1021,19 @@ fun MessageItem(
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer
     }
     val alignment = if (isUserMessage) Alignment.CenterEnd else Alignment.CenterStart
+    
+    // Custom selection colors for user messages to ensure visibility
+    val customSelectionColors = if (isUserMessage) {
+        TextSelectionColors(
+            handleColor = MaterialTheme.colorScheme.onPrimary,
+            backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.4f)
+        )
+    } else {
+        TextSelectionColors(
+            handleColor = MaterialTheme.colorScheme.primary,
+            backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+        )
+    }
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Card(
@@ -710,15 +1042,7 @@ fun MessageItem(
                 .padding(
                     start = if (isUserMessage) 56.dp else 0.dp, // More indentation for user messages
                     end = if (isUserMessage) 0.dp else 56.dp   // More indentation for assistant messages
-                )
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onLongPress = { offset ->
-                            contextMenuOffset = offset
-                            showContextMenu = true
-                        }
-                    )
-                },
+                ),
             shape = RoundedCornerShape( // Slightly different shapes
                 topStart = if (!isUserMessage) 4.dp else 16.dp,
                 topEnd = if (isUserMessage) 4.dp else 16.dp,
@@ -738,17 +1062,21 @@ fun MessageItem(
                         modifier = Modifier.padding(bottom = 2.dp)
                     )
                 }
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.semantics { 
-                        contentDescription = if (message.type == MessageType.USER) {
-                            "User message: ${message.content}"
-                        } else {
-                            "Assistant message: ${message.content}"
-                        }
+                CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
+                    SelectionContainer {
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.semantics { 
+                                contentDescription = if (message.type == MessageType.USER) {
+                                    "User message: ${message.content}"
+                                } else {
+                                    "Assistant message: ${message.content}"
+                                }
+                            }
+                        )
                     }
-                )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = DateFormatter.formatMessageTime(message.timestamp),
@@ -759,426 +1087,6 @@ fun MessageItem(
                 )
             }
         }
-        
-        // Context menu popup positioned at long-press location
-        if (showContextMenu) {
-            Popup(
-                offset = IntOffset(
-                    contextMenuOffset.x.toInt(),
-                    (contextMenuOffset.y - 100).toInt() // Show above the touch point
-                ),
-                onDismissRequest = { showContextMenu = false },
-                properties = PopupProperties(focusable = true)
-            ) {
-                Card(
-                    modifier = Modifier
-                        .wrapContentSize()
-                        .padding(4.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                ) {
-                    TextButton(
-                        onClick = {
-                            onLongPress?.invoke(message)
-                            showContextMenu = false
-                        },
-                        modifier = Modifier.padding(horizontal = 8.dp)
-                    ) {
-                        Text("Copy", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
     }
 }
 
-@Composable
-fun EmptyChatPlaceholder() {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "Start chatting with Whiz!\nType or tap the mic.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-fun TypingIndicator() {
-    // State for animation
-    var isAnimating by remember { mutableStateOf(true) }
-    
-    // 🔧 DEBUG: Track animation timing for test vs production comparison
-    val animationStartTime = remember { System.currentTimeMillis() }
-    
-    // Using Card for consistency
-    Card(
-        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp) // Match message padding
-        ) {
-            Text(
-                text = "Whiz is computing",
-                style = MaterialTheme.typography.bodyMedium // Consistent style
-            )
-            Spacer(modifier = Modifier.width(8.dp)) // Space before dots
-
-            // Animated dots with proper animation
-            val dotCount = 3
-            val dotSize = 6.dp
-            val dotSpacing = 4.dp
-
-            Row(horizontalArrangement = Arrangement.spacedBy(dotSpacing)) {
-                for (i in 0 until dotCount) {
-                    val delay = i * 200 // Delay between each dot
-                    
-                    // Each dot has its own animation state
-                    var dotVisible by remember { mutableStateOf(false) }
-                    val alpha by animateFloatAsState(
-                        targetValue = if (dotVisible) 1f else 0.3f,
-                                                  animationSpec = tween(durationMillis = 600),
-                        label = "dotAlpha$i"
-                    )
-                    
-                    // LaunchedEffect to control the animation timing
-                    LaunchedEffect(isAnimating) {
-                        delay(delay.toLong()) // Initial stagger delay (0ms, 200ms, 400ms)
-                        while (isAnimating) {
-                            val cycleStart = System.currentTimeMillis()
-                            dotVisible = true
-                            
-                            // 🔧 NON-BLOCKING WAIT: Use system time + yielding (immune to test framework acceleration)
-                            val visibleStart = System.currentTimeMillis()
-                            while (System.currentTimeMillis() - visibleStart < 600L && isAnimating) {
-                                delay(16L) // Yield every frame (~60fps) - allows other coroutines to run
-                            }
-                            
-                            // Early exit if animation stopped during visible phase
-                            if (!isAnimating) break
-                            
-                            dotVisible = false
-                            val dimStart = System.currentTimeMillis()
-                            while (System.currentTimeMillis() - dimStart < 600L && isAnimating) {
-                                delay(16L) // Yield every frame
-                            }
-                            
-                            val cycleEnd = System.currentTimeMillis()
-                            val actualCycleDuration = cycleEnd - cycleStart
-                            val expectedDuration = 1200L // 600ms visible + 600ms dim
-                            
-                            Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${actualCycleDuration}ms (expected: ${expectedDuration}ms)")
-                            
-                            // Early exit if animation stopped during dim phase
-                            if (!isAnimating) break
-                        }
-                    }
-                    
-                    Box(
-                        modifier = Modifier
-                            .size(dotSize)
-                            .clip(CircleShape)
-                            .background(
-                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = alpha)
-                            )
-                    )
-                }
-            }
-        }
-    }
-    
-    // 🔧 DEBUG: Log total animation duration when component is disposed
-    DisposableEffect(Unit) {
-        onDispose {
-            val totalDuration = System.currentTimeMillis() - animationStartTime
-            Log.d("TypingIndicator", "🎬 TypingIndicator total duration: ${totalDuration}ms")
-        }
-    }
-}
-
-@Composable
-fun ChatInputBar(
-    inputText: String,
-    isInputFromVoice: Boolean,
-    transcription: String,
-    isListening: Boolean,
-    isInputDisabled: Boolean, // Text input disabled state
-    isMicDisabled: Boolean = isInputDisabled, // Separate mic disabled state, defaults to same as text input
-    isResponding: Boolean, // Bot is currently responding/thinking
-    isContinuousListeningEnabled: Boolean, // Add continuous listening state
-    isSpeaking: Boolean = false, // Add TTS speaking state
-    shouldShowMicDuringTTS: Boolean, // New parameter for headphone-aware behavior
-    shouldShowMuteButton: Boolean = false, // Computed state for when to show mute button
-    onInputChange: (String) -> Unit,
-    onSendClick: () -> Unit,
-    onInterruptClick: () -> Unit = {}, // New callback for interrupts
-    onMicClick: () -> Unit,
-    onMicClickDuringTTS: () -> Unit = {}, // New callback for TTS mic click
-    surfaceColor: Color,
-    shape: Shape = RectangleShape
-) {
-    val hasInputText = inputText.isNotBlank()
-    val hasTypedText = hasInputText && !isInputFromVoice
-    val hasVoiceText = hasInputText && isInputFromVoice
-    
-    // 🔧 PRODUCTION BUG FIX: Ensure displayValue recomposes correctly
-    // The issue was complex conditional logic that wasn't recomposing properly
-    val displayValue = when {
-        inputText.isNotBlank() -> inputText // Always show actual input text if present
-        isListening && transcription.isNotBlank() -> transcription // Show live transcription when listening
-        else -> inputText // Default to input text (could be empty)
-    }
-    
-    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else "Type or tap mic..."
-    
-
-
-    Surface(
-        color = surfaceColor,
-        //tonalElevation = 4.dp,
-        shape = shape,
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding() // Handles navigation bar insets
-            .imePadding() // Handles keyboard insets
-    ) {
-        Box( // Use Box to contain TextField and allow padding
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
-        ) {
-            // 🔧 PRODUCTION BUG FIX: Remove key() block that was causing TextField recreation
-            // The key() block was destroying focus and text input handling on every character
-            OutlinedTextField(
-                value = displayValue,
-                onValueChange = { newValue ->
-                    // Always allow input change - this enables manual typing to disable continuous listening
-                    // The updateInputText method will handle stopping voice recognition when user types
-                    onInputChange(newValue)
-                },
-                modifier = Modifier
-                    .fillMaxWidth() // TextField fills the Box
-                    .semantics { 
-                        contentDescription = "Message input field"
-                        testTag = "chat_input_field"
-                        // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
-                        role = Role.Button
-                        focused = true
-                    }, // Add accessibility description for both users and testing
-                placeholder = { Text(placeholderText) },
-                readOnly = false, // Always allow text input for production bug fix
-                enabled = !isInputDisabled, // Respect the isInputDisabled parameter
-                singleLine = false,
-                maxLines = 5,
-                shape = RoundedCornerShape(24.dp), // Rounded corners
-                colors = OutlinedTextFieldDefaults.colors(
-                    // Define colors for different states - voice text appears gray
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                    // Voice text is gray, typed text is normal color
-                    focusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = if (isInputFromVoice) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
-                    disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    focusedContainerColor = surfaceColor,
-                    unfocusedContainerColor = surfaceColor,
-                    disabledContainerColor = surfaceColor.copy(alpha = 0.8f),
-                    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                ),
-                trailingIcon = { // Place the icon back inside the TextField
-                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
-                    val (icon, description, action, tint) = when {
-                        hasTypedText -> {
-                            // PRIORITY: Show send button for typed text (always needs manual send)
-                            // This must come first to override listening/responding states
-                            Tuple4(
-                                Icons.Filled.Send,
-                                "Send typed message",
-                                onSendClick,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        shouldShowMuteButton -> {
-                            Tuple4(
-                                Icons.Filled.MicOff,
-                                "Stop listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.error
-                            )
-                        }
-                        shouldShowMicDuringTTS -> {
-                            // Show mic button during TTS when headphones not connected (allows manual override)
-                            Tuple4(
-                                Icons.Filled.Mic,
-                                "Start listening during response",
-                                onMicClickDuringTTS,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        isResponding && shouldShowMuteButton -> {
-                            Tuple4(
-                                Icons.Filled.MicOff,
-                                "Turn off continuous listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.error
-                            )
-                        }
-                        isResponding -> {
-                            Tuple4(
-                                Icons.Filled.Mic,
-                                "Turn on continuous listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        hasVoiceText && !isContinuousListeningEnabled -> {
-                            // Show send button for voice text when continuous listening is OFF
-                            Tuple4(
-                                Icons.Filled.Send,
-                                "Send voice message",
-                                onSendClick,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        shouldShowMuteButton && !hasInputText -> {
-                            // Show mic off button only when no text is present
-                            Tuple4(
-                                Icons.Filled.MicOff,
-                                "Turn off continuous listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.error
-                            )
-                        }
-                        else -> {
-                            Tuple4(
-                                Icons.Filled.Mic,
-                                "Start listening",
-                                onMicClick,
-                                MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    
-                    // Debug logging for button decision
-                    val buttonInstanceId = "BTN_${System.currentTimeMillis()}_${hashCode()}"
-                    Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
-                    Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
-                    Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
-                    Log.d("ChatInputBar", "🎤 VOICE_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton")
-
-                    val isButtonEnabled = when {
-                        hasTypedText -> true  // Send button for typed text is ALWAYS enabled
-                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
-                        isListening -> !isMicDisabled
-                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
-                        isResponding -> !isMicDisabled
-                        else -> !isMicDisabled
-                    }
-                    
-                    IconButton(
-                        onClick = action,
-                        enabled = isButtonEnabled,
-                        modifier = Modifier.semantics { 
-                            contentDescription = description
-                            testTag = when {
-                                hasTypedText -> "send_button"
-                                hasVoiceText -> "send_button"
-                                isListening -> "mic_off_button"
-                                else -> "mic_button"
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null, // Remove duplicate accessibility description
-                            tint = if (isButtonEnabled) tint else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                        )
-                    }
-                }
-            )
-        }
-    }
-}
-
-// Helper data class for the tuple
-private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
-
-@Composable
-fun ChatScreenWithPermissionDialog(
-    chatId: Long,
-    onChatsListClick: () -> Unit,
-    hasPermission: Boolean,
-    onRequestPermission: () -> Unit,
-    navController: NavHostController,
-    // Optional content parameter for testing
-    content: @Composable () -> Unit = {
-        // Default content - the real ChatScreen
-        ChatScreenContent(
-            chatId = chatId,
-            onChatsListClick = onChatsListClick,
-            navController = navController
-        )
-    }
-) {
-    var showPermissionDialog by remember { mutableStateOf(false) }
-
-    // Automatic permission prompt logic
-    LaunchedEffect(hasPermission) {
-        if (!hasPermission) {
-            delay(500L) // Permission check delay
-            showPermissionDialog = true
-        }
-    }
-
-    // Main content
-    content()
-    
-    // Microphone permission dialog
-    if (showPermissionDialog) {
-        AlertDialog(
-            onDismissRequest = { showPermissionDialog = false },
-            title = { Text("Microphone Permission Required") },
-            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
-            confirmButton = {
-                Button(onClick = {
-                    showPermissionDialog = false
-                    onRequestPermission()
-                }) {
-                    Text("Grant Permission")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { showPermissionDialog = false }) {
-                    Text("Not Now")
-                }
-            }
-        )
-    }
-}
-
-@Composable
-private fun ChatScreenContent(
-    chatId: Long,
-    onChatsListClick: () -> Unit,
-    navController: NavHostController
-) {
-    // This contains the original ChatScreen logic with ViewModels
-    val viewModel: ChatViewModel = hiltViewModel()
-    val authViewModel: AuthViewModel = hiltViewModel()
-    
-    // ... existing ChatScreen content ...
-}
