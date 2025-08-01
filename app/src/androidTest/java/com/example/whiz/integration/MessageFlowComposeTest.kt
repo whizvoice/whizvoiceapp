@@ -815,9 +815,6 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                     longClick()
                 }
             
-            // Wait a bit for the selection to be established
-            Thread.sleep(500)
-            
             // Since Android's native text selection doesn't appear in compose test nodes,
             // we'll verify that the text is selectable by checking if the SelectionContainer is working
             // In a real device, this would show the native Android text selection handles
