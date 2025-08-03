@@ -1067,8 +1067,33 @@ class WhizRepository @Inject constructor(
     fun getAllChatsFlow(forceFullSync: Boolean = false): Flow<List<ChatEntity>> = _conversationsRefreshTrigger.flatMapLatest {
         flow {
             try {
-                val result = getAllChats(forceFullSync)
-                emit(result)
+                // Get chats from server
+                val serverChats = getAllChats(forceFullSync)
+                
+                // Get optimistic chats from local database (IDs < -1)
+                val localChats = chatDao.getAllChatsFlow().first()
+                val optimisticChats = localChats.filter { it.id < -1 }
+                
+                // Check which optimistic chats haven't been migrated yet
+                val unmigratedOptimisticChats = optimisticChats.filter { optimisticChat ->
+                    // Check if this optimistic chat has been migrated
+                    val migratedId = chatMigrationMapping[optimisticChat.id]
+                    if (migratedId != null) {
+                        // This chat has been migrated, don't include it
+                        Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} already migrated to $migratedId")
+                        false
+                    } else {
+                        // This chat hasn't been migrated yet, include it
+                        Log.d(TAG, "getAllChatsFlow: Including unmigrated optimistic chat ${optimisticChat.id}")
+                        true
+                    }
+                }
+                
+                // Combine: optimistic chats first, then server chats
+                val combinedChats = unmigratedOptimisticChats + serverChats
+                
+                Log.d(TAG, "getAllChatsFlow: Returning ${unmigratedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
+                emit(combinedChats)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in getAllChatsFlow", e)
                 emit(_conversations.value) // Emit cached data on error
