@@ -85,37 +85,6 @@ object ComposeTestHelper {
     }
     
     /**
-     * Force stop the app to ensure clean state
-     * This is useful when running multiple tests that need complete isolation
-     * @param packageName The package name of the app to stop
-     */
-    fun closeApp(packageName: String = "com.example.whiz") {
-        try {
-            Log.d(TAG, "🛑 Force stopping app: $packageName")
-            val instrumentation = InstrumentationRegistry.getInstrumentation()
-            val device = UiDevice.getInstance(instrumentation)
-            
-            // Force stop the app
-            val result = device.executeShellCommand("am force-stop $packageName")
-            Log.d(TAG, "   Force stop result: ${result.trim()}")
-            
-            // Wait a moment for the app to fully stop
-            Thread.sleep(1000)
-            
-            // Verify app is no longer running
-            val isRunning = device.wait(Until.hasObject(By.pkg(packageName)), 1000)
-            if (isRunning) {
-                Log.w(TAG, "⚠️ App may still be running after force-stop")
-            } else {
-                Log.d(TAG, "✅ App successfully stopped")
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to close app: ${e.message}", e)
-        }
-    }
-    
-    /**
      * Launch app with option for voice intent and wait for it to be fully loaded
      * @param composeTestRule The compose test rule to use for UI verification
      * @param isVoiceLaunch Whether to launch with voice intent (simulates Google Assistant launch)

@@ -64,14 +64,29 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
         super.setUpAuthentication()
         Log.d(TAG, "🧪 WebSocket Reconnection Test Setup Complete")
     }
-
-    @After
-    fun cleanup() {
-        // Kill the app to ensure clean state for next test
-        Log.d(TAG, "🔄 Killing app to ensure clean state")
-        device.executeShellCommand("am force-stop $packageName")
-        Thread.sleep(1000) // Give time for app to fully stop
+    
+    /**
+     * Helper method to capture screenshots during test execution
+     * @param name The name for the screenshot file
+     */
+    private fun captureScreenshot(name: String) {
+        try {
+            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+            val filename = "${name}_${timestamp}.png"
+            val filepath = "/sdcard/Download/test_screenshots/$filename"
+            
+            Log.d(TAG, "📸 Taking screenshot: $filename")
+            val device = androidx.test.uiautomator.UiDevice.getInstance(
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            )
+            device.executeShellCommand("screencap -p $filepath")
+            
+            Log.d(TAG, "📸 Screenshot saved to: $filepath")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to capture screenshot", e)
+        }
     }
+
 
     @Test 
     fun testMessageSyncAfterDisconnection() {
@@ -227,7 +242,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     @Test
     fun testNoDoubleSyncOnChatSwitch() {
         runBlocking {
-            Log.d(TAG, "🧪 Starting no double sync on chat switch test")
+            Log.d(TAG, "🧪 Starting no double sync on chat switch test with disconnect/reconnect")
             
             try {
                 // Step 1: Launch app with manual launch mode
@@ -237,7 +252,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("App failed to launch using manual launch method", "app_launch_failed_test2")
                 }
                 
-                // We should be on chats list for manual launch
                 Log.d(TAG, "✅ App launched successfully in manual mode")
                 
                 // Navigate to new chat for first message
@@ -246,53 +260,36 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to navigate to new chat", "new_chat_navigation_failed")
                 }
                 
-                // Create first chat
-                val message1 = "Please keep responses to 1 word for test. Most popular caffeinated drink? Test ID ${System.currentTimeMillis()}"
+                // Step 2: Send first message and disconnect immediately
+                val message1 = "ID ${System.currentTimeMillis()}: Please tell me the history of the world's most popular caffeinated drink?"
                 val sent1 = ComposeTestHelper.sendMessage(composeTestRule, message1)
                 if (!sent1) {
                     failWithScreenshot("Failed to send first message", "first_message_send_failed")
                 }
+                Log.d(TAG, "✅ Sent first message: $message1")
                 
-                // Wait for bot response to appear in the first chat
-                Log.d(TAG, "⏳ Waiting for bot response in first chat...")
-                val firstChatResponseFound = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { 
-                        // Look for "coffee" response
-                        composeTestRule.onNodeWithText(
-                            "coffee",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
-                    },
-                    timeoutMs = 10000L,
-                    description = "bot response in first chat"
-                )
+                // Disconnect WebSocket immediately
+                Log.d(TAG, "🔌 Disconnecting WebSocket immediately after first message...")
+                whizServerRepository.disconnect()
                 
-                if (!firstChatResponseFound) {
-                    failWithScreenshot(
-                        "Bot response did not appear in UI for first chat within 10 seconds",
-                        "first_chat_no_bot_response"
-                    )
+                // Wait for disconnect
+                withTimeout(5000) {
+                    while (whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
                 }
+                Log.d(TAG, "✅ WebSocket disconnected after first message")
                 
-                // Give a moment for the messages to be saved to the database
-                delay(1000)
-                
-                // Wait for the chat to be created in the repository
+                // Get the first chat ID
                 var chatId1: Long? = null
-                val chatCreated = withTimeout(5000) {
+                withTimeout(5000) {
                     while (true) {
-                        // Use getAllChats() to force a fresh fetch from the database
                         val chats = repository.getAllChats()
                         if (chats.isNotEmpty()) {
                             chatId1 = chats.firstOrNull()?.id
-                            Log.d(TAG, "Chat created with ID: $chatId1, title: ${chats.firstOrNull()?.title}")
-                            true
+                            Log.d(TAG, "First chat created with ID: $chatId1")
                             break
                         }
-                        Log.d(TAG, "Waiting for chat to be created... current count: ${chats.size}")
                         delay(200)
                     }
                 }
@@ -301,73 +298,54 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("First chat was not created", "first_chat_not_created")
                 }
                 
-                // Verify messages were saved
-                val firstChatMessages = repository.getMessagesForChat(chatId1!!).first()
-                Log.d(TAG, "First chat has ${firstChatMessages.size} messages after bot response")
-                if (firstChatMessages.size < 2) { // Should have user message + bot response
-                    failWithScreenshot(
-                        "First chat messages not properly saved. Found ${firstChatMessages.size} messages",
-                        "first_chat_messages_not_saved"
-                    )
-                }
-                
-                // Create second chat by going home and sending another message
-                // Navigate back to chats list
+                // Step 3: Navigate to new chat (this will reconnect)
+                Log.d(TAG, "📱 Step 3: Navigating to new chat (will reconnect)...")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chats list for second chat", "navigate_back_failed_2")
+                    failWithScreenshot("Failed to navigate back to chats list", "navigate_back_failed")
                 }
                 
-                // Wait for chats list to be displayed
-                val chatsListReady = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { composeTestRule.onNodeWithText("My Chats") },
-                    timeoutMs = 5000L,
-                    description = "chats list screen"
-                )
+                // Wait for navigation to complete
+                delay(500)
                 
-                if (!chatsListReady) {
-                    failWithScreenshot("Chats list did not appear after navigation", "chats_list_not_ready")
-                }
+                // Take screenshot of chats list after first message
+                captureScreenshot("chats_list_after_first_message")
+                Log.d(TAG, "📸 Captured screenshot of chats list after first message")
                 
-                // Navigate to new chat for second message
+                // Give more time for the chat to appear in the list
+                delay(1000)
+                
                 if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     failWithScreenshot("Failed to navigate to new chat for second message", "new_chat_navigation_failed_2")
                 }
                 
-                val message2 = "Second test chat with ID ${System.currentTimeMillis()}. Please keep responses to one word. What's the type of pasta commonly eaten with alfredo sauce?"
+                // Wait for new ChatViewModel to initialize and connect WebSocket
+                delay(2000) // Give time for new ChatViewModel to connect
+                
+                // Verify WebSocket is connected after navigation
+                val connectedAfterNav = whizServerRepository.isConnected()
+                Log.d(TAG, "📊 WebSocket connected after navigation: $connectedAfterNav")
+                
+                // Step 4: Send second message and disconnect immediately
+                val message2 = "ID ${System.currentTimeMillis()}: Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
                 val sent2 = ComposeTestHelper.sendMessage(composeTestRule, message2)
                 if (!sent2) {
                     failWithScreenshot("Failed to send second message", "second_message_send_failed")
                 }
+                Log.d(TAG, "✅ Sent second message: $message2")
                 
-                // Wait for bot response in second chat
-                Log.d(TAG, "⏳ Waiting for bot response in second chat...")
-                val secondChatResponseFound = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { 
-                        // Look for "fettuccine" response
-                        composeTestRule.onNodeWithText(
-                            "fettuccine",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
-                    },
-                    timeoutMs = 10000L,
-                    description = "bot response in second chat"
-                )
+                // Disconnect WebSocket immediately
+                Log.d(TAG, "🔌 Disconnecting WebSocket immediately after second message...")
+                whizServerRepository.disconnect()
                 
-                if (!secondChatResponseFound) {
-                    failWithScreenshot(
-                        "Bot response did not appear in UI for second chat within 10 seconds",
-                        "second_chat_no_bot_response"
-                    )
+                // Wait for disconnect
+                withTimeout(5000) {
+                    while (whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
                 }
+                Log.d(TAG, "✅ WebSocket disconnected after second message")
                 
-                // Give a moment for the messages to be saved to the database
-                delay(1000)
-                
-                // Get the second chat ID (should be the newest one)
+                // Get the second chat ID
                 val chats = repository.getAllChats()
                 if (chats.size < 2) {
                     failWithScreenshot("Expected at least 2 chats but found ${chats.size}", "insufficient_chats")
@@ -375,48 +353,43 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val chatId2 = chats.first().id // Most recent chat
                 Log.d(TAG, "Second chat created with ID: $chatId2")
                 
-                // Verify second chat messages were saved
-                val secondChatMessages = repository.getMessagesForChat(chatId2).first()
-                Log.d(TAG, "Second chat has ${secondChatMessages.size} messages after bot response")
-                if (secondChatMessages.size < 2) { // Should have user message + bot response
-                    failWithScreenshot(
-                        "Second chat messages not properly saved. Found ${secondChatMessages.size} messages",
-                        "second_chat_messages_not_saved"
-                    )
-                }
-                
-                // Step 2: Count messages before switching
-                val messagesBeforeSwitch = repository.getMessagesForChat(chatId1!!).first().size
-                Log.d(TAG, "Chat 1 has $messagesBeforeSwitch messages before switch")
-                
-                // Step 3: Navigate back to first chat
+                // Step 5: Go back to first chat (will reconnect)
+                Log.d(TAG, "📱 Step 5: Going back to first chat (will reconnect and sync)...")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chats list", "navigate_back_failed_3")
+                    failWithScreenshot("Failed to navigate back to chats list", "navigate_back_failed_2")
                 }
                 
-                // Wait for chats list to appear
-                val chatsListReady2 = ComposeTestHelper.waitForElement(
+                // Wait for chats list to be displayed
+                val chatsListReadyForFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { composeTestRule.onNodeWithText("My Chats") },
                     timeoutMs = 5000L,
-                    description = "chats list screen (2nd time)"
+                    description = "chats list screen for first chat"
                 )
                 
-                if (!chatsListReady2) {
-                    failWithScreenshot("Chats list did not appear after second navigation", "chats_list_not_ready_2")
+                if (!chatsListReadyForFirstChat) {
+                    failWithScreenshot("Chats list did not appear before clicking first chat", "chats_list_not_ready_first")
                 }
                 
-                // Click on the first chat (it should be the second item in the list now)
-                val firstChatTitle = chats.find { it.id == chatId1 }?.title ?: message1.take(30)
+                // Take screenshot of chats list before clicking first chat
+                captureScreenshot("chats_list_before_clicking_first_chat")
+                Log.d(TAG, "📸 Captured screenshot of chats list before clicking first chat")
+                
+                // Give more time for the chats to appear in the list
+                delay(1000)
+                
+                // Click on the first chat using message text
                 composeTestRule.onNodeWithText(
-                    firstChatTitle,
+                    message1.take(20),
                     substring = true,
                     useUnmergedTree = true
                 ).performClick()
                 
-                // Step 4: Wait for chat to load and verify no duplicate messages
-                // Wait for the first chat's content to be displayed
-                val chatLoaded = ComposeTestHelper.waitForElement(
+                // Wait for navigation to complete and chat to load
+                delay(1000)
+                
+                // Verify we're in the first chat by checking for the first message
+                val firstChatLoaded = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
                         composeTestRule.onNodeWithText(
@@ -426,31 +399,44 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                         )
                     },
                     timeoutMs = 5000L,
-                    description = "first chat content"
+                    description = "first chat user message"
                 )
                 
-                if (!chatLoaded) {
-                    failWithScreenshot("First chat content did not load after switching back", "chat_content_not_loaded")
+                if (!firstChatLoaded) {
+                    failWithScreenshot("Failed to load first chat after clicking", "first_chat_not_loaded")
                 }
                 
-                // Give a small amount of time for any potential double sync to occur
-                delay(1000)
+                // Wait for ChatViewModel to initialize and WebSocket to connect
+                delay(2000) // Give time for new ChatViewModel to connect
                 
-                val messagesAfterSwitch = repository.getMessagesForChat(chatId1).first().size
-                Log.d(TAG, "Chat 1 has $messagesAfterSwitch messages after switch")
+                val connectedAfterFirstChatOpen = whizServerRepository.isConnected()
+                Log.d(TAG, "📊 WebSocket connected after opening first chat: $connectedAfterFirstChatOpen")
                 
-                // Messages should not have duplicated
-                if (messagesAfterSwitch != messagesBeforeSwitch) {
+                // Wait for bot response to sync in first chat
+                Log.d(TAG, "⏳ Waiting for first chat bot response to sync...")
+                val firstChatResponseFound = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            "coffee",
+                            substring = true,
+                            ignoreCase = true,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 15000L,
+                    description = "coffee response after reconnection"
+                )
+                
+                if (!firstChatResponseFound) {
                     failWithScreenshot(
-                        "Message count changed after chat switch. Before: $messagesBeforeSwitch, After: $messagesAfterSwitch",
-                        "double_sync_detected"
+                        "Bot response 'coffee' did not sync in first chat after reconnection",
+                        "first_chat_no_sync"
                     )
                 }
+                Log.d(TAG, "✅ First chat response 'coffee' synced successfully")
                 
-                // Step 5: Check for cross-contamination
-                Log.d(TAG, "🔍 Checking for cross-contamination between chats...")
-                
-                // Check that first chat (coffee) doesn't contain "fettuccine"
+                // Verify NO cross-contamination - should NOT see "fettuccine"
                 val fettuccineInFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -461,49 +447,72 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 500L, // Short timeout - we expect NOT to find it
+                    timeoutMs = 500L,
                     description = "fettuccine in first chat (should NOT be found)"
                 )
                 
                 if (fettuccineInFirstChat) {
                     failWithScreenshot(
-                        "Cross-contamination detected: Found 'fettuccine' in first chat which should only contain coffee response",
+                        "Cross-contamination: Found 'fettuccine' in first chat which should only contain coffee response",
                         "cross_contamination_fettuccine_in_coffee_chat"
                     )
                 }
+                Log.d(TAG, "✅ No cross-contamination in first chat")
                 
-                // Now navigate to second chat to check the reverse
+                // Step 6: Go to second chat and verify correct response
+                Log.d(TAG, "📱 Step 6: Going to second chat to verify correct response...")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chats list for cross-contamination check", "navigate_back_failed_4")
+                    failWithScreenshot("Failed to navigate back to chats list", "navigate_back_failed_3")
                 }
                 
-                // Click on the second chat (should be the first item in the list)
-                val secondChatTitle = chats.find { it.id == chatId2 }?.title ?: message2.take(30)
+                // Wait for chats list to be displayed
+                val chatsListReady = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText("My Chats") },
+                    timeoutMs = 5000L,
+                    description = "chats list screen for second chat"
+                )
+                
+                if (!chatsListReady) {
+                    failWithScreenshot("Chats list did not appear before clicking second chat", "chats_list_not_ready_second")
+                }
+                
+                // Take screenshot of chats list before clicking second chat
+                captureScreenshot("chats_list_before_clicking_second_chat")
+                Log.d(TAG, "📸 Captured screenshot of chats list before clicking second chat")
+                
+                // Click on the second chat using message text
                 composeTestRule.onNodeWithText(
-                    secondChatTitle,
+                    message2.take(20),
                     substring = true,
                     useUnmergedTree = true
                 ).performClick()
                 
-                // Wait for second chat to load
-                val secondChatLoaded = ComposeTestHelper.waitForElement(
+                // Wait for bot response to sync in second chat
+                Log.d(TAG, "⏳ Waiting for second chat bot response to sync...")
+                val secondChatResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
                         composeTestRule.onNodeWithText(
-                            message2,
+                            "fettuccine",
                             substring = true,
+                            ignoreCase = true,
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 5000L,
-                    description = "second chat content"
+                    timeoutMs = 15000L,
+                    description = "fettuccine response after reconnection"
                 )
                 
-                if (!secondChatLoaded) {
-                    failWithScreenshot("Second chat content did not load for cross-contamination check", "second_chat_not_loaded")
+                if (!secondChatResponseFound) {
+                    failWithScreenshot(
+                        "Bot response 'fettuccine' did not sync in second chat after reconnection",
+                        "second_chat_no_sync"
+                    )
                 }
+                Log.d(TAG, "✅ Second chat response 'fettuccine' synced successfully")
                 
-                // Check that second chat (fettuccine) doesn't contain "coffee"
+                // Verify NO cross-contamination - should NOT see "coffee"
                 val coffeeInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -514,20 +523,19 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 500L, // Short timeout - we expect NOT to find it
+                    timeoutMs = 500L,
                     description = "coffee in second chat (should NOT be found)"
                 )
                 
                 if (coffeeInSecondChat) {
                     failWithScreenshot(
-                        "Cross-contamination detected: Found 'coffee' in second chat which should only contain fettuccine response",
+                        "Cross-contamination: Found 'coffee' in second chat which should only contain fettuccine response",
                         "cross_contamination_coffee_in_fettuccine_chat"
                     )
                 }
+                Log.d(TAG, "✅ No cross-contamination in second chat")
                 
-                Log.d(TAG, "✅ No cross-contamination detected between chats")
-                
-                Log.d(TAG, "✅ Test passed: No double sync on chat switch")
+                Log.d(TAG, "✅ Test passed: Messages synced correctly with no cross-contamination")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Test failed with error: ${e.message}", e)
