@@ -64,28 +64,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
         super.setUpAuthentication()
         Log.d(TAG, "🧪 WebSocket Reconnection Test Setup Complete")
     }
-    
-    /**
-     * Helper method to capture screenshots during test execution
-     * @param name The name for the screenshot file
-     */
-    private fun captureScreenshot(name: String) {
-        try {
-            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
-            val filename = "${name}_${timestamp}.png"
-            val filepath = "/sdcard/Download/test_screenshots/$filename"
-            
-            Log.d(TAG, "📸 Taking screenshot: $filename")
-            val device = androidx.test.uiautomator.UiDevice.getInstance(
-                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-            )
-            device.executeShellCommand("screencap -p $filepath")
-            
-            Log.d(TAG, "📸 Screenshot saved to: $filepath")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to capture screenshot", e)
-        }
-    }
 
 
     @Test 
@@ -307,10 +285,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Wait for navigation to complete
                 delay(500)
                 
-                // Take screenshot of chats list after first message
-                captureScreenshot("chats_list_after_first_message")
-                Log.d(TAG, "📸 Captured screenshot of chats list after first message")
-                
                 // Give more time for the chat to appear in the list
                 delay(1000)
                 
@@ -371,18 +345,13 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Chats list did not appear before clicking first chat", "chats_list_not_ready_first")
                 }
                 
-                // Take screenshot of chats list before clicking first chat
-                captureScreenshot("chats_list_before_clicking_first_chat")
-                Log.d(TAG, "📸 Captured screenshot of chats list before clicking first chat")
-                
                 // Give more time for the chats to appear in the list
                 delay(1000)
                 
                 // Click on the first chat using message text
                 composeTestRule.onNodeWithText(
                     message1.take(20),
-                    substring = true,
-                    useUnmergedTree = true
+                    substring = true
                 ).performClick()
                 
                 // Wait for navigation to complete and chat to load
@@ -477,15 +446,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Chats list did not appear before clicking second chat", "chats_list_not_ready_second")
                 }
                 
-                // Take screenshot of chats list before clicking second chat
-                captureScreenshot("chats_list_before_clicking_second_chat")
-                Log.d(TAG, "📸 Captured screenshot of chats list before clicking second chat")
-                
                 // Click on the second chat using message text
                 composeTestRule.onNodeWithText(
                     message2.take(20),
-                    substring = true,
-                    useUnmergedTree = true
+                    substring = true
                 ).performClick()
                 
                 // Wait for bot response to sync in second chat
