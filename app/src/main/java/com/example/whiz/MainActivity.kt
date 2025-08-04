@@ -211,9 +211,11 @@ class MainActivity : ComponentActivity() {
             val hasTraceId = traceId > 0
             
                     // SECONDARY DETECTION: Intent flags analysis  
-        // Voice: 0x10000000, Manual: 0x10200000
+        // Voice: 0x10000000 (FLAG_ACTIVITY_NEW_TASK only)
+        // Manual: 0x10200000 (FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        // Test issue: 0x10008000 (FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_SINGLE_TOP)
         val intentFlags = intent?.flags ?: 0
-        val hasVoiceFlags = (intentFlags and 0x10000000) != 0 && (intentFlags and 0x00200000) == 0
+        val hasExactVoiceFlags = intentFlags == 0x10000000  // Exact match for voice launch flags
             
             // TERTIARY DETECTION: Bounds analysis
             // Manual launches have bounds (app icon position), voice launches don't
@@ -222,12 +224,12 @@ class MainActivity : ComponentActivity() {
             
             Log.d(TAG, "Voice launch detection:")
             Log.d(TAG, "  Has trace ID: $hasTraceId (traceId: $traceId) ← PRIMARY")
-            Log.d(TAG, "  Voice flags: $hasVoiceFlags (flags: ${String.format("0x%08X", intentFlags)}) ← SECONDARY")  
+            Log.d(TAG, "  Exact voice flags: $hasExactVoiceFlags (flags: ${String.format("0x%08X", intentFlags)}) ← SECONDARY")  
             Log.d(TAG, "  No bounds: $noBounds (bounds: $sourceBounds) ← TERTIARY")
             
-            // Voice launch ONLY if PRIMARY indicator (tracing_intent_id) is present
-            // This is the most reliable indicator based on production testing
-            val isVoiceLaunch = hasTraceId
+            // Voice launch if PRIMARY indicator is present, OR if we have exact voice flags + no bounds
+            // This handles both standard voice launches (with tracing_intent_id) and edge cases
+            val isVoiceLaunch = hasTraceId || (hasExactVoiceFlags && noBounds)
             
             Log.d(TAG, "  FINAL DECISION: Voice launch = $isVoiceLaunch")
             isVoiceLaunch
