@@ -225,8 +225,9 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG, "  Voice flags: $hasVoiceFlags (flags: ${String.format("0x%08X", intentFlags)}) ← SECONDARY")  
             Log.d(TAG, "  No bounds: $noBounds (bounds: $sourceBounds) ← TERTIARY")
             
-            // Voice launch if PRIMARY indicator is present, or SECONDARY + TERTIARY both match
-            val isVoiceLaunch = hasTraceId || (hasVoiceFlags && noBounds)
+            // Voice launch ONLY if PRIMARY indicator (tracing_intent_id) is present
+            // This is the most reliable indicator based on production testing
+            val isVoiceLaunch = hasTraceId
             
             Log.d(TAG, "  FINAL DECISION: Voice launch = $isVoiceLaunch")
             isVoiceLaunch
