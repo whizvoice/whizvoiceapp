@@ -212,7 +212,17 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ WebSocket disconnected")
                 
-                // Step 4: Verify bot response does NOT appear while disconnected
+                // Step 4: Send a second message while disconnected
+                Log.d(TAG, "📝 Sending second message while disconnected...")
+                val secondMessage = "hi hello are you there"
+                
+                val secondMessageSent = ComposeTestHelper.sendMessage(composeTestRule, secondMessage)
+                if (!secondMessageSent) {
+                    failWithScreenshot("Failed to send second message while disconnected", "second_message_send_failed")
+                }
+                Log.d(TAG, "✅ Sent second message while disconnected: $secondMessage")
+                
+                // Step 5: Verify bot response does NOT appear while disconnected
                 Log.d(TAG, "🔍 Verifying bot response doesn't appear while disconnected...")
                 delay(2000) // Give some time to ensure no response appears
                 
@@ -232,7 +242,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 if (botResponseFoundWhileDisconnected) {
                     failWithScreenshot(
-                        "Bot response about LEGO appeared while WebSocket was disconnected - this is a bug!",
+                        "Bot response appeared while WebSocket was disconnected - this is a bug!",
                         "bot_response_while_disconnected"
                     )
                 }
@@ -256,7 +266,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ Confirmed: No bot response while disconnected")
                 
-                // Step 5: Reconnect WebSocket
+                // Step 6: Reconnect WebSocket
                 Log.d(TAG, "🔌 Reconnecting WebSocket...")
                 whizServerRepository.connect()
                 
@@ -269,7 +279,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ WebSocket reconnected")
                 
-                // Step 6: Wait for bot response to appear after reconnection
+                // Step 7: Wait for bot response to appear after reconnection
                 Log.d(TAG, "⏳ Waiting for bot response to sync after reconnection...")
                 val botResponseAfterReconnect = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
