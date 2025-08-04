@@ -54,6 +54,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     
     // ChatViewModel reference for checking connection state
     private var chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+    
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
+    private var createdNewChatThisTest = false
 
     companion object {
         private const val TAG = "WebSocketReconnectionTest"
@@ -63,19 +67,67 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
+        
+        // Reset tracking for each test
+        createdChatIds.clear()
+        createdNewChatThisTest = false
+        
         Log.d(TAG, "🧪 WebSocket Reconnection Test Setup Complete")
     }
     
     @After
-    fun cleanupBetweenTests() {
-        // Ensure clean state between tests by disconnecting WebSocket
-        try {
-            runBlocking {
+    fun cleanup() {
+        runBlocking {
+            Log.d(TAG, "🧹 Cleaning up test chats and WebSocket connection")
+            
+            // Clean up any chats created during the test
+            if (createdNewChatThisTest && createdChatIds.isNotEmpty()) {
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = createdChatIds,
+                    additionalPatterns = listOf(
+                        "Please tell me the history", // Truncated version
+                        "Tell me the history", // Common prefix for all test messages
+                        "caffeinated drink", // Specific keywords
+                        "pasta commonly eaten",
+                        "alfredo sauce",
+                        "stacking brick",
+                        "ID 17542" // Timestamp prefix pattern
+                    ),
+                    enablePatternFallback = true
+                )
+                createdChatIds.clear()
+            } else if (createdNewChatThisTest) {
+                // Fallback: if we created chats but failed to track them
+                Log.w(TAG, "⚠️ Chat tracking failed but test created chats - using pattern fallback cleanup")
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = emptyList(),
+                    additionalPatterns = listOf(
+                        "Please tell me the history", // Truncated version
+                        "Tell me the history", // Common prefix for all test messages
+                        "caffeinated drink", // Specific keywords
+                        "pasta commonly eaten",
+                        "alfredo sauce",
+                        "stacking brick",
+                        "ID 17542" // Timestamp prefix pattern
+                    ),
+                    enablePatternFallback = true
+                )
+            }
+            
+            // Ensure clean state between tests by disconnecting WebSocket
+            try {
                 whizServerRepository.disconnect()
                 delay(500) // Give time for disconnect
+            } catch (e: Exception) {
+                Log.w(TAG, "Error disconnecting WebSocket during cleanup: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error during cleanup: ${e.message}")
+            
+            // Reset tracking flags
+            createdNewChatThisTest = false
+            
+            Log.d(TAG, "✅ Test cleanup completed")
         }
     }
 
@@ -86,6 +138,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             Log.d(TAG, "🧪 Starting WebSocket disconnection and reconnection test")
             
             try {
+                // Initialize cleanup tracking
+                createdNewChatThisTest = true
+                
+                // Capture initial chats before creating new ones
+                val initialChats = repository.getAllChats()
+                
                 // Step 1: Launch app with manual launch mode
                 Log.d(TAG, "📱 Step 1: Launching app in manual mode")
                 
@@ -113,12 +171,33 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ Sent user message: $userMessage")
                 
-                // Get the created chat ID
-                val chatId = repository.conversations.first().firstOrNull()?.id
-                if (chatId == null) {
-                    failWithScreenshot("Chat was not created after sending message", "chat_not_created")
+                // Track the newly created chat for cleanup
+                delay(1000) // Give time for chat to be created in database
+                var chatId: Long? = null
+                try {
+                    val currentChats = repository.getAllChats()
+                    val newChats = currentChats.filter { chat -> 
+                        !initialChats.map { it.id }.contains(chat.id) 
+                    }
+                    if (newChats.isEmpty()) {
+                        failWithScreenshot("Chat was not created after sending message", "chat_not_created")
+                    }
+                    
+                    chatId = newChats.first().id
+                    Log.d(TAG, "✅ Chat created with ID: $chatId")
+                    
+                    newChats.forEach { chat ->
+                        createdChatIds.add(chat.id)
+                        Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not track newly created chat: ${e.message}")
+                    failWithScreenshot("Failed to track newly created chat: ${e.message}", "chat_tracking_failed")
                 }
-                Log.d(TAG, "✅ Chat created with ID: $chatId")
+                
+                if (chatId == null) {
+                    failWithScreenshot("Chat ID was not captured", "chat_id_not_captured")
+                }
                 
                 // Step 3: Disconnect WebSocket immediately after sending message
                 Log.d(TAG, "🔌 Disconnecting WebSocket immediately after sending message...")
@@ -159,7 +238,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Also check database to ensure no bot messages yet
-                val messagesWhileDisconnected = repository.getMessagesForChat(chatId!!).first()
+                val messagesWhileDisconnected = if (chatId != null) {
+                    repository.getMessagesForChat(chatId).first()
+                } else {
+                    emptyList()
+                }
                 val botMessagesWhileDisconnected = messagesWhileDisconnected.filter { 
                     it.type == com.example.whiz.data.local.MessageType.ASSISTANT 
                 }
@@ -204,7 +287,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 if (!botResponseAfterReconnect) {
                     // Check if message is in database but not UI
-                    val messagesAfterReconnect = repository.getMessagesForChat(chatId).first()
+                    val messagesAfterReconnect = if (chatId != null) {
+                        repository.getMessagesForChat(chatId).first()
+                    } else {
+                        emptyList()
+                    }
                     val botMessagesAfterReconnect = messagesAfterReconnect.filter { 
                         it.type == com.example.whiz.data.local.MessageType.ASSISTANT 
                     }
@@ -237,6 +324,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             Log.d(TAG, "🧪 Starting no double sync on chat switch test with disconnect/reconnect")
             
             try {
+                // Initialize cleanup tracking
+                createdNewChatThisTest = true
+                
+                // Capture initial chats before creating new ones
+                val initialChats = repository.getAllChats()
+                
                 // Step 1: Launch app with manual launch mode
                 Log.d(TAG, "📱 Step 1: Launching app in manual mode")
                 
@@ -290,6 +383,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("First chat was not created", "first_chat_not_created")
                 }
                 
+                // Track the first chat for cleanup
+                createdChatIds.add(chatId1!!)
+                
                 // Step 3: Navigate to new chat (this will reconnect)
                 Log.d(TAG, "📱 Step 3: Navigating to new chat (will reconnect)...")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
@@ -340,6 +436,27 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 val chatId2 = chats.first().id // Most recent chat
                 Log.d(TAG, "Second chat created with ID: $chatId2")
+                
+                // Track the second chat for cleanup if it's different from the first
+                if (chatId2 != chatId1 && !createdChatIds.contains(chatId2)) {
+                    createdChatIds.add(chatId2)
+                }
+                
+                // Also track any other new chats that were created during the test
+                try {
+                    val currentChats = repository.getAllChats()
+                    val newChats = currentChats.filter { chat -> 
+                        !initialChats.map { it.id }.contains(chat.id) && 
+                        !createdChatIds.contains(chat.id)
+                    }
+                    newChats.forEach { chat ->
+                        createdChatIds.add(chat.id)
+                        Log.d(TAG, "📝 Tracked additional new chat for cleanup: ${chat.id} ('${chat.title}')")
+                    }
+                    Log.d(TAG, "📊 Total tracked chats for cleanup: ${createdChatIds.size}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not track all newly created chats: ${e.message}")
+                }
                 
                 // Step 5: Go back to first chat (will reconnect)
                 Log.d(TAG, "📱 Step 5: Going back to first chat (will reconnect and sync)...")
