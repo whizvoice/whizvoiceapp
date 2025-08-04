@@ -31,10 +31,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import okhttp3.Interceptor
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Add optimisticChatId column to chats table
+            database.execSQL("ALTER TABLE chats ADD COLUMN optimisticChatId INTEGER DEFAULT NULL")
+        }
+    }
 
     @Provides
     @Singleton
@@ -44,7 +53,8 @@ object AppModule {
             WhizDatabase::class.java,
             "whiz_database"
         )
-        .fallbackToDestructiveMigration() // 🔧 FIX: Allow destructive migration for production app
+        .addMigrations(MIGRATION_2_3)
+        .fallbackToDestructiveMigration() // Fallback for any other migrations
         .build()
     }
 

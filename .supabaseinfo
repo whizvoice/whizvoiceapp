@@ -29,6 +29,7 @@ last_message_time | timestamp | now()
 source | text | 'app', 'voice', or 'web'
 google_session_id | text
 updated_at | timestamp | now()
+optimistic_chat_id | text
 
 This table also has indexes
 - idx_conversations_user_id on conversations(user_id)
@@ -61,8 +62,8 @@ created_at | timestamp | now()
 updated_at | timestamp | now()
 
 the combination of user_id, entity_type, and entity_id is unique.
-IMV,V.//////zaP00TY0   5  6TGF  BA xzg bvx ji5oxz  ;     ofds kc799]9    mk,,,,,,,, 8 0pp[77 un]
-MKI] This table also has indexes
+
+This table also has indexes
 
 Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 

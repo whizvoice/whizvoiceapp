@@ -19,7 +19,8 @@ data class ChatEntity(
     val id: Long = 0,
     val title: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastMessageTime: Long = System.currentTimeMillis()
+    val lastMessageTime: Long = System.currentTimeMillis(),
+    val optimisticChatId: Long? = null  // Stores the original optimistic ID when chat was created offline
 )
 
 enum class MessageType {

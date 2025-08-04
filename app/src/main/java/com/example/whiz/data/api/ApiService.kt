@@ -29,7 +29,8 @@ interface ApiService {
     data class ConversationCreate(
         val title: String,
         val source: String = "app",
-        val google_session_id: String? = null
+        val google_session_id: String? = null,
+        val optimistic_chat_id: String? = null
     )
 
     data class ConversationUpdate(
@@ -44,7 +45,8 @@ interface ApiService {
         val last_message_time: String,
         val source: String,
         val google_session_id: String? = null,
-        val deleted_at: String? = null
+        val deleted_at: String? = null,
+        val optimistic_chat_id: String? = null
     )
 
     data class MessageCreate(
