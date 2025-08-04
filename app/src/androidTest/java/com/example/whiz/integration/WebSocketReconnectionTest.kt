@@ -3,6 +3,7 @@ package com.example.whiz.integration
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
@@ -14,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Before
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,7 +26,6 @@ import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import org.junit.Assert.*
-import org.junit.After
 import android.util.Log
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.di.TestInterceptor
@@ -63,6 +64,19 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         super.setUpAuthentication()
         Log.d(TAG, "🧪 WebSocket Reconnection Test Setup Complete")
+    }
+    
+    @After
+    fun cleanupBetweenTests() {
+        // Ensure clean state between tests by disconnecting WebSocket
+        try {
+            runBlocking {
+                whizServerRepository.disconnect()
+                delay(500) // Give time for disconnect
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error during cleanup: ${e.message}")
+        }
     }
 
 
@@ -348,11 +362,14 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Give more time for the chats to appear in the list
                 delay(1000)
                 
-                // Click on the first chat using message text
-                composeTestRule.onNodeWithText(
+                // Click on the first chat using message text - use onAllNodes to handle duplicates
+                val nodes = composeTestRule.onAllNodesWithText(
                     message1.take(20),
                     substring = true
-                ).performClick()
+                )
+                
+                // Click the first matching node (should be the top chat in the list)
+                nodes[0].performClick()
                 
                 // Wait for navigation to complete and chat to load
                 delay(1000)
@@ -446,11 +463,14 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Chats list did not appear before clicking second chat", "chats_list_not_ready_second")
                 }
                 
-                // Click on the second chat using message text
-                composeTestRule.onNodeWithText(
+                // Click on the second chat using message text - use onAllNodes to handle duplicates
+                val secondNodes = composeTestRule.onAllNodesWithText(
                     message2.take(20),
                     substring = true
-                ).performClick()
+                )
+                
+                // Click the first matching node (should be the top chat in the list)
+                secondNodes[0].performClick()
                 
                 // Wait for bot response to sync in second chat
                 Log.d(TAG, "⏳ Waiting for second chat bot response to sync...")

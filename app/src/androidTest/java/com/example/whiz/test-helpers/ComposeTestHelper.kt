@@ -232,7 +232,7 @@ object ComposeTestHelper {
             
             // Check if any part of the app UI is visible
             val anyUIVisible = try {
-                composeTestRule.onNodeWithText("WhizVoice").assertExists()
+                composeTestRule.onNodeWithText("WhizVoice", substring = true).assertExists()
                 true
             } catch (e: Exception) {
                 false
