@@ -1,0 +1,36 @@
+--------- beginning of main
+08-04 00:06:52.567 D/MainActivity( 5498): === INTENT ANALYSIS (onCreate) ===
+08-04 00:06:52.568 D/MainActivity( 5498): Basic Intent: Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x4 pkg=com.example.whiz cmp=com.example.whiz/.MainActivity (has extras) }
+08-04 00:06:52.568 D/MainActivity( 5498): Action: android.intent.action.MAIN
+08-04 00:06:52.568 D/MainActivity( 5498): Categories: {android.intent.category.LAUNCHER}
+08-04 00:06:52.568 D/MainActivity( 5498): Package: com.example.whiz
+08-04 00:06:52.568 D/MainActivity( 5498): Component: ComponentInfo{com.example.whiz/com.example.whiz.MainActivity}
+08-04 00:06:52.568 D/MainActivity( 5498): Flags: 10000000
+08-04 00:06:52.568 D/MainActivity( 5498): Intent Extras:
+08-04 00:06:52.568 D/MainActivity( 5498):   tracing_intent_id: 1688924268424855559 (Long)
+08-04 00:06:52.568 D/MainActivity( 5498): Referrer: null
+08-04 00:06:52.568 D/MainActivity( 5498): Calling Package: null
+08-04 00:06:52.568 D/MainActivity( 5498): Calling Activity: null
+08-04 00:06:52.568 D/MainActivity( 5498): Voice launch detection:
+08-04 00:06:52.568 D/MainActivity( 5498):   Has trace ID: true (traceId: 1688924268424855559) ← PRIMARY
+08-04 00:06:52.568 D/MainActivity( 5498):   Voice flags: true (flags: 0x10000000) ← SECONDARY
+08-04 00:06:52.568 D/MainActivity( 5498):   No bounds: true (bounds: null) ← TERTIARY
+08-04 00:06:52.568 D/MainActivity( 5498):   FINAL DECISION: Voice launch = true
+08-04 00:06:52.568 D/MainActivity( 5498): Likely voice launch: true
+08-04 00:06:52.568 D/MainActivity( 5498): 🎤 VOICE LAUNCH DETECTED (onCreate) - adding assistant flags
+08-04 00:06:52.568 D/MainActivity( 5498): 🎤 Updated activity intent with voice launch flags
+08-04 00:06:52.568 D/MainActivity( 5498): === END INTENT ANALYSIS ===
+08-04 00:06:52.575 D/MainActivity( 5498): Main Activity Resumed
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: Checking intent state after returning from background
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: Intent = Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x4 pkg=com.example.whiz cmp=com.example.whiz/.MainActivity (has extras) }
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: CREATE_NEW_CHAT_ON_START = true
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: FROM_ASSISTANT = true
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: ENABLE_VOICE_MODE = true
+08-04 00:06:52.575 D/MainActivity( 5498): 🔍 RESUME DEBUG: NAVIGATE_TO_CHAT_ID = -1
+08-04 00:06:52.675 D/MainActivity( 5498): 🔍 handleIntentNavigation called - using getIntent(): Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x4 pkg=com.example.whiz cmp=com.example.whiz/.MainActivity (has extras) }
+08-04 00:06:52.675 D/MainActivity( 5498): 🔍 DEBUG: CREATE_NEW_CHAT_ON_START flag at start of handleIntentNavigation: true
+08-04 00:06:52.676 D/MainActivity( 5498): 🔍 handleIntentNavigation called from: access$handleIntentNavigation
+08-04 00:06:52.676 D/MainActivity( 5498): 🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen
+08-04 00:06:52.676 D/MainActivity( 5498): 🔄 Already at assistant_chat screen - navigation is idempotent, no action needed
+08-04 00:06:52.676 D/MainActivity( 5498): Setting ENABLE_VOICE_MODE to true in savedStateHandle (idempotent)
+08-04 00:06:52.676 D/MainActivity( 5498): 🧹 CLEARING intent extras after idempotent navigation
