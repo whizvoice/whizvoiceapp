@@ -1110,6 +1110,11 @@ class ChatViewModel @Inject constructor(
                         _connectionError.value = "Failed to connect to server: ${e.message}"
                     }
                 }
+                
+                // Check for orphaned messages that need retry
+                if (configUseRemoteAgent && _chatId.value > 0) {
+                    checkAndRetryOrphanedMessages(_chatId.value)
+                }
 
                 // 🎙️ VOICE APP BEHAVIOR: Update permission state and let UI layer control all microphone behavior
                 // Since this is a voice app, the UI always enables continuous listening by default
@@ -1811,5 +1816,93 @@ class ChatViewModel @Inject constructor(
         
         Log.d(TAG, "[LOG] Speaking text: $text, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
         ttsManager.speak(text, "chat_message")
+    }
+    
+    /**
+     * Check for orphaned user messages in a chat that need to be retried.
+     * An orphaned message is a user message that was sent more than 2 minutes ago
+     * but never received an assistant response.
+     */
+    private suspend fun checkAndRetryOrphanedMessages(chatId: Long) {
+        try {
+            Log.d(TAG, "Checking for orphaned messages in chat $chatId")
+            
+            // Get all messages for this chat
+            val allMessages = messages.value
+            if (allMessages.isEmpty()) {
+                Log.d(TAG, "No messages in chat $chatId, skipping orphaned message check")
+                return
+            }
+            
+            // Find the timestamp of the last assistant message (if any)
+            val lastAssistantMessageTime = allMessages
+                .filter { it.type == MessageType.ASSISTANT }
+                .maxByOrNull { it.timestamp }
+                ?.timestamp ?: 0L
+            
+            // Current time and 2-minute threshold
+            val currentTime = System.currentTimeMillis()
+            val retryThresholdMs = 2 * 60 * 1000L // 2 minutes
+            
+            // Find orphaned user messages that need retry
+            val orphanedMessages = allMessages
+                .filter { message ->
+                    message.type == MessageType.USER &&
+                    message.timestamp > lastAssistantMessageTime && // After last assistant response
+                    (currentTime - message.timestamp) > retryThresholdMs && // Older than 2 minutes
+                    message.requestId != null // Has a request ID for retry
+                }
+                .sortedBy { it.timestamp } // Process in chronological order
+            
+            if (orphanedMessages.isEmpty()) {
+                Log.d(TAG, "No orphaned messages found in chat $chatId")
+                return
+            }
+            
+            Log.d(TAG, "Found ${orphanedMessages.size} orphaned messages to retry in chat $chatId")
+            
+            // Check each orphaned message
+            for (message in orphanedMessages) {
+                val requestId = message.requestId ?: continue
+                
+                // Check if it's already in the retry queue
+                if (whizServerRepository.hasMessageInRetryQueue(requestId)) {
+                    Log.d(TAG, "Message ${message.id} (requestId: $requestId) is already in retry queue, skipping")
+                    continue
+                }
+                
+                // Check if it's in pending requests (currently being processed)
+                if (pendingRequests.containsKey(requestId)) {
+                    Log.d(TAG, "Message ${message.id} (requestId: $requestId) is in pending requests, skipping")
+                    continue
+                }
+                
+                // This message needs to be retried
+                Log.d(TAG, "Retrying orphaned message ${message.id} (requestId: $requestId): ${message.content.take(50)}...")
+                
+                // Add to pending requests to track it
+                pendingRequests[requestId] = chatId
+                updateRespondingStateForCurrentChat()
+                
+                // Send the message again
+                val success = whizServerRepository.sendMessage(
+                    message.content, 
+                    requestId, 
+                    chatId
+                )
+                
+                if (!success) {
+                    Log.d(TAG, "Message ${message.id} queued for retry (requestId: $requestId)")
+                } else {
+                    Log.d(TAG, "Message ${message.id} sent successfully (requestId: $requestId)")
+                }
+                
+                // Small delay between retries to avoid overwhelming the server
+                delay(100)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking for orphaned messages in chat $chatId", e)
+        }
     }
 }
