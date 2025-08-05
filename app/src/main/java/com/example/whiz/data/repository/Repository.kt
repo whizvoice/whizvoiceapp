@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -63,6 +64,10 @@ class WhizRepository @Inject constructor(
     // Track optimistic chat ID → real chat ID migrations for deduplication
     private val chatMigrationMapping = mutableMapOf<Long, Long>()
     private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    
+    // Flow to notify when a chat migration occurs (optimistic ID -> server ID)
+    private val _chatMigrationEvents = MutableSharedFlow<Pair<Long, Long>>()
+    val chatMigrationEvents: Flow<Pair<Long, Long>> = _chatMigrationEvents
     
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
@@ -648,6 +653,10 @@ class WhizRepository @Inject constructor(
                 val response = apiService.getMessagesIncremental(chatId, since = null)
                 val serverMessages = response.messages.map { it.toMessageEntity() }
                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
+                // Debug: Log the conversation IDs of the messages
+                serverMessages.forEach { msg ->
+                    Log.d(TAG, "fetchMessagesWithDeduplication: Message ${msg.id} has chatId=${msg.chatId}")
+                }
                 
                 // Deduplicate with local optimistic messages
                 val deduplicatedMessages = deduplicateMessages(chatId, serverMessages)
@@ -703,6 +712,11 @@ class WhizRepository @Inject constructor(
         chatMigrationMapping[optimisticChatId] = realChatId
         migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
         Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        
+        // Emit migration event so ChatViewModel can update its chat ID
+        repositoryScope.launch {
+            _chatMigrationEvents.emit(optimisticChatId to realChatId)
+        }
         
         // Clean up old mappings (older than 1 hour)
         cleanupOldMigrations()
@@ -766,6 +780,27 @@ class WhizRepository @Inject constructor(
      */
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
+            // Check if server messages have a different chat ID (server resolved optimistic to real ID)
+            val serverChatId = serverMessages.firstOrNull()?.chatId
+            if (serverChatId != null && serverChatId != chatId && chatId < 0 && serverChatId > 0) {
+                Log.d(TAG, "deduplicateMessages: Server returned messages for chat $serverChatId instead of requested $chatId - triggering migration")
+                
+                // This is an optimistic->real chat migration scenario
+                // Use the existing migration logic that already handles:
+                // 1. Registering the migration mapping
+                // 2. Creating the target chat if needed
+                // 3. Migrating all messages
+                val migrationSuccess = migrateChatMessages(chatId, serverChatId)
+                
+                if (migrationSuccess) {
+                    Log.d(TAG, "deduplicateMessages: Successfully migrated chat $chatId to $serverChatId")
+                    // Register the migration for future lookups
+                    registerChatMigration(chatId, serverChatId)
+                } else {
+                    Log.e(TAG, "deduplicateMessages: Failed to migrate chat $chatId to $serverChatId")
+                }
+            }
+            
             // 🔧 FIX: Ensure chat exists in local database before inserting messages
             val existingChat = chatDao.getChatById(chatId)
             if (existingChat == null) {
@@ -851,11 +886,10 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Removed ${messagesToRemove.size} duplicate local messages")
             }
             
-            // Store server messages in database using batch insert
-            // Batch insert is more efficient and ensures atomicity
-            if (serverMessages.isNotEmpty()) {
-                val insertedIds = messageDao.insertMessages(serverMessages)
-                Log.d(TAG, "deduplicateMessages: Batch inserted ${insertedIds.size} server messages for chat $chatId")
+            // Store server messages in database
+            for (message in serverMessages) {
+                val insertedId = messageDao.insertMessage(message)
+                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
             }
             
             // Return all messages for this chat (fresh from database after deduplication)

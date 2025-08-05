@@ -292,6 +292,18 @@ class ChatViewModel @Inject constructor(
             }
         }
         
+        // Observe chat migration events from repository
+        viewModelScope.launch {
+            repository.chatMigrationEvents.collect { (optimisticId, serverId) ->
+                // Check if this migration affects the current chat
+                if (_chatId.value == optimisticId) {
+                    Log.d(TAG, "Chat migration detected: updating chat ID from $optimisticId to $serverId")
+                    _chatId.value = serverId
+                    // The messages flow will automatically update since it observes _chatId
+                }
+            }
+        }
+        
         // Observe app foreground events to restart continuous listening
         Log.d(TAG, "Setting up app foreground event collection")
         viewModelScope.launch {
