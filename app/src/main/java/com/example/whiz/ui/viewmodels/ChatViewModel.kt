@@ -326,33 +326,27 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.")
                         isDisconnectingForAuthError = false
                         
-                        // Only sync messages if this is a reconnection after disconnect
-                        // Skip sync if this is a fresh connection after loadChat (which already synced)
-                        if (isReconnectingAfterDisconnect) {
-                            val currentChatId = _chatId.value
-                            val disconnectedChatId = chatIdWhenDisconnected
-                            
-                            // Always sync the current chat on reconnection
-                            // The isReconnectingAfterDisconnect flag prevents double sync with loadChat
-                            if (currentChatId > 0) {
-                                Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for current chat $currentChatId after reconnection (was in chat $disconnectedChatId when disconnected)")
-                                viewModelScope.launch {
-                                    try {
-                                        // Fetch any messages we might have missed during disconnection
-                                        val serverMessages = repository.fetchMessagesWithDeduplication(currentChatId)
-                                        Log.d(TAG, "WebSocketEvent.Connected: Retrieved ${serverMessages.size} messages from server for chat $currentChatId")
-                                        
-                                        // The fetchMessagesWithDeduplication already handles storing messages
-                                        // Just trigger UI refresh
-                                        repository.refreshMessages()
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error syncing messages after reconnection for chat $currentChatId", e)
-                                        // Don't show error to user - this is a background sync
-                                    }
+                        // Always sync messages when WebSocket connects to ensure we have the latest
+                        val currentChatId = _chatId.value
+                        if (currentChatId != -1L) {
+                            Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for chat $currentChatId (reconnect=$isReconnectingAfterDisconnect)")
+                            viewModelScope.launch {
+                                try {
+                                    // Fetch any messages we might have missed
+                                    // Server now handles optimistic chat IDs via optimistic_chat_id column
+                                    val serverMessages = repository.fetchMessagesWithDeduplication(currentChatId)
+                                    Log.d(TAG, "WebSocketEvent.Connected: Retrieved ${serverMessages.size} messages from server for chat $currentChatId")
+                                    
+                                    // The fetchMessagesWithDeduplication already handles storing messages
+                                    // Just trigger UI refresh
+                                    repository.refreshMessages()
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error syncing messages for chat $currentChatId", e)
+                                    // Don't show error to user - this is a background sync
                                 }
                             }
                         } else {
-                            Log.d(TAG, "WebSocketEvent.Connected: Skipping message sync - this is a fresh connection after chat load")
+                            Log.d(TAG, "WebSocketEvent.Connected: New chat (chatId=-1), skipping sync")
                         }
                         
                         // Reset the flags for next time
