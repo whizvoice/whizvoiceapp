@@ -773,6 +773,14 @@ class WhizRepository @Inject constructor(
         }
         return false
     }
+    
+    /**
+     * Get the migrated chat ID for an optimistic chat.
+     * Returns the server-backed chat ID if this optimistic chat was migrated, null otherwise.
+     */
+    fun getMigratedChatId(optimisticChatId: Long): Long? {
+        return chatMigrationMapping[optimisticChatId]
+    }
 
     /**
      * Deduplicate server messages with local optimistic messages.

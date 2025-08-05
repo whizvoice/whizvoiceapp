@@ -732,7 +732,14 @@ class ChatViewModel @Inject constructor(
                                         // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
                                         if (event.clientConversationId != null) {
                                             Log.d(TAG, "🐛 VOICE_DEBUG: Using clientConversationId from server: ${event.clientConversationId}")
-                                            event.clientConversationId
+                                            // Check if this optimistic chat has been migrated to a server-backed ID
+                                            val migratedId = repository.getMigratedChatId(event.clientConversationId)
+                                            if (migratedId != null) {
+                                                Log.d(TAG, "🐛 VOICE_DEBUG: Found migration for clientConversationId ${event.clientConversationId} → $migratedId")
+                                                migratedId
+                                            } else {
+                                                event.clientConversationId
+                                            }
                                         } else {
                                             Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - discarding message to prevent cross-chat contamination")
                                             // Discard the message by returning null - will be handled below
@@ -743,7 +750,14 @@ class ChatViewModel @Inject constructor(
                                     // No request ID - check if we have clientConversationId
                                     if (event.clientConversationId != null) {
                                         Log.d(TAG, "🐛 VOICE_DEBUG: No requestId but have clientConversationId: ${event.clientConversationId}")
-                                        event.clientConversationId
+                                        // Check if this optimistic chat has been migrated to a server-backed ID
+                                        val migratedId = repository.getMigratedChatId(event.clientConversationId)
+                                        if (migratedId != null) {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: Found migration for clientConversationId ${event.clientConversationId} → $migratedId")
+                                            migratedId
+                                        } else {
+                                            event.clientConversationId
+                                        }
                                     } else {
                                         // No request ID or client conversation ID - discard message
                                         Log.w(TAG, "No request ID or client conversation ID provided. Discarding message to prevent cross-chat contamination.")
@@ -766,6 +780,34 @@ class ChatViewModel @Inject constructor(
                                 Log.w(TAG, "Cannot determine target chat ID for message. Discarding to prevent cross-chat contamination.")
                                 updateRespondingStateForCurrentChat()
                                 return@collect
+                            }
+                            
+                            // 🔧 Check if we need to register a migration (optimistic to server ID)
+                            if (event.clientConversationId != null && effectiveConversationId != null && 
+                                event.clientConversationId != effectiveConversationId &&
+                                event.clientConversationId < 0 && effectiveConversationId > 0) {
+                                // This is a migration from optimistic to server-backed chat
+                                Log.d(TAG, "🔧 Detected chat migration via WebSocket: ${event.clientConversationId} → $effectiveConversationId")
+                                
+                                // Migrate messages from optimistic to server chat
+                                try {
+                                    val migrationSuccess = withContext(Dispatchers.IO) {
+                                        repository.migrateChatMessages(event.clientConversationId, effectiveConversationId)
+                                    }
+                                    
+                                    if (migrationSuccess) {
+                                        Log.d(TAG, "✅ Successfully migrated messages from ${event.clientConversationId} to $effectiveConversationId")
+                                        repository.registerChatMigration(event.clientConversationId, effectiveConversationId)
+                                        
+                                        // If the current chat is the optimistic one, update it to the server ID
+                                        if (_chatId.value == event.clientConversationId) {
+                                            Log.d(TAG, "📝 Updating current chat ID from ${_chatId.value} to $effectiveConversationId")
+                                            _chatId.value = effectiveConversationId
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error migrating chat messages", e)
+                                }
                             }
                             
                             // 🔧 FIXED: Check if response is for current chat AFTER chat ID synchronization
@@ -1067,12 +1109,15 @@ class ChatViewModel @Inject constructor(
                 }
 
                 // Connect to server if needed *after* chat ID is set
+                Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}")
                 if (configUseRemoteAgent && _chatId.value != 0L) { // Connect for new (-1) or existing chats
                     try {
+                        Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat...")
                         delay(100) // Small delay to ensure state propagation
                         // Pass the conversation ID for existing chats, null for new chats (chatId = -1)
                         val conversationId = if (_chatId.value > 0) _chatId.value else null
                         whizServerRepository.connect(conversationId)
+                        Log.d(TAG, "🔌 WebSocket reconnect initiated for chat ${_chatId.value}")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
                         _connectionError.value = "Failed to connect to server: ${e.message}"

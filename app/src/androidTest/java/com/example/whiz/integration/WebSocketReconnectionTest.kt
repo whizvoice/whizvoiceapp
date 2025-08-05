@@ -413,10 +413,18 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Wait for new ChatViewModel to initialize and connect WebSocket
-                delay(2000) // Give time for new ChatViewModel to connect
+                Log.d(TAG, "⏳ Waiting for WebSocket to connect after navigation...")
+                var connectedNav = false
+                repeat(30) { // Try for up to 6 seconds (30 * 200ms)
+                    if (whizServerRepository.isConnected()) {
+                        connectedNav = true
+                        return@repeat
+                    }
+                    delay(200)
+                }
                 
                 // Verify WebSocket is connected after navigation
-                val connectedAfterNav = whizServerRepository.isConnected()
+                val connectedAfterNav = connectedNav
                 Log.d(TAG, "📊 WebSocket connected after navigation: $connectedAfterNav")
                 
                 // Step 4: Send second message and disconnect immediately
@@ -520,9 +528,17 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Wait for ChatViewModel to initialize and WebSocket to connect
-                delay(2000) // Give time for new ChatViewModel to connect
+                Log.d(TAG, "⏳ Waiting for WebSocket to connect after opening first chat...")
+                var connected = false
+                repeat(30) { // Try for up to 6 seconds (30 * 200ms)
+                    if (whizServerRepository.isConnected()) {
+                        connected = true
+                        return@repeat
+                    }
+                    delay(200)
+                }
                 
-                val connectedAfterFirstChatOpen = whizServerRepository.isConnected()
+                val connectedAfterFirstChatOpen = connected
                 Log.d(TAG, "📊 WebSocket connected after opening first chat: $connectedAfterFirstChatOpen")
                 
                 // Wait for bot response to sync in first chat
@@ -588,6 +604,24 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 if (!chatsListReady) {
                     failWithScreenshot("Chats list did not appear before clicking second chat", "chats_list_not_ready_second")
+                }
+                
+                // Wait for the second chat to appear in the list
+                val secondChatFound = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            message2.take(20),
+                            substring = true
+                        )
+                    },
+                    timeoutMs = 5000L,
+                    description = "second chat in list"
+                )
+                
+                if (!secondChatFound) {
+                    // If not found, take a screenshot of the current chat list
+                    failWithScreenshot("Second chat not found in chats list", "second_chat_not_in_list")
                 }
                 
                 // Click on the second chat using message text - use onAllNodes to handle duplicates
