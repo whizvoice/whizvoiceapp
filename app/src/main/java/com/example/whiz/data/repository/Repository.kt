@@ -1167,6 +1167,33 @@ class WhizRepository @Inject constructor(
                 val localChats = chatDao.getAllChatsFlow().first()
                 val optimisticChats = localChats.filter { it.id < -1 }
                 
+                // First, check all server chats for any that reference our optimistic chats
+                serverChats.forEach { serverChat ->
+                    // Check if this server chat has an optimistic_chat_id field
+                    val optimisticId = serverChat.optimisticChatId
+                    if (optimisticId != null && optimisticId < 0 && chatMigrationMapping[optimisticId] == null) {
+                        // This server chat is linked to an optimistic chat that hasn't been migrated yet
+                        Log.d(TAG, "getAllChatsFlow: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId - triggering migration")
+                        
+                        // Trigger migration asynchronously
+                        repositoryScope.launch {
+                            try {
+                                // First register the migration
+                                registerChatMigration(optimisticId, serverChat.id)
+                                
+                                // Then migrate the messages if the optimistic chat exists
+                                val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
+                                if (optimisticChatExists) {
+                                    migrateChatMessages(optimisticId, serverChat.id)
+                                    Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
+                            }
+                        }
+                    }
+                }
+                
                 // Check which optimistic chats haven't been migrated yet
                 val unmigratedOptimisticChats = optimisticChats.filter { optimisticChat ->
                     // Check if this optimistic chat has been migrated
@@ -1176,9 +1203,21 @@ class WhizRepository @Inject constructor(
                         Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} already migrated to $migratedId")
                         false
                     } else {
-                        // This chat hasn't been migrated yet, include it
-                        Log.d(TAG, "getAllChatsFlow: Including unmigrated optimistic chat ${optimisticChat.id}")
-                        true
+                        // Check if any server chat references this optimistic chat
+                        val hasServerChat = serverChats.any { serverChat ->
+                            serverChat.optimisticChatId == optimisticChat.id
+                        }
+                        
+                        if (hasServerChat) {
+                            // This optimistic chat has a server counterpart, don't include it
+                            // Migration will be triggered above
+                            Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} has server counterpart, excluding from list")
+                            false
+                        } else {
+                            // This chat hasn't been migrated yet and has no server counterpart, include it
+                            Log.d(TAG, "getAllChatsFlow: Including unmigrated optimistic chat ${optimisticChat.id}")
+                            true
+                        }
                     }
                 }
                 

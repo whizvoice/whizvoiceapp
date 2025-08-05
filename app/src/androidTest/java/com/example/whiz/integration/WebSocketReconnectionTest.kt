@@ -375,13 +375,17 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ WebSocket disconnected after first message")
                 
-                // Get the first chat ID
+                // Get the first chat ID from local database since we're disconnected
                 var chatId1: Long? = null
                 withTimeout(5000) {
                     while (true) {
-                        val chats = repository.getAllChats()
-                        if (chats.isNotEmpty()) {
-                            chatId1 = chats.firstOrNull()?.id
+                        // Use DAO directly to get local chats when disconnected
+                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val newChats = localChats.filter { chat ->
+                            !initialChats.map { it.id }.contains(chat.id)
+                        }
+                        if (newChats.isNotEmpty()) {
+                            chatId1 = newChats.firstOrNull()?.id
                             Log.d(TAG, "First chat created with ID: $chatId1")
                             break
                         }
@@ -447,12 +451,16 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ WebSocket disconnected after second message")
                 
-                // Get the second chat ID
-                val chats = repository.getAllChats()
-                if (chats.size < 2) {
-                    failWithScreenshot("Expected at least 2 chats but found ${chats.size}", "insufficient_chats")
+                // Get the second chat ID from local database since we're disconnected
+                val localChats = repository.getChatDao().getAllChatsFlow().first()
+                val newChats = localChats.filter { chat ->
+                    !initialChats.map { it.id }.contains(chat.id)
                 }
-                val chatId2 = chats.first().id // Most recent chat
+                if (newChats.size < 2) {
+                    failWithScreenshot("Expected at least 2 chats but found ${newChats.size}", "insufficient_chats")
+                }
+                // Sort by ID descending to get the most recent chat first
+                val chatId2 = newChats.sortedByDescending { it.id }.first().id
                 Log.d(TAG, "Second chat created with ID: $chatId2")
                 
                 // Track the second chat for cleanup if it's different from the first
@@ -462,12 +470,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Also track any other new chats that were created during the test
                 try {
-                    val currentChats = repository.getAllChats()
-                    val newChats = currentChats.filter { chat -> 
+                    val currentLocalChats = repository.getChatDao().getAllChatsFlow().first()
+                    val additionalNewChats = currentLocalChats.filter { chat -> 
                         !initialChats.map { it.id }.contains(chat.id) && 
                         !createdChatIds.contains(chat.id)
                     }
-                    newChats.forEach { chat ->
+                    additionalNewChats.forEach { chat ->
                         createdChatIds.add(chat.id)
                         Log.d(TAG, "📝 Tracked additional new chat for cleanup: ${chat.id} ('${chat.title}')")
                     }

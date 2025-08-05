@@ -91,7 +91,8 @@ fun ApiService.ConversationResponse.toChatEntity(): ChatEntity {
         id = this.id,
         title = sanitizeChatTitle(this.title),
         createdAt = parseTimestampToMillis(this.created_at),
-        lastMessageTime = parseTimestampToMillis(this.last_message_time)
+        lastMessageTime = parseTimestampToMillis(this.last_message_time),
+        optimisticChatId = this.optimistic_chat_id?.toLongOrNull()
     )
 }
 
