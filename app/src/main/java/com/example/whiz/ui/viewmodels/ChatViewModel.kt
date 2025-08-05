@@ -645,10 +645,6 @@ class ChatViewModel @Inject constructor(
                             if (isChatTransition) {
                                 // Starting migration to sync with server conversation ID
                                 
-                                // 🔧 PRODUCTION BUG FIX: Preserve input text during chat migration
-                                // The chat ID change causes UI recomposition which resets input field state
-                                val preservedInputText = _inputText.value
-                                val preservedIsInputFromVoice = _isInputFromVoice.value
 
                                 
                                 // 🔧 CRITICAL: Migrate local messages from optimistic chat to server conversation
@@ -681,14 +677,8 @@ class ChatViewModel @Inject constructor(
                                             Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
                                             
-                                            // 🔧 PRODUCTION BUG FIX: Restore input text after chat ID update
-                                            // This ensures user's typing is preserved during migration
-                                            if (preservedInputText.isNotBlank()) {
-                                                Log.d(TAG, "[RACE_DEBUG] Chat migration: Restoring preserved input text: '$preservedInputText'. Previous: '${_inputText.value}'")
-                                    _inputText.value = preservedInputText
-                                    Log.d(TAG, "[RACE_DEBUG] Chat migration: Input text restored to: '${_inputText.value}'")
-                                                _isInputFromVoice.value = preservedIsInputFromVoice
-                                            }
+                                            // Note: Input text preservation removed - StateFlow maintains input across recomposition
+                                            // The old preservation logic could cause issues if user sent message during migration
                                             
                                         } else {
                                         }
