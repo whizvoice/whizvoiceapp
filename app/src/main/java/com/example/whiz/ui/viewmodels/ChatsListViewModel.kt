@@ -25,6 +25,10 @@ class ChatsListViewModel @Inject constructor(
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
+    // Error state for when loading chats fails
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+
     // All chats, ordered by most recent first
     val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
         .stateIn(
@@ -39,6 +43,9 @@ class ChatsListViewModel @Inject constructor(
             try {
                 Log.d(TAG, "ChatsListViewModel init: Checking if conversations need to be loaded")
                 
+                // Clear any previous error state
+                _loadError.value = null
+                
                 // If we don't have any conversations cached, trigger a refresh
                 if (repository.conversations.value.isEmpty()) {
                     Log.d(TAG, "ChatsListViewModel init: No conversations cached, triggering refresh")
@@ -48,6 +55,7 @@ class ChatsListViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
+                _loadError.value = "Couldn't load chats"
             }
         }
     }
@@ -88,15 +96,22 @@ class ChatsListViewModel @Inject constructor(
         viewModelScope.launch {
             _isRefreshing.value = true
             try {
+                // Clear error state when refreshing
+                _loadError.value = null
                 Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
                 repository.performIncrementalSync()
                 Log.d(TAG, "refreshChats: Incremental sync completed successfully")
             } catch (e: Exception) {
                 Log.e(TAG, "refreshChats: Error during incremental sync", e)
-                // Error is handled by the repository and UI
+                _loadError.value = "Couldn't load chats"
             } finally {
                 _isRefreshing.value = false
             }
         }
+    }
+    
+    // Retry loading chats
+    fun retryLoading() {
+        refreshChats()
     }
 }

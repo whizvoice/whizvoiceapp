@@ -58,6 +58,8 @@ import com.example.whiz.data.local.DateFormatter
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.ui.text.style.TextAlign
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +73,7 @@ fun ChatsListScreen(
 ) {
     val chats by viewModel.chats.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val loadError by viewModel.loadError.collectAsState()
     
     // Auto-refresh when returning to chat list to sync new chats created via WebSocket
     // This ensures users see chats created in other parts of the app (like voice assistant)
@@ -139,16 +142,24 @@ fun ChatsListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (chats.isEmpty()) {
-                EmptyChatsList(onNewChatClick = onNewChatClick)
-            } else {
-                ChatsList(
-                    chats = chats,
-                    onChatClick = onChatSelected,
-                    onChatLongPress = { chatId ->
-                        viewModel.deleteChat(chatId)
-                    }
-                )
+            when {
+                loadError != null -> {
+                    ChatsListErrorView(
+                        onRetry = { viewModel.retryLoading() }
+                    )
+                }
+                chats.isEmpty() -> {
+                    EmptyChatsList(onNewChatClick = onNewChatClick)
+                }
+                else -> {
+                    ChatsList(
+                        chats = chats,
+                        onChatClick = onChatSelected,
+                        onChatLongPress = { chatId ->
+                            viewModel.deleteChat(chatId)
+                        }
+                    )
+                }
             }
         }
     }
@@ -294,6 +305,56 @@ fun EmptyChatsList(onNewChatClick: () -> Unit) {
                         .clearAndSetSemantics { }
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun ChatsListErrorView(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // Error icon
+        Icon(
+            imageVector = Icons.Outlined.ErrorOutline,
+            contentDescription = null,
+            modifier = Modifier
+                .size(64.dp)
+                .padding(bottom = 16.dp),
+            tint = MaterialTheme.colorScheme.error
+        )
+        
+        // Error message
+        Text(
+            text = "Couldn't load chats",
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        Text(
+            text = "Check your connection and try again",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 24.dp)
+        )
+        
+        // Retry button
+        Button(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 48.dp)
+        ) {
+            Text("Retry")
         }
     }
 }
