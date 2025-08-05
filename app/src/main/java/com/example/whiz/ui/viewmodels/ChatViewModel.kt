@@ -261,9 +261,6 @@ class ChatViewModel @Inject constructor(
     private val _isInputFromVoice = MutableStateFlow(false)
     val isInputFromVoice = _isInputFromVoice.asStateFlow()
     
-    // Track message currently being sent to handle race conditions during migrations
-    @Volatile
-    private var messageBeingSent: String? = null
 
     init {
         // Check if the app already has microphone permission
@@ -1157,13 +1154,6 @@ class ChatViewModel @Inject constructor(
     fun migrateChatId(oldId: Long, newId: Long) {
         Log.d(TAG, "📝 Migrating chat ID from $oldId to $newId (keeping WebSocket connected)")
         
-        // Check if there's a message currently being sent
-        val messageInFlight = messageBeingSent
-        if (messageInFlight != null) {
-            Log.d(TAG, "⚠️ Migration detected while sending message: '$messageInFlight'")
-            // We'll re-send this message after migration
-        }
-        
         // Just update the chat ID - the messages flow will automatically update
         // since it's derived from _chatId
         _chatId.value = newId
@@ -1174,33 +1164,11 @@ class ChatViewModel @Inject constructor(
         // The WebSocket connection remains intact, which is the key benefit
         Log.d(TAG, "✅ Chat ID migration complete. WebSocket remains connected: ${_isConnectedToServer.value}")
         
-        // If there was a message being sent during migration, ensure it gets sent to the new chat
-        if (messageInFlight != null && configUseRemoteAgent) {
-            Log.d(TAG, "🔄 Re-sending message to new chat after migration: '$messageInFlight'")
-            viewModelScope.launch {
-                // Generate a new request ID for the message
-                val requestId = java.util.UUID.randomUUID().toString()
-                
-                // Add the message to the new chat immediately
-                val localMessageId = repository.addUserMessageOptimistic(newId, messageInFlight, requestId)
-                
-                // Track the request and update responding state
-                pendingRequests[requestId] = newId
-                updateRespondingStateForCurrentChat()
-                
-                // Send via WebSocket
-                val success = whizServerRepository.sendMessage(messageInFlight, requestId, newId)
-                
-                if (success) {
-                    Log.d(TAG, "✅ Message re-sent successfully to new chat $newId")
-                } else {
-                    Log.d(TAG, "⚠️ Message queued for retry to new chat $newId")
-                }
-                
-                // Clear the messageBeingSent flag since we've handled it
-                messageBeingSent = null
-            }
-        }
+        // Note: We don't need to handle any in-flight messages here because:
+        // - If a message was sent successfully, it's already on the server
+        // - If a message failed and is in the retry queue, processRetryQueue() will handle it automatically
+        // - The retry queue is processed automatically on WebSocket reconnection
+        // - Messages are never "lost" during migration - they're either sent or queued
     }
 
     fun updateInputText(text: String, fromVoice: Boolean = false) {
@@ -1373,9 +1341,6 @@ class ChatViewModel @Inject constructor(
         val trimmedText = text.trim()
         if (trimmedText.isBlank()) return
         
-        // Track the message being sent for migration handling
-        messageBeingSent = trimmedText
-        
         // Always send messages - server will handle interrupts automatically based on its state
 
         viewModelScope.launch {
@@ -1524,9 +1489,6 @@ class ChatViewModel @Inject constructor(
             if (!configUseRemoteAgent && currentChatId > 0) {
                 schedulePersistenceCheck(currentChatId)
             }
-            } finally {
-                // Clear the message being sent
-                messageBeingSent = null
             }
         }
     }
