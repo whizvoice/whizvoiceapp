@@ -769,6 +769,12 @@ class WhizRepository @Inject constructor(
             // 🔧 FIX: Ensure chat exists in local database before inserting messages
             val existingChat = chatDao.getChatById(chatId)
             if (existingChat == null) {
+                // For optimistic chats, we should never get server messages if the chat doesn't exist locally
+                if (chatId < 0) {
+                    Log.w(TAG, "deduplicateMessages: Optimistic chat $chatId doesn't exist locally, ignoring server messages")
+                    return emptyList()
+                }
+                
                 Log.d(TAG, "deduplicateMessages: Chat $chatId doesn't exist locally, fetching from server")
                 try {
                     val serverChat = apiService.getConversation(chatId)
@@ -838,8 +844,13 @@ class WhizRepository @Inject constructor(
                 messageDao.insertMessage(serverMessage)
             }
             
+            // Small delay to ensure database writes are committed
+            delay(100)
+            
             // Return all messages for this chat (fresh from database after deduplication)
-            return messageDao.getMessagesForChatFlow(chatId).first()
+            val finalMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            Log.d(TAG, "deduplicateMessages: Returning ${finalMessages.size} messages from database for chat $chatId")
+            return finalMessages
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in deduplicateMessages for chat $chatId", e)
