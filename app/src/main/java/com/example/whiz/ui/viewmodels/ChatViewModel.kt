@@ -622,7 +622,7 @@ class ChatViewModel @Inject constructor(
                                         // Remove completed request from pending requests
                                         pendingRequests.remove(event.requestId) // Remove completed request
                                         
-                                                                // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
+                        // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
                         if (originalChatId == -1L && effectiveConversationId != null) {
                             // Update local chat ID to match server-assigned ID
                             _chatId.value = effectiveConversationId
@@ -710,14 +710,17 @@ class ChatViewModel @Inject constructor(
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
-                            val finalTargetChatId = effectiveConversationId
-                                            Log.d(TAG, "🐛 VOICE_DEBUG: Migration scenario - returning effectiveConversationId = $finalTargetChatId")
-                                            finalTargetChatId
-                                        } else {
-                                            Log.d(TAG, "🐛 VOICE_DEBUG: No migration needed - returning originalChatId = $originalChatId")
-                                            originalChatId
-                                        }
-                                    } else {
+                        }
+                        
+                        // Return the appropriate chat ID after all migration logic
+                        if (effectiveConversationId != null && effectiveConversationId != originalChatId) {
+                            Log.d(TAG, "🐛 VOICE_DEBUG: Migration scenario - returning effectiveConversationId = $effectiveConversationId")
+                            effectiveConversationId
+                        } else {
+                            Log.d(TAG, "🐛 VOICE_DEBUG: No migration needed - returning originalChatId = $originalChatId")
+                            originalChatId
+                        }
+                    } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "Request ID ${event.requestId} not found in pending requests")
                                         // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
