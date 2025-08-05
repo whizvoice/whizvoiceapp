@@ -27,7 +27,12 @@ import kotlinx.coroutines.delay
 
 
 sealed class WebSocketEvent {
-    data class Message(val text: String, val requestId: String? = null, val conversationId: Long? = null) : WebSocketEvent()
+    data class Message(
+        val text: String, 
+        val requestId: String? = null, 
+        val conversationId: Long? = null,
+        val clientConversationId: Long? = null
+    ) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
@@ -248,9 +253,12 @@ class WhizServerRepository @Inject constructor(
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
+                                val clientConversationId = if (jsonObject.has("client_conversation_id")) {
+                                    jsonObject.getLong("client_conversation_id")
+                                } else null
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
-                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId))
+                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
                                     if (emitDuration > 50) {

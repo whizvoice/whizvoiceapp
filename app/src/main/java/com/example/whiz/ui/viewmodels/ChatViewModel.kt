@@ -720,16 +720,28 @@ class ChatViewModel @Inject constructor(
                                     } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "Request ID ${event.requestId} not found in pending requests")
-                                        Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests - returning _chatId.value = ${_chatId.value}")
-                                        // This could be a race condition or resumed session response
-                                        // Process the message for current chat as fallback instead of skipping entirely
-                                        _chatId.value
+                                        // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
+                                        if (event.clientConversationId != null) {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: Using clientConversationId from server: ${event.clientConversationId}")
+                                            event.clientConversationId
+                                        } else {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - returning _chatId.value = ${_chatId.value}")
+                                            // This could be a race condition or resumed session response
+                                            // Process the message for current chat as fallback instead of skipping entirely
+                                            _chatId.value
+                                        }
                                     }
                                 } else {
-                                    // No request ID - this is a legacy message or server-initiated message
-                                    Log.w(TAG, "No request ID provided. Using current chat as fallback.")
-                                    Log.d(TAG, "🐛 VOICE_DEBUG: No requestId - returning _chatId.value = ${_chatId.value}")
-                                    _chatId.value
+                                    // No request ID - check if we have clientConversationId
+                                    if (event.clientConversationId != null) {
+                                        Log.d(TAG, "🐛 VOICE_DEBUG: No requestId but have clientConversationId: ${event.clientConversationId}")
+                                        event.clientConversationId
+                                    } else {
+                                        // No request ID - this is a legacy message or server-initiated message
+                                        Log.w(TAG, "No request ID provided. Using current chat as fallback.")
+                                        Log.d(TAG, "🐛 VOICE_DEBUG: No requestId or clientConversationId - returning _chatId.value = ${_chatId.value}")
+                                        _chatId.value
+                                    }
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing request ID validation", e)
