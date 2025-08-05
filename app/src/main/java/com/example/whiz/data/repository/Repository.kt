@@ -130,10 +130,21 @@ class WhizRepository @Inject constructor(
             val chatEntity = conversation.toChatEntity()
             chatEntity
         } catch (e: retrofit2.HttpException) {
-            // For 404, return null (chat doesn't exist)
             if (e.code() == 404) {
-                Log.d(TAG, "Chat with id $chatId not found (404)")
-                null
+                if (chatId < 0) {
+                    // For optimistic chats (negative IDs), fall back to local database
+                    Log.d(TAG, "Chat with optimistic id $chatId not found on server (404), checking local database")
+                    try {
+                        chatDao.getChatById(chatId)
+                    } catch (localError: Exception) {
+                        Log.e(TAG, "Error getting local chat for optimistic id $chatId", localError)
+                        null
+                    }
+                } else {
+                    // For server chats, 404 means it doesn't exist
+                    Log.d(TAG, "Chat with id $chatId not found (404)")
+                    null
+                }
             } else {
                 // For other HTTP errors (500, 401, etc), throw to trigger error state
                 Log.e(TAG, "HTTP error getting chat with id $chatId: ${e.code()} ${e.message()}", e)
@@ -643,6 +654,24 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "fetchMessagesWithDeduplication: After deduplication: ${deduplicatedMessages.size} messages for chat $chatId")
                 
                 deduplicatedMessages
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 404 && chatId < 0) {
+                    // For optimistic chats (negative IDs), a 404 is expected if the server hasn't created it yet
+                    // Fall back to local database
+                    Log.d(TAG, "fetchMessagesWithDeduplication: Got 404 for optimistic chat $chatId, falling back to local data")
+                    try {
+                        val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+                        Log.d(TAG, "fetchMessagesWithDeduplication: Found ${localMessages.size} local messages for optimistic chat $chatId")
+                        localMessages
+                    } catch (localError: Exception) {
+                        Log.e(TAG, "Error getting local messages for optimistic chat $chatId", localError)
+                        emptyList()
+                    }
+                } else {
+                    // For server chats or other HTTP errors, log and return empty
+                    Log.e(TAG, "HTTP error in fetchMessagesWithDeduplication for chat $chatId: ${e.code()}", e)
+                    emptyList()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in fetchMessagesWithDeduplication for chat $chatId", e)
                 emptyList()
