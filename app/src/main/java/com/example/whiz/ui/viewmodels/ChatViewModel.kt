@@ -1479,6 +1479,8 @@ class ChatViewModel @Inject constructor(
             if (!configUseRemoteAgent && currentChatId > 0) {
                 schedulePersistenceCheck(currentChatId)
             }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in sendUserInput", e)
             }
         }
     }
