@@ -8,6 +8,8 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.example.whiz.data.remote.WhizServerRepository
+import java.io.IOException
 
 /**
  * Test interceptor that can simulate different HTTP responses for testing.
@@ -27,6 +29,14 @@ class TestInterceptor @Inject constructor() : Interceptor {
         const val CHAT_ID_503 = 503503L
         const val CHAT_ID_TIMEOUT = 999999L
         const val CHAT_ID_SUCCESS_AFTER_ERROR = 200200L
+        
+        // Static flag to simulate network errors when manual disconnect is active
+        @Volatile
+        var simulateNetworkErrorForManualDisconnect = true
+        
+        // Callback to check if WebSocket is manually disconnected
+        @Volatile
+        var isManuallyDisconnectedCheck: (() -> Boolean)? = null
     }
     
     // Track if we should return an error for the success-after-error chat
@@ -43,6 +53,12 @@ class TestInterceptor @Inject constructor() : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
+        
+        // Check if WebSocket is manually disconnected - simulate network failure for all API calls
+        if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
+            Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
+            throw IOException("Network unavailable - WebSocket manually disconnected for testing")
+        }
         
         // Only intercept conversation GET requests
         if (request.method == "GET" && url.contains("/api/conversations/") && !url.contains("/messages")) {

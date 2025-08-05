@@ -79,6 +79,11 @@ class WhizServerRepository @Inject constructor(
         return lastEvent is WebSocketEvent.Connected && webSocket != null
     }
     
+    // Expose manual disconnect state for testing
+    fun isManuallyDisconnected(): Boolean {
+        return isManuallyDisconnected
+    }
+    
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
         when (event) {
