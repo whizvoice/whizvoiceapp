@@ -851,13 +851,12 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Removed ${messagesToRemove.size} duplicate local messages")
             }
             
-            // Store server messages in database
-            serverMessages.forEach { serverMessage ->
-                messageDao.insertMessage(serverMessage)
+            // Store server messages in database using batch insert
+            // Batch insert is more efficient and ensures atomicity
+            if (serverMessages.isNotEmpty()) {
+                val insertedIds = messageDao.insertMessages(serverMessages)
+                Log.d(TAG, "deduplicateMessages: Batch inserted ${insertedIds.size} server messages for chat $chatId")
             }
-            
-            // Small delay to ensure database writes are committed
-            delay(100)
             
             // Return all messages for this chat (fresh from database after deduplication)
             val finalMessages = messageDao.getMessagesForChatFlow(chatId).first()
