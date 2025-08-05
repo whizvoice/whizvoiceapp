@@ -769,16 +769,28 @@ class WhizRepository @Inject constructor(
             // 🔧 FIX: Ensure chat exists in local database before inserting messages
             val existingChat = chatDao.getChatById(chatId)
             if (existingChat == null) {
-                // For optimistic chats, we should never get server messages if the chat doesn't exist locally
-                if (chatId < 0) {
-                    Log.w(TAG, "deduplicateMessages: Optimistic chat $chatId doesn't exist locally, ignoring server messages")
-                    return emptyList()
-                }
-                
                 Log.d(TAG, "deduplicateMessages: Chat $chatId doesn't exist locally, fetching from server")
                 try {
                     val serverChat = apiService.getConversation(chatId)
                     val chatEntity = serverChat.toChatEntity()
+                    
+                    // Check if this server chat is linked to an existing optimistic chat
+                    serverChat.optimistic_chat_id?.let { optimisticIdStr ->
+                        try {
+                            val optimisticId = optimisticIdStr.toLong()
+                            val optimisticChat = chatDao.getChatById(optimisticId)
+                            if (optimisticChat != null) {
+                                Log.d(TAG, "deduplicateMessages: Server chat $chatId is linked to existing optimistic chat $optimisticId")
+                                // Register the migration so we know these are the same chat
+                                registerChatMigration(optimisticId, chatId)
+                                // Migrate messages from optimistic to server chat
+                                migrateChatMessages(optimisticId, chatId)
+                            }
+                        } catch (e: NumberFormatException) {
+                            Log.e(TAG, "deduplicateMessages: Invalid optimistic_chat_id format: $optimisticIdStr", e)
+                        }
+                    }
+                    
                     chatDao.insertChat(chatEntity)
                     Log.d(TAG, "deduplicateMessages: Created local chat record for chat $chatId")
                 } catch (e: Exception) {
