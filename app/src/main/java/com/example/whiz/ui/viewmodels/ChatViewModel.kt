@@ -725,10 +725,9 @@ class ChatViewModel @Inject constructor(
                                             Log.d(TAG, "🐛 VOICE_DEBUG: Using clientConversationId from server: ${event.clientConversationId}")
                                             event.clientConversationId
                                         } else {
-                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - returning _chatId.value = ${_chatId.value}")
-                                            // This could be a race condition or resumed session response
-                                            // Process the message for current chat as fallback instead of skipping entirely
-                                            _chatId.value
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - discarding message to prevent cross-chat contamination")
+                                            // Discard the message by returning null - will be handled below
+                                            null
                                         }
                                     }
                                 } else {
@@ -737,10 +736,10 @@ class ChatViewModel @Inject constructor(
                                         Log.d(TAG, "🐛 VOICE_DEBUG: No requestId but have clientConversationId: ${event.clientConversationId}")
                                         event.clientConversationId
                                     } else {
-                                        // No request ID - this is a legacy message or server-initiated message
-                                        Log.w(TAG, "No request ID provided. Using current chat as fallback.")
-                                        Log.d(TAG, "🐛 VOICE_DEBUG: No requestId or clientConversationId - returning _chatId.value = ${_chatId.value}")
-                                        _chatId.value
+                                        // No request ID or client conversation ID - discard message
+                                        Log.w(TAG, "No request ID or client conversation ID provided. Discarding message to prevent cross-chat contamination.")
+                                        Log.d(TAG, "🐛 VOICE_DEBUG: No requestId or clientConversationId - discarding message")
+                                        null
                                     }
                                 }
                             } catch (e: Exception) {
@@ -752,6 +751,13 @@ class ChatViewModel @Inject constructor(
                             
                             // 🔧 VOICE MESSAGE DEBUG: Log final calculated targetChatId
                             Log.d(TAG, "🐛 VOICE_DEBUG: Final calculated targetChatId = $targetChatId")
+                            
+                            // 🔧 Handle null targetChatId - discard message
+                            if (targetChatId == null) {
+                                Log.w(TAG, "Cannot determine target chat ID for message. Discarding to prevent cross-chat contamination.")
+                                updateRespondingStateForCurrentChat()
+                                return@collect
+                            }
                             
                             // 🔧 FIXED: Check if response is for current chat AFTER chat ID synchronization
                             val isResponseForCurrentChat = (targetChatId == _chatId.value)
