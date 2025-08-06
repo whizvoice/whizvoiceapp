@@ -53,6 +53,12 @@ data class PendingMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+// Debug event tracking
+data class TimestampedEvent(
+    val event: WebSocketEvent,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 @Singleton
 class WhizServerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
@@ -61,6 +67,10 @@ class WhizServerRepository @Inject constructor(
     private val TAG = "WhizServerRepo"
     private var webSocket: WebSocket? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    
+    // Debug: Track event history for troubleshooting
+    private val eventHistory = mutableListOf<TimestampedEvent>()
+    private val maxEventHistorySize = 100 // Keep last 100 events
 
     // Separate connection state from message events to prevent inappropriate replay
     private val _connectionStateEvents = MutableSharedFlow<WebSocketEvent>(replay = 1) // Only for connection state tracking
@@ -86,6 +96,15 @@ class WhizServerRepository @Inject constructor(
     
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
+        // Track event in history for debugging
+        synchronized(eventHistory) {
+            eventHistory.add(TimestampedEvent(event))
+            // Keep only the last N events
+            while (eventHistory.size > maxEventHistorySize) {
+                eventHistory.removeAt(0)
+            }
+        }
+        
         when (event) {
             is WebSocketEvent.Connected, 
             is WebSocketEvent.Closed, 
@@ -100,6 +119,40 @@ class WhizServerRepository @Inject constructor(
                 _messageEvents.emit(event)
             }
         }
+    }
+    
+    // Debug method to get recent events
+    fun getRecentEvents(sinceMinutesAgo: Int = 2): List<TimestampedEvent> {
+        val cutoffTime = System.currentTimeMillis() - (sinceMinutesAgo * 60 * 1000)
+        synchronized(eventHistory) {
+            return eventHistory.filter { it.timestamp >= cutoffTime }.toList()
+        }
+    }
+    
+    // Debug method to dump event history to log
+    fun dumpEventHistory(tag: String = TAG, sinceMinutesAgo: Int = 2) {
+        val recentEvents = getRecentEvents(sinceMinutesAgo)
+        Log.d(tag, "=== WebSocket Event History (last $sinceMinutesAgo minutes) ===")
+        Log.d(tag, "Current state: isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
+        Log.d(tag, "Replay cache: ${_connectionStateEvents.replayCache.lastOrNull()}")
+        Log.d(tag, "Total events in period: ${recentEvents.size}")
+        
+        val dateFormat = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+        recentEvents.forEach { event ->
+            val time = dateFormat.format(java.util.Date(event.timestamp))
+            val eventStr = when (val e = event.event) {
+                is WebSocketEvent.Connected -> "CONNECTED"
+                is WebSocketEvent.Closed -> "CLOSED"
+                is WebSocketEvent.Reconnecting -> "RECONNECTING"
+                is WebSocketEvent.Error -> "ERROR: ${e.error.message}"
+                is WebSocketEvent.AuthError -> "AUTH_ERROR: ${e.message}"
+                is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
+                is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
+                is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
+            }
+            Log.d(tag, "[$time] $eventStr")
+        }
+        Log.d(tag, "=== End Event History ===")
     }
 
     // Replace with your server's actual address

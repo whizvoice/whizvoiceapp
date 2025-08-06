@@ -630,6 +630,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "📊 WebSocket connected after opening first chat: $connectedAfterFirstChatOpen")
                 
                 if (!connectedAfterFirstChatOpen) {
+                    // Dump event history before failing to help debug
+                    Log.e(TAG, "❌ WebSocket not connected! Dumping event history for debugging:")
+                    whizServerRepository.dumpEventHistory(TAG, sinceMinutesAgo = 2)
                     failWithScreenshot("WebSocket is not connected after manual connection and opening first chat", "websocket_not_connected_first_chat")
                 }
                 
