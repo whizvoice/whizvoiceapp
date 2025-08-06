@@ -50,15 +50,13 @@ class TestInterceptor @Inject constructor() : Interceptor {
         retryCountMap.clear()
     }
     
+    fun resetRetryCount(chatId: Long) {
+        retryCountMap.remove(chatId)
+    }
+    
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
-        
-        // Check if WebSocket is manually disconnected - simulate network failure for all API calls
-        if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
-            Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
-            throw IOException("Network unavailable - WebSocket manually disconnected for testing")
-        }
         
         // Only intercept conversation GET requests
         if (request.method == "GET" && url.contains("/api/conversations/") && !url.contains("/messages")) {
@@ -66,6 +64,18 @@ class TestInterceptor @Inject constructor() : Interceptor {
             val chatId = url.substringAfterLast("/conversations/").substringBefore("?").toLongOrNull()
             
             Log.d(TAG, "Intercepting GET request for chat ID: $chatId")
+            
+            // For specific test chat IDs, bypass the WebSocket disconnect check to allow retry logic
+            if (chatId in listOf(CHAT_ID_500, CHAT_ID_SUCCESS_AFTER_ERROR)) {
+                // Let the chat-specific logic below handle these cases
+                Log.d(TAG, "Bypassing WebSocket disconnect check for test chat ID: $chatId")
+            } else {
+                // Check if WebSocket is manually disconnected - simulate network failure for all API calls
+                if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
+                    Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
+                    throw IOException("Network unavailable - WebSocket manually disconnected for testing")
+                }
+            }
             
             return when (chatId) {
                 CHAT_ID_404 -> {
@@ -183,6 +193,21 @@ class TestInterceptor @Inject constructor() : Interceptor {
                     // For all other requests, proceed normally
                     chain.proceed(request)
                 }
+            }
+        }
+        
+        // For non-chat requests, check WebSocket disconnect status
+        if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
+            // But still bypass for specific test chat IDs that might be in the URL
+            val chatIdInUrl = if (url.contains("/conversations/")) {
+                url.substringAfter("/conversations/").substringBefore("/").substringBefore("?").toLongOrNull()
+            } else {
+                null
+            }
+            
+            if (chatIdInUrl !in listOf(CHAT_ID_500, CHAT_ID_SUCCESS_AFTER_ERROR)) {
+                Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
+                throw IOException("Network unavailable - WebSocket manually disconnected for testing")
             }
         }
         
