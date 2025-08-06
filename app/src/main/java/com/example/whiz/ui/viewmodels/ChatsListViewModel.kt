@@ -24,10 +24,10 @@ class ChatsListViewModel @Inject constructor(
     // Pull-to-refresh state
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
-
-    // Error state for when loading chats fails
-    private val _loadError = MutableStateFlow<String?>(null)
-    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+    
+    // Connection status - true when we had to use cached data
+    private val _isShowingCachedData = MutableStateFlow(false)
+    val isShowingCachedData: StateFlow<Boolean> = _isShowingCachedData.asStateFlow()
 
     // All chats, ordered by most recent first
     val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
@@ -43,9 +43,6 @@ class ChatsListViewModel @Inject constructor(
             try {
                 Log.d(TAG, "ChatsListViewModel init: Checking if conversations need to be loaded")
                 
-                // Clear any previous error state
-                _loadError.value = null
-                
                 // If we don't have any conversations cached, trigger a refresh
                 if (repository.conversations.value.isEmpty()) {
                     Log.d(TAG, "ChatsListViewModel init: No conversations cached, triggering refresh")
@@ -55,7 +52,7 @@ class ChatsListViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
-                _loadError.value = "Couldn't load chats"
+                // Error is silently handled - we'll show cached data
             }
         }
     }
@@ -96,22 +93,19 @@ class ChatsListViewModel @Inject constructor(
         viewModelScope.launch {
             _isRefreshing.value = true
             try {
-                // Clear error state when refreshing
-                _loadError.value = null
                 Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
-                repository.performIncrementalSync()
+                val result = repository.performIncrementalSync()
                 Log.d(TAG, "refreshChats: Incremental sync completed successfully")
+                
+                // Check if we're showing cached data (result will indicate this)
+                _isShowingCachedData.value = result.isCachedData
             } catch (e: Exception) {
                 Log.e(TAG, "refreshChats: Error during incremental sync", e)
-                _loadError.value = "Couldn't load chats"
+                // Even on error, we show cached data
+                _isShowingCachedData.value = true
             } finally {
                 _isRefreshing.value = false
             }
         }
-    }
-    
-    // Retry loading chats
-    fun retryLoading() {
-        refreshChats()
     }
 }

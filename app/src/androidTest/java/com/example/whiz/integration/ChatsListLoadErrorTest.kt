@@ -26,8 +26,8 @@ import javax.inject.Inject
 import org.junit.After
 
 /**
- * Integration tests for chats list loading error scenarios.
- * Tests error handling when the chats list fails to load due to network issues.
+ * Integration tests for chats list offline scenarios.
+ * Tests that a snackbar is shown when the app is offline and showing cached data.
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
@@ -98,12 +98,12 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     }
     
     /**
-     * Test that connection errors during chats list load show the error UI
+     * Test that being offline shows a snackbar with connection status
      */
     @Test
-    fun testConnectionError_ShowsErrorUI() {
+    fun testOfflineMode_ShowsSnackbar() {
         runBlocking {
-            Log.d(TAG, "Starting testConnectionError_ShowsErrorUI")
+            Log.d(TAG, "Starting testOfflineMode_ShowsSnackbar")
             
             // App is already launched by createAndroidComposeRule
             // Handle potential voice launch by checking if we're on chat screen
@@ -142,65 +142,44 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 )
             }
             
-            // Wait for error UI to appear
-            val errorAppeared = ComposeTestHelper.waitForElement(
+            // Wait for snackbar to appear
+            val snackbarAppeared = ComposeTestHelper.waitForElement(
                 composeTestRule,
-                { composeTestRule.onNodeWithText("Couldn't load chats") },
+                { composeTestRule.onNodeWithText("No connection. Showing offline data") },
                 TEST_TIMEOUT,
-                "error message for chats list"
+                "offline snackbar"
             )
             
-            if (!errorAppeared) {
-                failWithScreenshot("Connection error should show error UI", "chats_list_no_error_ui")
+            if (!snackbarAppeared) {
+                failWithScreenshot("Offline mode should show snackbar", "offline_no_snackbar")
                 return@runBlocking
             }
             
-            // Verify error details are shown
-            val hasErrorDetails = try {
-                composeTestRule.onNodeWithText("Check your connection and try again").assertExists()
-                true
-            } catch (e: Exception) {
-                false
-            }
-            
-            if (!hasErrorDetails) {
-                failWithScreenshot("Error UI should show connection message", "chats_list_error_no_details")
-            }
-            
-            // Verify retry button exists
-            val retryButtonExists = try {
-                composeTestRule.onNodeWithText("Retry").assertExists()
-                true
-            } catch (e: Exception) {
-                false
-            }
-            
-            if (!retryButtonExists) {
-                failWithScreenshot("Retry button should be visible for connection error", "chats_list_no_retry")
-            }
-            
-            // Verify no chats list is shown
-            try {
+            // Verify chats list is still shown
+            val chatListVisible = try {
                 composeTestRule.onNodeWithText("My Chats").assertExists()
-                // The app bar should still be visible
+                true
             } catch (e: Exception) {
-                failWithScreenshot("App bar should remain visible during error", "chats_list_no_app_bar")
+                false
             }
             
-            Log.d(TAG, "Test completed - connection error shows error UI correctly")
+            if (!chatListVisible) {
+                failWithScreenshot("Chat list should remain visible when offline", "offline_no_chat_list")
+            }
+            
+            Log.d(TAG, "Test completed - offline mode shows snackbar correctly")
         }
     }
     
     /**
-     * Test that the retry button attempts to reload chats
+     * Test that snackbar disappears when connection is restored
      */
     @Test
-    fun testRetryButton_AttemptsReload() {
+    fun testSnackbarDisappears_WhenConnectionRestored() {
         runBlocking {
-            Log.d(TAG, "Starting testRetryButton_AttemptsReload")
+            Log.d(TAG, "Starting testSnackbarDisappears_WhenConnectionRestored")
             
-            // App is already launched by createAndroidComposeRule
-            // Handle potential voice launch by checking if we're on chat screen
+            // First ensure we're on the chat list and have shown the offline snackbar
             if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                 Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
@@ -209,21 +188,17 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 }
             }
             
-            // Wait for initial load
-            delay(1000)
-            
-            // Disconnect WebSocket to simulate connection error
-            Log.d(TAG, "Disconnecting WebSocket to simulate connection error...")
+            // Disconnect to show offline snackbar
+            Log.d(TAG, "Disconnecting WebSocket to trigger offline mode...")
             whizServerRepository.disconnect()
             
-            // Wait for disconnect
             withTimeout(5000) {
                 while (whizServerRepository.isConnected()) {
                     delay(100)
                 }
             }
             
-            // Trigger refresh to get error state
+            // Trigger refresh to show snackbar
             composeTestRule.onRoot().performTouchInput {
                 swipeDown(
                     startY = centerY - (height * 0.2f),
@@ -231,133 +206,57 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 )
             }
             
-            // Wait for error UI
-            val errorAppeared = ComposeTestHelper.waitForElement(
+            // Wait for snackbar
+            val snackbarAppeared = ComposeTestHelper.waitForElement(
                 composeTestRule,
-                { composeTestRule.onNodeWithText("Couldn't load chats") },
+                { composeTestRule.onNodeWithText("No connection. Showing offline data") },
                 TEST_TIMEOUT,
-                "error message"
+                "offline snackbar"
             )
             
-            if (!errorAppeared) {
-                failWithScreenshot("Error UI did not appear", "retry_test_no_error_ui")
+            if (!snackbarAppeared) {
+                failWithScreenshot("Snackbar should appear when offline", "no_initial_snackbar")
                 return@runBlocking
             }
             
-            // Reconnect WebSocket before clicking retry
-            Log.d(TAG, "Reconnecting WebSocket before retry...")
+            // Now reconnect
+            Log.d(TAG, "Reconnecting WebSocket...")
             whizServerRepository.connect()
             
-            // Wait for reconnection
             withTimeout(5000) {
                 while (!whizServerRepository.isConnected()) {
                     delay(100)
                 }
             }
-            Log.d(TAG, "WebSocket reconnected")
             
-            // Reset interceptor to allow successful requests
+            // Reset interceptor
             testInterceptor.resetErrorState()
             TestInterceptor.simulateNetworkErrorForManualDisconnect = false
             
-            // Click retry button
-            Log.d(TAG, "Clicking retry button")
-            composeTestRule.onNodeWithText("Retry").performClick()
-            
-            // Wait for error to clear - first check if empty state appears
-            val successfulRetry = ComposeTestHelper.waitForElement(
-                composeTestRule,
-                { composeTestRule.onNodeWithText("No chats yet") },
-                TEST_TIMEOUT,
-                "empty chats list after retry"
-            )
-            
-            if (!successfulRetry) {
-                // Check if error is still showing
-                val errorStillShowing = try {
-                    composeTestRule.onNodeWithText("Couldn't load chats").assertExists()
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-                
-                if (errorStillShowing) {
-                    failWithScreenshot("Retry did not clear error state", "retry_error_still_showing")
-                } else {
-                    failWithScreenshot("Unexpected state after retry", "retry_unexpected_state")
-                }
+            // Trigger another refresh when online
+            composeTestRule.onRoot().performTouchInput {
+                swipeDown(
+                    startY = centerY - (height * 0.2f),
+                    endY = centerY + (height * 0.2f)
+                )
             }
             
-            // Verify error UI is gone
-            try {
-                composeTestRule.onNodeWithText("Couldn't load chats").assertDoesNotExist()
-                Log.d(TAG, "Confirmed: Error UI removed after successful retry")
+            // Wait a bit for the refresh to complete
+            delay(2000)
+            
+            // Verify snackbar is gone (or shows different message)
+            val snackbarGone = try {
+                composeTestRule.onNodeWithText("No connection. Showing offline data").assertDoesNotExist()
+                true
             } catch (e: Exception) {
-                failWithScreenshot("Error UI still visible after successful retry", "retry_error_ui_remains")
+                false
             }
             
-            Log.d(TAG, "Test completed - retry button works correctly")
-        }
-    }
-    
-    /**
-     * Test that error appears on initial load when there's no connection
-     */
-    @Test
-    fun testInitialLoadError_ShowsErrorUI() {
-        runBlocking {
-            Log.d(TAG, "Starting testInitialLoadError_ShowsErrorUI")
-            
-            // Disconnect WebSocket BEFORE the app loads chats
-            Log.d(TAG, "Disconnecting WebSocket before app loads...")
-            whizServerRepository.disconnect()
-            
-            // Wait for disconnect
-            withTimeout(5000) {
-                while (whizServerRepository.isConnected()) {
-                    delay(100)
-                }
+            if (!snackbarGone) {
+                failWithScreenshot("Snackbar should disappear when connection restored", "snackbar_still_showing")
             }
             
-            // The TestInterceptor will automatically throw IOException for all API calls
-            // when WebSocket is manually disconnected (already configured in setUp)
-            
-            // Now navigate to trigger initial load
-            // App is already launched by createAndroidComposeRule
-            // Handle potential voice launch by checking if we're on chat screen
-            if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
-                Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
-                if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
-                    return@runBlocking
-                }
-            }
-            
-            // Wait for error UI to appear on initial load
-            val errorAppeared = ComposeTestHelper.waitForElement(
-                composeTestRule,
-                { composeTestRule.onNodeWithText("Couldn't load chats") },
-                TEST_TIMEOUT,
-                "error message on initial load"
-            )
-            
-            if (!errorAppeared) {
-                // Check if we see empty state instead (which would be wrong)
-                val showsEmptyState = try {
-                    composeTestRule.onNodeWithText("No chats yet").assertExists()
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-                
-                if (showsEmptyState) {
-                    failWithScreenshot("Shows empty state instead of error on connection failure", "initial_load_wrong_state")
-                } else {
-                    failWithScreenshot("Initial load error should show error UI", "initial_load_no_error_ui")
-                }
-            }
-            
-            Log.d(TAG, "Test completed - initial load error shows error UI correctly")
+            Log.d(TAG, "Test completed - snackbar behavior correct")
         }
     }
 }

@@ -946,9 +946,117 @@ class WhizRepository @Inject constructor(
         ongoingConversationRequests[requestKey] = deferred
         return deferred.await()
     }
+    
+    // Version that returns status about whether cached data was used
+    private suspend fun fetchConversationsWithDeduplicationAndStatus(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean = false
+    ): SyncResult {
+        val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
+        
+        // Check if there's already an ongoing request
+        val ongoing = ongoingConversationRequests[requestKey]
+        if (ongoing != null && ongoing.isActive) {
+            Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
+            val result = ongoing.await()
+            return SyncResult(result, isCachedData = false) // If request succeeded, it's not cached
+        }
+        
+        // Start a new request
+        val deferred = CoroutineScope(Dispatchers.IO).async {
+            fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
+        }
+        
+        ongoingConversationRequests[requestKey] = CoroutineScope(Dispatchers.IO).async { deferred.await().chats }
+        return deferred.await()
+    }
+    
+    private suspend fun fetchConversationsIncrementallyWithStatus(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean
+    ): SyncResult {
+        // Track if we successfully made an API call
+        var apiCallSucceeded = false
+        
+        return try {
+            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("conversations")
+            
+            // For incremental sync, use a slightly older timestamp to catch any edge cases
+            val effectiveSince = if (!forceFullSync && useAggressiveSync && lastSync != null) {
+                try {
+                    val instant = java.time.Instant.parse(lastSync)
+                    val adjustedInstant = instant.minusSeconds(30)
+                    adjustedInstant.toString()
+                } catch (e: Exception) {
+                    Log.e("Repository", "Error adjusting sync timestamp", e)
+                    lastSync
+                }
+            } else {
+                lastSync
+            }
+            
+            Log.d("Repository", "Fetching conversations incrementally since: $effectiveSince (forceFullSync=$forceFullSync, aggressive=$useAggressiveSync)")
+            
+            // Try API call directly
+            val response = apiService.getConversationsIncremental(since = effectiveSince)
+            apiCallSucceeded = true
+            
+            if (forceFullSync || lastSync == null) {
+                // Full sync: replace all local data
+                val newConversations = response.conversations.map { it.toChatEntity() }
+                chatDao.deleteAllChats()
+                newConversations.forEach { chat ->
+                    chatDao.insertChat(chat)
+                }
+                
+                // Update sync timestamp
+                updateLastSyncTimestamp("conversations", response.server_timestamp)
+                
+                Log.d("Repository", "Full sync: returning ${newConversations.size} conversations")
+                return SyncResult(newConversations, isCachedData = false)
+            } else {
+                // Incremental sync
+                val updates = response.conversations.map { it.toChatEntity() }
+                val deletedIds = response.conversations
+                    .filter { it.deleted_at != null }
+                    .map { it.id }
+                
+                // Process updates
+                if (updates.isNotEmpty()) {
+                    updates.forEach { chat ->
+                        chatDao.insertChat(chat)
+                    }
+                    Log.d("Repository", "Incremental sync: upserted ${updates.size} conversations")
+                }
+                
+                // Process deletions
+                if (deletedIds.isNotEmpty()) {
+                    deletedIds.forEach { id ->
+                        chatDao.deleteChat(id)
+                    }
+                    Log.d("Repository", "Incremental sync: deleted ${deletedIds.size} conversations")
+                }
+                
+                // Update sync timestamp
+                updateLastSyncTimestamp("conversations", response.server_timestamp)
+                
+                // Get all chats from local database
+                val allChats = chatDao.getAllChatsFlow().first()
+                Log.d("Repository", "Incremental sync: returning ${allChats.size} total conversations")
+                return SyncResult(allChats, isCachedData = false)
+            }
+            
+        } catch (e: Exception) {
+            Log.e("Repository", "Error in incremental sync for chats", e)
+            // Return existing cached data on any error
+            val cachedChats = _conversations.value
+            Log.d("Repository", "Returning ${cachedChats.size} cached conversations due to error")
+            return SyncResult(cachedChats, isCachedData = true)
+        }
+    }
 
     // Incremental sync for pull-to-refresh - actually waits for completion
-    suspend fun performIncrementalSync(): List<ChatEntity> {
+    suspend fun performIncrementalSync(): SyncResult {
         Log.d(TAG, "performIncrementalSync: starting incremental sync operation")
         return try {
             // For chat list refreshes, be more aggressive about syncing new chats
@@ -957,24 +1065,24 @@ class WhizRepository @Inject constructor(
             val shouldUseAggressiveSync = true // Always use aggressive sync for chat list
             
             // Use deduplication helper for incremental sync
-            val conversations = fetchConversationsWithDeduplication(
+            val result = fetchConversationsWithDeduplicationAndStatus(
                 forceFullSync = false, 
                 useAggressiveSync = shouldUseAggressiveSync
             )
-            _conversations.value = conversations
-            Log.d(TAG, "performIncrementalSync: completed, got ${conversations.size} conversations")
+            _conversations.value = result.chats
+            Log.d(TAG, "performIncrementalSync: completed, got ${result.chats.size} conversations, cached=${result.isCachedData}")
             
             // Trigger messages refresh for any active chat flows
             triggerMessagesRefresh()
             Log.d(TAG, "performIncrementalSync: incremental sync completed successfully")
             
-            conversations
+            result
         } catch (e: Exception) {
             Log.e(TAG, "performIncrementalSync: error during incremental sync", e)
-            // Trigger normal refresh as fallback
-            triggerConversationsRefresh()
-            triggerMessagesRefresh()
-            throw e // Re-throw so the UI can handle the error
+            // Return cached data on error
+            val cachedChats = _conversations.value
+            Log.d(TAG, "performIncrementalSync: returning ${cachedChats.size} cached conversations due to error")
+            SyncResult(cachedChats, isCachedData = true)
         }
     }
 
@@ -1243,3 +1351,9 @@ class WhizRepository @Inject constructor(
     // Expose ChatDao for testing purposes
     fun getChatDao(): com.example.whiz.data.local.ChatDao = chatDao
 }
+
+// Result class to indicate if we're returning cached data
+data class SyncResult(
+    val chats: List<ChatEntity>,
+    val isCachedData: Boolean
+)
