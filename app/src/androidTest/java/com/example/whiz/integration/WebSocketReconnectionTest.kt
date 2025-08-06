@@ -119,7 +119,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             // Ensure clean state between tests by disconnecting WebSocket
             try {
                 whizServerRepository.disconnect()
-                delay(500) // Give time for disconnect
+                // Wait for disconnect to complete
+                withTimeout(2000) {
+                    while (whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Error disconnecting WebSocket during cleanup: ${e.message}")
             }
@@ -172,27 +177,26 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Sent user message: $userMessage")
                 
                 // Track the newly created chat for cleanup
-                delay(1000) // Give time for chat to be created in database
                 var chatId: Long? = null
-                try {
-                    val currentChats = repository.getAllChats()
-                    val newChats = currentChats.filter { chat -> 
-                        !initialChats.map { it.id }.contains(chat.id) 
+                withTimeout(5000) {
+                    while (true) {
+                        val currentChats = repository.getAllChats()
+                        val newChats = currentChats.filter { chat -> 
+                            !initialChats.map { it.id }.contains(chat.id) 
+                        }
+                        if (newChats.isNotEmpty()) {
+                            chatId = newChats.first().id
+                            Log.d(TAG, "✅ Chat created with ID: $chatId")
+                            break
+                        }
+                        delay(200)
                     }
-                    if (newChats.isEmpty()) {
-                        failWithScreenshot("Chat was not created after sending message", "chat_not_created")
-                    }
-                    
-                    chatId = newChats.first().id
-                    Log.d(TAG, "✅ Chat created with ID: $chatId")
-                    
-                    newChats.forEach { chat ->
-                        createdChatIds.add(chat.id)
-                        Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Could not track newly created chat: ${e.message}")
-                    failWithScreenshot("Failed to track newly created chat: ${e.message}", "chat_tracking_failed")
+                }
+                
+                // Track the chat for cleanup
+                if (chatId != null) {
+                    createdChatIds.add(chatId!!)
+                    Log.d(TAG, "📝 Tracked new chat for cleanup: $chatId")
                 }
                 
                 if (chatId == null) {
@@ -406,30 +410,43 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to navigate back to chats list", "navigate_back_failed")
                 }
                 
-                // Wait for navigation to complete
-                delay(500)
+                // Wait for navigation to complete by checking for chats list
+                val backToChatsList = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText("My Chats") },
+                    timeoutMs = 3000L,
+                    description = "chats list after back navigation"
+                )
                 
-                // Give more time for the chat to appear in the list
-                delay(1000)
+                if (!backToChatsList) {
+                    failWithScreenshot("Failed to return to chats list", "chats_list_not_shown")
+                }
+                
+                // Manually reconnect WebSocket since we disconnected it
+                Log.d(TAG, "🔌 Manually reconnecting WebSocket...")
+                whizServerRepository.connect()
+                
+                // Wait for WebSocket to connect
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
+                }
+                Log.d(TAG, "✅ WebSocket reconnected")
+                
+                // Wait for the chat to appear in the list before navigating
                 
                 if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     failWithScreenshot("Failed to navigate to new chat for second message", "new_chat_navigation_failed_2")
                 }
                 
-                // Wait for new ChatViewModel to initialize and connect WebSocket
-                Log.d(TAG, "⏳ Waiting for WebSocket to connect after navigation...")
-                var connectedNav = false
-                repeat(30) { // Try for up to 6 seconds (30 * 200ms)
-                    if (whizServerRepository.isConnected()) {
-                        connectedNav = true
-                        return@repeat
-                    }
-                    delay(200)
-                }
-                
-                // Verify WebSocket is connected after navigation
-                val connectedAfterNav = connectedNav
+                // WebSocket should already be connected from our manual connection
+                val connectedAfterNav = whizServerRepository.isConnected()
                 Log.d(TAG, "📊 WebSocket connected after navigation: $connectedAfterNav")
+                
+                if (!connectedAfterNav) {
+                    failWithScreenshot("WebSocket is not connected after manual connection and navigation", "websocket_not_connected")
+                }
                 
                 // Step 4: Send second message and disconnect immediately
                 val message2 = "ID ${System.currentTimeMillis()}: Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
@@ -452,16 +469,36 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ WebSocket disconnected after second message")
                 
                 // Get the second chat ID from local database since we're disconnected
-                val localChats = repository.getChatDao().getAllChatsFlow().first()
-                val newChats = localChats.filter { chat ->
-                    !initialChats.map { it.id }.contains(chat.id)
+                var chatId2: Long? = null
+                withTimeout(5000) {
+                    while (true) {
+                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val newChats = localChats.filter { chat ->
+                            !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
+                        }
+                        if (newChats.isNotEmpty()) {
+                            // Check each new chat to find the one with the second message
+                            for (chat in newChats) {
+                                try {
+                                    val messages = repository.getMessagesForChat(chat.id).first()
+                                    if (messages.any { it.content.contains("pasta") || it.content.contains("alfredo") }) {
+                                        chatId2 = chat.id
+                                        Log.d(TAG, "Second chat created with ID: $chatId2")
+                                        break
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Could not get messages for chat ${chat.id}: ${e.message}")
+                                }
+                            }
+                            if (chatId2 != null) break
+                        }
+                        delay(200)
+                    }
                 }
-                if (newChats.size < 2) {
-                    failWithScreenshot("Expected at least 2 chats but found ${newChats.size}", "insufficient_chats")
+                
+                if (chatId2 == null) {
+                    failWithScreenshot("Second chat was not created", "second_chat_not_created")
                 }
-                // Sort by ID descending to get the most recent chat first
-                val chatId2 = newChats.sortedByDescending { it.id }.first().id
-                Log.d(TAG, "Second chat created with ID: $chatId2")
                 
                 // Track the second chat for cleanup if it's different from the first
                 if (chatId2 != chatId1 && !createdChatIds.contains(chatId2)) {
@@ -502,20 +539,54 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Chats list did not appear before clicking first chat", "chats_list_not_ready_first")
                 }
                 
-                // Give more time for the chats to appear in the list
-                delay(1000)
+                // Manually reconnect WebSocket since we disconnected it after second message
+                Log.d(TAG, "🔌 Manually reconnecting WebSocket before opening first chat...")
+                whizServerRepository.connect()
                 
-                // Click on the first chat using message text - use onAllNodes to handle duplicates
+                // Wait for WebSocket to connect
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
+                }
+                Log.d(TAG, "✅ WebSocket reconnected")
+                
+                // Wait for the first chat to appear in the list
+                val firstChatInList = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            message1.take(20),
+                            substring = true
+                        )
+                    },
+                    timeoutMs = 5000L,
+                    description = "first chat in chats list"
+                )
+                
+                if (!firstChatInList) {
+                    failWithScreenshot("First chat did not appear in chats list", "first_chat_not_in_list")
+                }
+                
+                // Click on the first chat using message text
                 val nodes = composeTestRule.onAllNodesWithText(
                     message1.take(20),
                     substring = true
                 )
                 
-                // Click the first matching node (should be the top chat in the list)
+                // Check if there are multiple nodes with the same text
+                val nodeCount = nodes.fetchSemanticsNodes().size
+                if (nodeCount > 1) {
+                    failWithScreenshot(
+                        "Found $nodeCount chats with the same text '${message1.take(20)}...' - expected only 1. This indicates duplicate chats.",
+                        "duplicate_first_chat_in_list"
+                    )
+                }
+                
+                // Click the chat
                 nodes[0].performClick()
                 
                 // Wait for navigation to complete and chat to load
-                delay(1000)
                 
                 // Verify we're in the first chat by checking for the first message
                 val firstChatLoaded = ComposeTestHelper.waitForElement(
@@ -535,19 +606,13 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to load first chat after clicking", "first_chat_not_loaded")
                 }
                 
-                // Wait for ChatViewModel to initialize and WebSocket to connect
-                Log.d(TAG, "⏳ Waiting for WebSocket to connect after opening first chat...")
-                var connected = false
-                repeat(30) { // Try for up to 6 seconds (30 * 200ms)
-                    if (whizServerRepository.isConnected()) {
-                        connected = true
-                        return@repeat
-                    }
-                    delay(200)
-                }
-                
-                val connectedAfterFirstChatOpen = connected
+                // WebSocket should already be connected from our manual connection
+                val connectedAfterFirstChatOpen = whizServerRepository.isConnected()
                 Log.d(TAG, "📊 WebSocket connected after opening first chat: $connectedAfterFirstChatOpen")
+                
+                if (!connectedAfterFirstChatOpen) {
+                    failWithScreenshot("WebSocket is not connected after manual connection and opening first chat", "websocket_not_connected_first_chat")
+                }
                 
                 // Wait for bot response to sync in first chat
                 Log.d(TAG, "⏳ Waiting for first chat bot response to sync...")
@@ -561,7 +626,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 15000L,
+                    timeoutMs = 5000L,
                     description = "coffee response after reconnection"
                 )
                 
@@ -632,13 +697,22 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Second chat not found in chats list", "second_chat_not_in_list")
                 }
                 
-                // Click on the second chat using message text - use onAllNodes to handle duplicates
+                // Click on the second chat using message text
                 val secondNodes = composeTestRule.onAllNodesWithText(
                     message2.take(20),
                     substring = true
                 )
                 
-                // Click the first matching node (should be the top chat in the list)
+                // Check if there are multiple nodes with the same text
+                val secondNodeCount = secondNodes.fetchSemanticsNodes().size
+                if (secondNodeCount > 1) {
+                    failWithScreenshot(
+                        "Found $secondNodeCount chats with the same text '${message2.take(20)}...' - expected only 1. This indicates duplicate chats.",
+                        "duplicate_second_chat_in_list"
+                    )
+                }
+                
+                // Click the chat
                 secondNodes[0].performClick()
                 
                 // Wait for bot response to sync in second chat
@@ -653,7 +727,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 15000L,
+                    timeoutMs = 5000L,
                     description = "fettuccine response after reconnection"
                 )
                 
