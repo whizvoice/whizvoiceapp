@@ -1329,7 +1329,7 @@ class WhizRepository @Inject constructor(
                 val localChats = chatDao.getAllChatsFlow().first()
                 val optimisticChats = localChats.filter { it.id < -1 }
                 
-                // First, check all server chats for any that reference our optimistic chats
+                // Check all server chats for any that reference our optimistic chats
                 serverChats.forEach { serverChat ->
                     // Check if this server chat has an optimistic_chat_id field
                     val optimisticId = serverChat.optimisticChatId
@@ -1337,13 +1337,13 @@ class WhizRepository @Inject constructor(
                         // This server chat is linked to an optimistic chat that hasn't been migrated yet
                         Log.d(TAG, "getAllChatsFlow: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId - triggering migration")
                         
+                        // Register the migration
+                        registerChatMigration(optimisticId, serverChat.id)
+                        
                         // Trigger migration asynchronously
                         repositoryScope.launch {
                             try {
-                                // First register the migration
-                                registerChatMigration(optimisticId, serverChat.id)
-                                
-                                // Then migrate the messages if the optimistic chat exists
+                                // Migrate the messages if the optimistic chat exists
                                 val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
                                 if (optimisticChatExists) {
                                     migrateChatMessages(optimisticId, serverChat.id)
@@ -1376,7 +1376,10 @@ class WhizRepository @Inject constructor(
                             Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} has server counterpart, excluding from list")
                             false
                         } else {
-                            // This chat hasn't been migrated yet and has no server counterpart, include it
+                            // This chat hasn't been migrated yet and has no server counterpart in current list
+                            // For now, include it. The server check will happen when the chat is opened
+                            // via fetchMessagesWithDeduplication which already has the logic to find
+                            // server-backed versions of optimistic chats
                             Log.d(TAG, "getAllChatsFlow: Including unmigrated optimistic chat ${optimisticChat.id}")
                             true
                         }
