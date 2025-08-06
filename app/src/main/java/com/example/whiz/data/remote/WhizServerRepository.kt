@@ -545,7 +545,9 @@ class WhizServerRepository @Inject constructor(
             reconnectJob?.cancel() // Cancel any pending reconnect attempts
             retryJob?.cancel() // Cancel any pending retry attempts
             currentReconnectAttempts = 0 // Reset attempts
-            messageRetryQueue.clear() // Clear retry queue
+            // Don't clear retry queue on manual disconnect - messages should be retried when reconnecting
+            // This allows queued messages to be sent when the connection is re-established
+            Log.d(TAG, "Preserving ${messageRetryQueue.size} messages in retry queue for reconnection")
             webSocket?.close(1000, "Client initiated disconnect")
             webSocket = null
         } catch (e: Exception) {
@@ -567,7 +569,8 @@ class WhizServerRepository @Inject constructor(
                 scope.launch {
                     emitEvent(WebSocketEvent.Error(Exception("Connection lost. Please check your internet connection and try again.")))
                 }
-                messageRetryQueue.clear()
+                // Don't clear retry queue on connection errors - messages should be retried when reconnecting
+                Log.d(TAG, "Connection lost. Preserving ${messageRetryQueue.size} messages in retry queue for reconnection")
             }
             return
         }
