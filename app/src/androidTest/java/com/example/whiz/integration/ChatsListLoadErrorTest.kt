@@ -98,15 +98,17 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     }
     
     /**
-     * Test that being offline shows a snackbar with connection status
+     * Test that offline mode shows a snackbar and it disappears when connection is restored
      */
     @Test
-    fun testOfflineMode_ShowsSnackbar() {
+    fun testOfflineSnackbar_AppearsAndDisappearsCorrectly() {
         runBlocking {
-            Log.d(TAG, "Starting testOfflineMode_ShowsSnackbar")
+            Log.d(TAG, "Starting testOfflineSnackbar_AppearsAndDisappearsCorrectly")
             
-            // App is already launched by createAndroidComposeRule
-            // Handle potential voice launch by checking if we're on chat screen
+            // PART 1: Test that being offline shows the snackbar
+            Log.d(TAG, "=== PART 1: Testing snackbar appears when offline ===")
+            
+            // First ensure we're on the chat list
             if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                 Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
                 if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
@@ -115,7 +117,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 }
             }
             
-            // Wait for initial chat list to load (or fail)
+            // Wait for initial chat list to load
             val chatListReady = ComposeTestHelper.waitForElement(
                 composeTestRule,
                 { composeTestRule.onNodeWithText("My Chats") },
@@ -125,76 +127,6 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             
             if (!chatListReady) {
                 Log.w(TAG, "Chat list may not be fully loaded, continuing with test")
-            }
-            
-            // Disconnect WebSocket to simulate connection error
-            Log.d(TAG, "Disconnecting WebSocket to simulate connection error...")
-            whizServerRepository.disconnect()
-            
-            // Wait for WebSocket to disconnect
-            Log.d(TAG, "Waiting for WebSocket to disconnect...")
-            withTimeout(5000) {
-                while (whizServerRepository.isConnected()) {
-                    delay(100)
-                }
-            }
-            Log.d(TAG, "WebSocket disconnected - TestInterceptor will now throw IOException for API calls")
-            
-            // Force a refresh which should fail with network error
-            Log.d(TAG, "Triggering pull-to-refresh to force network error")
-            
-            // Perform swipe down gesture to trigger refresh
-            composeTestRule.onRoot().performTouchInput {
-                swipeDown(
-                    startY = centerY - (height * 0.2f),
-                    endY = centerY + (height * 0.2f)
-                )
-            }
-            
-            // Wait for snackbar to appear
-            val snackbarAppeared = ComposeTestHelper.waitForElement(
-                composeTestRule,
-                { composeTestRule.onNodeWithText("No connection. Showing offline data") },
-                TEST_TIMEOUT,
-                "offline snackbar"
-            )
-            
-            if (!snackbarAppeared) {
-                failWithScreenshot("Offline mode should show snackbar", "offline_no_snackbar")
-                return@runBlocking
-            }
-            
-            // Verify chats list is still shown
-            val chatListVisible = try {
-                composeTestRule.onNodeWithText("My Chats").assertExists()
-                true
-            } catch (e: Exception) {
-                false
-            }
-            
-            if (!chatListVisible) {
-                failWithScreenshot("Chat list should remain visible when offline", "offline_no_chat_list")
-            }
-            
-            Log.d(TAG, "Test completed - offline mode shows snackbar correctly")
-        }
-    }
-    
-    /**
-     * Test that snackbar disappears when connection is restored
-     */
-    @Test
-    fun testSnackbarDisappears_WhenConnectionRestored() {
-        runBlocking {
-            Log.d(TAG, "Starting testSnackbarDisappears_WhenConnectionRestored")
-            
-            // First ensure we're on the chat list and have shown the offline snackbar
-            if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
-                Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
-                if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
-                    return@runBlocking
-                }
             }
             
             // Disconnect to show offline snackbar
@@ -224,9 +156,27 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             )
             
             if (!snackbarAppeared) {
-                failWithScreenshot("Snackbar should appear when offline", "no_initial_snackbar")
+                failWithScreenshot("Offline mode should show snackbar", "offline_no_snackbar")
                 return@runBlocking
             }
+            
+            // Verify chats list is still shown
+            val chatListVisible = try {
+                composeTestRule.onNodeWithText("My Chats").assertExists()
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!chatListVisible) {
+                failWithScreenshot("Chat list should remain visible when offline", "offline_no_chat_list")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "✅ Part 1 complete - offline mode shows snackbar correctly")
+            
+            // PART 2: Test that snackbar disappears when connection is restored
+            Log.d(TAG, "=== PART 2: Testing snackbar disappears when reconnected ===")
             
             // Now reconnect
             Log.d(TAG, "Reconnecting WebSocket...")
@@ -275,7 +225,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 failWithScreenshot("Snackbar should disappear when connection restored", "snackbar_still_showing")
             }
             
-            Log.d(TAG, "Test completed - snackbar behavior correct")
+            Log.d(TAG, "✅ Test completed - snackbar appears when offline and disappears when online")
         }
     }
 }
