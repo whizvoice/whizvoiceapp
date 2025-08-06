@@ -116,7 +116,16 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             }
             
             // Wait for initial chat list to load (or fail)
-            delay(1000)
+            val chatListReady = ComposeTestHelper.waitForElement(
+                composeTestRule,
+                { composeTestRule.onNodeWithText("My Chats") },
+                TEST_TIMEOUT,
+                "chat list to load"
+            )
+            
+            if (!chatListReady) {
+                Log.w(TAG, "Chat list may not be fully loaded, continuing with test")
+            }
             
             // Disconnect WebSocket to simulate connection error
             Log.d(TAG, "Disconnecting WebSocket to simulate connection error...")
@@ -241,8 +250,18 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 )
             }
             
-            // Wait a bit for the refresh to complete
-            delay(2000)
+            // Wait for the refresh to complete by checking for loading indicator disappearance
+            // or by waiting for the chat list to be refreshed
+            val refreshComplete = ComposeTestHelper.waitForElement(
+                composeTestRule,
+                { composeTestRule.onNodeWithText("My Chats") },
+                2000L,
+                "refresh to complete"
+            )
+            
+            if (!refreshComplete) {
+                Log.w(TAG, "Refresh may not be complete, continuing with test")
+            }
             
             // Verify snackbar is gone (or shows different message)
             val snackbarGone = try {
