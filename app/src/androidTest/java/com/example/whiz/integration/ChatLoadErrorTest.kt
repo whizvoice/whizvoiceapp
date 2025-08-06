@@ -102,9 +102,9 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
                 createdChatIds.clear()
             }
             
-            // Ensure WebSocket is reconnected for next test
+            // Ensure WebSocket is reconnected for next test and reset persistent disconnect flag
             if (!whizServerRepository.isConnected()) {
-                whizServerRepository.connect()
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 // Wait for connection
                 withTimeout(5000) {
                     while (!whizServerRepository.isConnected()) {
@@ -320,7 +320,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
             
             // Disconnect WebSocket to simulate connection error
             Log.d(TAG, "Disconnecting WebSocket to simulate connection error...")
-            whizServerRepository.disconnect()
+            whizServerRepository.disconnect(setPersistentDisconnect = true)
             
             // Wait for WebSocket to disconnect
             Log.d(TAG, "Waiting for WebSocket to disconnect...")

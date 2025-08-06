@@ -77,9 +77,9 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
         runBlocking {
             Log.d(TAG, "Cleaning up test data...")
             
-            // Ensure WebSocket is reconnected for next test
+            // Ensure WebSocket is reconnected for next test and reset persistent disconnect flag
             if (!whizServerRepository.isConnected()) {
-                whizServerRepository.connect()
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 // Wait for connection
                 withTimeout(5000) {
                     while (!whizServerRepository.isConnected()) {
@@ -128,7 +128,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             
             // Disconnect to show offline snackbar
             Log.d(TAG, "Disconnecting WebSocket to trigger offline mode...")
-            whizServerRepository.disconnect()
+            whizServerRepository.disconnect(setPersistentDisconnect = true)
             
             withTimeout(5000) {
                 while (whizServerRepository.isConnected()) {

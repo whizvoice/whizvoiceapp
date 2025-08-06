@@ -68,6 +68,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         super.setUpAuthentication()
         
+        // Configure TestInterceptor to check WebSocket persistent disconnect state
+        TestInterceptor.persistentDisconnectForTestCheck = { whizServerRepository.persistentDisconnectForTest() }
+        TestInterceptor.simulateNetworkErrorForManualDisconnect = true
+        
         // Reset tracking for each test
         createdChatIds.clear()
         createdNewChatThisTest = false
@@ -116,18 +120,33 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 )
             }
             
-            // Ensure clean state between tests by disconnecting WebSocket
+            // Ensure clean state between tests - reconnect with flag reset
             try {
-                whizServerRepository.disconnect()
-                // Wait for disconnect to complete
-                withTimeout(2000) {
-                    while (whizServerRepository.isConnected()) {
+                // First disconnect if connected
+                if (whizServerRepository.isConnected()) {
+                    whizServerRepository.disconnect(setPersistentDisconnect = false)
+                    // Wait for disconnect to complete
+                    withTimeout(2000) {
+                        while (whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
+                    }
+                }
+                // Then reconnect with flag reset to ensure clean state for next test
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                // Wait for connection
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
                         delay(100)
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error disconnecting WebSocket during cleanup: ${e.message}")
+                Log.w(TAG, "Error resetting WebSocket state during cleanup: ${e.message}")
             }
+            
+            // Reset TestInterceptor state
+            TestInterceptor.persistentDisconnectForTestCheck = null
+            TestInterceptor.simulateNetworkErrorForManualDisconnect = true
             
             // Reset tracking flags
             createdNewChatThisTest = false
@@ -205,7 +224,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Step 3: Disconnect WebSocket immediately after sending message
                 Log.d(TAG, "🔌 Disconnecting WebSocket immediately after sending message...")
-                whizServerRepository.disconnect()
+                whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for WebSocket to disconnect
                 Log.d(TAG, "⏳ Waiting for WebSocket to disconnect...")
@@ -272,7 +291,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Step 6: Reconnect WebSocket
                 Log.d(TAG, "🔌 Reconnecting WebSocket...")
-                whizServerRepository.connect()
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 // Wait for WebSocket to reconnect
                 Log.d(TAG, "⏳ Waiting for WebSocket to reconnect...")
@@ -369,7 +388,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Disconnect WebSocket immediately
                 Log.d(TAG, "🔌 Disconnecting WebSocket immediately after first message...")
-                whizServerRepository.disconnect()
+                whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect
                 withTimeout(5000) {
@@ -424,7 +443,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Manually reconnect WebSocket since we disconnected it
                 Log.d(TAG, "🔌 Manually reconnecting WebSocket...")
-                whizServerRepository.connect()
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {
@@ -458,7 +477,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Disconnect WebSocket immediately
                 Log.d(TAG, "🔌 Disconnecting WebSocket immediately after second message...")
-                whizServerRepository.disconnect()
+                whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect
                 withTimeout(5000) {
@@ -541,7 +560,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Manually reconnect WebSocket since we disconnected it after second message
                 Log.d(TAG, "🔌 Manually reconnecting WebSocket before opening first chat...")
-                whizServerRepository.connect()
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {

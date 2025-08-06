@@ -134,15 +134,17 @@ class WhizServerRepository @Inject constructor(
         return messageRetryQueue.map { it.requestId }.toSet()
     }
 
-    suspend fun connect(conversationId: Long? = null) {
+    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         currentConversationId = conversationId
         
         // 🔧 FIXED: Improved WebSocket connection state checking
         // Don't use the crude send("") check which can cause message loss
         if (webSocket != null && _connectionStateEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
             Log.w(TAG, "WebSocket already connected based on connection state.")
-            // If successfully connected, reset persistent disconnect flag
-            persistentDisconnectForTest = false
+            // Only reset persistent disconnect flag if explicitly requested
+            if (turnOffPersistentDisconnect) {
+                persistentDisconnectForTest = false
+            }
             currentReconnectAttempts = 0 // Reset attempts on explicit connect call if it implies success
             reconnectJob?.cancel() // Cancel any pending reconnect job
             // Process any queued messages when reconnected
@@ -151,7 +153,10 @@ class WhizServerRepository @Inject constructor(
         }
         // If webSocket is not null but connection state is not Connected, proceed with new connection
         Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but not confirmed connected"}")
-        persistentDisconnectForTest = false // Reset this flag on any attempt to connect
+        // Only reset persistent disconnect flag if explicitly requested
+        if (turnOffPersistentDisconnect) {
+            persistentDisconnectForTest = false
+        }
         reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
 
         try {
@@ -183,7 +188,7 @@ class WhizServerRepository @Inject constructor(
                         Log.i(TAG, "WebSocket connection opened.")
                         currentReconnectAttempts = 0 // Reset on successful open
                         reconnectJob?.cancel() // Cancel any pending reconnect job
-                        persistentDisconnectForTest = false // Reset flag
+                        // Don't automatically reset persistentDisconnectForTest on connection open
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
@@ -351,7 +356,7 @@ class WhizServerRepository @Inject constructor(
                             scope.launch { emitEvent(WebSocketEvent.AuthError(userMessage)) }
                             currentReconnectAttempts = 0 // Don't retry on explicit auth failure
                             reconnectJob?.cancel()
-                            persistentDisconnectForTest = true // Treat as a state requiring manual intervention (login)
+                            // Don't automatically set persistentDisconnectForTest on auth failure
                         } else {
                             scope.launch { emitEvent(WebSocketEvent.Error(t)) }
                             if (!persistentDisconnectForTest) {
@@ -538,10 +543,13 @@ class WhizServerRepository @Inject constructor(
         return sendMessage(message, requestId, clientConversationId, clientMessageId)
     }
 
-    fun disconnect() {
+    fun disconnect(setPersistentDisconnect: Boolean = false) {
         try {
-            Log.d(TAG, "Disconnecting WebSocket manually.")
-            persistentDisconnectForTest = true // Set flag to prevent auto-reconnect
+            Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect")
+            // Only set flag to prevent auto-reconnect if explicitly requested
+            if (setPersistentDisconnect) {
+                persistentDisconnectForTest = true
+            }
             reconnectJob?.cancel() // Cancel any pending reconnect attempts
             retryJob?.cancel() // Cancel any pending retry attempts
             currentReconnectAttempts = 0 // Reset attempts
