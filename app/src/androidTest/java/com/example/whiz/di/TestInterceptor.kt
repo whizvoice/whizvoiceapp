@@ -34,9 +34,9 @@ class TestInterceptor @Inject constructor() : Interceptor {
         @Volatile
         var simulateNetworkErrorForManualDisconnect = true
         
-        // Callback to check if WebSocket is manually disconnected
+        // Callback to check if WebSocket has persistent disconnect for testing
         @Volatile
-        var isManuallyDisconnectedCheck: (() -> Boolean)? = null
+        var persistentDisconnectForTestCheck: (() -> Boolean)? = null
     }
     
     // Track if we should return an error for the success-after-error chat
@@ -70,10 +70,10 @@ class TestInterceptor @Inject constructor() : Interceptor {
                 // Let the chat-specific logic below handle these cases
                 Log.d(TAG, "Bypassing WebSocket disconnect check for test chat ID: $chatId")
             } else {
-                // Check if WebSocket is manually disconnected - simulate network failure for all API calls
-                if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
-                    Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
-                    throw IOException("Network unavailable - WebSocket manually disconnected for testing")
+                // Check if WebSocket has persistent disconnect - simulate network failure for all API calls
+                if (simulateNetworkErrorForManualDisconnect && persistentDisconnectForTestCheck?.invoke() == true) {
+                    Log.d(TAG, "WebSocket has persistent disconnect - simulating IOException for: $url")
+                    throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
                 }
             }
             
@@ -197,7 +197,7 @@ class TestInterceptor @Inject constructor() : Interceptor {
         }
         
         // For non-chat requests, check WebSocket disconnect status
-        if (simulateNetworkErrorForManualDisconnect && isManuallyDisconnectedCheck?.invoke() == true) {
+        if (simulateNetworkErrorForManualDisconnect && persistentDisconnectForTestCheck?.invoke() == true) {
             // But still bypass for specific test chat IDs that might be in the URL
             val chatIdInUrl = if (url.contains("/conversations/")) {
                 url.substringAfter("/conversations/").substringBefore("/").substringBefore("?").toLongOrNull()
@@ -206,8 +206,8 @@ class TestInterceptor @Inject constructor() : Interceptor {
             }
             
             if (chatIdInUrl !in listOf(CHAT_ID_500, CHAT_ID_SUCCESS_AFTER_ERROR)) {
-                Log.d(TAG, "WebSocket is manually disconnected - simulating IOException for: $url")
-                throw IOException("Network unavailable - WebSocket manually disconnected for testing")
+                Log.d(TAG, "WebSocket has persistent disconnect - simulating IOException for: $url")
+                throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
             }
         }
         

@@ -75,8 +75,8 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         // Reset test interceptor state
         testInterceptor.resetErrorState()
         
-        // Configure TestInterceptor to check WebSocket manual disconnect state
-        TestInterceptor.isManuallyDisconnectedCheck = { whizServerRepository.isManuallyDisconnected() }
+        // Configure TestInterceptor to check WebSocket persistent disconnect state
+        TestInterceptor.persistentDisconnectForTestCheck = { whizServerRepository.persistentDisconnectForTest() }
         TestInterceptor.simulateNetworkErrorForManualDisconnect = true
         
         Log.d(TAG, "Test setup complete")
@@ -114,7 +114,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
             }
             
             // Reset TestInterceptor state
-            TestInterceptor.isManuallyDisconnectedCheck = null
+            TestInterceptor.persistentDisconnectForTestCheck = null
             TestInterceptor.simulateNetworkErrorForManualDisconnect = true
             
             Log.d(TAG, "Cleanup complete")

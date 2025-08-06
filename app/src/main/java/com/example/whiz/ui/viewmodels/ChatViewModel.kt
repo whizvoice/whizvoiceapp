@@ -1097,8 +1097,8 @@ class ChatViewModel @Inject constructor(
 
                 // Connect to server if needed *after* chat ID is set
                 // BUT respect manual disconnect flag (for testing connection errors)
-                Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, isManuallyDisconnected=${whizServerRepository.isManuallyDisconnected()}")
-                if (configUseRemoteAgent && _chatId.value != 0L && !whizServerRepository.isManuallyDisconnected()) {
+                Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
+                if (configUseRemoteAgent && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
                         Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat...")
                         delay(100) // Small delay to ensure state propagation
@@ -1110,7 +1110,7 @@ class ChatViewModel @Inject constructor(
                         Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
                         _connectionError.value = "Failed to connect to server: ${e.message}"
                     }
-                } else if (whizServerRepository.isManuallyDisconnected()) {
+                } else if (whizServerRepository.persistentDisconnectForTest()) {
                     Log.d(TAG, "🔌 Skipping WebSocket reconnect - manually disconnected")
                 }
                 
@@ -1379,7 +1379,7 @@ class ChatViewModel @Inject constructor(
                 }
 
                 // Connect to WebSocket if using remote agent and not connected
-                if(configUseRemoteAgent && !whizServerRepository.isConnected() && !whizServerRepository.isManuallyDisconnected()) {
+                if(configUseRemoteAgent && !whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
                     // For new chats, we don't have a conversation_id yet, so pass null
                     whizServerRepository.connect(null)
                 }

@@ -79,9 +79,9 @@ class WhizServerRepository @Inject constructor(
         return lastEvent is WebSocketEvent.Connected && webSocket != null
     }
     
-    // Expose manual disconnect state for testing
-    fun isManuallyDisconnected(): Boolean {
-        return isManuallyDisconnected
+    // Expose persistent disconnect state for testing
+    fun persistentDisconnectForTest(): Boolean {
+        return persistentDisconnectForTest
     }
     
     // Helper function to route events to appropriate flows
@@ -111,7 +111,7 @@ class WhizServerRepository @Inject constructor(
     private val initialReconnectDelayMs = 1000L
     private val reconnectDelayBackoffFactor = 2.0
     private var reconnectJob: Job? = null
-    private var isManuallyDisconnected = false // Flag to prevent reconnect on manual disconnect
+    private var persistentDisconnectForTest = false // Flag to prevent reconnect during testing
 
     // Message retry queue and parameters
     private val messageRetryQueue = mutableListOf<PendingMessage>()
@@ -141,8 +141,8 @@ class WhizServerRepository @Inject constructor(
         // Don't use the crude send("") check which can cause message loss
         if (webSocket != null && _connectionStateEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
             Log.w(TAG, "WebSocket already connected based on connection state.")
-            // If successfully connected, reset manual disconnect flag
-            isManuallyDisconnected = false
+            // If successfully connected, reset persistent disconnect flag
+            persistentDisconnectForTest = false
             currentReconnectAttempts = 0 // Reset attempts on explicit connect call if it implies success
             reconnectJob?.cancel() // Cancel any pending reconnect job
             // Process any queued messages when reconnected
@@ -151,7 +151,7 @@ class WhizServerRepository @Inject constructor(
         }
         // If webSocket is not null but connection state is not Connected, proceed with new connection
         Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but not confirmed connected"}")
-        isManuallyDisconnected = false // Reset this flag on any attempt to connect
+        persistentDisconnectForTest = false // Reset this flag on any attempt to connect
         reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
 
         try {
@@ -183,7 +183,7 @@ class WhizServerRepository @Inject constructor(
                         Log.i(TAG, "WebSocket connection opened.")
                         currentReconnectAttempts = 0 // Reset on successful open
                         reconnectJob?.cancel() // Cancel any pending reconnect job
-                        isManuallyDisconnected = false // Reset flag
+                        persistentDisconnectForTest = false // Reset flag
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
@@ -327,10 +327,10 @@ class WhizServerRepository @Inject constructor(
                         
                         // Attempt to reconnect if not manually disconnected and not a specific "do not retry" code
                         // Example: code 1000 is normal closure, 1008 is policy violation (likely auth)
-                        if (!isManuallyDisconnected && code != 1008 && code != 1011) { 
+                        if (!persistentDisconnectForTest && code != 1008 && code != 1011) { 
                             scheduleReconnect()
                         } else {
-                             Log.i(TAG, "Not attempting reconnect. isManuallyDisconnected=$isManuallyDisconnected, code=$code")
+                             Log.i(TAG, "Not attempting reconnect. persistentDisconnectForTest=$persistentDisconnectForTest, code=$code")
                              currentReconnectAttempts = 0 // Reset if not retrying
                              reconnectJob?.cancel()
                         }
@@ -351,10 +351,10 @@ class WhizServerRepository @Inject constructor(
                             scope.launch { emitEvent(WebSocketEvent.AuthError(userMessage)) }
                             currentReconnectAttempts = 0 // Don't retry on explicit auth failure
                             reconnectJob?.cancel()
-                            isManuallyDisconnected = true // Treat as a state requiring manual intervention (login)
+                            persistentDisconnectForTest = true // Treat as a state requiring manual intervention (login)
                         } else {
                             scope.launch { emitEvent(WebSocketEvent.Error(t)) }
-                            if (!isManuallyDisconnected) {
+                            if (!persistentDisconnectForTest) {
                                 scheduleReconnect()
                             } else {
                                 Log.i(TAG, "Not attempting reconnect due to manual disconnect flag on failure.")
@@ -376,7 +376,7 @@ class WhizServerRepository @Inject constructor(
     fun sendMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
         return try {
             val currentSocket = webSocket
-            if (currentSocket != null && !isManuallyDisconnected) {
+            if (currentSocket != null && !persistentDisconnectForTest) {
                 // 🔧 ENHANCED: Check connection state before sending
                 val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
                 if (lastEvent !is WebSocketEvent.Connected) {
@@ -409,7 +409,7 @@ class WhizServerRepository @Inject constructor(
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
                 queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                 // Attempt to reconnect
-                if (!isManuallyDisconnected) {
+                if (!persistentDisconnectForTest) {
                     val conversationId = currentConversationId
                     scope.launch {
                         delay(100L) // Small delay before reconnect
@@ -451,7 +451,7 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages")
         val currentSocket = webSocket
         
-        if (currentSocket == null || isManuallyDisconnected) {
+        if (currentSocket == null || persistentDisconnectForTest) {
             Log.d(TAG, "Cannot process retry queue - not connected")
             return
         }
@@ -541,7 +541,7 @@ class WhizServerRepository @Inject constructor(
     fun disconnect() {
         try {
             Log.d(TAG, "Disconnecting WebSocket manually.")
-            isManuallyDisconnected = true // Set flag to prevent auto-reconnect
+            persistentDisconnectForTest = true // Set flag to prevent auto-reconnect
             reconnectJob?.cancel() // Cancel any pending reconnect attempts
             retryJob?.cancel() // Cancel any pending retry attempts
             currentReconnectAttempts = 0 // Reset attempts
@@ -556,7 +556,7 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun scheduleReconnect() {
-        if (isManuallyDisconnected) {
+        if (persistentDisconnectForTest) {
             Log.i(TAG, "Reconnect scheduling aborted: manually disconnected.")
             return
         }
