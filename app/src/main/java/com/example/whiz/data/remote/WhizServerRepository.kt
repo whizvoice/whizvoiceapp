@@ -211,8 +211,9 @@ class WhizServerRepository @Inject constructor(
                 Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
                 
                 // Only reset persistent disconnect flag if explicitly requested
+                // This is often the real reason for calling connect() when already connected
                 if (turnOffPersistentDisconnect) {
-                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false")
+                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false (staying connected to $conversationId)")
                     persistentDisconnectForTest = false
                 }
                 
@@ -225,14 +226,14 @@ class WhizServerRepository @Inject constructor(
             
             // IMPORTANT: If we're connected to a specific conversation and someone requests null,
             // stay connected to the specific conversation (it's more specific/better)
+            // This often happens when the test just wants to reset the persistent disconnect flag
             if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED)
                 && conversationId == null && currentConversationId != null) {
-                Log.w(TAG, "⚠️ SUSPICIOUS: connect(null) called while already ${connectionState.name.lowercase()} to conversation $currentConversationId")
-                Log.w(TAG, "⚠️ Stack trace to find caller:", Exception("Stack trace for null conversation connect"))
+                Log.d(TAG, "connect(null) called while ${connectionState.name.lowercase()} to conversation $currentConversationId - likely just resetting persistent disconnect flag")
                 
                 // Only reset persistent disconnect flag if explicitly requested
                 if (turnOffPersistentDisconnect) {
-                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false")
+                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false while staying connected to $currentConversationId")
                     persistentDisconnectForTest = false
                 }
                 
@@ -756,11 +757,8 @@ class WhizServerRepository @Inject constructor(
             // Clear references
             webSocket = null
             connectionState = ConnectionState.IDLE
-            // Only clear conversation ID if explicitly disconnecting with persistent flag
-            // This allows reconnects to remember the conversation
-            if (setPersistentDisconnect) {
-                currentConversationId = null
-            }
+            // Never clear currentConversationId - we want to remember what conversation we were in
+            // even if we're doing a persistent disconnect (which just means "don't auto-reconnect")
         } catch (e: Exception) {
             Log.e(TAG, "Error disconnecting WebSocket", e)
         }

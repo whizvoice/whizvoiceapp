@@ -625,7 +625,15 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to load first chat after clicking", "first_chat_not_loaded")
                 }
                 
-                // WebSocket should already be connected from our manual connection
+                // Wait for WebSocket to reconnect with the specific chat ID
+                // (ChatViewModel disconnects and reconnects when loading a specific chat)
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
+                }
+                
+                // WebSocket should now be connected with the specific chat ID
                 val connectedAfterFirstChatOpen = whizServerRepository.isConnected()
                 Log.d(TAG, "📊 WebSocket connected after opening first chat: $connectedAfterFirstChatOpen")
                 
