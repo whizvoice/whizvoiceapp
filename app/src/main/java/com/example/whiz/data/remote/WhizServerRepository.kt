@@ -164,6 +164,7 @@ class WhizServerRepository @Inject constructor(
     private val initialReconnectDelayMs = 1000L
     private val reconnectDelayBackoffFactor = 2.0
     private var reconnectJob: Job? = null
+    private var connectionTimeoutJob: Job? = null // Timeout for WebSocket connection attempts
     private var persistentDisconnectForTest = false // Flag to prevent reconnect during testing
 
     // Message retry queue and parameters
@@ -188,6 +189,7 @@ class WhizServerRepository @Inject constructor(
     }
 
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
+        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         currentConversationId = conversationId
         
         // 🔧 FIXED: Improved WebSocket connection state checking
@@ -196,6 +198,7 @@ class WhizServerRepository @Inject constructor(
             Log.w(TAG, "WebSocket already connected based on connection state.")
             // Only reset persistent disconnect flag if explicitly requested
             if (turnOffPersistentDisconnect) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false (already connected)")
                 persistentDisconnectForTest = false
             }
             currentReconnectAttempts = 0 // Reset attempts on explicit connect call if it implies success
@@ -208,6 +211,7 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but not confirmed connected"}")
         // Only reset persistent disconnect flag if explicitly requested
         if (turnOffPersistentDisconnect) {
+            Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false (before connection attempt)")
             persistentDisconnectForTest = false
         }
         reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
@@ -235,10 +239,33 @@ class WhizServerRepository @Inject constructor(
             requestBuilder.header("Authorization", "Bearer $serverToken")
             
             val request = requestBuilder.build()
+            Log.d(TAG, "Creating new WebSocket with URL: $websocketUrl, persistentDisconnect=$persistentDisconnectForTest")
+            
+            // Set up a timeout for the connection attempt
+            connectionTimeoutJob?.cancel()
+            connectionTimeoutJob = scope.launch {
+                delay(5000) // 5 second timeout for WebSocket connection
+                val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
+                if (webSocket != null && lastEvent !is WebSocketEvent.Connected) {
+                    Log.e(TAG, "WebSocket connection timeout after 5 seconds for URL: $websocketUrl")
+                    Log.e(TAG, "Last event state: $lastEvent, conversationId: $conversationId")
+                    webSocket?.cancel() // Cancel the hanging connection
+                    webSocket = null
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
+                    
+                    // Only attempt reconnect if not manually disconnected
+                    if (!persistentDisconnectForTest) {
+                        Log.d(TAG, "Scheduling reconnect after timeout")
+                        scheduleReconnect()
+                    }
+                }
+            }
+            
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     try {
-                        Log.i(TAG, "WebSocket connection opened.")
+                        Log.i(TAG, "WebSocket connection opened. persistentDisconnect=$persistentDisconnectForTest")
+                        connectionTimeoutJob?.cancel() // Cancel timeout on successful connection
                         currentReconnectAttempts = 0 // Reset on successful open
                         reconnectJob?.cancel() // Cancel any pending reconnect job
                         // Don't automatically reset persistentDisconnectForTest on connection open
@@ -379,7 +406,8 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     try {
-                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason")
+                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason, persistentDisconnect=$persistentDisconnectForTest")
+                        connectionTimeoutJob?.cancel() // Cancel timeout on close
                         this@WhizServerRepository.webSocket = null // Clear reference
                         scope.launch { emitEvent(WebSocketEvent.Closed) }
                         
@@ -399,7 +427,8 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     try {
-                        Log.e(TAG, "WebSocket connection failure", t)
+                        Log.e(TAG, "WebSocket connection failure. persistentDisconnect=$persistentDisconnectForTest, response code=${response?.code}, message=${t.message}", t)
+                        connectionTimeoutJob?.cancel() // Cancel timeout on failure
                         this@WhizServerRepository.webSocket = null // Clear reference on failure
                         
                         val isAuthFailure = response?.code == 401 || t.message?.contains("Authentication failed", ignoreCase = true) == true
@@ -425,6 +454,7 @@ class WhizServerRepository @Inject constructor(
                     }
                 }
             })
+            Log.d(TAG, "WebSocket creation initiated. Waiting for onOpen/onFailure callback...")
         } catch (e: Exception) {
             Log.e(TAG, "Error creating WebSocket connection", e)
             scope.launch { emitEvent(WebSocketEvent.Error(e)) }
