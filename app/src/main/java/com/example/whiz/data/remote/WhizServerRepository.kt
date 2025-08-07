@@ -241,27 +241,8 @@ class WhizServerRepository @Inject constructor(
             val request = requestBuilder.build()
             Log.d(TAG, "Creating new WebSocket with URL: $websocketUrl, persistentDisconnect=$persistentDisconnectForTest")
             
-            // Set up a timeout for the connection attempt
-            connectionTimeoutJob?.cancel()
-            connectionTimeoutJob = scope.launch {
-                delay(5000) // 5 second timeout for WebSocket connection
-                val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
-                if (webSocket != null && lastEvent !is WebSocketEvent.Connected) {
-                    Log.e(TAG, "WebSocket connection timeout after 5 seconds for URL: $websocketUrl")
-                    Log.e(TAG, "Last event state: $lastEvent, conversationId: $conversationId")
-                    webSocket?.cancel() // Cancel the hanging connection
-                    webSocket = null
-                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
-                    
-                    // Only attempt reconnect if not manually disconnected
-                    if (!persistentDisconnectForTest) {
-                        Log.d(TAG, "Scheduling reconnect after timeout")
-                        scheduleReconnect()
-                    }
-                }
-            }
-            
-            webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            // Create the WebSocket first
+            val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     try {
                         Log.i(TAG, "WebSocket connection opened. persistentDisconnect=$persistentDisconnectForTest")
@@ -454,6 +435,30 @@ class WhizServerRepository @Inject constructor(
                     }
                 }
             })
+            
+            // Store the WebSocket reference immediately
+            webSocket = newWebSocket
+            
+            // Set up a timeout for the connection attempt AFTER creating the WebSocket
+            connectionTimeoutJob?.cancel()
+            connectionTimeoutJob = scope.launch {
+                delay(5000) // 5 second timeout for WebSocket connection
+                val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
+                if (webSocket != null && lastEvent !is WebSocketEvent.Connected) {
+                    Log.e(TAG, "WebSocket connection timeout after 5 seconds for URL: $websocketUrl")
+                    Log.e(TAG, "Last event state: $lastEvent, conversationId: $conversationId")
+                    webSocket?.cancel() // Cancel the hanging connection
+                    webSocket = null
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
+                    
+                    // Only attempt reconnect if not manually disconnected
+                    if (!persistentDisconnectForTest) {
+                        Log.d(TAG, "Scheduling reconnect after timeout")
+                        scheduleReconnect()
+                    }
+                }
+            }
+            
             Log.d(TAG, "WebSocket creation initiated. Waiting for onOpen/onFailure callback...")
         } catch (e: Exception) {
             Log.e(TAG, "Error creating WebSocket connection", e)

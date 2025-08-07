@@ -120,6 +120,12 @@ class WhizRepository @Inject constructor(
         return try {
             // Use deduplication helper to prevent multiple concurrent API calls
             val result = fetchConversationsWithDeduplication(forceFullSync)
+            Log.d(TAG, "🔍 getAllChats: Got ${result.size} chats from fetchConversationsWithDeduplication")
+            result.forEach { chat ->
+                if (chat.id > 0 && chat.id < 10000) {
+                    Log.w(TAG, "🚨 WARNING: Chat ${chat.id} has suspiciously low positive ID - might be locally generated!")
+                }
+            }
             _conversations.value = result
             result
         } catch (e: Exception) {
@@ -428,6 +434,10 @@ class WhizRepository @Inject constructor(
             // 🔧 Ensure chat exists locally before adding optimistic message
             val existingChat = chatDao.getChatById(actualChatId)
             if (existingChat == null) {
+                if (actualChatId > 0) {
+                    Log.e(TAG, "🚨 WARNING: Creating placeholder chat with POSITIVE ID $actualChatId - this should only happen for real server IDs!")
+                    Log.e(TAG, "🚨 Stack trace:", Exception("Stack trace for positive ID creation"))
+                }
                 Log.w(TAG, "addAssistantMessageOptimistic: Chat $actualChatId not found locally, creating placeholder chat for optimistic UI")
                 val placeholderChat = ChatEntity(
                     id = actualChatId,
@@ -1058,6 +1068,10 @@ class WhizRepository @Inject constructor(
             if (forceFullSync || lastSync == null) {
                 // Full sync: replace all local data
                 val newConversations = response.conversations.map { it.toChatEntity() }
+                Log.d(TAG, "🔍 getAllChatsIncremental FULL SYNC: Got ${newConversations.size} chats from server")
+                newConversations.forEach { chat ->
+                    Log.d(TAG, "  - Server chat from API: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                }
                 chatDao.deleteAllChats()
                 newConversations.forEach { chat ->
                     chatDao.insertChat(chat)
@@ -1077,7 +1091,9 @@ class WhizRepository @Inject constructor(
                 
                 // Process updates
                 if (updates.isNotEmpty()) {
+                    Log.d(TAG, "🔍 getAllChatsIncremental INCREMENTAL: Processing ${updates.size} updates")
                     updates.forEach { chat ->
+                        Log.d(TAG, "  - Update chat from API: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
                         chatDao.insertChat(chat)
                     }
                     Log.d("Repository", "Incremental sync: upserted ${updates.size} conversations")
@@ -1324,9 +1340,19 @@ class WhizRepository @Inject constructor(
             try {
                 // Get chats from server
                 val serverChats = getAllChats(forceFullSync)
+                Log.d(TAG, "🔍 getAllChatsFlow: Got ${serverChats.size} chats from server")
+                serverChats.forEach { chat ->
+                    Log.d(TAG, "  - Server chat: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                }
                 
                 // Get optimistic chats from local database (IDs < -1)
                 val localChats = chatDao.getAllChatsFlow().first()
+                Log.d(TAG, "🔍 getAllChatsFlow: Got ${localChats.size} chats from local database")
+                localChats.forEach { chat ->
+                    if (chat.id > 0 && chat.id < 10000) {
+                        Log.w(TAG, "🚨 LOCAL DB: Chat with positive ID ${chat.id} found - title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                    }
+                }
                 val optimisticChats = localChats.filter { it.id < -1 }
                 
                 // Check all server chats for any that reference our optimistic chats
@@ -1335,7 +1361,8 @@ class WhizRepository @Inject constructor(
                     val optimisticId = serverChat.optimisticChatId
                     if (optimisticId != null && optimisticId < 0 && chatMigrationMapping[optimisticId] == null) {
                         // This server chat is linked to an optimistic chat that hasn't been migrated yet
-                        Log.d(TAG, "getAllChatsFlow: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId - triggering migration")
+                        Log.e(TAG, "🚨 MIGRATION TRIGGER: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId")
+                        Log.e(TAG, "🚨 Is ${serverChat.id} a real server ID or locally generated? Stack trace:", Exception("Stack trace for migration trigger"))
                         
                         // Register the migration
                         registerChatMigration(optimisticId, serverChat.id)
@@ -1346,6 +1373,7 @@ class WhizRepository @Inject constructor(
                                 // Migrate the messages if the optimistic chat exists
                                 val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
                                 if (optimisticChatExists) {
+                                    Log.e(TAG, "🚨 CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
                                     migrateChatMessages(optimisticId, serverChat.id)
                                     Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
                                 }
