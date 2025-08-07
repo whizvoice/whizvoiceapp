@@ -79,7 +79,6 @@ class WhizServerRepository @Inject constructor(
     }
     
     private var connectionState = ConnectionState.IDLE
-    private var currentConnectionConversationId: Long? = null
     private val connectionLock = Mutex()
     
     // Debug: Track event history for troubleshooting
@@ -146,7 +145,7 @@ class WhizServerRepository @Inject constructor(
     fun dumpEventHistory(tag: String = TAG, sinceMinutesAgo: Int = 2) {
         val recentEvents = getRecentEvents(sinceMinutesAgo)
         Log.d(tag, "=== WebSocket Event History (last $sinceMinutesAgo minutes) ===")
-        Log.d(tag, "Current state: connectionState=$connectionState, conversationId=$currentConnectionConversationId, isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
+        Log.d(tag, "Current state: connectionState=$connectionState, conversationId=$currentConversationId, isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
         Log.d(tag, "Replay cache: ${_connectionStateEvents.replayCache.lastOrNull()}")
         Log.d(tag, "Total events in period: ${recentEvents.size}")
         
@@ -208,7 +207,7 @@ class WhizServerRepository @Inject constructor(
         connectionLock.withLock {
             // Check if we're already connected/connecting to the SAME conversation
             if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) 
-                && currentConnectionConversationId == conversationId) {
+                && currentConversationId == conversationId) {
                 Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
                 
                 // Only reset persistent disconnect flag if explicitly requested
@@ -224,9 +223,29 @@ class WhizServerRepository @Inject constructor(
                 return
             }
             
-            // If connecting/connected to a DIFFERENT conversation, need to disconnect first
+            // IMPORTANT: If we're connected to a specific conversation and someone requests null,
+            // stay connected to the specific conversation (it's more specific/better)
+            if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED)
+                && conversationId == null && currentConversationId != null) {
+                Log.w(TAG, "⚠️ SUSPICIOUS: connect(null) called while already ${connectionState.name.lowercase()} to conversation $currentConversationId")
+                Log.w(TAG, "⚠️ Stack trace to find caller:", Exception("Stack trace for null conversation connect"))
+                
+                // Only reset persistent disconnect flag if explicitly requested
+                if (turnOffPersistentDisconnect) {
+                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false")
+                    persistentDisconnectForTest = false
+                }
+                
+                // If already connected, process any queued messages
+                if (connectionState == ConnectionState.CONNECTED) {
+                    processRetryQueue()
+                }
+                return
+            }
+            
+            // If connecting/connected to a DIFFERENT conversation (and not the null case above), need to disconnect first
             if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
-                Log.d(TAG, "Disconnecting from conversation $currentConnectionConversationId to connect to $conversationId")
+                Log.d(TAG, "Disconnecting from conversation $currentConversationId to connect to $conversationId")
                 
                 // Cancel any ongoing connection attempt
                 connectionTimeoutJob?.cancel()
@@ -248,7 +267,6 @@ class WhizServerRepository @Inject constructor(
             
             // Update state to CONNECTING
             connectionState = ConnectionState.CONNECTING
-            currentConnectionConversationId = conversationId
             currentConversationId = conversationId
             
             // Only reset persistent disconnect flag if explicitly requested
@@ -271,7 +289,7 @@ class WhizServerRepository @Inject constructor(
                 Log.w(TAG, "No server token available for WebSocket connection")
                 // Reset connection state on auth failure
                 connectionState = ConnectionState.IDLE
-                currentConnectionConversationId = null
+                // Keep currentConversationId for potential future retry
                 scope.launch { emitEvent(WebSocketEvent.Error(Exception("Authentication required. Please log in again."))) }
                 return
             }
@@ -443,7 +461,7 @@ class WhizServerRepository @Inject constructor(
                         
                         // Update connection state
                         connectionState = ConnectionState.IDLE
-                        currentConnectionConversationId = null
+                        // DO NOT reset currentConversationId here - we need it for reconnection!
                         
                         connectionTimeoutJob?.cancel() // Cancel timeout on close
                         this@WhizServerRepository.webSocket = null // Clear reference
@@ -469,7 +487,7 @@ class WhizServerRepository @Inject constructor(
                         
                         // Update connection state
                         connectionState = ConnectionState.IDLE
-                        currentConnectionConversationId = null
+                        // DO NOT reset currentConversationId here - we need it for reconnection!
                         
                         connectionTimeoutJob?.cancel() // Cancel timeout on failure
                         this@WhizServerRepository.webSocket = null // Clear reference on failure
@@ -513,7 +531,7 @@ class WhizServerRepository @Inject constructor(
                     
                     // Update state to IDLE
                     connectionState = ConnectionState.IDLE
-                    currentConnectionConversationId = null
+                    // DO NOT reset currentConversationId here - we need it for reconnection!
                     
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
@@ -532,7 +550,7 @@ class WhizServerRepository @Inject constructor(
             Log.e(TAG, "Error creating WebSocket connection", e)
             // Reset connection state on error
             connectionState = ConnectionState.IDLE
-            currentConnectionConversationId = null
+            // Keep currentConversationId for potential future retry
             scope.launch { emitEvent(WebSocketEvent.Error(e)) }
         }
     }
@@ -738,7 +756,11 @@ class WhizServerRepository @Inject constructor(
             // Clear references
             webSocket = null
             connectionState = ConnectionState.IDLE
-            currentConnectionConversationId = null
+            // Only clear conversation ID if explicitly disconnecting with persistent flag
+            // This allows reconnects to remember the conversation
+            if (setPersistentDisconnect) {
+                currentConversationId = null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error disconnecting WebSocket", e)
         }
