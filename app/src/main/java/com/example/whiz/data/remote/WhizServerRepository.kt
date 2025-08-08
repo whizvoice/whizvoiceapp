@@ -296,7 +296,8 @@ class WhizServerRepository @Inject constructor(
             }
             
             // Build WebSocket URL with conversation_id parameter if provided
-            val websocketUrl = if (conversationId != null && conversationId > 0) {
+            // Include any conversation ID except -1 (which represents "no chat")
+            val websocketUrl = if (conversationId != null && conversationId != -1L) {
                 "$WHIZ_SERVER_URL?conversation_id=$conversationId"
             } else {
                 WHIZ_SERVER_URL
