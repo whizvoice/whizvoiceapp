@@ -656,7 +656,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 5000L,
+                    timeoutMs = 10000L,  // Increased timeout to handle server processing time
                     description = "coffee response after reconnection"
                 )
                 
@@ -757,7 +757,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 5000L,
+                    timeoutMs = 10000L,  // Increased timeout to handle server processing time
                     description = "fettuccine response after reconnection"
                 )
                 
