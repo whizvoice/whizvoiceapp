@@ -727,15 +727,25 @@ class WhizServerRepository @Inject constructor(
             // Check if already disconnected or disconnecting
             if (connectionState == ConnectionState.IDLE || connectionState == ConnectionState.DISCONNECTING) {
                 Log.d(TAG, "Already in state $connectionState, skipping disconnect")
+                // When already disconnected, only update persistentDisconnectForTest if explicitly setting it to true
+                // This preserves the flag when ChatViewModel calls disconnect() during navigation
+                if (setPersistentDisconnect) {
+                    Log.d(TAG, "Setting persistentDisconnectForTest to true even though already disconnected")
+                    persistentDisconnectForTest = true
+                }
                 return
             }
             
             // Update state to DISCONNECTING
             connectionState = ConnectionState.DISCONNECTING
             
-            // Only set flag to prevent auto-reconnect if explicitly requested
+            // Only update the persistent disconnect flag if explicitly requested
+            // When setPersistentDisconnect is false, preserve the existing value
             if (setPersistentDisconnect) {
                 persistentDisconnectForTest = true
+            } else {
+                // Don't reset to false - preserve existing value
+                Log.d(TAG, "Preserving existing persistentDisconnectForTest value: $persistentDisconnectForTest")
             }
             
             // Cancel any pending jobs
