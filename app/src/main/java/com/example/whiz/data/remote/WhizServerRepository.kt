@@ -205,18 +205,11 @@ class WhizServerRepository @Inject constructor(
         
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
-            // Special case: If we're just turning off persistent disconnect flag
+            // Reset persistent disconnect flag if requested
             if (turnOffPersistentDisconnect && persistentDisconnectForTest) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
                 persistentDisconnectForTest = false
-                
-                // If conversationId is null and we're just resetting the flag, don't reconnect
-                // The WebSocket will connect naturally when needed (e.g., when entering a chat)
-                if (conversationId == null) {
-                    Log.d(TAG, "No reconnection needed - just reset flag")
-                    return
-                }
-                // If conversationId is provided, continue with normal connection flow below
+                return // Just reset the flag and return - don't attempt connection
             }
             
             // Check if we're already connected/connecting to the SAME conversation

@@ -132,13 +132,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                         }
                     }
                 }
-                // Then reconnect with flag reset to ensure clean state for next test
+                // Then reset the persistent disconnect flag for next test
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
-                // Wait for connection
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
-                    }
+                // Just check that the flag was reset, don't wait for connection
+                if (whizServerRepository.persistentDisconnectForTest()) {
+                    Log.w(TAG, "persistentDisconnectForTest flag was not reset properly")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error resetting WebSocket state during cleanup: ${e.message}")
@@ -289,9 +287,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ Confirmed: No bot response while disconnected")
                 
-                // Step 6: Reconnect WebSocket
-                Log.d(TAG, "🔌 Reconnecting WebSocket...")
+                // Step 6: Reset persistent disconnect flag and then reconnect
+                Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                
+                // Now actually connect since flag is reset
+                whizServerRepository.connect(conversationId = chatId)
                 
                 // Wait for WebSocket to reconnect
                 Log.d(TAG, "⏳ Waiting for WebSocket to reconnect...")
@@ -441,9 +442,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to return to chats list", "chats_list_not_shown")
                 }
                 
-                // Manually reconnect WebSocket since we disconnected it
-                Log.d(TAG, "🔌 Manually reconnecting WebSocket...")
+                // Reset persistent disconnect flag and then reconnect
+                Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                
+                // Now actually connect since flag is reset
+                whizServerRepository.connect()
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {
@@ -558,9 +562,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Chats list did not appear before clicking first chat", "chats_list_not_ready_first")
                 }
                 
-                // Manually reconnect WebSocket since we disconnected it after second message
-                Log.d(TAG, "🔌 Manually reconnecting WebSocket before opening first chat...")
+                // Reset persistent disconnect flag and then reconnect
+                Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting before opening first chat...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                
+                // Now actually connect since flag is reset
+                whizServerRepository.connect()
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {

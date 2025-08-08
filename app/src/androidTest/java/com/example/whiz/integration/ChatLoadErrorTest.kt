@@ -102,9 +102,15 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
                 createdChatIds.clear()
             }
             
-            // Ensure WebSocket is reconnected for next test and reset persistent disconnect flag
-            if (!whizServerRepository.isConnected()) {
+            // Reset persistent disconnect flag if it was set
+            if (whizServerRepository.persistentDisconnectForTest()) {
+                // Just reset the flag, don't try to connect
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+            }
+            
+            // Now try to connect with a fake chat ID
+            if (!whizServerRepository.isConnected()) {
+                whizServerRepository.connect(conversationId = 9999999L)
                 // Wait for connection
                 withTimeout(5000) {
                     while (!whizServerRepository.isConnected()) {
