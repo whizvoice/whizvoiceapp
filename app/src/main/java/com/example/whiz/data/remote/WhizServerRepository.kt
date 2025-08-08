@@ -211,7 +211,7 @@ class WhizServerRepository @Inject constructor(
                 persistentDisconnectForTest = false
                 
                 // If we're disconnected, trigger a reconnect to the current conversation
-                if ((connectionState == ConnectionState.IDLE || connectionState == ConnectionState.ERROR) && currentConversationId != null) {
+                if ((connectionState == ConnectionState.IDLE || connectionState == ConnectionState.Error) && currentConversationId != null) {
                     // Start reconnection with existing conversation ID
                     scope.launch {
                         connect(conversationId = currentConversationId)
