@@ -1670,17 +1670,11 @@ class ChatViewModel @Inject constructor(
         // Only restart if we have permission, are in a chat, and continuous listening was enabled before backgrounding
         if (_micPermissionGranted.value && _chatId.value > 0 && voiceManager.isContinuousListeningEnabled.value) {
             try {
-                // Clean up any stuck states that might prevent restart
                 viewModelScope.launch {
                     delay(200L) // Brief delay to ensure app is fully resumed
                     
-                    // Reset potentially stuck speaking state
-                    if (ttsManager.isSpeaking.value) {
-                        Log.d(TAG, "[LOG] Detected stuck speaking state on foreground, clearing it")
-                        ttsManager.stop() // Force stop TTS to clear speaking state
-                    }
-                    
-                    // Restart continuous listening if it's not already active
+                    // Don't try to "fix" TTS state - MainActivity.onPause already stops TTS properly
+                    // Just restart continuous listening if needed
                     if (!isListening.value) {
                         Log.d(TAG, "[LOG] Restarting continuous listening after app foregrounded")
                         startContinuousListening()
