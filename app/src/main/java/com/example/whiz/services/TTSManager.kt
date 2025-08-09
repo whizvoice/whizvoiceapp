@@ -164,6 +164,11 @@ class TTSManager @Inject constructor(
     
     fun stop() {
         tts?.stop()
+        // Manually set speaking state to false to ensure sync
+        // This is needed because onStop callback isn't guaranteed to fire
+        // when stop() is called directly (e.g., from MainActivity.onPause)
+        _isSpeaking.value = false
+        Log.d(TAG, "TTS stopped manually, isSpeaking set to false")
     }
     
     fun shutdown() {

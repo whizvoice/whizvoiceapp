@@ -1179,10 +1179,16 @@ class ChatViewModel @Inject constructor(
         
         // 🔧 NEW: Auto-disable continuous listening when user starts typing
         // This ensures the send button appears when user types text
-        if (!fromVoice && text.isNotEmpty() && voiceManager.isContinuousListeningEnabled.value) {
-            Log.d(TAG, "[LOG] 🔥 updateInputText: User started typing - auto-disabling continuous listening")
-            voiceManager.updateContinuousListeningEnabled(false)
-            voiceManager.stopListening()
+        if (!fromVoice && text.isNotEmpty()) {
+            if (voiceManager.isContinuousListeningEnabled.value) {
+                Log.d(TAG, "[LOG] 🔥 updateInputText: User started typing - auto-disabling continuous listening")
+                voiceManager.updateContinuousListeningEnabled(false)
+            }
+            // Stop any active listening (regular or continuous) when user types
+            if (voiceManager.isListening.value) {
+                Log.d(TAG, "[LOG] 🔥 updateInputText: User started typing - stopping active listening")
+                voiceManager.stopListening()
+            }
         }
         
         // Clear voice flag when text is empty (reset state)
