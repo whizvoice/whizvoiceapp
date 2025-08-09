@@ -981,34 +981,9 @@ class WhizRepository @Inject constructor(
         forceFullSync: Boolean,
         useAggressiveSync: Boolean = false
     ): List<ChatEntity> {
-        val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
-        
-        // Check if there's already an ongoing request
-        val ongoing = ongoingConversationRequests[requestKey]
-        if (ongoing != null && ongoing.isActive) {
-            Log.d(TAG, "fetchConversationsWithDeduplication: Reusing ongoing $requestKey request")
-            return ongoing.await()
-        }
-        
-        // Start a new request and track it
-        val deferred = CoroutineScope(Dispatchers.IO).async {
-            try {
-                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request (aggressive: $useAggressiveSync)")
-                val result = getAllChatsIncremental(forceFullSync, useAggressiveSync)
-                Log.d(TAG, "fetchConversationsWithDeduplication: Retrieved ${result.size} conversations via $requestKey")
-                result
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in fetchConversationsWithDeduplication for $requestKey", e)
-                emptyList<ChatEntity>()
-            } finally {
-                // Clean up the tracking when done
-                ongoingConversationRequests.remove(requestKey)
-                Log.d(TAG, "fetchConversationsWithDeduplication: Cleaned up $requestKey request tracking")
-            }
-        }
-        
-        ongoingConversationRequests[requestKey] = deferred
-        return deferred.await()
+        // Simply delegate to the status version and extract the chats
+        val result = fetchConversationsWithDeduplicationAndStatus(forceFullSync, useAggressiveSync)
+        return result.chats
     }
     
     // Version that returns status about whether cached data was used
