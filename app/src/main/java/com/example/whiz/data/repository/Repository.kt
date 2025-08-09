@@ -59,7 +59,7 @@ class WhizRepository @Inject constructor(
     
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
-    private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<SyncResult>>()
+    private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
     // Track optimistic chat ID → real chat ID migrations for deduplication
     private val chatMigrationMapping = mutableMapOf<Long, Long>()
@@ -988,21 +988,16 @@ class WhizRepository @Inject constructor(
         val ongoing = ongoingConversationRequests[requestKey]
         if (ongoing != null && ongoing.isActive) {
             Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
-            return ongoing.await()
+            val result = ongoing.await()
+            return SyncResult(result, isCachedData = false) // If request succeeded, it's not cached
         }
         
         // Start a new request
         val deferred = CoroutineScope(Dispatchers.IO).async {
-            try {
-                fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
-            } finally {
-                // Clean up the tracking when done
-                ongoingConversationRequests.remove(requestKey)
-                Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Cleaned up $requestKey request tracking")
-            }
+            fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
         }
         
-        ongoingConversationRequests[requestKey] = deferred
+        ongoingConversationRequests[requestKey] = CoroutineScope(Dispatchers.IO).async { deferred.await().chats }
         return deferred.await()
     }
     
