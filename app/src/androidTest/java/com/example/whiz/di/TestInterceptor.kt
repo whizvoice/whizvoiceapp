@@ -8,6 +8,8 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.example.whiz.data.remote.WhizServerRepository
+import java.io.IOException
 
 /**
  * Test interceptor that can simulate different HTTP responses for testing.
@@ -27,6 +29,14 @@ class TestInterceptor @Inject constructor() : Interceptor {
         const val CHAT_ID_503 = 503503L
         const val CHAT_ID_TIMEOUT = 999999L
         const val CHAT_ID_SUCCESS_AFTER_ERROR = 200200L
+        
+        // Static flag to simulate network errors when manual disconnect is active
+        @Volatile
+        var simulateNetworkErrorForManualDisconnect = true
+        
+        // Callback to check if WebSocket has persistent disconnect for testing
+        @Volatile
+        var persistentDisconnectForTestCheck: (() -> Boolean)? = null
     }
     
     // Track if we should return an error for the success-after-error chat
@@ -40,6 +50,10 @@ class TestInterceptor @Inject constructor() : Interceptor {
         retryCountMap.clear()
     }
     
+    fun resetRetryCount(chatId: Long) {
+        retryCountMap.remove(chatId)
+    }
+    
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
@@ -50,6 +64,18 @@ class TestInterceptor @Inject constructor() : Interceptor {
             val chatId = url.substringAfterLast("/conversations/").substringBefore("?").toLongOrNull()
             
             Log.d(TAG, "Intercepting GET request for chat ID: $chatId")
+            
+            // For specific test chat IDs, bypass the WebSocket disconnect check to allow retry logic
+            if (chatId in listOf(CHAT_ID_500, CHAT_ID_SUCCESS_AFTER_ERROR)) {
+                // Let the chat-specific logic below handle these cases
+                Log.d(TAG, "Bypassing WebSocket disconnect check for test chat ID: $chatId")
+            } else {
+                // Check if WebSocket has persistent disconnect - simulate network failure for all API calls
+                if (simulateNetworkErrorForManualDisconnect && persistentDisconnectForTestCheck?.invoke() == true) {
+                    Log.d(TAG, "WebSocket has persistent disconnect - simulating IOException for: $url")
+                    throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
+                }
+            }
             
             return when (chatId) {
                 CHAT_ID_404 -> {
@@ -167,6 +193,21 @@ class TestInterceptor @Inject constructor() : Interceptor {
                     // For all other requests, proceed normally
                     chain.proceed(request)
                 }
+            }
+        }
+        
+        // For non-chat requests, check WebSocket disconnect status
+        if (simulateNetworkErrorForManualDisconnect && persistentDisconnectForTestCheck?.invoke() == true) {
+            // But still bypass for specific test chat IDs that might be in the URL
+            val chatIdInUrl = if (url.contains("/conversations/")) {
+                url.substringAfter("/conversations/").substringBefore("/").substringBefore("?").toLongOrNull()
+            } else {
+                null
+            }
+            
+            if (chatIdInUrl !in listOf(CHAT_ID_500, CHAT_ID_SUCCESS_AFTER_ERROR)) {
+                Log.d(TAG, "WebSocket has persistent disconnect - simulating IOException for: $url")
+                throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
             }
         }
         

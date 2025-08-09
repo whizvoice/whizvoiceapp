@@ -19,7 +19,8 @@ data class ChatEntity(
     val id: Long = 0,
     val title: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastMessageTime: Long = System.currentTimeMillis()
+    val lastMessageTime: Long = System.currentTimeMillis(),
+    val optimisticChatId: Long? = null  // Stores the original optimistic ID when chat was created offline
 )
 
 enum class MessageType {
@@ -90,7 +91,8 @@ fun ApiService.ConversationResponse.toChatEntity(): ChatEntity {
         id = this.id,
         title = sanitizeChatTitle(this.title),
         createdAt = parseTimestampToMillis(this.created_at),
-        lastMessageTime = parseTimestampToMillis(this.last_message_time)
+        lastMessageTime = parseTimestampToMillis(this.last_message_time),
+        optimisticChatId = this.optimistic_chat_id?.toLongOrNull()
     )
 }
 

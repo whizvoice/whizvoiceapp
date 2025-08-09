@@ -24,10 +24,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 
 sealed class WebSocketEvent {
-    data class Message(val text: String, val requestId: String? = null, val conversationId: Long? = null) : WebSocketEvent()
+    data class Message(
+        val text: String, 
+        val requestId: String? = null, 
+        val conversationId: Long? = null,
+        val clientConversationId: Long? = null
+    ) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
@@ -48,6 +55,12 @@ data class PendingMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+// Debug event tracking
+data class TimestampedEvent(
+    val event: WebSocketEvent,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 @Singleton
 class WhizServerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
@@ -56,6 +69,21 @@ class WhizServerRepository @Inject constructor(
     private val TAG = "WhizServerRepo"
     private var webSocket: WebSocket? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    
+    // Connection state management
+    private enum class ConnectionState {
+        IDLE,        // No connection, not attempting to connect
+        CONNECTING,  // Connection in progress
+        CONNECTED,   // Successfully connected
+        DISCONNECTING // Disconnection in progress
+    }
+    
+    private var connectionState = ConnectionState.IDLE
+    private val connectionLock = Mutex()
+    
+    // Debug: Track event history for troubleshooting
+    private val eventHistory = mutableListOf<TimestampedEvent>()
+    private val maxEventHistorySize = 100 // Keep last 100 events
 
     // Separate connection state from message events to prevent inappropriate replay
     private val _connectionStateEvents = MutableSharedFlow<WebSocketEvent>(replay = 1) // Only for connection state tracking
@@ -70,12 +98,25 @@ class WhizServerRepository @Inject constructor(
     
     // Expose connection state for synchronous checking
     fun isConnected(): Boolean {
-        val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
-        return lastEvent is WebSocketEvent.Connected && webSocket != null
+        return connectionState == ConnectionState.CONNECTED && webSocket != null
+    }
+    
+    // Expose persistent disconnect state for testing
+    fun persistentDisconnectForTest(): Boolean {
+        return persistentDisconnectForTest
     }
     
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
+        // Track event in history for debugging
+        synchronized(eventHistory) {
+            eventHistory.add(TimestampedEvent(event))
+            // Keep only the last N events
+            while (eventHistory.size > maxEventHistorySize) {
+                eventHistory.removeAt(0)
+            }
+        }
+        
         when (event) {
             is WebSocketEvent.Connected, 
             is WebSocketEvent.Closed, 
@@ -91,6 +132,40 @@ class WhizServerRepository @Inject constructor(
             }
         }
     }
+    
+    // Debug method to get recent events
+    fun getRecentEvents(sinceMinutesAgo: Int = 2): List<TimestampedEvent> {
+        val cutoffTime = System.currentTimeMillis() - (sinceMinutesAgo * 60 * 1000)
+        synchronized(eventHistory) {
+            return eventHistory.filter { it.timestamp >= cutoffTime }.toList()
+        }
+    }
+    
+    // Debug method to dump event history to log
+    fun dumpEventHistory(tag: String = TAG, sinceMinutesAgo: Int = 2) {
+        val recentEvents = getRecentEvents(sinceMinutesAgo)
+        Log.d(tag, "=== WebSocket Event History (last $sinceMinutesAgo minutes) ===")
+        Log.d(tag, "Current state: connectionState=$connectionState, conversationId=$currentConversationId, isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
+        Log.d(tag, "Replay cache: ${_connectionStateEvents.replayCache.lastOrNull()}")
+        Log.d(tag, "Total events in period: ${recentEvents.size}")
+        
+        val dateFormat = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+        recentEvents.forEach { event ->
+            val time = dateFormat.format(java.util.Date(event.timestamp))
+            val eventStr = when (val e = event.event) {
+                is WebSocketEvent.Connected -> "CONNECTED"
+                is WebSocketEvent.Closed -> "CLOSED"
+                is WebSocketEvent.Reconnecting -> "RECONNECTING"
+                is WebSocketEvent.Error -> "ERROR: ${e.error.message}"
+                is WebSocketEvent.AuthError -> "AUTH_ERROR: ${e.message}"
+                is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
+                is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
+                is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
+            }
+            Log.d(tag, "[$time] $eventStr")
+        }
+        Log.d(tag, "=== End Event History ===")
+    }
 
     // Replace with your server's actual address
     private val WHIZ_SERVER_URL = "wss://whizvoice.com/ws/chat" // Using secure WebSocket with domain
@@ -101,7 +176,8 @@ class WhizServerRepository @Inject constructor(
     private val initialReconnectDelayMs = 1000L
     private val reconnectDelayBackoffFactor = 2.0
     private var reconnectJob: Job? = null
-    private var isManuallyDisconnected = false // Flag to prevent reconnect on manual disconnect
+    private var connectionTimeoutJob: Job? = null // Timeout for WebSocket connection attempts
+    private var persistentDisconnectForTest = false // Flag to prevent reconnect during testing
 
     // Message retry queue and parameters
     private val messageRetryQueue = mutableListOf<PendingMessage>()
@@ -124,25 +200,92 @@ class WhizServerRepository @Inject constructor(
         return messageRetryQueue.map { it.requestId }.toSet()
     }
 
-    suspend fun connect(conversationId: Long? = null) {
-        currentConversationId = conversationId
+    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
+        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         
-        // 🔧 FIXED: Improved WebSocket connection state checking
-        // Don't use the crude send("") check which can cause message loss
-        if (webSocket != null && _connectionStateEvents.replayCache.lastOrNull() is WebSocketEvent.Connected) {
-            Log.w(TAG, "WebSocket already connected based on connection state.")
-            // If successfully connected, reset manual disconnect flag
-            isManuallyDisconnected = false
-            currentReconnectAttempts = 0 // Reset attempts on explicit connect call if it implies success
-            reconnectJob?.cancel() // Cancel any pending reconnect job
-            // Process any queued messages when reconnected
-            processRetryQueue()
-            return
-        }
-        // If webSocket is not null but connection state is not Connected, proceed with new connection
-        Log.d(TAG, "Proceeding with connect(). Current webSocket state: ${if (webSocket == null) "null" else "exists but not confirmed connected"}")
-        isManuallyDisconnected = false // Reset this flag on any attempt to connect
-        reconnectJob?.cancel() // Cancel any pending reconnect job before attempting a new connection
+        // Use lock to ensure thread-safe connection state management
+        connectionLock.withLock {
+            // Reset persistent disconnect flag if requested
+            if (turnOffPersistentDisconnect && persistentDisconnectForTest) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
+                persistentDisconnectForTest = false
+                return // Just reset the flag and return - don't attempt connection
+            }
+            
+            // Check if we're already connected/connecting to the SAME conversation
+            if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) 
+                && currentConversationId == conversationId) {
+                Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
+                
+                // Only reset persistent disconnect flag if explicitly requested
+                // This is often the real reason for calling connect() when already connected
+                if (turnOffPersistentDisconnect) {
+                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false (staying connected to $conversationId)")
+                    persistentDisconnectForTest = false
+                }
+                
+                // If already connected, process any queued messages
+                if (connectionState == ConnectionState.CONNECTED) {
+                    processRetryQueue()
+                }
+                return
+            }
+            
+            // IMPORTANT: If we're connected to a specific conversation and someone requests null,
+            // stay connected to the specific conversation (it's more specific/better)
+            // This often happens when the test just wants to reset the persistent disconnect flag
+            if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED)
+                && conversationId == null && currentConversationId != null) {
+                Log.d(TAG, "connect(null) called while ${connectionState.name.lowercase()} to conversation $currentConversationId - likely just resetting persistent disconnect flag")
+                
+                // Only reset persistent disconnect flag if explicitly requested
+                if (turnOffPersistentDisconnect) {
+                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false while staying connected to $currentConversationId")
+                    persistentDisconnectForTest = false
+                }
+                
+                // If already connected, process any queued messages
+                if (connectionState == ConnectionState.CONNECTED) {
+                    processRetryQueue()
+                }
+                return
+            }
+            
+            // If connecting/connected to a DIFFERENT conversation (and not the null case above), need to disconnect first
+            if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
+                Log.d(TAG, "Disconnecting from conversation $currentConversationId to connect to $conversationId")
+                
+                // Cancel any ongoing connection attempt
+                connectionTimeoutJob?.cancel()
+                connectionTimeoutJob = null
+                
+                // Cancel the existing WebSocket
+                webSocket?.cancel()
+                webSocket = null
+                
+                // Reset state
+                connectionState = ConnectionState.IDLE
+            }
+            
+            // If currently disconnecting, wait a bit
+            if (connectionState == ConnectionState.DISCONNECTING) {
+                Log.d(TAG, "Currently disconnecting, waiting before new connection...")
+                delay(100)
+            }
+            
+            // Update state to CONNECTING
+            connectionState = ConnectionState.CONNECTING
+            currentConversationId = conversationId
+            
+            // Only reset persistent disconnect flag if explicitly requested
+            if (turnOffPersistentDisconnect) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false")
+                persistentDisconnectForTest = false
+            }
+            
+            // Cancel any pending reconnect job
+            reconnectJob?.cancel()
+        }  // End of connectionLock.withLock block
 
         try {
             // Only use server token, no fallback to Google token  
@@ -152,12 +295,16 @@ class WhizServerRepository @Inject constructor(
             
             if (serverToken == null) {
                 Log.w(TAG, "No server token available for WebSocket connection")
+                // Reset connection state on auth failure
+                connectionState = ConnectionState.IDLE
+                // Keep currentConversationId for potential future retry
                 scope.launch { emitEvent(WebSocketEvent.Error(Exception("Authentication required. Please log in again."))) }
                 return
             }
             
             // Build WebSocket URL with conversation_id parameter if provided
-            val websocketUrl = if (conversationId != null && conversationId > 0) {
+            // Include any conversation ID except -1 (which represents "no chat")
+            val websocketUrl = if (conversationId != null && conversationId != -1L) {
                 "$WHIZ_SERVER_URL?conversation_id=$conversationId"
             } else {
                 WHIZ_SERVER_URL
@@ -167,13 +314,21 @@ class WhizServerRepository @Inject constructor(
             requestBuilder.header("Authorization", "Bearer $serverToken")
             
             val request = requestBuilder.build()
-            webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            Log.d(TAG, "Creating new WebSocket with URL: $websocketUrl, persistentDisconnect=$persistentDisconnectForTest")
+            
+            // Create the WebSocket first
+            val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     try {
-                        Log.i(TAG, "WebSocket connection opened.")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId. persistentDisconnect=$persistentDisconnectForTest")
+                        
+                        // Update connection state
+                        connectionState = ConnectionState.CONNECTED
+                        
+                        connectionTimeoutJob?.cancel() // Cancel timeout on successful connection
                         currentReconnectAttempts = 0 // Reset on successful open
                         reconnectJob?.cancel() // Cancel any pending reconnect job
-                        isManuallyDisconnected = false // Reset flag
+                        // Don't automatically reset persistentDisconnectForTest on connection open
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
@@ -248,9 +403,12 @@ class WhizServerRepository @Inject constructor(
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
+                                val clientConversationId = if (jsonObject.has("client_conversation_id")) {
+                                    jsonObject.getLong("client_conversation_id")
+                                } else null
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
-                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId))
+                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
                                     if (emitDuration > 50) {
@@ -308,16 +466,22 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     try {
-                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason")
+                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason, persistentDisconnect=$persistentDisconnectForTest")
+                        
+                        // Update connection state
+                        connectionState = ConnectionState.IDLE
+                        // DO NOT reset currentConversationId here - we need it for reconnection!
+                        
+                        connectionTimeoutJob?.cancel() // Cancel timeout on close
                         this@WhizServerRepository.webSocket = null // Clear reference
                         scope.launch { emitEvent(WebSocketEvent.Closed) }
                         
                         // Attempt to reconnect if not manually disconnected and not a specific "do not retry" code
                         // Example: code 1000 is normal closure, 1008 is policy violation (likely auth)
-                        if (!isManuallyDisconnected && code != 1008 && code != 1011) { 
+                        if (!persistentDisconnectForTest && code != 1008 && code != 1011) { 
                             scheduleReconnect()
                         } else {
-                             Log.i(TAG, "Not attempting reconnect. isManuallyDisconnected=$isManuallyDisconnected, code=$code")
+                             Log.i(TAG, "Not attempting reconnect. persistentDisconnectForTest=$persistentDisconnectForTest, code=$code")
                              currentReconnectAttempts = 0 // Reset if not retrying
                              reconnectJob?.cancel()
                         }
@@ -328,7 +492,13 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     try {
-                        Log.e(TAG, "WebSocket connection failure", t)
+                        Log.e(TAG, "WebSocket connection failure. persistentDisconnect=$persistentDisconnectForTest, response code=${response?.code}, message=${t.message}", t)
+                        
+                        // Update connection state
+                        connectionState = ConnectionState.IDLE
+                        // DO NOT reset currentConversationId here - we need it for reconnection!
+                        
+                        connectionTimeoutJob?.cancel() // Cancel timeout on failure
                         this@WhizServerRepository.webSocket = null // Clear reference on failure
                         
                         val isAuthFailure = response?.code == 401 || t.message?.contains("Authentication failed", ignoreCase = true) == true
@@ -338,10 +508,10 @@ class WhizServerRepository @Inject constructor(
                             scope.launch { emitEvent(WebSocketEvent.AuthError(userMessage)) }
                             currentReconnectAttempts = 0 // Don't retry on explicit auth failure
                             reconnectJob?.cancel()
-                            isManuallyDisconnected = true // Treat as a state requiring manual intervention (login)
+                            // Don't automatically set persistentDisconnectForTest on auth failure
                         } else {
                             scope.launch { emitEvent(WebSocketEvent.Error(t)) }
-                            if (!isManuallyDisconnected) {
+                            if (!persistentDisconnectForTest) {
                                 scheduleReconnect()
                             } else {
                                 Log.i(TAG, "Not attempting reconnect due to manual disconnect flag on failure.")
@@ -354,8 +524,42 @@ class WhizServerRepository @Inject constructor(
                     }
                 }
             })
+            
+            // Store the WebSocket reference immediately
+            webSocket = newWebSocket
+            
+            // Set up a timeout for the connection attempt AFTER creating the WebSocket
+            connectionTimeoutJob?.cancel()
+            connectionTimeoutJob = scope.launch {
+                delay(5000) // 5 second timeout for WebSocket connection
+                
+                // Check if still in CONNECTING state after timeout
+                if (connectionState == ConnectionState.CONNECTING) {
+                    Log.e(TAG, "WebSocket connection timeout after 5 seconds for URL: $websocketUrl")
+                    Log.e(TAG, "Connection state still CONNECTING, conversationId: $conversationId")
+                    
+                    // Update state to IDLE
+                    connectionState = ConnectionState.IDLE
+                    // DO NOT reset currentConversationId here - we need it for reconnection!
+                    
+                    webSocket?.cancel() // Cancel the hanging connection
+                    webSocket = null
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
+                    
+                    // Only attempt reconnect if not manually disconnected
+                    if (!persistentDisconnectForTest) {
+                        Log.d(TAG, "Scheduling reconnect after timeout")
+                        scheduleReconnect()
+                    }
+                }
+            }
+            
+            Log.d(TAG, "WebSocket creation initiated. Waiting for onOpen/onFailure callback...")
         } catch (e: Exception) {
             Log.e(TAG, "Error creating WebSocket connection", e)
+            // Reset connection state on error
+            connectionState = ConnectionState.IDLE
+            // Keep currentConversationId for potential future retry
             scope.launch { emitEvent(WebSocketEvent.Error(e)) }
         }
     }
@@ -363,11 +567,10 @@ class WhizServerRepository @Inject constructor(
     fun sendMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
         return try {
             val currentSocket = webSocket
-            if (currentSocket != null && !isManuallyDisconnected) {
+            if (currentSocket != null && !persistentDisconnectForTest) {
                 // 🔧 ENHANCED: Check connection state before sending
-                val lastEvent = _connectionStateEvents.replayCache.lastOrNull()
-                if (lastEvent !is WebSocketEvent.Connected) {
-                    Log.w(TAG, "WebSocket exists but last state is not Connected: $lastEvent - queueing message for retry")
+                if (connectionState != ConnectionState.CONNECTED) {
+                    Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing message for retry")
                     queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                     return false
                 }
@@ -396,7 +599,7 @@ class WhizServerRepository @Inject constructor(
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
                 queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
                 // Attempt to reconnect
-                if (!isManuallyDisconnected) {
+                if (!persistentDisconnectForTest) {
                     val conversationId = currentConversationId
                     scope.launch {
                         delay(100L) // Small delay before reconnect
@@ -438,7 +641,7 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages")
         val currentSocket = webSocket
         
-        if (currentSocket == null || isManuallyDisconnected) {
+        if (currentSocket == null || persistentDisconnectForTest) {
             Log.d(TAG, "Cannot process retry queue - not connected")
             return
         }
@@ -525,23 +728,62 @@ class WhizServerRepository @Inject constructor(
         return sendMessage(message, requestId, clientConversationId, clientMessageId)
     }
 
-    fun disconnect() {
+    fun disconnect(setPersistentDisconnect: Boolean = false) {
         try {
-            Log.d(TAG, "Disconnecting WebSocket manually.")
-            isManuallyDisconnected = true // Set flag to prevent auto-reconnect
+            Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect, currentState=$connectionState")
+            
+            // Check if already disconnected or disconnecting
+            if (connectionState == ConnectionState.IDLE || connectionState == ConnectionState.DISCONNECTING) {
+                Log.d(TAG, "Already in state $connectionState, skipping disconnect")
+                // When already disconnected, only update persistentDisconnectForTest if explicitly setting it to true
+                // This preserves the flag when ChatViewModel calls disconnect() during navigation
+                if (setPersistentDisconnect) {
+                    Log.d(TAG, "Setting persistentDisconnectForTest to true even though already disconnected")
+                    persistentDisconnectForTest = true
+                }
+                return
+            }
+            
+            // Update state to DISCONNECTING
+            connectionState = ConnectionState.DISCONNECTING
+            
+            // Only update the persistent disconnect flag if explicitly requested
+            // When setPersistentDisconnect is false, preserve the existing value
+            if (setPersistentDisconnect) {
+                persistentDisconnectForTest = true
+            } else {
+                // Don't reset to false - preserve existing value
+                Log.d(TAG, "Preserving existing persistentDisconnectForTest value: $persistentDisconnectForTest")
+            }
+            
+            // Cancel any pending jobs
+            connectionTimeoutJob?.cancel()
             reconnectJob?.cancel() // Cancel any pending reconnect attempts
             retryJob?.cancel() // Cancel any pending retry attempts
             currentReconnectAttempts = 0 // Reset attempts
-            messageRetryQueue.clear() // Clear retry queue
-            webSocket?.close(1000, "Client initiated disconnect")
+            
+            // Don't clear retry queue on manual disconnect - messages should be retried when reconnecting
+            // This allows queued messages to be sent when the connection is re-established
+            Log.d(TAG, "Preserving ${messageRetryQueue.size} messages in retry queue for reconnection")
+            
+            // Close the WebSocket
+            val currentSocket = webSocket
+            if (currentSocket != null) {
+                currentSocket.close(1000, "Client initiated disconnect")
+            }
+            
+            // Clear references
             webSocket = null
+            connectionState = ConnectionState.IDLE
+            // Never clear currentConversationId - we want to remember what conversation we were in
+            // even if we're doing a persistent disconnect (which just means "don't auto-reconnect")
         } catch (e: Exception) {
             Log.e(TAG, "Error disconnecting WebSocket", e)
         }
     }
 
     private fun scheduleReconnect() {
-        if (isManuallyDisconnected) {
+        if (persistentDisconnectForTest) {
             Log.i(TAG, "Reconnect scheduling aborted: manually disconnected.")
             return
         }
@@ -554,7 +796,8 @@ class WhizServerRepository @Inject constructor(
                 scope.launch {
                     emitEvent(WebSocketEvent.Error(Exception("Connection lost. Please check your internet connection and try again.")))
                 }
-                messageRetryQueue.clear()
+                // Don't clear retry queue on connection errors - messages should be retried when reconnecting
+                Log.d(TAG, "Connection lost. Preserving ${messageRetryQueue.size} messages in retry queue for reconnection")
             }
             return
         }

@@ -26,6 +26,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import javax.inject.Inject
+import com.example.whiz.data.remote.WhizServerRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
+import org.junit.After
 
 /**
  * Integration tests for chat loading error scenarios.
@@ -48,10 +53,16 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
     
+    @Inject
+    lateinit var whizServerRepository: WhizServerRepository
+    
     companion object {
         private const val TAG = "ChatLoadErrorTest"
         private const val TEST_TIMEOUT = 10000L
     }
+    
+    // Track created chats for cleanup
+    private val createdChatIds = mutableListOf<Long>()
     
     @Before
     override fun setUpAuthentication() {
@@ -64,7 +75,56 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         // Reset test interceptor state
         testInterceptor.resetErrorState()
         
+        // Configure TestInterceptor to check WebSocket persistent disconnect state
+        TestInterceptor.persistentDisconnectForTestCheck = { whizServerRepository.persistentDisconnectForTest() }
+        TestInterceptor.simulateNetworkErrorForManualDisconnect = true
+        
         Log.d(TAG, "Test setup complete")
+    }
+    
+    @After
+    fun cleanup() {
+        runBlocking {
+            Log.d(TAG, "Cleaning up test data...")
+            
+            // Clean up any created chats
+            if (createdChatIds.isNotEmpty()) {
+                // Use the same cleanup approach as WebSocketReconnectionTest
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = createdChatIds,
+                    additionalPatterns = listOf(
+                        "Test message for connection error test",
+                        "connection error test"
+                    ),
+                    enablePatternFallback = true
+                )
+                createdChatIds.clear()
+            }
+            
+            // Reset persistent disconnect flag if it was set
+            if (whizServerRepository.persistentDisconnectForTest()) {
+                // Just reset the flag, don't try to connect
+                whizServerRepository.connect(turnOffPersistentDisconnect = true)
+            }
+            
+            // Now try to connect with a fake chat ID
+            if (!whizServerRepository.isConnected()) {
+                whizServerRepository.connect(conversationId = 9999999L)
+                // Wait for connection
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
+                    }
+                }
+            }
+            
+            // Reset TestInterceptor state
+            TestInterceptor.persistentDisconnectForTestCheck = null
+            TestInterceptor.simulateNetworkErrorForManualDisconnect = true
+            
+            Log.d(TAG, "Cleanup complete")
+        }
     }
     
     /**
@@ -230,6 +290,103 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "Test completed - go back button works")
+    }
+    
+    /**
+     * Test that connection errors during chat load show the error UI
+     * Uses TestInterceptor to simulate network errors
+     */
+    @Test
+    fun testConnectionError_ShowsErrorUI() {
+        runBlocking {
+            Log.d(TAG, "Starting testConnectionError_ShowsErrorUI")
+            
+            // App is already launched by createAndroidComposeRule
+            // Handle potential voice launch by checking if we're on chat screen
+            if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+                Log.d(TAG, "App launched to chat screen (voice launch), navigating back to chat list")
+                if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                    failWithScreenshot("Failed to navigate back to chat list", "nav_to_chat_list_failed")
+                    return@runBlocking
+                }
+            }
+            
+            // Ensure we're on the chat list
+            val chatListReady = ComposeTestHelper.waitForElement(
+                composeTestRule,
+                { composeTestRule.onNodeWithText("My Chats") },
+                TEST_TIMEOUT,
+                "chat list to load"
+            )
+            
+            if (!chatListReady) {
+                failWithScreenshot("Chat list not ready", "chat_list_not_ready")
+                return@runBlocking
+            }
+            
+            // Disconnect WebSocket to simulate connection error
+            Log.d(TAG, "Disconnecting WebSocket to simulate connection error...")
+            whizServerRepository.disconnect(setPersistentDisconnect = true)
+            
+            // Wait for WebSocket to disconnect
+            Log.d(TAG, "Waiting for WebSocket to disconnect...")
+            withTimeout(5000) {
+                while (whizServerRepository.isConnected()) {
+                    delay(100)
+                }
+            }
+            Log.d(TAG, "WebSocket disconnected - TestInterceptor will now throw IOException for API calls")
+            
+            // Navigate to any chat ID - the interceptor will throw IOException
+            val chatId = 12345L
+            Log.d(TAG, "Navigating to chat ID: $chatId (will fail with IOException)")
+            navigateToChatId(chatId)
+            
+            // Wait for error UI to appear
+            // The exact error message may vary, but should indicate connection failure
+            val errorAppeared = ComposeTestHelper.waitForElement(
+                composeTestRule,
+                { composeTestRule.onNodeWithText("Couldn't load this chat") },
+                TEST_TIMEOUT,
+                "error message for connection failure"
+            )
+            
+            if (!errorAppeared) {
+                failWithScreenshot("Connection error should show error UI", "connection_error_no_ui")
+            }
+            
+            // Verify no input field is shown
+            try {
+                composeTestRule.onNodeWithTag("chat_input_field").assertDoesNotExist()
+            } catch (e: Exception) {
+                failWithScreenshot("Input field should not be visible during connection error", "connection_error_has_input")
+            }
+            
+            // Verify retry button exists
+            val retryButtonExists = try {
+                composeTestRule.onNodeWithText("Retry").assertExists()
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!retryButtonExists) {
+                failWithScreenshot("Retry button should be visible for connection error", "connection_error_no_retry")
+            }
+            
+            // Verify go back button exists
+            val goBackButtonExists = try {
+                composeTestRule.onNodeWithText("Go back").assertExists()
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (!goBackButtonExists) {
+                failWithScreenshot("Go back button should be visible for connection error", "connection_error_no_go_back")
+            }
+            
+        }
     }
     
     // Helper methods

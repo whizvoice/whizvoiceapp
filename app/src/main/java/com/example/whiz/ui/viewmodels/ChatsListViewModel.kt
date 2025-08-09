@@ -24,6 +24,10 @@ class ChatsListViewModel @Inject constructor(
     // Pull-to-refresh state
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+    
+    // Connection status - true when we had to use cached data
+    private val _isShowingCachedData = MutableStateFlow(false)
+    val isShowingCachedData: StateFlow<Boolean> = _isShowingCachedData.asStateFlow()
 
     // All chats, ordered by most recent first
     val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
@@ -48,6 +52,7 @@ class ChatsListViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
+                // Error is silently handled - we'll show cached data
             }
         }
     }
@@ -89,11 +94,15 @@ class ChatsListViewModel @Inject constructor(
             _isRefreshing.value = true
             try {
                 Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
-                repository.performIncrementalSync()
+                val result = repository.performIncrementalSync()
                 Log.d(TAG, "refreshChats: Incremental sync completed successfully")
+                
+                // Check if we're showing cached data (result will indicate this)
+                _isShowingCachedData.value = result.isCachedData
             } catch (e: Exception) {
                 Log.e(TAG, "refreshChats: Error during incremental sync", e)
-                // Error is handled by the repository and UI
+                // Even on error, we show cached data
+                _isShowingCachedData.value = true
             } finally {
                 _isRefreshing.value = false
             }

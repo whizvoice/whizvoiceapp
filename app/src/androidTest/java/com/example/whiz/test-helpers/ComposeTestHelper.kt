@@ -119,6 +119,7 @@ object ComposeTestHelper {
                 addCategory(Intent.CATEGORY_LAUNCHER)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
                         Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                
                 // No tracing_intent_id extra - this is key to avoid voice detection
                 Log.d(TAG, "👆 Configured for manual launch (no tracing_intent_id)")
             }
@@ -232,10 +233,23 @@ object ComposeTestHelper {
             
             // Check if any part of the app UI is visible
             val anyUIVisible = try {
-                composeTestRule.onNodeWithText("WhizVoice").assertExists()
+                // Try multiple possible UI elements that indicate the app is running
+                composeTestRule.onNodeWithText("Whiz", substring = true, ignoreCase = true).assertExists()
                 true
             } catch (e: Exception) {
-                false
+                try {
+                    // Fallback: check for any common UI element
+                    composeTestRule.onNodeWithContentDescription("New Chat").assertExists()
+                    true
+                } catch (e2: Exception) {
+                    try {
+                        // Another fallback: check for voice-related UI
+                        composeTestRule.onNodeWithContentDescription("Start listening").assertExists()
+                        true
+                    } catch (e3: Exception) {
+                        false
+                    }
+                }
             }
             
             if (!anyUIVisible) {

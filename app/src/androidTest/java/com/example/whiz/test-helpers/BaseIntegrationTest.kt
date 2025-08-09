@@ -2287,16 +2287,6 @@ abstract class BaseIntegrationTest {
                 }
                 
                 android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find app with any selector in recent apps")
-            } else {
-                // Always create UI dump for debugging recent apps structure, regardless of detection result
-                try {
-                    val timestamp = System.currentTimeMillis()
-                    val dumpFile = File("/sdcard/Download/test_screenshots/recent_apps_ui_dump_$timestamp.xml")
-                    device.dumpWindowHierarchy(dumpFile)
-                    android.util.Log.d("BaseIntegrationTest", "📋 UI dump saved for recent apps debugging (loaded=$recentAppsLoaded): $dumpFile")
-                } catch (e: Exception) {
-                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not save UI dump: ${e.message}")
-                }
             }
             
             android.util.Log.w("BaseIntegrationTest", "⚠️ App not found in recent apps, trying alternative methods")

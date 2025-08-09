@@ -92,6 +92,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
+import androidx.compose.ui.res.painterResource
+import com.example.whiz.R
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -430,10 +432,10 @@ fun ChatLoadErrorView(
     ) {
         // Error icon
         Icon(
-            imageVector = Icons.Outlined.ErrorOutline,
+            painter = painterResource(id = R.drawable.robot_error),
             contentDescription = null,
             modifier = Modifier
-                .size(64.dp)
+                .size(128.dp)
                 .padding(bottom = 16.dp),
             tint = MaterialTheme.colorScheme.error
         )

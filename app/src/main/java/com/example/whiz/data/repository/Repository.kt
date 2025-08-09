@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -63,6 +64,10 @@ class WhizRepository @Inject constructor(
     // Track optimistic chat ID → real chat ID migrations for deduplication
     private val chatMigrationMapping = mutableMapOf<Long, Long>()
     private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    
+    // Flow to notify when a chat migration occurs (optimistic ID -> server ID)
+    private val _chatMigrationEvents = MutableSharedFlow<Pair<Long, Long>>()
+    val chatMigrationEvents: Flow<Pair<Long, Long>> = _chatMigrationEvents
     
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
@@ -115,6 +120,12 @@ class WhizRepository @Inject constructor(
         return try {
             // Use deduplication helper to prevent multiple concurrent API calls
             val result = fetchConversationsWithDeduplication(forceFullSync)
+            Log.d(TAG, "🔍 getAllChats: Got ${result.size} chats from fetchConversationsWithDeduplication")
+            result.forEach { chat ->
+                if (chat.id > 0 && chat.id < 10000) {
+                    Log.w(TAG, "🚨 WARNING: Chat ${chat.id} has suspiciously low positive ID - might be locally generated!")
+                }
+            }
             _conversations.value = result
             result
         } catch (e: Exception) {
@@ -130,10 +141,21 @@ class WhizRepository @Inject constructor(
             val chatEntity = conversation.toChatEntity()
             chatEntity
         } catch (e: retrofit2.HttpException) {
-            // For 404, return null (chat doesn't exist)
             if (e.code() == 404) {
-                Log.d(TAG, "Chat with id $chatId not found (404)")
-                null
+                if (chatId < 0) {
+                    // For optimistic chats (negative IDs), fall back to local database
+                    Log.d(TAG, "Chat with optimistic id $chatId not found on server (404), checking local database")
+                    try {
+                        chatDao.getChatById(chatId)
+                    } catch (localError: Exception) {
+                        Log.e(TAG, "Error getting local chat for optimistic id $chatId", localError)
+                        null
+                    }
+                } else {
+                    // For server chats, 404 means it doesn't exist
+                    Log.d(TAG, "Chat with id $chatId not found (404)")
+                    null
+                }
             } else {
                 // For other HTTP errors (500, 401, etc), throw to trigger error state
                 Log.e(TAG, "HTTP error getting chat with id $chatId: ${e.code()} ${e.message()}", e)
@@ -412,6 +434,10 @@ class WhizRepository @Inject constructor(
             // 🔧 Ensure chat exists locally before adding optimistic message
             val existingChat = chatDao.getChatById(actualChatId)
             if (existingChat == null) {
+                if (actualChatId > 0) {
+                    Log.e(TAG, "🚨 WARNING: Creating placeholder chat with POSITIVE ID $actualChatId - this should only happen for real server IDs!")
+                    Log.e(TAG, "🚨 Stack trace:", Exception("Stack trace for positive ID creation"))
+                }
                 Log.w(TAG, "addAssistantMessageOptimistic: Chat $actualChatId not found locally, creating placeholder chat for optimistic UI")
                 val placeholderChat = ChatEntity(
                     id = actualChatId,
@@ -637,12 +663,88 @@ class WhizRepository @Inject constructor(
                 val response = apiService.getMessagesIncremental(chatId, since = null)
                 val serverMessages = response.messages.map { it.toMessageEntity() }
                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
+                // Debug: Log the conversation IDs of the messages
+                serverMessages.forEach { msg ->
+                    Log.d(TAG, "fetchMessagesWithDeduplication: Message ${msg.id} has chatId=${msg.chatId}")
+                }
                 
                 // Deduplicate with local optimistic messages
                 val deduplicatedMessages = deduplicateMessages(chatId, serverMessages)
                 Log.d(TAG, "fetchMessagesWithDeduplication: After deduplication: ${deduplicatedMessages.size} messages for chat $chatId")
                 
                 deduplicatedMessages
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 404 && chatId < 0) {
+                    // For optimistic chats (negative IDs), a 404 is expected if the server hasn't created it yet
+                    // First check if there's a server-backed version of this chat
+                    Log.d(TAG, "fetchMessagesWithDeduplication: Got 404 for optimistic chat $chatId, checking for server-backed version")
+                    
+                    try {
+                        // Check if we already have a migration mapping
+                        val migratedChatId = chatMigrationMapping[chatId]
+                        if (migratedChatId != null) {
+                            // We already know this chat was migrated, fetch from the server chat
+                            Log.d(TAG, "fetchMessagesWithDeduplication: Found existing migration $chatId → $migratedChatId, fetching from server chat")
+                            val response = apiService.getMessagesIncremental(migratedChatId, since = null)
+                            val serverMessages = response.messages.map { it.toMessageEntity() }
+                            Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages from migrated chat $migratedChatId")
+                            serverMessages
+                        } else {
+                            // No known migration, check if server has a chat that references this optimistic ID
+                            Log.d(TAG, "fetchMessagesWithDeduplication: No known migration for $chatId, checking server conversations")
+                            val conversationsResponse = apiService.getConversationsIncremental(since = null)
+                            val serverChatWithOptimisticId = conversationsResponse.conversations.find { 
+                                it.optimistic_chat_id?.toLongOrNull() == chatId 
+                            }
+                            
+                            if (serverChatWithOptimisticId != null) {
+                                // Found server chat that references this optimistic chat!
+                                Log.d(TAG, "fetchMessagesWithDeduplication: Found server chat ${serverChatWithOptimisticId.id} that references optimistic chat $chatId")
+                                
+                                // Register the migration
+                                registerChatMigration(chatId, serverChatWithOptimisticId.id)
+                                
+                                // Fetch messages from the server chat
+                                val response = apiService.getMessagesIncremental(serverChatWithOptimisticId.id, since = null)
+                                val serverMessages = response.messages.map { it.toMessageEntity() }
+                                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages from server chat ${serverChatWithOptimisticId.id}")
+                                
+                                // Trigger message migration asynchronously
+                                repositoryScope.launch {
+                                    try {
+                                        migrateChatMessages(chatId, serverChatWithOptimisticId.id)
+                                        Log.d(TAG, "fetchMessagesWithDeduplication: Message migration completed for $chatId → ${serverChatWithOptimisticId.id}")
+                                    } catch (migrationError: Exception) {
+                                        Log.e(TAG, "fetchMessagesWithDeduplication: Failed to migrate messages", migrationError)
+                                    }
+                                }
+                                
+                                serverMessages
+                            } else {
+                                // No server chat found, fall back to local data
+                                Log.d(TAG, "fetchMessagesWithDeduplication: No server chat found for optimistic chat $chatId, falling back to local data")
+                                val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+                                Log.d(TAG, "fetchMessagesWithDeduplication: Found ${localMessages.size} local messages for optimistic chat $chatId")
+                                localMessages
+                            }
+                        }
+                    } catch (syncError: Exception) {
+                        Log.e(TAG, "Error checking for server-backed version of optimistic chat $chatId", syncError)
+                        // Fall back to local data
+                        try {
+                            val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+                            Log.d(TAG, "fetchMessagesWithDeduplication: Fallback - found ${localMessages.size} local messages for optimistic chat $chatId")
+                            localMessages
+                        } catch (localError: Exception) {
+                            Log.e(TAG, "Error getting local messages for optimistic chat $chatId", localError)
+                            emptyList()
+                        }
+                    }
+                } else {
+                    // For server chats or other HTTP errors, log and return empty
+                    Log.e(TAG, "HTTP error in fetchMessagesWithDeduplication for chat $chatId: ${e.code()}", e)
+                    emptyList()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in fetchMessagesWithDeduplication for chat $chatId", e)
                 emptyList()
@@ -674,6 +776,11 @@ class WhizRepository @Inject constructor(
         chatMigrationMapping[optimisticChatId] = realChatId
         migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
         Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        
+        // Emit migration event so ChatViewModel can update its chat ID
+        repositoryScope.launch {
+            _chatMigrationEvents.emit(optimisticChatId to realChatId)
+        }
         
         // Clean up old mappings (older than 1 hour)
         cleanupOldMigrations()
@@ -730,6 +837,14 @@ class WhizRepository @Inject constructor(
         }
         return false
     }
+    
+    /**
+     * Get the migrated chat ID for an optimistic chat.
+     * Returns the server-backed chat ID if this optimistic chat was migrated, null otherwise.
+     */
+    fun getMigratedChatId(optimisticChatId: Long): Long? {
+        return chatMigrationMapping[optimisticChatId]
+    }
 
     /**
      * Deduplicate server messages with local optimistic messages.
@@ -737,6 +852,27 @@ class WhizRepository @Inject constructor(
      */
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
+            // Check if server messages have a different chat ID (server resolved optimistic to real ID)
+            val serverChatId = serverMessages.firstOrNull()?.chatId
+            if (serverChatId != null && serverChatId != chatId && chatId < 0 && serverChatId > 0) {
+                Log.d(TAG, "deduplicateMessages: Server returned messages for chat $serverChatId instead of requested $chatId - triggering migration")
+                
+                // This is an optimistic->real chat migration scenario
+                // Use the existing migration logic that already handles:
+                // 1. Registering the migration mapping
+                // 2. Creating the target chat if needed
+                // 3. Migrating all messages
+                val migrationSuccess = migrateChatMessages(chatId, serverChatId)
+                
+                if (migrationSuccess) {
+                    Log.d(TAG, "deduplicateMessages: Successfully migrated chat $chatId to $serverChatId")
+                    // Register the migration for future lookups
+                    registerChatMigration(chatId, serverChatId)
+                } else {
+                    Log.e(TAG, "deduplicateMessages: Failed to migrate chat $chatId to $serverChatId")
+                }
+            }
+            
             // 🔧 FIX: Ensure chat exists in local database before inserting messages
             val existingChat = chatDao.getChatById(chatId)
             if (existingChat == null) {
@@ -744,6 +880,24 @@ class WhizRepository @Inject constructor(
                 try {
                     val serverChat = apiService.getConversation(chatId)
                     val chatEntity = serverChat.toChatEntity()
+                    
+                    // Check if this server chat is linked to an existing optimistic chat
+                    serverChat.optimistic_chat_id?.let { optimisticIdStr ->
+                        try {
+                            val optimisticId = optimisticIdStr.toLong()
+                            val optimisticChat = chatDao.getChatById(optimisticId)
+                            if (optimisticChat != null) {
+                                Log.d(TAG, "deduplicateMessages: Server chat $chatId is linked to existing optimistic chat $optimisticId")
+                                // Register the migration so we know these are the same chat
+                                registerChatMigration(optimisticId, chatId)
+                                // Migrate messages from optimistic to server chat
+                                migrateChatMessages(optimisticId, chatId)
+                            }
+                        } catch (e: NumberFormatException) {
+                            Log.e(TAG, "deduplicateMessages: Invalid optimistic_chat_id format: $optimisticIdStr", e)
+                        }
+                    }
+                    
                     chatDao.insertChat(chatEntity)
                     Log.d(TAG, "deduplicateMessages: Created local chat record for chat $chatId")
                 } catch (e: Exception) {
@@ -805,12 +959,15 @@ class WhizRepository @Inject constructor(
             }
             
             // Store server messages in database
-            serverMessages.forEach { serverMessage ->
-                messageDao.insertMessage(serverMessage)
+            for (message in serverMessages) {
+                val insertedId = messageDao.insertMessage(message)
+                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
             }
             
             // Return all messages for this chat (fresh from database after deduplication)
-            return messageDao.getMessagesForChatFlow(chatId).first()
+            val finalMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            Log.d(TAG, "deduplicateMessages: Returning ${finalMessages.size} messages from database for chat $chatId")
+            return finalMessages
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in deduplicateMessages for chat $chatId", e)
@@ -853,9 +1010,133 @@ class WhizRepository @Inject constructor(
         ongoingConversationRequests[requestKey] = deferred
         return deferred.await()
     }
+    
+    // Version that returns status about whether cached data was used
+    private suspend fun fetchConversationsWithDeduplicationAndStatus(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean = false
+    ): SyncResult {
+        val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
+        
+        // Check if there's already an ongoing request
+        val ongoing = ongoingConversationRequests[requestKey]
+        if (ongoing != null && ongoing.isActive) {
+            Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
+            val result = ongoing.await()
+            return SyncResult(result, isCachedData = false) // If request succeeded, it's not cached
+        }
+        
+        // Start a new request
+        val deferred = CoroutineScope(Dispatchers.IO).async {
+            fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
+        }
+        
+        // Store a deferred that extracts just the chats for other functions that need it
+        ongoingConversationRequests[requestKey] = CoroutineScope(Dispatchers.IO).async {
+            try {
+                deferred.await().chats
+            } finally {
+                // Clean up the tracking when done
+                ongoingConversationRequests.remove(requestKey)
+                Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Cleaned up $requestKey request tracking")
+            }
+        }
+        
+        return deferred.await()
+    }
+    
+    private suspend fun fetchConversationsIncrementallyWithStatus(
+        forceFullSync: Boolean,
+        useAggressiveSync: Boolean
+    ): SyncResult {
+        // Track if we successfully made an API call
+        var apiCallSucceeded = false
+        
+        return try {
+            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("conversations")
+            
+            // For incremental sync, use a slightly older timestamp to catch any edge cases
+            val effectiveSince = if (!forceFullSync && useAggressiveSync && lastSync != null) {
+                try {
+                    val instant = java.time.Instant.parse(lastSync)
+                    val adjustedInstant = instant.minusSeconds(30)
+                    adjustedInstant.toString()
+                } catch (e: Exception) {
+                    Log.e("Repository", "Error adjusting sync timestamp", e)
+                    lastSync
+                }
+            } else {
+                lastSync
+            }
+            
+            Log.d("Repository", "Fetching conversations incrementally since: $effectiveSince (forceFullSync=$forceFullSync, aggressive=$useAggressiveSync)")
+            
+            // Try API call directly
+            val response = apiService.getConversationsIncremental(since = effectiveSince)
+            apiCallSucceeded = true
+            
+            if (forceFullSync || lastSync == null) {
+                // Full sync: replace all local data
+                val newConversations = response.conversations.map { it.toChatEntity() }
+                Log.d(TAG, "🔍 getAllChatsIncremental FULL SYNC: Got ${newConversations.size} chats from server")
+                newConversations.forEach { chat ->
+                    Log.d(TAG, "  - Server chat from API: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                }
+                chatDao.deleteAllChats()
+                newConversations.forEach { chat ->
+                    chatDao.insertChat(chat)
+                }
+                
+                // Update sync timestamp
+                updateLastSyncTimestamp("conversations", response.server_timestamp)
+                
+                Log.d("Repository", "Full sync: returning ${newConversations.size} conversations")
+                return SyncResult(newConversations, isCachedData = false)
+            } else {
+                // Incremental sync
+                val updates = response.conversations.map { it.toChatEntity() }
+                val deletedIds = response.conversations
+                    .filter { it.deleted_at != null }
+                    .map { it.id }
+                
+                // Process updates
+                if (updates.isNotEmpty()) {
+                    Log.d(TAG, "🔍 getAllChatsIncremental INCREMENTAL: Processing ${updates.size} updates")
+                    updates.forEach { chat ->
+                        Log.d(TAG, "  - Update chat from API: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                        chatDao.insertChat(chat)
+                    }
+                    Log.d("Repository", "Incremental sync: upserted ${updates.size} conversations")
+                }
+                
+                // Process deletions
+                if (deletedIds.isNotEmpty()) {
+                    deletedIds.forEach { id ->
+                        chatDao.deleteChat(id)
+                    }
+                    Log.d("Repository", "Incremental sync: deleted ${deletedIds.size} conversations")
+                }
+                
+                // Update sync timestamp
+                updateLastSyncTimestamp("conversations", response.server_timestamp)
+                
+                // Get all chats from local database
+                val allChats = chatDao.getAllChatsFlow().first()
+                Log.d("Repository", "Incremental sync: returning ${allChats.size} total conversations")
+                return SyncResult(allChats, isCachedData = false)
+            }
+            
+        } catch (e: Exception) {
+            Log.e("Repository", "Error in incremental sync for chats", e)
+            // Return existing cached data on any error
+            val cachedChats = _conversations.value
+            Log.d("Repository", "Returning ${cachedChats.size} cached conversations due to error")
+            return SyncResult(cachedChats, isCachedData = true)
+        }
+    }
 
     // Incremental sync for pull-to-refresh - actually waits for completion
-    suspend fun performIncrementalSync(): List<ChatEntity> {
+    suspend fun performIncrementalSync(): SyncResult {
         Log.d(TAG, "performIncrementalSync: starting incremental sync operation")
         return try {
             // For chat list refreshes, be more aggressive about syncing new chats
@@ -864,24 +1145,24 @@ class WhizRepository @Inject constructor(
             val shouldUseAggressiveSync = true // Always use aggressive sync for chat list
             
             // Use deduplication helper for incremental sync
-            val conversations = fetchConversationsWithDeduplication(
+            val result = fetchConversationsWithDeduplicationAndStatus(
                 forceFullSync = false, 
                 useAggressiveSync = shouldUseAggressiveSync
             )
-            _conversations.value = conversations
-            Log.d(TAG, "performIncrementalSync: completed, got ${conversations.size} conversations")
+            _conversations.value = result.chats
+            Log.d(TAG, "performIncrementalSync: completed, got ${result.chats.size} conversations, cached=${result.isCachedData}")
             
             // Trigger messages refresh for any active chat flows
             triggerMessagesRefresh()
             Log.d(TAG, "performIncrementalSync: incremental sync completed successfully")
             
-            conversations
+            result
         } catch (e: Exception) {
             Log.e(TAG, "performIncrementalSync: error during incremental sync", e)
-            // Trigger normal refresh as fallback
-            triggerConversationsRefresh()
-            triggerMessagesRefresh()
-            throw e // Re-throw so the UI can handle the error
+            // Return cached data on error
+            val cachedChats = _conversations.value
+            Log.d(TAG, "performIncrementalSync: returning ${cachedChats.size} cached conversations due to error")
+            SyncResult(cachedChats, isCachedData = true)
         }
     }
 
@@ -1067,8 +1348,91 @@ class WhizRepository @Inject constructor(
     fun getAllChatsFlow(forceFullSync: Boolean = false): Flow<List<ChatEntity>> = _conversationsRefreshTrigger.flatMapLatest {
         flow {
             try {
-                val result = getAllChats(forceFullSync)
-                emit(result)
+                // Get chats from server
+                val serverChats = getAllChats(forceFullSync)
+                Log.d(TAG, "🔍 getAllChatsFlow: Got ${serverChats.size} chats from server")
+                serverChats.forEach { chat ->
+                    Log.d(TAG, "  - Server chat: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                }
+                
+                // Get optimistic chats from local database (IDs < -1)
+                val localChats = chatDao.getAllChatsFlow().first()
+                Log.d(TAG, "🔍 getAllChatsFlow: Got ${localChats.size} chats from local database")
+                localChats.forEach { chat ->
+                    if (chat.id > 0 && chat.id < 10000) {
+                        Log.w(TAG, "🚨 LOCAL DB: Chat with positive ID ${chat.id} found - title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                    }
+                }
+                val optimisticChats = localChats.filter { it.id < -1 }
+                
+                // Check all server chats for any that reference our optimistic chats
+                serverChats.forEach { serverChat ->
+                    // Check if this server chat has an optimistic_chat_id field
+                    val optimisticId = serverChat.optimisticChatId
+                    if (optimisticId != null && optimisticId < 0 && chatMigrationMapping[optimisticId] == null) {
+                        // This server chat is linked to an optimistic chat that hasn't been migrated yet
+                        Log.e(TAG, "🚨 MIGRATION TRIGGER: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId")
+                        Log.e(TAG, "🚨 Is ${serverChat.id} a real server ID or locally generated? Stack trace:", Exception("Stack trace for migration trigger"))
+                        
+                        // Register the migration
+                        registerChatMigration(optimisticId, serverChat.id)
+                        
+                        // Trigger migration asynchronously
+                        repositoryScope.launch {
+                            try {
+                                // Migrate the messages if the optimistic chat exists
+                                val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
+                                if (optimisticChatExists) {
+                                    Log.e(TAG, "🚨 CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
+                                    migrateChatMessages(optimisticId, serverChat.id)
+                                    Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
+                            }
+                        }
+                    }
+                }
+                
+                // Check which optimistic chats haven't been migrated yet
+                val unmigratedOptimisticChats = optimisticChats.filter { optimisticChat ->
+                    // Check if this optimistic chat has been migrated
+                    val migratedId = chatMigrationMapping[optimisticChat.id]
+                    if (migratedId != null) {
+                        // This chat has been migrated, don't include it
+                        Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} already migrated to $migratedId")
+                        false
+                    } else {
+                        // Check if any server chat references this optimistic chat
+                        val hasServerChat = serverChats.any { serverChat ->
+                            serverChat.optimisticChatId == optimisticChat.id
+                        }
+                        
+                        if (hasServerChat) {
+                            // This optimistic chat has a server counterpart, don't include it
+                            // Migration will be triggered above
+                            Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} has server counterpart, excluding from list")
+                            false
+                        } else {
+                            // This chat hasn't been migrated yet and has no server counterpart in current list
+                            // For now, include it. The server check will happen when the chat is opened
+                            // via fetchMessagesWithDeduplication which already has the logic to find
+                            // server-backed versions of optimistic chats
+                            Log.d(TAG, "getAllChatsFlow: Including unmigrated optimistic chat ${optimisticChat.id}")
+                            true
+                        }
+                    }
+                }
+                
+                // Sort optimistic chats by timestamp (most recent first)
+                val sortedOptimisticChats = unmigratedOptimisticChats.sortedByDescending { it.lastMessageTime }
+                
+                // Server chats are already sorted by the API
+                // Combine: optimistic chats first, then server chats
+                val combinedChats = sortedOptimisticChats + serverChats
+                
+                Log.d(TAG, "getAllChatsFlow: Returning ${sortedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
+                emit(combinedChats)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in getAllChatsFlow", e)
                 emit(_conversations.value) // Emit cached data on error
@@ -1082,3 +1446,9 @@ class WhizRepository @Inject constructor(
     // Expose ChatDao for testing purposes
     fun getChatDao(): com.example.whiz.data.local.ChatDao = chatDao
 }
+
+// Result class to indicate if we're returning cached data
+data class SyncResult(
+    val chats: List<ChatEntity>,
+    val isCachedData: Boolean
+)

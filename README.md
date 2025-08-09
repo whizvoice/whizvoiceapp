@@ -33,3 +33,9 @@ cd whizvoiceapp
 cd whizvoiceapp
 ./run_tests_on_emulator.sh
 ```
+
+### get test logs from server
+
+```
+sudo journalctl -u whizvoice --since "Aug 05 07:15:36 UTC" --no-pager > whizvoice_server_logs.txt
+```
