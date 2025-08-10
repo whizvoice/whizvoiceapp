@@ -189,6 +189,9 @@ class ChatViewModel @Inject constructor(
     val speechError = voiceManager.speechError
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
+    
+    // Track when app was last backgrounded to prevent TTS replay of old messages
+    private var lastBackgroundedTime = 0L
 
     // Responses are in progress
     private val _isResponding = MutableStateFlow(false)
@@ -855,6 +858,21 @@ class ChatViewModel @Inject constructor(
                             updateRespondingStateForCurrentChat()
                             
                             try {
+                                // Check if we recently returned from background (within 3 seconds)
+                                val timeSinceBackground = if (lastBackgroundedTime > 0) {
+                                    System.currentTimeMillis() - lastBackgroundedTime
+                                } else {
+                                    Long.MAX_VALUE // Never backgrounded
+                                }
+                                
+                                // Skip TTS for messages that arrive within 3 seconds of returning from background
+                                // This prevents replay of messages that were already spoken before backgrounding
+                                val isReplayedMessage = timeSinceBackground < 3000L
+                                
+                                if (isReplayedMessage) {
+                                    Log.d(TAG, "[LOG] Skipping TTS - message arrived ${timeSinceBackground}ms after backgrounding (likely a replay)")
+                                }
+                                
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
                                 val shouldSpeak = _isVoiceResponseEnabled.value && 
@@ -863,7 +881,8 @@ class ChatViewModel @Inject constructor(
                                                 messageContentForChat.isNotBlank() &&
                                                 isResponseForCurrentChat && 
                                                 targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
-                                                targetChatId == _chatId.value // Double-check current chat
+                                                targetChatId == _chatId.value && // Double-check current chat
+                                                !isReplayedMessage // Don't speak replayed messages
                                 
                                 
                                 if (shouldSpeak) {
@@ -1650,6 +1669,10 @@ class ChatViewModel @Inject constructor(
     // Called when app goes to background
     fun onAppBackgrounded() {
         Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
+        
+        // Record when we're backgrounding to prevent TTS replay of old messages
+        lastBackgroundedTime = System.currentTimeMillis()
+        Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
         
         // Stop TTS when app goes to background
         if (ttsManager.isSpeaking.value) {
