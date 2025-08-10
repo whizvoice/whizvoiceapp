@@ -276,9 +276,9 @@ class ChatViewModel @Inject constructor(
 
         // Start observing messages immediately
         if (configUseRemoteAgent) {
-            Log.d(TAG, "Init: Using remote agent. WebSocket connection will be established when loading a chat.")
-            // Don't connect here - let loadChatWithVoiceMode handle it with the proper conversation ID
-            // This prevents creating a connection without a conversation ID when navigating to existing chats
+            Log.d(TAG, "Init: Using remote agent. WebSocket will connect when sending first message or loading existing chat.")
+            // Don't connect here - let sendMessage or loadChatWithVoiceMode handle it
+            // This prevents duplicate connections when navigating to existing chats
         }
         
         // Observe voice settings changes and apply them to TTS
@@ -1060,11 +1060,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // Reset states
-                Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
-                Log.d(TAG, "[RACE_DEBUG] loadChat: About to clear input text due to chat load. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
-                _inputText.value = ""
-                Log.d(TAG, "[RACE_DEBUG] loadChat: Input text cleared, now: '${_inputText.value}'")
+                // Don't clear input text - if it's the same chat, preserve what user was typing
+                // If it's a different chat, we have a new ViewModel instance anyway
+                Log.d(TAG, "[LOG] loadChat: Preserving input text. Current value: '${_inputText.value}'")
                 // 🔧 Update responding state based on current chat's pending requests
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
@@ -1115,6 +1113,7 @@ class ChatViewModel @Inject constructor(
                 // Connect to server if needed *after* chat ID is set
                 // BUT respect manual disconnect flag (for testing connection errors)
                 Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
+                // Allow connection for both new chats (chatId = -1) and existing chats (chatId > 0), but not for uninitialized state (chatId = 0)
                 if (configUseRemoteAgent && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
                         Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat...")
@@ -1403,8 +1402,8 @@ class ChatViewModel @Inject constructor(
 
                 // Connect to WebSocket if using remote agent and not connected
                 if(configUseRemoteAgent && !whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
-                    // For new chats, we don't have a conversation_id yet, so pass null
-                    whizServerRepository.connect(null)
+                    // Pass the optimistic chat ID we just created - the server will handle it as a client_conversation_id
+                    whizServerRepository.connect(currentChatId)
                 }
             } else {
                 // Existing chat - add message normally
