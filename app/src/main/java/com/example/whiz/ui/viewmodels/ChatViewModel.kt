@@ -273,11 +273,9 @@ class ChatViewModel @Inject constructor(
 
         // Start observing messages immediately
         if (configUseRemoteAgent) {
-            Log.d(TAG, "Init: Using remote agent. Attempting WebSocket connection.")
-            viewModelScope.launch {
-                whizServerRepository.connect()
-            }
-            // Enhanced server message collection with interrupt handling - moved inline above
+            Log.d(TAG, "Init: Using remote agent. WebSocket connection will be established when loading a chat.")
+            // Don't connect here - let loadChatWithVoiceMode handle it with the proper conversation ID
+            // This prevents creating a connection without a conversation ID when navigating to existing chats
         }
         
         // Observe voice settings changes and apply them to TTS
