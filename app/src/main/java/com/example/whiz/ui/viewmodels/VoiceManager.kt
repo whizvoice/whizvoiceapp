@@ -2,14 +2,16 @@ package com.example.whiz.ui.viewmodels
 
 import android.content.Context
 import android.util.Log
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,9 +29,12 @@ class VoiceManager @Inject constructor(
     private val ttsManager: TTSManager,
     private val userPreferences: UserPreferences,
     private val appLifecycleService: AppLifecycleService
-) : ViewModel() {
+) {
 
     private val TAG = "VoiceManager"
+    
+    // Create a coroutine scope for this singleton service
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // Speech Recognition State
     val transcriptionState = speechRecognitionService.transcriptionState
@@ -80,7 +85,7 @@ class VoiceManager @Inject constructor(
                 Log.d(TAG, "TTS initialized successfully")
                 setupTTSCallbacks()
                 // Apply current voice settings if any
-                viewModelScope.launch {
+                coroutineScope.launch {
                     userPreferences.voiceSettings.collect { voiceSettings ->
                         applyVoiceSettings(voiceSettings)
                     }
@@ -120,7 +125,7 @@ class VoiceManager @Inject constructor(
     }
 
     private fun observeVoiceSettings() {
-        viewModelScope.launch {
+        coroutineScope.launch {
             userPreferences.voiceSettings.collect { voiceSettings ->
                 if (_isTTSInitialized.value) {
                     applyVoiceSettings(voiceSettings)
@@ -130,7 +135,7 @@ class VoiceManager @Inject constructor(
     }
 
     private fun observePermissionChanges() {
-        viewModelScope.launch {
+        coroutineScope.launch {
             permissionManager.microphonePermissionGranted.collect { hasPermission ->
                 if (hasPermission) {
                     onPermissionGranted()
@@ -148,7 +153,7 @@ class VoiceManager @Inject constructor(
             
             // If continuous listening was enabled before permission was granted, start it now
             if (continuousListeningEnabled) {
-                viewModelScope.launch {
+                coroutineScope.launch {
                     delay(100L) // Small delay to ensure service is initialized
                     startContinuousListening()
                 }
@@ -193,7 +198,7 @@ class VoiceManager @Inject constructor(
 
     private fun observeAppLifecycle() {
         // Handle app background events
-        viewModelScope.launch {
+        coroutineScope.launch {
             appLifecycleService.appBackgroundEvent.collect {
                 Log.d(TAG, "App backgrounded - stopping continuous listening")
                 onAppBackgrounded()
@@ -201,7 +206,7 @@ class VoiceManager @Inject constructor(
         }
         
         // Handle app foreground events
-        viewModelScope.launch {
+        coroutineScope.launch {
             appLifecycleService.appForegroundEvent.collect {
                 Log.d(TAG, "App foregrounded")
                 onAppForegrounded()
@@ -292,7 +297,7 @@ class VoiceManager @Inject constructor(
                 // Auto-restart continuous listening if still enabled
                 if (continuousListeningEnabled) {
                     Log.d(TAG, "Continuous listening: restarting after result")
-                    viewModelScope.launch {
+                    coroutineScope.launch {
                         // Small delay to ensure the previous listening session is fully stopped
                         delay(100L)
                         if (continuousListeningEnabled && !ttsManager.isSpeaking.value) {
@@ -353,7 +358,7 @@ class VoiceManager @Inject constructor(
             
             // Use reactive state observation instead of delay
             // Observe when TTS actually stops speaking, but only check once
-            viewModelScope.launch {
+            coroutineScope.launch {
                 ttsManager.isSpeaking.first { !it } // Wait for first emission where isSpeaking is false
                 if (continuousListeningEnabled) {
                     startContinuousListening()
@@ -362,8 +367,11 @@ class VoiceManager @Inject constructor(
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    // Cleanup method - typically called when the app is destroyed
+    // As a Singleton, this will rarely be called in practice
+    fun cleanup() {
+        Log.d(TAG, "Cleaning up VoiceManager resources")
+        coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()
     }
