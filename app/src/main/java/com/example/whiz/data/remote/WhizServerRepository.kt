@@ -322,6 +322,10 @@ class WhizServerRepository @Inject constructor(
                     try {
                         Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId. persistentDisconnect=$persistentDisconnectForTest")
                         
+                        // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
+                        // This prevents race condition where processRetryQueue() runs before webSocket is assigned
+                        this@WhizServerRepository.webSocket = webSocket
+                        
                         // Update connection state
                         connectionState = ConnectionState.CONNECTED
                         
@@ -525,8 +529,11 @@ class WhizServerRepository @Inject constructor(
                 }
             })
             
-            // Store the WebSocket reference immediately
-            webSocket = newWebSocket
+            // Store the WebSocket reference immediately (if onOpen hasn't already done it)
+            // This handles the case where onOpen hasn't fired yet
+            if (webSocket == null) {
+                webSocket = newWebSocket
+            }
             
             // Set up a timeout for the connection attempt AFTER creating the WebSocket
             connectionTimeoutJob?.cancel()
