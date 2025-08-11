@@ -504,6 +504,12 @@ run_integration_tests_with_logcat() {
     # Run gradle command and capture ONLY its output to test_gradle_output.log
     local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
     if [[ -n "$SINGLE_TEST" ]]; then
+        # Fix the test class path if it's missing the integration package
+        # This handles the case where WebSocketReconnectionTest is specified without the full package path
+        if [[ "$SINGLE_TEST" == "com.example.whiz.WebSocketReconnectionTest" ]]; then
+            SINGLE_TEST="com.example.whiz.integration.WebSocketReconnectionTest"
+            echo "🔧 Fixed test path: using $SINGLE_TEST" >> test_summary.log
+        fi
         gradle_command="$gradle_command -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST"
         echo "🎯 Running single test: $SINGLE_TEST" >> test_summary.log
     fi

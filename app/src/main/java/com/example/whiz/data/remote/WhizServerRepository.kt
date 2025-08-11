@@ -210,11 +210,13 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         
         // Check if persistent disconnect is active and we're not explicitly turning it off
-        if (persistentDisconnectForTest && !turnOffPersistentDisconnect) {
-            Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
-            // Don't actually connect, but keep the retry mechanism running
-            // This better simulates production behavior where the network might be unavailable
-            return
+        if (!turnOffPersistentDisconnect) {
+            if (persistentDisconnectForTest) {
+                Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
+            }
+            if (conversationId == null) {
+                return
+            }
         }
         
         // Increment generation for this new connection attempt
