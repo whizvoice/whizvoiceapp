@@ -81,6 +81,12 @@ class WhizServerRepository @Inject constructor(
     private var connectionState = ConnectionState.IDLE
     private val connectionLock = Mutex()
     
+    // Generation tracking for non-blocking connection management
+    // Each connection attempt gets a unique generation number
+    // Callbacks from old connections are ignored based on generation mismatch
+    private val connectionGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+    private var currentGeneration = 0
+    
     // Debug: Track event history for troubleshooting
     private val eventHistory = mutableListOf<TimestampedEvent>()
     private val maxEventHistorySize = 100 // Keep last 100 events
@@ -203,26 +209,33 @@ class WhizServerRepository @Inject constructor(
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         
+        // Check if persistent disconnect is active and we're not explicitly turning it off
+        if (persistentDisconnectForTest && !turnOffPersistentDisconnect) {
+            Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
+            // Don't actually connect, but keep the retry mechanism running
+            // This better simulates production behavior where the network might be unavailable
+            return
+        }
+        
+        // Increment generation for this new connection attempt
+        val thisGeneration = connectionGeneration.incrementAndGet()
+        
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
             // Reset persistent disconnect flag if requested
             if (turnOffPersistentDisconnect && persistentDisconnectForTest) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
                 persistentDisconnectForTest = false
-                return // Just reset the flag and return - don't attempt connection
+                // Continue with connection attempt after resetting the flag
+                // This allows tests to both reset the flag AND establish a connection in one call
             }
             
             // Check if we're already connected/connecting to the SAME conversation
             if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) 
-                && currentConversationId == conversationId) {
+                && currentConversationId == conversationId && currentGeneration == thisGeneration - 1) {
                 Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
-                
-                // Only reset persistent disconnect flag if explicitly requested
-                // This is often the real reason for calling connect() when already connected
-                if (turnOffPersistentDisconnect) {
-                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false (staying connected to $conversationId)")
-                    persistentDisconnectForTest = false
-                }
+                // Revert generation since we're not actually creating a new connection
+                connectionGeneration.decrementAndGet()
                 
                 // If already connected, process any queued messages
                 if (connectionState == ConnectionState.CONNECTED) {
@@ -233,16 +246,11 @@ class WhizServerRepository @Inject constructor(
             
             // IMPORTANT: If we're connected to a specific conversation and someone requests null,
             // stay connected to the specific conversation (it's more specific/better)
-            // This often happens when the test just wants to reset the persistent disconnect flag
             if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED)
-                && conversationId == null && currentConversationId != null) {
+                && conversationId == null && currentConversationId != null && currentGeneration == thisGeneration - 1) {
                 Log.d(TAG, "connect(null) called while ${connectionState.name.lowercase()} to conversation $currentConversationId - likely just resetting persistent disconnect flag")
-                
-                // Only reset persistent disconnect flag if explicitly requested
-                if (turnOffPersistentDisconnect) {
-                    Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false while staying connected to $currentConversationId")
-                    persistentDisconnectForTest = false
-                }
+                // Revert generation since we're not actually creating a new connection
+                connectionGeneration.decrementAndGet()
                 
                 // If already connected, process any queued messages
                 if (connectionState == ConnectionState.CONNECTED) {
@@ -251,27 +259,29 @@ class WhizServerRepository @Inject constructor(
                 return
             }
             
-            // If connecting/connected to a DIFFERENT conversation (and not the null case above), need to disconnect first
-            if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
-                Log.d(TAG, "Disconnecting from conversation $currentConversationId to connect to $conversationId")
-                
-                // Cancel any ongoing connection attempt
-                connectionTimeoutJob?.cancel()
-                connectionTimeoutJob = null
-                
-                // Cancel the existing WebSocket
-                webSocket?.cancel()
+            // Store the generation for this connection
+            currentGeneration = thisGeneration
+            Log.d(TAG, "Starting new connection with generation $thisGeneration")
+            
+            // If there's an existing connection, disconnect it asynchronously
+            val oldWebSocket = webSocket
+            val oldGeneration = thisGeneration - 1
+            if (oldWebSocket != null) {
+                Log.d(TAG, "Disconnecting old connection (generation $oldGeneration) asynchronously")
+                // Disconnect old connection in background - non-blocking
+                scope.launch {
+                    try {
+                        oldWebSocket.close(1000, "New connection initiated")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing old WebSocket", e)
+                    }
+                }
+                // Clear the reference immediately
                 webSocket = null
-                
-                // Reset state
-                connectionState = ConnectionState.IDLE
             }
             
-            // If currently disconnecting, wait a bit
-            if (connectionState == ConnectionState.DISCONNECTING) {
-                Log.d(TAG, "Currently disconnecting, waiting before new connection...")
-                delay(100)
-            }
+            // NO WAITING - proceed immediately with new connection
+            // The generation tracking will ensure old callbacks are ignored
             
             // Update state to CONNECTING
             connectionState = ConnectionState.CONNECTING
@@ -320,7 +330,14 @@ class WhizServerRepository @Inject constructor(
             val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     try {
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId. persistentDisconnect=$persistentDisconnectForTest")
+                        // Check if this callback is from the current generation
+                        if (thisGeneration != currentGeneration) {
+                            Log.d(TAG, "onOpen: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            webSocket.close(1000, "Superseded by newer connection")
+                            return
+                        }
+                        
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
@@ -470,9 +487,15 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     try {
-                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason, persistentDisconnect=$persistentDisconnectForTest")
+                        // Check if this callback is from the current generation
+                        if (thisGeneration != currentGeneration) {
+                            Log.d(TAG, "onClosed: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            return
+                        }
                         
-                        // Update connection state
+                        Log.i(TAG, "WebSocket connection closed: Code=$code, Reason=$reason, generation=$thisGeneration, persistentDisconnect=$persistentDisconnectForTest")
+                        
+                        // Update connection state only if this is the current generation
                         connectionState = ConnectionState.IDLE
                         // DO NOT reset currentConversationId here - we need it for reconnection!
                         
@@ -496,9 +519,15 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     try {
-                        Log.e(TAG, "WebSocket connection failure. persistentDisconnect=$persistentDisconnectForTest, response code=${response?.code}, message=${t.message}", t)
+                        // Check if this callback is from the current generation
+                        if (thisGeneration != currentGeneration) {
+                            Log.d(TAG, "onFailure: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            return
+                        }
                         
-                        // Update connection state
+                        Log.e(TAG, "WebSocket connection failure. generation=$thisGeneration, persistentDisconnect=$persistentDisconnectForTest, response code=${response?.code}, message=${t.message}", t)
+                        
+                        // Update connection state only if this is the current generation
                         connectionState = ConnectionState.IDLE
                         // DO NOT reset currentConversationId here - we need it for reconnection!
                         
@@ -737,11 +766,11 @@ class WhizServerRepository @Inject constructor(
 
     fun disconnect(setPersistentDisconnect: Boolean = false) {
         try {
-            Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect, currentState=$connectionState")
+            Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect, currentState=$connectionState, generation=$currentGeneration")
             
-            // Check if already disconnected or disconnecting
-            if (connectionState == ConnectionState.IDLE || connectionState == ConnectionState.DISCONNECTING) {
-                Log.d(TAG, "Already in state $connectionState, skipping disconnect")
+            // Check if already disconnected
+            if (connectionState == ConnectionState.IDLE && webSocket == null) {
+                Log.d(TAG, "Already disconnected, skipping disconnect")
                 // When already disconnected, only update persistentDisconnectForTest if explicitly setting it to true
                 // This preserves the flag when ChatViewModel calls disconnect() during navigation
                 if (setPersistentDisconnect) {
@@ -750,6 +779,11 @@ class WhizServerRepository @Inject constructor(
                 }
                 return
             }
+            
+            // Increment generation to invalidate any pending callbacks
+            val disconnectGeneration = connectionGeneration.incrementAndGet()
+            currentGeneration = disconnectGeneration
+            Log.d(TAG, "Disconnect initiated with generation $disconnectGeneration")
             
             // Update state to DISCONNECTING
             connectionState = ConnectionState.DISCONNECTING
@@ -777,11 +811,15 @@ class WhizServerRepository @Inject constructor(
             val currentSocket = webSocket
             if (currentSocket != null) {
                 currentSocket.close(1000, "Client initiated disconnect")
+                // The onClosed callback will handle:
+                // - Setting connectionState to IDLE
+                // - Clearing the webSocket reference
+                // - Emitting the Closed event
+            } else {
+                // No WebSocket to close, transition directly to IDLE
+                connectionState = ConnectionState.IDLE
             }
             
-            // Clear references
-            webSocket = null
-            connectionState = ConnectionState.IDLE
             // Never clear currentConversationId - we want to remember what conversation we were in
             // even if we're doing a persistent disconnect (which just means "don't auto-reconnect")
         } catch (e: Exception) {
@@ -790,11 +828,10 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun scheduleReconnect() {
-        if (persistentDisconnectForTest) {
-            Log.i(TAG, "Reconnect scheduling aborted: manually disconnected.")
-            return
-        }
-
+        // Don't check persistentDisconnectForTest here - let the retry mechanism keep running
+        // The actual connection attempt will be blocked in connect() if the flag is true
+        // This better simulates production behavior where retries keep happening
+        
         if (currentReconnectAttempts >= maxReconnectAttempts) {
             Log.w(TAG, "Max reconnect attempts reached ($maxReconnectAttempts). Giving up.")
             currentReconnectAttempts = 0 // Reset for future manual connect

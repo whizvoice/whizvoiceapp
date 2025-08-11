@@ -287,8 +287,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ Confirmed: No bot response while disconnected")
                 
-                // Step 6: Reset persistent disconnect flag and then reconnect
-                Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting...")
+                // Step 6: Reset persistent disconnect flag
+                Log.d(TAG, "🔌 Resetting persistent disconnect flag")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
 
                 // Step 7: Wait for bot response to appear after reconnection
