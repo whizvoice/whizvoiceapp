@@ -63,6 +63,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
     
+    @Inject
+    lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
+    
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     
@@ -472,6 +475,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
+        // Notify that app is returning to foreground
+        appLifecycleService.notifyAppForegrounded()
+        Log.d("MainActivity", "Notified app foregrounded")
         
         // 🕵️ DEBUG: Log intent state when resuming to understand chat ID issue
         Log.d(TAG, "🔍 RESUME DEBUG: Checking intent state after returning from background")
@@ -516,6 +522,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
+        // Notify that app is going to background
+        appLifecycleService.notifyAppBackgrounded()
+        Log.d("MainActivity", "Notified app backgrounded")
         // Stop TTS when app is backgrounded to prevent speech continuing off-screen
         try {
             ttsManager.stop()
