@@ -862,19 +862,31 @@ class ChatViewModel @Inject constructor(
                             updateRespondingStateForCurrentChat()
                             
                             try {
-                                // Check if we recently returned from background (within 3 seconds)
-                                val timeSinceBackground = if (lastBackgroundedTime > 0) {
-                                    System.currentTimeMillis() - lastBackgroundedTime
+                                // Determine if this message is fresh enough to speak
+                                val currentTime = System.currentTimeMillis()
+                                val timeSinceBackgrounding = if (lastBackgroundedTime > 0) {
+                                    currentTime - lastBackgroundedTime
                                 } else {
                                     Long.MAX_VALUE // Never backgrounded
                                 }
                                 
-                                // Skip TTS for messages that arrive within 3 seconds of returning from background
-                                // This prevents replay of messages that were already spoken before backgrounding
-                                val isReplayedMessage = timeSinceBackground < 3000L
-                                
-                                if (isReplayedMessage) {
-                                    Log.d(TAG, "[LOG] Skipping TTS - message arrived ${timeSinceBackground}ms after backgrounding (likely a replay)")
+                                val isMessageFresh = if (timeSinceBackgrounding <= 3000L) {
+                                    // We JUST returned from background (within 3 seconds)
+                                    // Only speak messages that arrived AFTER backgrounding
+                                    val isFresh = messageReceivedTime > lastBackgroundedTime
+                                    if (!isFresh) {
+                                        Log.d(TAG, "[LOG] Skipping TTS - message received at $messageReceivedTime before backgrounding at $lastBackgroundedTime")
+                                    }
+                                    isFresh
+                                } else {
+                                    // Either never backgrounded OR backgrounded long ago (>3 seconds)
+                                    // Only speak recent messages (arrived within last 3 seconds)
+                                    val messageAge = currentTime - messageReceivedTime
+                                    val isFresh = messageAge <= 3000L
+                                    if (!isFresh) {
+                                        Log.d(TAG, "[LOG] Skipping TTS - message is ${messageAge}ms old (too old to speak)")
+                                    }
+                                    isFresh
                                 }
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
@@ -886,7 +898,7 @@ class ChatViewModel @Inject constructor(
                                                 isResponseForCurrentChat && 
                                                 targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
                                                 targetChatId == _chatId.value && // Double-check current chat
-                                                !isReplayedMessage // Don't speak replayed messages
+                                                isMessageFresh // Only speak fresh messages
                                 
                                 
                                 if (shouldSpeak) {
