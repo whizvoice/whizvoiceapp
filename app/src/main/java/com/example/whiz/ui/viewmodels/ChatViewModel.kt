@@ -1441,12 +1441,16 @@ class ChatViewModel @Inject constructor(
                 Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
             }
             
-            if (_inputText.value.isNotBlank()) {
+            // Only clear the input if it still contains the message we just sent
+            // This prevents clearing text that the user is currently typing
+            if (_inputText.value.trim() == trimmedText) {
                 Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
-                Log.d(TAG, "[RACE_DEBUG] sendUserInput: About to clear input text after message sent. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: Current input matches sent message ('${_inputText.value}' == '$trimmedText'), clearing...")
                 _inputText.value = ""
                 Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text cleared to: '${_inputText.value}'")
                 _isInputFromVoice.value = false
+            } else {
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text has changed ('${_inputText.value}' != '$trimmedText'), NOT clearing to avoid race condition")
             }
 
             // Send to agent (local or remote)
