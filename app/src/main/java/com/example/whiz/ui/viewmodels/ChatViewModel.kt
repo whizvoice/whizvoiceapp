@@ -474,8 +474,12 @@ class ChatViewModel @Inject constructor(
                                 Log.i(TAG, "Token refresh successful after WebSocket AuthError. Attempting to reconnect WebSocket.")
                                 isDisconnectingForAuthError = false
                                 _navigateToLogin.value = false
-                                val conversationId = if (_chatId.value > 0) _chatId.value else null
-                                whizServerRepository.connect(conversationId)
+                                // Reconnect to the same conversation we were in
+                                // Don't reconnect only for the "new chat" state (chatId = -1)
+                                // DO reconnect for existing chats (chatId > 0) and optimistic chats (chatId < -1)
+                                if (_chatId.value != -1L && _chatId.value != 0L) {
+                                    whizServerRepository.connect(_chatId.value)
+                                }
                             } else {
                                 Log.w(TAG, "Token refresh failed after WebSocket AuthError. Navigating to login.")
                                 _navigateToLogin.value = true 
@@ -1113,14 +1117,15 @@ class ChatViewModel @Inject constructor(
                 // Connect to server if needed *after* chat ID is set
                 // BUT respect manual disconnect flag (for testing connection errors)
                 Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
-                // Allow connection for both new chats (chatId = -1) and existing chats (chatId > 0), but not for uninitialized state (chatId = 0)
-                if (configUseRemoteAgent && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
+                // Connect for existing chats (chatId > 0) and optimistic chats (chatId < -1)
+                // Don't connect only for the "new chat" placeholder (chatId = -1) or uninitialized state (chatId = 0)
+                // New chats will connect when sending the first message with an optimistic ID
+                if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
-                        Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat...")
+                        Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat for chat ${_chatId.value}...")
                         delay(100) // Small delay to ensure state propagation
-                        // Pass the conversation ID for existing chats, null for new chats (chatId = -1)
-                        val conversationId = if (_chatId.value > 0) _chatId.value else null
-                        whizServerRepository.connect(conversationId)
+                        // Connect with the specific chat ID
+                        whizServerRepository.connect(_chatId.value)
                         Log.d(TAG, "🔌 WebSocket reconnect initiated for chat ${_chatId.value}")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
