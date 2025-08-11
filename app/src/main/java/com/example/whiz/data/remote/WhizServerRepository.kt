@@ -230,25 +230,20 @@ class WhizServerRepository @Inject constructor(
                 // This allows tests to both reset the flag AND establish a connection in one call
             }
             
+            // Validate that conversationId is not null (except when just resetting the flag)
+            // In production, we should always have a valid conversation ID (either server-backed or optimistic)
+            if (conversationId == null && !turnOffPersistentDisconnect) {
+                val errorMsg = "connect() called with null conversationId - this should not happen in production. " +
+                               "All chats should have either a server-backed ID (>0) or optimistic ID (<-1). " +
+                               "Current state: connectionState=$connectionState, currentConversationId=$currentConversationId"
+                Log.e(TAG, errorMsg)
+                throw IllegalArgumentException(errorMsg)
+            }
+            
             // Check if we're already connected/connecting to the SAME conversation
             if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) 
                 && currentConversationId == conversationId && currentGeneration == thisGeneration - 1) {
                 Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
-                // Revert generation since we're not actually creating a new connection
-                connectionGeneration.decrementAndGet()
-                
-                // If already connected, process any queued messages
-                if (connectionState == ConnectionState.CONNECTED) {
-                    processRetryQueue()
-                }
-                return
-            }
-            
-            // IMPORTANT: If we're connected to a specific conversation and someone requests null,
-            // stay connected to the specific conversation (it's more specific/better)
-            if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED)
-                && conversationId == null && currentConversationId != null && currentGeneration == thisGeneration - 1) {
-                Log.d(TAG, "connect(null) called while ${connectionState.name.lowercase()} to conversation $currentConversationId - likely just resetting persistent disconnect flag")
                 // Revert generation since we're not actually creating a new connection
                 connectionGeneration.decrementAndGet()
                 
