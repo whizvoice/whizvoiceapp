@@ -108,17 +108,6 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
             }
             
-            // Now try to connect with a fake chat ID
-            if (!whizServerRepository.isConnected()) {
-                whizServerRepository.connect(conversationId = 9999999L)
-                // Wait for connection
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
-                    }
-                }
-            }
-            
             // Reset TestInterceptor state
             TestInterceptor.persistentDisconnectForTestCheck = null
             TestInterceptor.simulateNetworkErrorForManualDisconnect = true

@@ -290,19 +290,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Step 6: Reset persistent disconnect flag and then reconnect
                 Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
-                
-                // Now actually connect since flag is reset
-                whizServerRepository.connect(conversationId = chatId)
-                
-                // Wait for WebSocket to reconnect
-                Log.d(TAG, "⏳ Waiting for WebSocket to reconnect...")
-                withTimeout(10000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
-                    }
-                }
-                Log.d(TAG, "✅ WebSocket reconnected")
-                
+
                 // Step 7: Wait for bot response to appear after reconnection
                 Log.d(TAG, "⏳ Waiting for bot response to sync after reconnection...")
                 val botResponseAfterReconnect = ComposeTestHelper.waitForElement(
@@ -315,7 +303,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 15000L, // Give more time for sync
+                    timeoutMs = 5000L, // Give more time for sync
                     description = "bot response about LEGO history after reconnection"
                 )
                 
