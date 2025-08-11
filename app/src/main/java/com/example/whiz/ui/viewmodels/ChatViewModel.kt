@@ -1382,44 +1382,30 @@ class ChatViewModel @Inject constructor(
             // Only create a new chat if we don't have any chat yet (first message)
             // Note: Negative chat IDs are valid optimistic chats, not "no chat"
             if (currentChatId == -1L) {
-                if (configUseRemoteAgent) {
-                    // For remote agent: Create optimistic chat only for the first message
-                    // Let the WebSocket server create it and then sync
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChatOptimistic(tempTitle)
-                    // Don't update _chatId yet to avoid race condition
-                    currentChatId = tempChatId
-                    
-                    // Add the message first
-                    val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId)
-                    
-                    // Now update the chat ID - the message is already in the database
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                } else {
-                    // For local agent: Create conversation locally as before
-                    val chatTitle = repository.deriveChatTitle(trimmedText)
-                    val newChatId = repository.createChat(chatTitle)
-                    _chatId.value = newChatId
-                    _chatTitle.value = chatTitle
-                    currentChatId = newChatId
-                }
+                // Create optimistic chat only for the first message
+                // Let the WebSocket server create it and then sync
+                val tempTitle = repository.deriveChatTitle(trimmedText)
+                val tempChatId = repository.createChatOptimistic(tempTitle)
+                // Don't update _chatId yet to avoid race condition
+                currentChatId = tempChatId
+                
+                // Add the message first
+                val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId)
+                
+                // Now update the chat ID - the message is already in the database
+                _chatId.value = tempChatId
+                _chatTitle.value = tempTitle
 
-                // Connect to WebSocket if using remote agent and not connected
-                if(configUseRemoteAgent && !whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
+                // Connect to WebSocket if not connected
+                if(!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
                     // Pass the optimistic chat ID we just created - the server will handle it as a client_conversation_id
                     whizServerRepository.connect(currentChatId)
                 }
             } else {
                 // Existing chat - add message normally
                 val actualChatId = _chatId.value
-                val localMessageId = if (configUseRemoteAgent) {
-                    // For remote agent: use optimistic UI (local only, no API call)
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
-                } else {
-                    // For local agent: use regular method (creates via API)
-                    repository.addUserMessage(actualChatId, trimmedText)
-                }
+                // Always use optimistic UI since configUseRemoteAgent is always true
+                val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
             }
             
             // Clear input text after optimistic message is added (consistent UX for all input types)
