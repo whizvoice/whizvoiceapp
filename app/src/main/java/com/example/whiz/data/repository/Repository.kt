@@ -343,26 +343,29 @@ class WhizRepository @Inject constructor(
      */
     suspend fun addUserMessageOptimistic(chatId: Long, content: String, requestId: String? = null): Long {
         return try {
-            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $chatId (local only) with requestId: $requestId")
+            // Check if this chat has been migrated to a server-backed chat
+            val actualChatId = getActualChatId(chatId)
+            
+            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $actualChatId (original: $chatId, migrated: ${actualChatId != chatId}) with requestId: $requestId")
             
             // 🔧 FIXED: Ensure chat exists locally before adding optimistic message
             // This prevents foreign key constraint failures for server-only chats
-            val existingChat = chatDao.getChatById(chatId)
+            val existingChat = chatDao.getChatById(actualChatId)
             if (existingChat == null) {
-                Log.w(TAG, "addUserMessageOptimistic: Chat $chatId not found locally, creating placeholder chat for optimistic UI")
+                Log.w(TAG, "addUserMessageOptimistic: Chat $actualChatId not found locally, creating placeholder chat for optimistic UI")
                 // Create a minimal chat entity to satisfy foreign key constraint
                 val placeholderChat = ChatEntity(
-                    id = chatId,
+                    id = actualChatId,
                     title = "Loading...", // Will be updated when server data arrives
                     createdAt = System.currentTimeMillis(),
                     lastMessageTime = System.currentTimeMillis()
                 )
                 chatDao.insertChat(placeholderChat)
-                Log.d(TAG, "addUserMessageOptimistic: Created placeholder chat $chatId for optimistic UI")
+                Log.d(TAG, "addUserMessageOptimistic: Created placeholder chat $actualChatId for optimistic UI")
             }
             
             // Check if this message already exists to prevent duplicates
-            val existingMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            val existingMessages = messageDao.getMessagesForChatFlow(actualChatId).first()
             val duplicateMessage = existingMessages.find { 
                 it.content.trim() == content.trim() && 
                 it.type == MessageType.USER &&
@@ -378,7 +381,7 @@ class WhizRepository @Inject constructor(
             // Create optimistic message entity
             val messageEntity = MessageEntity(
                 id = 0,
-                chatId = chatId,
+                chatId = actualChatId,
                 content = content,
                 type = MessageType.USER,
                 timestamp = System.currentTimeMillis(),
@@ -386,7 +389,7 @@ class WhizRepository @Inject constructor(
             )
             
             val messageId = messageDao.insertMessage(messageEntity)
-            Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $chatId with requestId: $requestId")
+            Log.d(TAG, "addUserMessageOptimistic: added optimistic message ${messageId} to chat $actualChatId with requestId: $requestId")
             
             // Room will automatically notify the Flow - no manual trigger needed
             
@@ -858,18 +861,22 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Server returned messages for chat $serverChatId instead of requested $chatId - triggering migration")
                 
                 // This is an optimistic->real chat migration scenario
-                // Use the existing migration logic that already handles:
-                // 1. Registering the migration mapping
-                // 2. Creating the target chat if needed
-                // 3. Migrating all messages
+                // CRITICAL: Register the migration FIRST to prevent race conditions
+                // where new messages get added to the old chat during migration
+                registerChatMigration(chatId, serverChatId)
+                
+                // Now perform the actual migration
+                // This handles:
+                // 1. Creating the target chat if needed
+                // 2. Migrating all messages
                 val migrationSuccess = migrateChatMessages(chatId, serverChatId)
                 
                 if (migrationSuccess) {
                     Log.d(TAG, "deduplicateMessages: Successfully migrated chat $chatId to $serverChatId")
-                    // Register the migration for future lookups
-                    registerChatMigration(chatId, serverChatId)
                 } else {
                     Log.e(TAG, "deduplicateMessages: Failed to migrate chat $chatId to $serverChatId")
+                    // Consider: Should we unregister the migration if it failed?
+                    // For now, leave it registered to prevent retries
                 }
             }
             
