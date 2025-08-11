@@ -314,28 +314,6 @@ class WhizRepository @Inject constructor(
         }
     }
 
-    suspend fun addUserMessage(chatId: Long, content: String): Long {
-        return try {
-            Log.d(TAG, "addUserMessage: adding user message to chat $chatId via API")
-            val createRequest = ApiService.MessageCreate(
-                conversation_id = chatId,
-                content = content,
-                message_type = MessageType.USER.name
-            )
-            val message = apiService.createMessage(createRequest)
-            Log.d(TAG, "addUserMessage: added user message ${message.id} to chat $chatId")
-            
-            // Remove arbitrary delay - trigger immediate refresh
-            triggerMessagesRefresh()
-            triggerConversationsRefresh() // Also refresh conversations for lastMessageTime
-            
-            message.id
-        } catch (e: Exception) {
-            Log.e(TAG, "Error adding user message to chat $chatId via API", e)
-            -1
-        }
-    }
-
     /**
      * Add user message for optimistic UI - only stores locally, doesn't make API call.
      * Used when we want immediate UI feedback before server processes the message.
