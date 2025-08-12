@@ -920,7 +920,11 @@ class WhizRepository @Inject constructor(
             
             for (serverMessage in serverMessages) {
                 // Look for local messages with same content and type that could be duplicates
+                // IMPORTANT: Don't remove messages that already have the same ID as the server message
+                // (they're already synced from a previous fetch)
                 val duplicateLocal = allLocalMessages.find { localMsg ->
+                    // Skip if this is the exact same message (same ID means it's already from server)
+                    localMsg.id != serverMessage.id &&
                     localMsg.content.trim() == serverMessage.content.trim() &&
                     localMsg.type == serverMessage.type &&
                     // Only consider recent local messages as potential optimistic duplicates
@@ -943,10 +947,16 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Removed ${messagesToRemove.size} duplicate local messages")
             }
             
-            // Store server messages in database
+            // Store server messages in database (only if they don't already exist)
             for (message in serverMessages) {
-                val insertedId = messageDao.insertMessage(message)
-                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
+                // Check if this message already exists in the database
+                val existingMessage = messageDao.getMessageById(message.id)
+                if (existingMessage == null) {
+                    val insertedId = messageDao.insertMessage(message)
+                    Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
+                } else {
+                    Log.d(TAG, "deduplicateMessages: Server message ${message.id} already exists in database, skipping insert")
+                }
             }
             
             // Return all messages for this chat (fresh from database after deduplication)

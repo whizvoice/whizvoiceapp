@@ -42,6 +42,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChatFlow(chatId: Long): Flow<List<MessageEntity>>
 
+    @Query("SELECT * FROM messages WHERE id = :messageId")
+    suspend fun getMessageById(messageId: Long): MessageEntity?
+
     @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId")
     suspend fun getMessageCountForChat(chatId: Long): Int
 
