@@ -631,7 +631,14 @@ class WhizServerRepository @Inject constructor(
                     put("message", message)
                     put("request_id", requestId)
                     put("type", "message")
-                    // Add client context for optimistic ID mapping
+                    
+                    // Include conversation_id if we have a real (positive) conversation ID
+                    val conversationId = currentConversationId
+                    if (conversationId != null && conversationId > 0) {
+                        put("conversation_id", conversationId)
+                    }
+                    
+                    // Add client context for optimistic ID mapping (only for negative IDs)
                     clientConversationId?.let { put("client_conversation_id", it) }
                     clientMessageId?.let { put("client_message_id", it) }
                 }
@@ -706,7 +713,14 @@ class WhizServerRepository @Inject constructor(
                     put("message", pendingMessage.message)
                     put("request_id", pendingMessage.requestId)
                     put("type", "message")
-                    // Include client context for optimistic ID mapping
+                    
+                    // Include conversation_id if we have a real (positive) conversation ID
+                    val conversationId = currentConversationId
+                    if (conversationId != null && conversationId > 0) {
+                        put("conversation_id", conversationId)
+                    }
+                    
+                    // Include client context for optimistic ID mapping (only for negative IDs)
                     pendingMessage.clientConversationId?.let { put("client_conversation_id", it) }
                     pendingMessage.clientMessageId?.let { put("client_message_id", it) }
                 }
