@@ -426,6 +426,7 @@ class WhizServerRepository @Inject constructor(
                                 messageHandled = true
                             }
                             // Handle normal structured response with request_id and conversation_id
+                            // This handles both "response" type and "broadcast" type messages
                             else if (jsonObject.has("response")) {
                                 val responseText = jsonObject.getString("response")
                                 val conversationId = if (jsonObject.has("conversation_id")) {
@@ -434,6 +435,13 @@ class WhizServerRepository @Inject constructor(
                                 val clientConversationId = if (jsonObject.has("client_conversation_id")) {
                                     jsonObject.getLong("client_conversation_id")
                                 } else null
+                                
+                                // Log the message type for debugging
+                                val messageType = if (jsonObject.has("type")) {
+                                    jsonObject.getString("type")
+                                } else "unknown"
+                                Log.d(TAG, "Handling message type: $messageType with response field")
+                                
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
                                     emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId))
