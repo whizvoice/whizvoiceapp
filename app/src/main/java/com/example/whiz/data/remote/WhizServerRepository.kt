@@ -432,7 +432,7 @@ class WhizServerRepository @Inject constructor(
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
-                                val clientConversationId = if (jsonObject.has("client_conversation_id")) {
+                                val clientConversationId = if (jsonObject.has("client_conversation_id") && !jsonObject.isNull("client_conversation_id")) {
                                     jsonObject.getLong("client_conversation_id")
                                 } else null
                                 
@@ -455,7 +455,7 @@ class WhizServerRepository @Inject constructor(
                             }
                         } catch (e: org.json.JSONException) {
                             // Not a JSON object, or JSON parsing failed.
-                            Log.d(TAG, "Message is not a structured JSON error. Will proceed to general message handling or legacy checks.")
+                            Log.d(TAG, "JSON parsing failed for message: ${e.message}. Raw text: ${text.take(200)}")
                         }
 
                         // If the message was not handled as a structured JSON error above, treat it as a regular message
