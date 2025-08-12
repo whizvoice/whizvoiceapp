@@ -298,6 +298,10 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Chat migration detected: updating chat ID from $optimisticId to $serverId")
                     _chatId.value = serverId
                     // The messages flow will automatically update since it observes _chatId
+                    
+                    // Update WhizServerRepository so reconnections use the correct ID
+                    whizServerRepository.updateConversationId(serverId)
+                    Log.d(TAG, "Updated WhizServerRepository conversation ID to $serverId for proper reconnection")
                 }
             }
         }
@@ -634,6 +638,8 @@ class ChatViewModel @Inject constructor(
                         if (originalChatId == -1L && effectiveConversationId != null) {
                             // Update local chat ID to match server-assigned ID
                             _chatId.value = effectiveConversationId
+                            // Update WhizServerRepository so reconnections use the correct ID
+                            whizServerRepository.updateConversationId(effectiveConversationId)
                             // Updated local chat ID to server-assigned conversation ID
                             effectiveConversationId
                         } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
@@ -682,6 +688,10 @@ class ChatViewModel @Inject constructor(
                                             Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
                                             
+                                            // Update WhizServerRepository so reconnections use the correct ID
+                                            whizServerRepository.updateConversationId(effectiveConversationId)
+                                            Log.d(TAG, "Updated WhizServerRepository conversation ID to $effectiveConversationId for proper reconnection")
+                                            
                                             // Note: Input text preservation removed - StateFlow maintains input across recomposition
                                             // The old preservation logic could cause issues if user sent message during migration
                                             
@@ -705,6 +715,8 @@ class ChatViewModel @Inject constructor(
                                 
                                 // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
+                                // Update WhizServerRepository so reconnections use the correct ID
+                                whizServerRepository.updateConversationId(effectiveConversationId)
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
@@ -795,6 +807,8 @@ class ChatViewModel @Inject constructor(
                                         if (_chatId.value == event.clientConversationId) {
                                             Log.d(TAG, "📝 Updating current chat ID from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
+                                            // Update WhizServerRepository so reconnections use the correct ID
+                                            whizServerRepository.updateConversationId(effectiveConversationId)
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -1482,7 +1496,10 @@ class ChatViewModel @Inject constructor(
                 // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
                 updateRespondingStateForCurrentChat()
                 
-                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
+                // Only pass client_conversation_id if it's an optimistic (negative) ID
+                // Server-assigned IDs are passed via the WebSocket connection URL, not as client_conversation_id
+                val clientConversationId = if (chatIdForWebSocket < 0) chatIdForWebSocket else null
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, clientConversationId)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
@@ -1915,10 +1932,12 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 
                 // Send the message again
+                // Only pass client_conversation_id if it's an optimistic (negative) ID
+                val clientConversationId = if (chatId < 0) chatId else null
                 val success = whizServerRepository.sendMessage(
                     message.content, 
                     requestId, 
-                    chatId
+                    clientConversationId
                 )
                 
                 if (!success) {

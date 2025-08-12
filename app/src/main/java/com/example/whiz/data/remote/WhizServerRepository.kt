@@ -205,6 +205,16 @@ class WhizServerRepository @Inject constructor(
     fun getRetryQueueRequestIds(): Set<String> {
         return messageRetryQueue.map { it.requestId }.toSet()
     }
+    
+    /**
+     * Update the current conversation ID when it changes (e.g., from optimistic to real ID)
+     * This ensures reconnections use the correct conversation ID
+     */
+    fun updateConversationId(newConversationId: Long) {
+        val oldId = currentConversationId
+        currentConversationId = newConversationId
+        Log.d(TAG, "Updated currentConversationId from $oldId to $newConversationId")
+    }
 
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
