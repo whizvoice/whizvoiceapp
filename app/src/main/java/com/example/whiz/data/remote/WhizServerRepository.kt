@@ -514,7 +514,13 @@ class WhizServerRepository @Inject constructor(
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
-                            Log.d(TAG, "onClosed: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            Log.d(TAG, "onClosed: Callback from old generation $thisGeneration (current: $currentGeneration)")
+                            // For test disconnects with persistentDisconnectForTest, still schedule reconnect
+                            // This ensures retry mechanism continues even during test-induced disconnections
+                            if (persistentDisconnectForTest && code == 1000) {
+                                Log.d(TAG, "Test disconnect detected - scheduling reconnect attempts")
+                                scheduleReconnect()
+                            }
                             return
                         }
                         
@@ -528,12 +534,14 @@ class WhizServerRepository @Inject constructor(
                         this@WhizServerRepository.webSocket = null // Clear reference
                         scope.launch { emitEvent(WebSocketEvent.Closed) }
                         
-                        // Attempt to reconnect if not manually disconnected and not a specific "do not retry" code
+                        // Attempt to reconnect if not a specific "do not retry" code
                         // Example: code 1000 is normal closure, 1008 is policy violation (likely auth)
-                        if (!persistentDisconnectForTest && code != 1008 && code != 1011) { 
+                        // Note: We don't check persistentDisconnectForTest here - let retries continue
+                        // The flag will block the actual connection attempt, simulating network failure
+                        if (code != 1008 && code != 1011) { 
                             scheduleReconnect()
                         } else {
-                             Log.i(TAG, "Not attempting reconnect. persistentDisconnectForTest=$persistentDisconnectForTest, code=$code")
+                             Log.i(TAG, "Not attempting reconnect. code=$code")
                              currentReconnectAttempts = 0 // Reset if not retrying
                              reconnectJob?.cancel()
                         }
@@ -569,13 +577,8 @@ class WhizServerRepository @Inject constructor(
                             // Don't automatically set persistentDisconnectForTest on auth failure
                         } else {
                             scope.launch { emitEvent(WebSocketEvent.Error(t)) }
-                            if (!persistentDisconnectForTest) {
-                                scheduleReconnect()
-                            } else {
-                                Log.i(TAG, "Not attempting reconnect due to manual disconnect flag on failure.")
-                                currentReconnectAttempts = 0
-                                reconnectJob?.cancel()
-                            }
+                            // Always attempt reconnect on failure - let the flag block at connection level
+                            scheduleReconnect()
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in onFailure", e)
