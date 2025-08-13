@@ -292,7 +292,15 @@ class WhizServerRepository @Inject constructor(
             
             // Update state to CONNECTING
             connectionState = ConnectionState.CONNECTING
-            currentConversationId = conversationId
+            
+            // Only update currentConversationId if we have a non-null conversationId
+            // When just resetting persistent disconnect flag, preserve the existing conversation ID
+            if (conversationId != null) {
+                currentConversationId = conversationId
+            } else if (turnOffPersistentDisconnect && currentConversationId != null) {
+                // Preserve existing conversation ID when just resetting the persistent disconnect flag
+                Log.d(TAG, "Preserving currentConversationId=$currentConversationId when resetting persistent disconnect")
+            }
             
             // Only reset persistent disconnect flag if explicitly requested
             if (turnOffPersistentDisconnect) {
@@ -320,9 +328,11 @@ class WhizServerRepository @Inject constructor(
             }
             
             // Build WebSocket URL with conversation_id parameter if provided
+            // Use the provided conversationId, or fall back to currentConversationId if we're just reconnecting
+            val effectiveConversationId = conversationId ?: currentConversationId
             // Include any conversation ID except -1 (which represents "no chat")
-            val websocketUrl = if (conversationId != null && conversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
+            val websocketUrl = if (effectiveConversationId != null && effectiveConversationId != -1L) {
+                "$WHIZ_SERVER_URL?conversation_id=$effectiveConversationId"
             } else {
                 WHIZ_SERVER_URL
             }
@@ -344,7 +354,7 @@ class WhizServerRepository @Inject constructor(
                             return
                         }
                         
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$effectiveConversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
