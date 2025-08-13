@@ -431,11 +431,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Reset persistent disconnect flag and then reconnect
-                Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting...")
+                Log.d(TAG, "🔌 Resetting persistent disconnect flag...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
-                // Now actually connect since flag is reset
-                whizServerRepository.connect()
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {
@@ -553,9 +551,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Reset persistent disconnect flag and then reconnect
                 Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting before opening first chat...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
-                
-                // Now actually connect since flag is reset
-                whizServerRepository.connect()
                 
                 // Wait for WebSocket to connect
                 withTimeout(5000) {
