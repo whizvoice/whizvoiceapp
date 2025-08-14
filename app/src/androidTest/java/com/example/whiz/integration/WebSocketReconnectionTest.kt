@@ -968,18 +968,28 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("WebSocket failed to disconnect within 1 second in step 8", "websocket_disconnect_timeout_step8")
                 }
 
-                // Step 9: Go back to chats list to see what happens when disconnected
-                Log.d(TAG, "📱 Step 9: Going back to chats list while disconnected...")
-                if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
-                    failWithScreenshot("Failed to navigate back to chats list while disconnected", "navigate_back_disconnected_failed")
+                // Track the second chat ID after disconnecting
+                // The chat was created when we sent the message, even though we're disconnected
+                // We need to get it from local database since we're disconnected
+                var chatId2: Long? = null
+                try {
+                    withTimeout(3000) {
+                        while (true) {
+                            val currentChats = repository.getChatDao().getAllChatsFlow().first()
+                            val newChats = currentChats.filter { chat ->
+                                !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
+                            }
+                            if (newChats.isNotEmpty()) {
+                                chatId2 = newChats.first().id
+                                Log.d(TAG, "✅ Second chat created with ID: $chatId2 (optimistic: ${chatId2 < 0})")
+                                break
+                            }
+                            delay(100)
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Second chat was not found within 3 seconds", "second_chat_not_found_timeout")
                 }
-                
-                // Wait a bit to see if error page appears or if it auto-retries
-                Log.d(TAG, "⏳ Waiting to see if error page appears or auto-retry happens...")
-                delay(2000)
-                
-                // Take a screenshot to see what state we're in (error page, loading, or chats list)
-                failWithScreenshot("Checking chats list state while disconnected - this is intentional to see the UI", "chats_list_disconnected_state")
                 
                 if (chatId2 == null) {
                     failWithScreenshot("Second chat was not created", "second_chat_not_created")
