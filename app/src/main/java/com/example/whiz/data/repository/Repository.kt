@@ -793,7 +793,7 @@ class WhizRepository @Inject constructor(
      * Get the actual chat ID, checking if this chat was migrated.
      * If the chat was migrated, returns the new chat ID, otherwise returns the original.
      */
-    private fun getActualChatId(chatId: Long): Long {
+    fun getActualChatId(chatId: Long): Long {
         // Check if this chat was migrated to a new ID
         val migratedId = chatMigrationMapping[chatId]
         if (migratedId != null) {

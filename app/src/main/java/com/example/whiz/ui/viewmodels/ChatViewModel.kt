@@ -1428,8 +1428,16 @@ class ChatViewModel @Inject constructor(
                     whizServerRepository.connect(currentChatId)
                 }
             } else {
-                // Existing chat - add message normally
-                val actualChatId = _chatId.value
+                // Existing chat - check for migration first
+                val originalChatId = _chatId.value
+                val actualChatId = repository.getActualChatId(originalChatId)
+                
+                // If the chat was migrated, update our local reference
+                if (actualChatId != originalChatId) {
+                    Log.d(TAG, "Chat was migrated: using chat ID $actualChatId instead of $originalChatId for new message")
+                    _chatId.value = actualChatId
+                }
+                
                 // Always use optimistic UI since configUseRemoteAgent is always true
                 val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
             }

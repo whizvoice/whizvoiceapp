@@ -243,6 +243,30 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ Sent second message while disconnected: $secondMessage")
                 
+                // Verify the second message appears in the UI (optimistic UI)
+                Log.d(TAG, "🔍 Verifying second message appears in UI...")
+                val secondMessageVisible = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            secondMessage,
+                            substring = false,
+                            ignoreCase = false,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 3000L,
+                    description = "second message in UI"
+                )
+                
+                if (!secondMessageVisible) {
+                    failWithScreenshot(
+                        "Second message '$secondMessage' not visible in UI after sending while disconnected",
+                        "second_message_not_visible"
+                    )
+                }
+                Log.d(TAG, "✅ Second message is visible in UI")
+                
                 // Step 5: Verify bot response does NOT appear while disconnected
                 Log.d(TAG, "🔍 Verifying bot response doesn't appear while disconnected...")
                 delay(2000) // Give some time to ensure no response appears
