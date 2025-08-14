@@ -564,6 +564,33 @@ class ChatViewModel @Inject constructor(
                             // Don't try to re-parse the response text as JSON since it's just the response content
                             effectiveConversationId = event.conversationId
                             
+                            // 🔧 CRITICAL FIX: Immediately update conversation ID when we receive a real ID for the CURRENT chat
+                            // This ensures reconnections use the correct ID even if they happen during migration
+                            val currentChatId = _chatId.value
+                            if (effectiveConversationId != null && effectiveConversationId > 0 && currentChatId < 0) {
+                                // We have an optimistic ID for the current chat and received a real ID
+                                // Check if this message is actually for our current chat (might be a broadcast from another session)
+                                val isForCurrentChat = event.clientConversationId == currentChatId || 
+                                                       event.requestId in pendingRequests
+                                
+                                if (isForCurrentChat) {
+                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Received real conversation ID $effectiveConversationId for current optimistic chat $currentChatId")
+                                    
+                                    // Register the migration FIRST
+                                    repository.registerChatMigration(currentChatId, effectiveConversationId)
+                                    
+                                    // Update the chat ID immediately so reconnections use the correct ID
+                                    _chatId.value = effectiveConversationId
+                                    
+                                    // Update WhizServerRepository so WebSocket reconnections use the correct ID
+                                    whizServerRepository.updateConversationId(effectiveConversationId)
+                                    
+                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Updated chat ID from $currentChatId to $effectiveConversationId BEFORE message migration")
+                                    
+                                    // Message migration will happen later in the flow if needed
+                                }
+                            }
+                            
                             // Only attempt JSON parsing for error handling if the text looks like JSON
                             try {
                                 if (event.text.trimStart().startsWith("{")) {
@@ -678,19 +705,25 @@ class ChatViewModel @Inject constructor(
                                         Log.d(TAG, "🔧 CHAT_ID_UPDATE: currentChatIsOptimistic=$currentChatIsOptimistic, shouldSwitch=$shouldSwitchToMigratedChat, _chatId=${_chatId.value}, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId")
                                         
                                         if (shouldSwitchToMigratedChat) {
-                                            // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
-                                            val oldChatId = _chatId.value
-                                            if (oldChatId < 0 && effectiveConversationId > 0) {
-                                                repository.registerChatMigration(oldChatId, effectiveConversationId)
-                                                Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                            // Check if migration was already done by immediate migration above
+                                            val alreadyMigrated = _chatId.value == effectiveConversationId
+                                            if (!alreadyMigrated) {
+                                                // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
+                                                val oldChatId = _chatId.value
+                                                if (oldChatId < 0 && effectiveConversationId > 0) {
+                                                    repository.registerChatMigration(oldChatId, effectiveConversationId)
+                                                    Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                                }
+                                                
+                                                Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                                                _chatId.value = effectiveConversationId
+                                                
+                                                // Update WhizServerRepository so reconnections use the correct ID
+                                                whizServerRepository.updateConversationId(effectiveConversationId)
+                                                Log.d(TAG, "Updated WhizServerRepository conversation ID to $effectiveConversationId for proper reconnection")
+                                            } else {
+                                                Log.d(TAG, "🔧 CHAT_ID_UPDATE: Chat ID already migrated to $effectiveConversationId")
                                             }
-                                            
-                                            Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
-                                            _chatId.value = effectiveConversationId
-                                            
-                                            // Update WhizServerRepository so reconnections use the correct ID
-                                            whizServerRepository.updateConversationId(effectiveConversationId)
-                                            Log.d(TAG, "Updated WhizServerRepository conversation ID to $effectiveConversationId for proper reconnection")
                                             
                                             // Note: Input text preservation removed - StateFlow maintains input across recomposition
                                             // The old preservation logic could cause issues if user sent message during migration
