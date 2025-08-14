@@ -1455,10 +1455,13 @@ class ChatViewModel @Inject constructor(
                 _chatId.value = tempChatId
                 _chatTitle.value = tempTitle
 
-                // Connect to WebSocket if not connected
+                // Connect to WebSocket with the new optimistic chat ID
                 if(!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
                     // Pass the optimistic chat ID we just created - the server will handle it as a client_conversation_id
-                    whizServerRepository.connect(currentChatId)
+                    whizServerRepository.connect(tempChatId)
+                } else if (whizServerRepository.isConnected()) {
+                    // Already connected but possibly to a different chat - reconnect with new chat ID
+                    whizServerRepository.connect(tempChatId)
                 }
             } else {
                 // Existing chat - check for migration first
@@ -1473,6 +1476,15 @@ class ChatViewModel @Inject constructor(
                 
                 // Always use optimistic UI since configUseRemoteAgent is always true
                 val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
+                
+                // Ensure WebSocket is connected to the correct conversation
+                // This handles the case where we're switching between existing chats
+                if (!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
+                    whizServerRepository.connect(actualChatId)
+                } else if (whizServerRepository.isConnected()) {
+                    // Already connected but possibly to a different chat - reconnect with correct chat ID
+                    whizServerRepository.connect(actualChatId)
+                }
             }
             
             // Clear input text after optimistic message is added (consistent UX for all input types)

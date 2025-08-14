@@ -252,18 +252,24 @@ class WhizServerRepository @Inject constructor(
                 throw IllegalArgumentException(errorMsg)
             }
             
-            // Check if we're already connected/connecting to the SAME conversation
-            if ((connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) 
-                && currentConversationId == conversationId && currentGeneration == thisGeneration - 1) {
-                Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
-                // Revert generation since we're not actually creating a new connection
-                connectionGeneration.decrementAndGet()
-                
-                // If already connected, process any queued messages
-                if (connectionState == ConnectionState.CONNECTED) {
-                    processRetryQueue()
+            // Check if we're already connected/connecting
+            if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
+                if (currentConversationId == conversationId && currentGeneration == thisGeneration - 1) {
+                    // Already connected to the SAME conversation
+                    Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
+                    // Revert generation since we're not actually creating a new connection
+                    connectionGeneration.decrementAndGet()
+                    
+                    // If already connected, process any queued messages
+                    if (connectionState == ConnectionState.CONNECTED) {
+                        processRetryQueue()
+                    }
+                    return
+                } else {
+                    // Connected to a DIFFERENT conversation - need to close the old one
+                    Log.d(TAG, "Currently ${connectionState.name.lowercase()} to conversation $currentConversationId, but need to connect to $conversationId - closing old connection")
+                    // Continue below to close old connection and open new one
                 }
-                return
             }
             
             // Store the generation for this connection
@@ -717,8 +723,29 @@ class WhizServerRepository @Inject constructor(
             return
         }
         
-        val messagesToRetry = messageRetryQueue.toList()
+        // Only process messages that match the current conversation
+        // Messages for other conversations stay in the queue
+        val allMessages = messageRetryQueue.toList()
+        val messagesToRetry = allMessages.filter { msg ->
+            // Match if:
+            // 1. The pending message's conversationId matches currentConversationId
+            // 2. OR the pending message's clientConversationId matches currentConversationId (for optimistic IDs)
+            msg.conversationId == currentConversationId || msg.clientConversationId == currentConversationId
+        }
+        val messagesForOtherConversations = allMessages.filter { msg ->
+            msg.conversationId != currentConversationId && msg.clientConversationId != currentConversationId
+        }
+        
+        if (messagesToRetry.isEmpty()) {
+            Log.d(TAG, "No messages in retry queue for current conversation $currentConversationId")
+            return
+        }
+        
+        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $currentConversationId, keeping ${messagesForOtherConversations.size} for other conversations")
+        
+        // Clear the queue and re-add messages for other conversations
         messageRetryQueue.clear()
+        messageRetryQueue.addAll(messagesForOtherConversations)
         
         messagesToRetry.forEach { pendingMessage ->
             try {
@@ -727,8 +754,9 @@ class WhizServerRepository @Inject constructor(
                     put("request_id", pendingMessage.requestId)
                     put("type", "message")
                     
-                    // Include conversation_id if we have a real (positive) conversation ID
-                    val conversationId = currentConversationId
+                    // Use the pending message's conversation ID, not the current one
+                    // The pending message might be for an optimistic ID that needs to be resolved
+                    val conversationId = pendingMessage.conversationId ?: currentConversationId
                     if (conversationId != null && conversationId > 0) {
                         put("conversation_id", conversationId)
                     }
