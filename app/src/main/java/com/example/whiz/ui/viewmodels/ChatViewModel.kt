@@ -1481,9 +1481,23 @@ class ChatViewModel @Inject constructor(
                 // This handles the case where we're switching between existing chats
                 if (!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
                     whizServerRepository.connect(actualChatId)
+                    // After connecting, check for unsent messages
+                    viewModelScope.launch {
+                        // Wait for the WebSocket to actually connect
+                        whizServerRepository.webSocketEvents
+                            .first { it is WebSocketEvent.Connected }
+                        checkAndRetryOrphanedMessages(actualChatId)
+                    }
                 } else if (whizServerRepository.isConnected()) {
                     // Already connected but possibly to a different chat - reconnect with correct chat ID
                     whizServerRepository.connect(actualChatId)
+                    // After reconnecting, check for unsent messages
+                    viewModelScope.launch {
+                        // Wait for the WebSocket to actually connect
+                        whizServerRepository.webSocketEvents
+                            .first { it is WebSocketEvent.Connected }
+                        checkAndRetryOrphanedMessages(actualChatId)
+                    }
                 }
             }
             
