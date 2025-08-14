@@ -561,7 +561,43 @@ class WhizRepository @Inject constructor(
                 Log.w(TAG, "migrateChatMessages: ⚠️ No messages found for chat $fromChatId - this might be a timing issue")
             }
             
-            if (messagesToMigrate.isNotEmpty()) {
+            // 🔧 RACE CONDITION FIX: Check for any messages that were added during migration
+            // Multiple checks with delays to catch messages added at different timing windows
+            var totalOrphanedMessages = 0
+            
+            // Check multiple times with delays to catch messages at different stages
+            for (checkAttempt in 1..3) {
+                // Delay to allow in-flight database writes to complete
+                val delayMs = if (checkAttempt == 1) 100L else 50L
+                delay(delayMs)
+                
+                // Check if any new messages appeared in the optimistic chat
+                val orphanedMessages = messageDao.getMessagesForChatFlow(fromChatId).first()
+                if (orphanedMessages.isNotEmpty()) {
+                    Log.w(TAG, "migrateChatMessages: 🚨 Check #$checkAttempt found ${orphanedMessages.size} orphaned messages!")
+                    Log.w(TAG, "migrateChatMessages: 📋 Orphaned messages: ${orphanedMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                    
+                    // Migrate these orphaned messages to the new chat
+                    try {
+                        Log.d(TAG, "migrateChatMessages: 🔄 Migrating ${orphanedMessages.size} orphaned messages to chat $toChatId")
+                        val orphanUpdateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
+                        Log.d(TAG, "migrateChatMessages: ✅ Successfully migrated $orphanUpdateCount orphaned messages in check #$checkAttempt")
+                        totalOrphanedMessages += orphanUpdateCount
+                    } catch (e: Exception) {
+                        Log.e(TAG, "migrateChatMessages: ❌ Error migrating orphaned messages in check #$checkAttempt", e)
+                        // Continue anyway - better to have the main messages migrated
+                    }
+                } else if (checkAttempt == 1) {
+                    // No orphaned messages on first check, continue checking
+                    Log.d(TAG, "migrateChatMessages: Check #$checkAttempt found no orphaned messages, will check again")
+                } else {
+                    // No more orphaned messages, can stop checking
+                    Log.d(TAG, "migrateChatMessages: Check #$checkAttempt found no orphaned messages, stopping checks")
+                    break
+                }
+            }
+            
+            if (messagesToMigrate.isNotEmpty() || totalOrphanedMessages > 0) {
                 // Delete the old optimistic chat if it was temporary (negative ID means optimistic)
                 if (fromChatId < 0) {
                     try {
@@ -575,7 +611,8 @@ class WhizRepository @Inject constructor(
                     Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
                 }
                 
-                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId")
+                val totalMigrated = messagesToMigrate.size + totalOrphanedMessages
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of $totalMigrated messages from chat $fromChatId to $toChatId (including $totalOrphanedMessages orphaned)")
                 return true
             } else {
                 Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
