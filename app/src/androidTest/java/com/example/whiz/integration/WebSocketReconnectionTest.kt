@@ -1065,18 +1065,18 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 composeTestRule.onNodeWithText(firstMessage.take(20), substring = true).performClick()
                 
-                // Wait for chat to load by checking for the first message
+                // Wait for chat to load by checking for the unique timestamp part of the first message
                 val chatLoaded = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
                         composeTestRule.onNodeWithText(
-                            firstMessage.substringAfter(":").trim().take(20),
+                            firstMessage.substringBefore(":"), // Use the unique "Test 1755237427034" part
                             substring = true,
                             useUnmergedTree = true
                         )
                     },
                     timeoutMs = 2000L,
-                    description = "first chat loaded with first message"
+                    description = "first chat loaded with unique timestamp"
                 )
                 if (!chatLoaded) {
                     failWithScreenshot("First chat did not load after clicking", "first_chat_not_loaded_after_click")

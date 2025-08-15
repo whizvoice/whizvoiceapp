@@ -299,9 +299,8 @@ class ChatViewModel @Inject constructor(
                     _chatId.value = serverId
                     // The messages flow will automatically update since it observes _chatId
                     
-                    // Update WhizServerRepository so reconnections use the correct ID
-                    whizServerRepository.updateConversationId(serverId)
-                    Log.d(TAG, "Updated WhizServerRepository conversation ID to $serverId for proper reconnection")
+                    // No longer needed - chatId is passed directly to sendMessage
+                    Log.d(TAG, "Chat ID migration complete: $serverId")
                 }
             }
         }
@@ -583,7 +582,7 @@ class ChatViewModel @Inject constructor(
                                     _chatId.value = effectiveConversationId
                                     
                                     // Update WhizServerRepository so WebSocket reconnections use the correct ID
-                                    whizServerRepository.updateConversationId(effectiveConversationId)
+                                    // No longer needed - chatId is passed directly to sendMessage
                                     
                                     Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Updated chat ID from $currentChatId to $effectiveConversationId BEFORE message migration")
                                     
@@ -666,7 +665,7 @@ class ChatViewModel @Inject constructor(
                             // Update local chat ID to match server-assigned ID
                             _chatId.value = effectiveConversationId
                             // Update WhizServerRepository so reconnections use the correct ID
-                            whizServerRepository.updateConversationId(effectiveConversationId)
+                            // No longer needed - chatId is passed directly to sendMessage
                             // Updated local chat ID to server-assigned conversation ID
                             effectiveConversationId
                         } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
@@ -719,7 +718,7 @@ class ChatViewModel @Inject constructor(
                                                 _chatId.value = effectiveConversationId
                                                 
                                                 // Update WhizServerRepository so reconnections use the correct ID
-                                                whizServerRepository.updateConversationId(effectiveConversationId)
+                                                // No longer needed - chatId is passed directly to sendMessage
                                                 Log.d(TAG, "Updated WhizServerRepository conversation ID to $effectiveConversationId for proper reconnection")
                                             } else {
                                                 Log.d(TAG, "🔧 CHAT_ID_UPDATE: Chat ID already migrated to $effectiveConversationId")
@@ -749,7 +748,7 @@ class ChatViewModel @Inject constructor(
                                 // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
                                 // Update WhizServerRepository so reconnections use the correct ID
-                                whizServerRepository.updateConversationId(effectiveConversationId)
+                                // No longer needed - chatId is passed directly to sendMessage
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
@@ -841,7 +840,7 @@ class ChatViewModel @Inject constructor(
                                             Log.d(TAG, "📝 Updating current chat ID from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
                                             // Update WhizServerRepository so reconnections use the correct ID
-                                            whizServerRepository.updateConversationId(effectiveConversationId)
+                                            // No longer needed - chatId is passed directly to sendMessage
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -1563,10 +1562,9 @@ class ChatViewModel @Inject constructor(
                 // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
                 updateRespondingStateForCurrentChat()
                 
-                // Only pass client_conversation_id if it's an optimistic (negative) ID
-                // Server-assigned IDs are passed via the WebSocket connection URL, not as client_conversation_id
-                val clientConversationId = if (chatIdForWebSocket < 0) chatIdForWebSocket else null
-                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, clientConversationId)
+                // Pass the chatId directly - WhizServerRepository will handle whether to send as
+                // conversation_id (positive) or client_conversation_id (negative)
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
@@ -1999,12 +1997,12 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 
                 // Send the message again
-                // Only pass client_conversation_id if it's an optimistic (negative) ID
-                val clientConversationId = if (chatId < 0) chatId else null
+                // Pass the chatId directly - WhizServerRepository will handle whether to send as
+                // conversation_id (positive) or client_conversation_id (negative)
                 val success = whizServerRepository.sendMessage(
                     message.content, 
                     requestId, 
-                    clientConversationId
+                    chatId
                 )
                 
                 if (!success) {

@@ -48,8 +48,7 @@ sealed class WebSocketEvent {
 data class PendingMessage(
     val message: String,
     val requestId: String,
-    val conversationId: Long?,
-    val clientConversationId: Long? = null,
+    val chatId: Long,
     val clientMessageId: String? = null,
     val retryCount: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
@@ -151,7 +150,7 @@ class WhizServerRepository @Inject constructor(
     fun dumpEventHistory(tag: String = TAG, sinceMinutesAgo: Int = 2) {
         val recentEvents = getRecentEvents(sinceMinutesAgo)
         Log.d(tag, "=== WebSocket Event History (last $sinceMinutesAgo minutes) ===")
-        Log.d(tag, "Current state: connectionState=$connectionState, conversationId=$currentConversationId, isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
+        Log.d(tag, "Current state: connectionState=$connectionState, isConnected=${isConnected()}, webSocket=${if(webSocket != null) "exists" else "null"}, persistentDisconnect=$persistentDisconnectForTest")
         Log.d(tag, "Replay cache: ${_connectionStateEvents.replayCache.lastOrNull()}")
         Log.d(tag, "Total events in period: ${recentEvents.size}")
         
@@ -190,7 +189,7 @@ class WhizServerRepository @Inject constructor(
     private val maxMessageRetries = 3
     private val messageRetryDelayMs = 2000L
     private var retryJob: Job? = null
-    private var currentConversationId: Long? = null
+    // Removed currentConversationId - using chatId parameter directly for single source of truth
 
     /**
      * Check if a request is currently in the retry queue (for testing purposes)
@@ -207,15 +206,23 @@ class WhizServerRepository @Inject constructor(
     }
     
     /**
-     * Update the current conversation ID when it changes (e.g., from optimistic to real ID)
-     * This ensures reconnections use the correct conversation ID
+     * Extract the conversation ID from the current WebSocket connection's URL
+     * Checks for both conversation_id (positive) and client_conversation_id (negative) parameters
      */
-    fun updateConversationId(newConversationId: Long) {
-        val oldId = currentConversationId
-        currentConversationId = newConversationId
-        Log.d(TAG, "Updated currentConversationId from $oldId to $newConversationId")
+    private fun getConnectedConversationId(): Long? {
+        val url = webSocket?.request()?.url?.toString() ?: return null
+        
+        // First check for conversation_id (server-backed chat)
+        val conversationIdMatch = Regex("conversation_id=(\\d+)").find(url)
+        if (conversationIdMatch != null) {
+            return conversationIdMatch.groupValues[1].toLongOrNull()
+        }
+        
+        // Then check for client_conversation_id (optimistic chat)
+        val clientConversationIdMatch = Regex("client_conversation_id=(-\\d+)").find(url)
+        return clientConversationIdMatch?.groupValues?.get(1)?.toLongOrNull()
     }
-
+    
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         
@@ -247,29 +254,22 @@ class WhizServerRepository @Inject constructor(
             if (conversationId == null && !turnOffPersistentDisconnect) {
                 val errorMsg = "connect() called with null conversationId - this should not happen in production. " +
                                "All chats should have either a server-backed ID (>0) or optimistic ID (<-1). " +
-                               "Current state: connectionState=$connectionState, currentConversationId=$currentConversationId"
+                               "Current state: connectionState=$connectionState"
                 Log.e(TAG, errorMsg)
                 throw IllegalArgumentException(errorMsg)
             }
             
             // Check if we're already connected/connecting
             if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
-                if (currentConversationId == conversationId && currentGeneration == thisGeneration - 1) {
-                    // Already connected to the SAME conversation
-                    Log.d(TAG, "Already ${connectionState.name.lowercase()} to same conversation: $conversationId")
-                    // Revert generation since we're not actually creating a new connection
-                    connectionGeneration.decrementAndGet()
-                    
-                    // If already connected, process any queued messages
-                    if (connectionState == ConnectionState.CONNECTED) {
-                        processRetryQueue()
-                    }
+                // Check if we're already connected to the same conversation
+                val currentConversationId = getConnectedConversationId()
+                if (connectionState == ConnectionState.CONNECTED && currentConversationId == conversationId) {
+                    Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
                     return
-                } else {
-                    // Connected to a DIFFERENT conversation - need to close the old one
-                    Log.d(TAG, "Currently ${connectionState.name.lowercase()} to conversation $currentConversationId, but need to connect to $conversationId - closing old connection")
-                    // Continue below to close old connection and open new one
                 }
+                // Different conversation or still connecting - close and reconnect
+                Log.d(TAG, "Currently ${connectionState.name.lowercase()} to conversation $currentConversationId, need to connect to $conversationId - closing old connection")
+                // Continue below to close old connection and open new one
             }
             
             // Store the generation for this connection
@@ -299,15 +299,6 @@ class WhizServerRepository @Inject constructor(
             // Update state to CONNECTING
             connectionState = ConnectionState.CONNECTING
             
-            // Only update currentConversationId if we have a non-null conversationId
-            // When just resetting persistent disconnect flag, preserve the existing conversation ID
-            if (conversationId != null) {
-                currentConversationId = conversationId
-            } else if (turnOffPersistentDisconnect && currentConversationId != null) {
-                // Preserve existing conversation ID when just resetting the persistent disconnect flag
-                Log.d(TAG, "Preserving currentConversationId=$currentConversationId when resetting persistent disconnect")
-            }
-            
             // Only reset persistent disconnect flag if explicitly requested
             if (turnOffPersistentDisconnect) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest from $persistentDisconnectForTest to false")
@@ -328,17 +319,15 @@ class WhizServerRepository @Inject constructor(
                 Log.w(TAG, "No server token available for WebSocket connection")
                 // Reset connection state on auth failure
                 connectionState = ConnectionState.IDLE
-                // Keep currentConversationId for potential future retry
+                // Connection failed due to auth
                 scope.launch { emitEvent(WebSocketEvent.Error(Exception("Authentication required. Please log in again."))) }
                 return
             }
             
             // Build WebSocket URL with conversation_id parameter if provided
-            // Use the provided conversationId, or fall back to currentConversationId if we're just reconnecting
-            val effectiveConversationId = conversationId ?: currentConversationId
             // Include any conversation ID except -1 (which represents "no chat")
-            val websocketUrl = if (effectiveConversationId != null && effectiveConversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$effectiveConversationId"
+            val websocketUrl = if (conversationId != null && conversationId != -1L) {
+                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
             } else {
                 WHIZ_SERVER_URL
             }
@@ -360,7 +349,7 @@ class WhizServerRepository @Inject constructor(
                             return
                         }
                         
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$effectiveConversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
@@ -376,7 +365,7 @@ class WhizServerRepository @Inject constructor(
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
-                        processRetryQueue()
+                        processRetryQueue(conversationId)
 
                         // Send timezone via API endpoint after connection is established
                         val timezone = java.util.TimeZone.getDefault().id
@@ -534,7 +523,7 @@ class WhizServerRepository @Inject constructor(
                         
                         // Update connection state only if this is the current generation
                         connectionState = ConnectionState.IDLE
-                        // DO NOT reset currentConversationId here - we need it for reconnection!
+                        // Connection closed
                         
                         connectionTimeoutJob?.cancel() // Cancel timeout on close
                         this@WhizServerRepository.webSocket = null // Clear reference
@@ -568,7 +557,7 @@ class WhizServerRepository @Inject constructor(
                         
                         // Update connection state only if this is the current generation
                         connectionState = ConnectionState.IDLE
-                        // DO NOT reset currentConversationId here - we need it for reconnection!
+                        // Connection closed
                         
                         connectionTimeoutJob?.cancel() // Cancel timeout on failure
                         this@WhizServerRepository.webSocket = null // Clear reference on failure
@@ -610,7 +599,7 @@ class WhizServerRepository @Inject constructor(
                     
                     // Update state to IDLE
                     connectionState = ConnectionState.IDLE
-                    // DO NOT reset currentConversationId here - we need it for reconnection!
+                    // Connection closed
                     
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
@@ -629,19 +618,18 @@ class WhizServerRepository @Inject constructor(
             Log.e(TAG, "Error creating WebSocket connection", e)
             // Reset connection state on error
             connectionState = ConnectionState.IDLE
-            // Keep currentConversationId for potential future retry
             scope.launch { emitEvent(WebSocketEvent.Error(e)) }
         }
     }
 
-    fun sendMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
+    fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null): Boolean {
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !persistentDisconnectForTest) {
                 // 🔧 ENHANCED: Check connection state before sending
                 if (connectionState != ConnectionState.CONNECTED) {
                     Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing message for retry")
-                    queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId)
                     return false
                 }
                 
@@ -651,14 +639,13 @@ class WhizServerRepository @Inject constructor(
                     put("request_id", requestId)
                     put("type", "message")
                     
-                    // Include conversation_id if we have a real (positive) conversation ID
-                    val conversationId = currentConversationId
-                    if (conversationId != null && conversationId > 0) {
-                        put("conversation_id", conversationId)
+                    // Use chatId directly - send as conversation_id if positive, client_conversation_id if negative
+                    if (chatId > 0) {
+                        put("conversation_id", chatId)
+                    } else if (chatId < 0) {
+                        put("client_conversation_id", chatId)
                     }
                     
-                    // Add client context for optimistic ID mapping (only for negative IDs)
-                    clientConversationId?.let { put("client_conversation_id", it) }
                     clientMessageId?.let { put("client_message_id", it) }
                 }
                 val jsonMessage = messageJson.toString()
@@ -669,32 +656,31 @@ class WhizServerRepository @Inject constructor(
                     true
                 } else {
                     Log.w(TAG, "WebSocket send failed - queueing message for retry")
-                    queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId)
                     false
                 }
             } else {
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
-                queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
+                queueMessageForRetry(message, requestId, chatId, clientMessageId)
                 // Attempt to reconnect
                 if (!persistentDisconnectForTest) {
-                    val conversationId = currentConversationId
                     scope.launch {
                         delay(100L) // Small delay before reconnect
-                        connect(conversationId)
+                        connect(chatId)
                     }
                 }
                 false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending message - queueing for retry", e)
-            queueMessageForRetry(message, requestId, currentConversationId, clientConversationId, clientMessageId)
+            queueMessageForRetry(message, requestId, chatId, clientMessageId)
             false
         }
     }
 
-    private fun queueMessageForRetry(message: String, requestId: String, conversationId: Long?, clientConversationId: Long? = null, clientMessageId: String? = null) {
-        Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId")
-        val pendingMessage = PendingMessage(message, requestId, conversationId, clientConversationId, clientMessageId)
+    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null) {
+        Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId for chatId: $chatId")
+        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId)
         
         // Remove any existing message with the same requestId to avoid duplicates
         messageRetryQueue.removeAll { it.requestId == requestId }
@@ -704,12 +690,13 @@ class WhizServerRepository @Inject constructor(
         if (retryJob?.isActive != true) {
             retryJob = scope.launch {
                 delay(messageRetryDelayMs)
+                // Process all messages in retry queue
                 processRetryQueue()
             }
         }
     }
 
-    private fun processRetryQueue() {
+    private fun processRetryQueue(conversationId: Long? = null) {
         if (messageRetryQueue.isEmpty()) {
             Log.d(TAG, "Retry queue is empty")
             return
@@ -723,29 +710,35 @@ class WhizServerRepository @Inject constructor(
             return
         }
         
-        // Only process messages that match the current conversation
-        // Messages for other conversations stay in the queue
+        // Only process messages that match the conversation we're connected to
+        // Discard messages for other conversations (they'll be synced when that chat is opened)
         val allMessages = messageRetryQueue.toList()
-        val messagesToRetry = allMessages.filter { msg ->
-            // Match if:
-            // 1. The pending message's conversationId matches currentConversationId
-            // 2. OR the pending message's clientConversationId matches currentConversationId (for optimistic IDs)
-            msg.conversationId == currentConversationId || msg.clientConversationId == currentConversationId
+        val messagesToRetry = if (conversationId != null) {
+            allMessages.filter { msg ->
+                // Match if the pending message's chatId matches the current connection
+                msg.chatId == conversationId
+            }
+        } else {
+            // If no conversationId specified, process all messages
+            allMessages
         }
-        val messagesForOtherConversations = allMessages.filter { msg ->
-            msg.conversationId != currentConversationId && msg.clientConversationId != currentConversationId
+        
+        val discardedCount = allMessages.size - messagesToRetry.size
+        if (discardedCount > 0) {
+            Log.d(TAG, "Discarding $discardedCount messages for other conversations (will be synced when those chats are opened)")
         }
         
         if (messagesToRetry.isEmpty()) {
-            Log.d(TAG, "No messages in retry queue for current conversation $currentConversationId")
+            Log.d(TAG, "No messages in retry queue for conversation $conversationId")
+            // Clear the queue since we're discarding messages for other conversations
+            messageRetryQueue.clear()
             return
         }
         
-        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $currentConversationId, keeping ${messagesForOtherConversations.size} for other conversations")
+        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $conversationId")
         
-        // Clear the queue and re-add messages for other conversations
+        // Clear the entire queue (we're not keeping messages for other conversations)
         messageRetryQueue.clear()
-        messageRetryQueue.addAll(messagesForOtherConversations)
         
         messagesToRetry.forEach { pendingMessage ->
             try {
@@ -754,15 +747,13 @@ class WhizServerRepository @Inject constructor(
                     put("request_id", pendingMessage.requestId)
                     put("type", "message")
                     
-                    // Use the pending message's conversation ID, not the current one
-                    // The pending message might be for an optimistic ID that needs to be resolved
-                    val conversationId = pendingMessage.conversationId ?: currentConversationId
-                    if (conversationId != null && conversationId > 0) {
-                        put("conversation_id", conversationId)
+                    // Send as conversation_id if positive, client_conversation_id if negative
+                    if (pendingMessage.chatId > 0) {
+                        put("conversation_id", pendingMessage.chatId)
+                    } else if (pendingMessage.chatId < 0) {
+                        put("client_conversation_id", pendingMessage.chatId)
                     }
                     
-                    // Include client context for optimistic ID mapping (only for negative IDs)
-                    pendingMessage.clientConversationId?.let { put("client_conversation_id", it) }
                     pendingMessage.clientMessageId?.let { put("client_message_id", it) }
                 }
                 val jsonMessage = messageJson.toString()
@@ -800,6 +791,7 @@ class WhizServerRepository @Inject constructor(
         if (messageRetryQueue.isNotEmpty()) {
             retryJob = scope.launch {
                 delay(messageRetryDelayMs * 2) // Longer delay for subsequent retries
+                // Process all messages in retry queue
                 processRetryQueue()
             }
         }
@@ -828,10 +820,10 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendInterruptMessage(message: String, requestId: String, clientConversationId: Long? = null, clientMessageId: String? = null): Boolean {
+    fun sendInterruptMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null): Boolean {
         // This is the same as sendMessage since the backend automatically handles interrupts
         // when a new message arrives while there are active requests
-        return sendMessage(message, requestId, clientConversationId, clientMessageId)
+        return sendMessage(message, requestId, chatId, clientMessageId)
     }
 
     fun disconnect(setPersistentDisconnect: Boolean = false) {
@@ -890,8 +882,7 @@ class WhizServerRepository @Inject constructor(
                 connectionState = ConnectionState.IDLE
             }
             
-            // Never clear currentConversationId - we want to remember what conversation we were in
-            // even if we're doing a persistent disconnect (which just means "don't auto-reconnect")
+            // Persistent disconnect just means "don't auto-reconnect"
         } catch (e: Exception) {
             Log.e(TAG, "Error disconnecting WebSocket", e)
         }
@@ -928,7 +919,9 @@ class WhizServerRepository @Inject constructor(
                 emitEvent(WebSocketEvent.Reconnecting) // Notify UI
                 delay(delayMs)
                 Log.i(TAG, "Attempting reconnect now (attempt $currentReconnectAttempts)...")
-                connect(currentConversationId) // Call the main connect method with current conversation
+                // Note: connect() requires a conversationId now - this reconnect attempt may fail
+                // The ChatViewModel should handle reconnection with the proper chatId
+                Log.w(TAG, "Reconnect attempt without conversationId - this may not work as expected")
             } catch (e: Exception) {
                 Log.e(TAG, "Exception in scheduled reconnect job", e)
                 // This catch is for the delay or emit itself. connect() has its own try-catch.
