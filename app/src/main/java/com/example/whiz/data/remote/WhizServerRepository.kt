@@ -26,7 +26,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentHashMap
 
 
 sealed class WebSocketEvent {
@@ -52,8 +51,7 @@ data class PendingMessage(
     val chatId: Long,
     val clientMessageId: String? = null,
     val retryCount: Int = 0,
-    val timestamp: Long = System.currentTimeMillis(),
-    val nextRetryTime: Long = System.currentTimeMillis() // When this message should be retried (in millis)
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 // Debug event tracking
@@ -189,106 +187,15 @@ class WhizServerRepository @Inject constructor(
     // Message retry queue and parameters
     private val messageRetryQueue = mutableListOf<PendingMessage>()
     private val maxMessageRetries = 3
-    private val messageRetryDelayMs = 1000L // Base delay for exponential backoff
+    private val messageRetryDelayMs = 2000L
     private var retryJob: Job? = null
-    
-    // Periodic retry checker
-    private var periodicRetryCheckerJob: Job? = null
-    
-    // Connection retry parameters
-    private var connectionRetryCount = 0
-    private var nextConnectionRetryTime = 0L
-    
-    // Track messages that have been sent and are awaiting response
-    private val pendingRequests = ConcurrentHashMap<String, Long>() // requestId -> chatId
+    // Removed currentConversationId - using chatId parameter directly for single source of truth
 
     /**
      * Check if a request is currently in the retry queue (for testing purposes)
      */
     fun hasMessageInRetryQueue(requestId: String): Boolean {
         return messageRetryQueue.any { it.requestId == requestId }
-    }
-
-    fun removeFromRetryQueue(requestId: String): Boolean {
-        val removed = messageRetryQueue.removeAll { it.requestId == requestId }
-        if (removed) {
-            Log.d(TAG, "Removed message with requestId $requestId from retry queue")
-        }
-        return removed
-    }
-    
-    /**
-     * Add a request to pending requests tracking
-     */
-    fun addToPendingRequests(requestId: String, chatId: Long) {
-        pendingRequests[requestId] = chatId
-        Log.d(TAG, "Added request $requestId to pending requests for chat $chatId")
-    }
-    
-    /**
-     * Remove a request from pending requests tracking
-     */
-    fun removeFromPendingRequests(requestId: String): Long? {
-        val chatId = pendingRequests.remove(requestId)
-        if (chatId != null) {
-            Log.d(TAG, "Removed request $requestId from pending requests (was for chat $chatId)")
-        }
-        return chatId
-    }
-    
-    /**
-     * Check if a request is in pending requests
-     */
-    fun isInPendingRequests(requestId: String): Boolean {
-        return pendingRequests.containsKey(requestId)
-    }
-    
-    /**
-     * Get all pending requests (for moving to retry queue on disconnect)
-     */
-    fun getAllPendingRequests(): Map<String, Long> {
-        return pendingRequests.toMap()
-    }
-    
-    /**
-     * Clear all pending requests
-     */
-    fun clearPendingRequests() {
-        val count = pendingRequests.size
-        pendingRequests.clear()
-        Log.d(TAG, "Cleared $count pending requests")
-    }
-    
-    /**
-     * Handle error response for a pending request by moving it to retry queue
-     */
-    fun handleErrorResponse(requestId: String, errorMessage: String, messageContent: String) {
-        val chatId = removeFromPendingRequests(requestId)
-        if (chatId != null) {
-            Log.d(TAG, "Error response for request $requestId: $errorMessage - adding to retry queue")
-            queueMessageForRetry(messageContent, requestId, chatId, null)
-        }
-    }
-    
-    /**
-     * Get all pending request IDs
-     */
-    fun getPendingRequestIds(): Set<String> {
-        return pendingRequests.keys.toSet()
-    }
-    
-    /**
-     * Check if there are pending requests for a specific chat
-     */
-    fun hasPendingRequestsForChat(chatId: Long): Boolean {
-        return pendingRequests.values.any { it == chatId }
-    }
-    
-    /**
-     * Get all pending request IDs for a specific chat
-     */
-    fun getPendingRequestIdsForChat(chatId: Long): Set<String> {
-        return pendingRequests.filterValues { it == chatId }.keys.toSet()
     }
 
     /**
@@ -335,19 +242,11 @@ class WhizServerRepository @Inject constructor(
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
             // Reset persistent disconnect flag if requested
-            if (turnOffPersistentDisconnect) {
-                if (persistentDisconnectForTest) {
-                    Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
-                    persistentDisconnectForTest = false
-                } else {
-                    Log.d(TAG, "persistentDisconnectForTest flag already false - no action needed")
-                }
-                // If no conversationId provided, just handle the flag and return
-                if (conversationId == null) {
-                    Log.d(TAG, "No conversationId provided - only handling persistentDisconnectForTest flag")
-                    return
-                }
-                // Otherwise continue with connection attempt
+            if (turnOffPersistentDisconnect && persistentDisconnectForTest) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
+                persistentDisconnectForTest = false
+                // Continue with connection attempt after resetting the flag
+                // This allows tests to both reset the flag AND establish a connection in one call
             }
             
             // Validate that conversationId is not null (except when just resetting the flag)
@@ -461,8 +360,6 @@ class WhizServerRepository @Inject constructor(
                         
                         connectionTimeoutJob?.cancel() // Cancel timeout on successful connection
                         currentReconnectAttempts = 0 // Reset on successful open
-                        connectionRetryCount = 0 // Reset the new retry counter
-                        nextConnectionRetryTime = 0L // Clear any pending retry time
                         reconnectJob?.cancel() // Cancel any pending reconnect job
                         // Don't automatically reset persistentDisconnectForTest on connection open
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
@@ -552,10 +449,6 @@ class WhizServerRepository @Inject constructor(
                                 
                                 val emitStartTime = System.currentTimeMillis()
                                 scope.launch { 
-                                    // Remove from pending requests on successful response
-                                    if (requestId != null) {
-                                        removeFromPendingRequests(requestId)
-                                    }
                                     emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
@@ -675,8 +568,6 @@ class WhizServerRepository @Inject constructor(
                              val userMessage = "Authentication failed. Please log in again."
                             scope.launch { emitEvent(WebSocketEvent.AuthError(userMessage)) }
                             currentReconnectAttempts = 0 // Don't retry on explicit auth failure
-                            connectionRetryCount = 0 // Reset the new retry counter
-                            nextConnectionRetryTime = 0L // Clear any pending retry time
                             reconnectJob?.cancel()
                             // Don't automatically set persistentDisconnectForTest on auth failure
                         } else {
@@ -762,8 +653,6 @@ class WhizServerRepository @Inject constructor(
                 // Try to send the message
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
-                    // Add to pending requests to track it
-                    addToPendingRequests(requestId, chatId)
                     true
                 } else {
                     Log.w(TAG, "WebSocket send failed - queueing message for retry")
@@ -789,26 +678,22 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, retryCount: Int = 0) {
+    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null) {
+        Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId for chatId: $chatId")
+        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId)
+        
         // Remove any existing message with the same requestId to avoid duplicates
         messageRetryQueue.removeAll { it.requestId == requestId }
-        
-        // Calculate next retry time with exponential backoff
-        val delayMs = messageRetryDelayMs * Math.pow(2.0, retryCount.toDouble()).toLong()
-        val nextRetryTime = System.currentTimeMillis() + delayMs
-        
-        val pendingMessage = PendingMessage(
-            message = message,
-            requestId = requestId,
-            chatId = chatId,
-            clientMessageId = clientMessageId,
-            retryCount = retryCount,
-            nextRetryTime = nextRetryTime
-        )
         messageRetryQueue.add(pendingMessage)
-        Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId for chatId: $chatId, will retry in ${delayMs}ms (attempt ${retryCount + 1})")
         
-        // The periodic checker will handle the retry
+        // Start retry process if not already running
+        if (retryJob?.isActive != true) {
+            retryJob = scope.launch {
+                delay(messageRetryDelayMs)
+                // Process all messages in retry queue
+                processRetryQueue()
+            }
+        }
     }
 
     private fun processRetryQueue(conversationId: Long? = null) {
@@ -826,7 +711,7 @@ class WhizServerRepository @Inject constructor(
         }
         
         // Only process messages that match the conversation we're connected to
-        // Discard messages for other conversations (they'll be synced via orphaned message check when those chats are opened)
+        // Discard messages for other conversations (they'll be synced when that chat is opened)
         val allMessages = messageRetryQueue.toList()
         val messagesToRetry = if (conversationId != null) {
             allMessages.filter { msg ->
@@ -840,7 +725,7 @@ class WhizServerRepository @Inject constructor(
         
         val discardedCount = allMessages.size - messagesToRetry.size
         if (discardedCount > 0) {
-            Log.d(TAG, "Discarding $discardedCount messages for other conversations (will be handled by orphaned message check)")
+            Log.d(TAG, "Discarding $discardedCount messages for other conversations (will be synced when those chats are opened)")
         }
         
         if (messagesToRetry.isEmpty()) {
@@ -876,20 +761,11 @@ class WhizServerRepository @Inject constructor(
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
                     Log.d(TAG, "Successfully retried message: ${pendingMessage.message}")
-                    // Add to pending requests to track it
-                    addToPendingRequests(pendingMessage.requestId, pendingMessage.chatId)
                 } else {
                     val newRetryCount = pendingMessage.retryCount + 1
                     if (newRetryCount < maxMessageRetries) {
                         Log.w(TAG, "Retry failed, queueing again (attempt ${newRetryCount + 1}/$maxMessageRetries)")
-                        // Re-queue with updated retry count and time
-                        queueMessageForRetry(
-                            pendingMessage.message,
-                            pendingMessage.requestId,
-                            pendingMessage.chatId,
-                            pendingMessage.clientMessageId,
-                            newRetryCount
-                        )
+                        messageRetryQueue.add(pendingMessage.copy(retryCount = newRetryCount))
                     } else {
                         Log.e(TAG, "Message retry failed after $maxMessageRetries attempts: ${pendingMessage.message}")
                         // Emit error for this specific message
@@ -902,14 +778,7 @@ class WhizServerRepository @Inject constructor(
                 Log.e(TAG, "Error retrying message: ${pendingMessage.message}", e)
                 val newRetryCount = pendingMessage.retryCount + 1
                 if (newRetryCount < maxMessageRetries) {
-                    // Re-queue with updated retry count and time
-                    queueMessageForRetry(
-                        pendingMessage.message,
-                        pendingMessage.requestId,
-                        pendingMessage.chatId,
-                        pendingMessage.clientMessageId,
-                        newRetryCount
-                    )
+                    messageRetryQueue.add(pendingMessage.copy(retryCount = newRetryCount))
                 } else {
                     scope.launch {
                         emitEvent(WebSocketEvent.Error(Exception("Failed to send message after $maxMessageRetries attempts: ${pendingMessage.message}")))
@@ -918,7 +787,14 @@ class WhizServerRepository @Inject constructor(
             }
         }
         
-        // The periodic checker will handle future retries
+        // If there are still messages to retry, schedule another attempt
+        if (messageRetryQueue.isNotEmpty()) {
+            retryJob = scope.launch {
+                delay(messageRetryDelayMs * 2) // Longer delay for subsequent retries
+                // Process all messages in retry queue
+                processRetryQueue()
+            }
+        }
     }
 
     fun cancelRequest(requestId: String): Boolean {
@@ -1013,11 +889,13 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun scheduleReconnect() {
-        // Update the connection retry timer
-        if (connectionRetryCount >= maxReconnectAttempts) {
+        // Don't check persistentDisconnectForTest here - let the retry mechanism keep running
+        // The actual connection attempt will be blocked in connect() if the flag is true
+        // This better simulates production behavior where retries keep happening
+        
+        if (currentReconnectAttempts >= maxReconnectAttempts) {
             Log.w(TAG, "Max reconnect attempts reached ($maxReconnectAttempts). Giving up.")
-            connectionRetryCount = 0 // Reset for future manual connect
-            nextConnectionRetryTime = 0L
+            currentReconnectAttempts = 0 // Reset for future manual connect
             // Emit a final error if we have pending messages that couldn't be sent
             if (messageRetryQueue.isNotEmpty()) {
                 scope.launch {
@@ -1029,101 +907,25 @@ class WhizServerRepository @Inject constructor(
             return
         }
 
-        // Calculate next retry time with exponential backoff
-        val delayMs = (initialReconnectDelayMs * Math.pow(reconnectDelayBackoffFactor, connectionRetryCount.toDouble())).toLong()
-        nextConnectionRetryTime = System.currentTimeMillis() + delayMs
-        connectionRetryCount++
+        reconnectJob?.cancel() // Cancel any existing job
+
+        val delayMs = (initialReconnectDelayMs * Math.pow(reconnectDelayBackoffFactor, currentReconnectAttempts.toDouble())).toLong()
+        currentReconnectAttempts++
+
+        Log.i(TAG, "Scheduling reconnect attempt $currentReconnectAttempts/$maxReconnectAttempts in ${delayMs}ms.")
         
-        Log.i(TAG, "Scheduling reconnect attempt $connectionRetryCount/$maxReconnectAttempts in ${delayMs}ms")
-        
-        // Emit reconnecting event so UI knows we're trying
-        scope.launch {
-            emitEvent(WebSocketEvent.Reconnecting)
-        }
-    }
-    
-    /**
-     * Start the periodic checker that processes retry queues
-     */
-    private fun startPeriodicRetryChecker() {
-        Log.i(TAG, "🔄 startPeriodicRetryChecker() called - starting periodic retry checker...")
-        periodicRetryCheckerJob?.cancel()
-        Log.i(TAG, "🔄 Creating coroutine job for periodic checker...")
-        periodicRetryCheckerJob = scope.launch {
-            Log.i(TAG, "🔄 Periodic retry checker coroutine started successfully!")
-            while (true) {
-                try {
-                    delay(1000) // Check every second
-                    
-                    val currentTime = System.currentTimeMillis()
-                    
-                    // Check for connection retry
-                    if (nextConnectionRetryTime > 0) {
-                        val timeLeft = nextConnectionRetryTime - currentTime
-                        if (timeLeft <= 0) {
-                            nextConnectionRetryTime = 0L // Clear so we don't retry again immediately
-                            Log.i(TAG, "🔄 Periodic checker: Attempting reconnect now (attempt $connectionRetryCount)...")
-                            // The ChatViewModel should handle reconnection with the proper chatId
-                            // Just emit the event, don't call connect() directly
-                            emitEvent(WebSocketEvent.Reconnecting)
-                        } else {
-                            Log.d(TAG, "🔄 Periodic checker: Reconnect scheduled in ${timeLeft}ms (attempt $connectionRetryCount)")
-                        }
-                    }
-                    
-                    // Check for message retries
-                    if (messageRetryQueue.isNotEmpty() && connectionState == ConnectionState.CONNECTED) {
-                        val messagesToRetry = messageRetryQueue.filter { msg ->
-                            currentTime >= msg.nextRetryTime
-                        }
-                        
-                        if (messagesToRetry.isNotEmpty()) {
-                            Log.d(TAG, "Found ${messagesToRetry.size} messages ready to retry")
-                            // Remove them from the queue first
-                            messageRetryQueue.removeAll(messagesToRetry)
-                            // Process them
-                            messagesToRetry.forEach { pendingMessage ->
-                                // Re-add to queue for processing
-                                messageRetryQueue.add(pendingMessage)
-                            }
-                            // Process the retry queue
-                            processRetryQueue()
-                        }
-                    }
-                    
-                    // Clean up old messages from the retry queue (older than 5 minutes)
-                    val fiveMinutesAgo = currentTime - (5 * 60 * 1000)
-                    val expiredMessages = messageRetryQueue.filter { it.timestamp < fiveMinutesAgo }
-                    if (expiredMessages.isNotEmpty()) {
-                        Log.w(TAG, "Removing ${expiredMessages.size} expired messages from retry queue")
-                        messageRetryQueue.removeAll(expiredMessages)
-                    }
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error in periodic retry checker", e)
-                }
+        reconnectJob = scope.launch {
+            try {
+                emitEvent(WebSocketEvent.Reconnecting) // Notify UI
+                delay(delayMs)
+                Log.i(TAG, "Attempting reconnect now (attempt $currentReconnectAttempts)...")
+                // Note: connect() requires a conversationId now - this reconnect attempt may fail
+                // The ChatViewModel should handle reconnection with the proper chatId
+                Log.w(TAG, "Reconnect attempt without conversationId - this may not work as expected")
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception in scheduled reconnect job", e)
+                // This catch is for the delay or emit itself. connect() has its own try-catch.
             }
         }
-    }
-    
-    /**
-     * Stop the periodic retry checker (for cleanup)
-     */
-    fun stopPeriodicRetryChecker() {
-        periodicRetryCheckerJob?.cancel()
-        periodicRetryCheckerJob = null
-    }
-    
-    init {
-        Log.i(TAG, "📦 WhizServerRepository init block starting...")
-        try {
-            // Start the periodic retry checker
-            Log.i(TAG, "📦 About to call startPeriodicRetryChecker()")
-            startPeriodicRetryChecker()
-            Log.i(TAG, "📦 startPeriodicRetryChecker() call completed")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to start periodic retry checker in init block", e)
-        }
-        Log.i(TAG, "📦 WhizServerRepository init block completed")
     }
 } 

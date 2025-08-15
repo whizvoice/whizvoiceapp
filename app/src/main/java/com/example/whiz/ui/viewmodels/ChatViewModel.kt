@@ -62,21 +62,21 @@ class ChatViewModel @Inject constructor(
     val chatTitle = _chatTitle.asStateFlow()
     
     // Track multiple pending WebSocket requests by request ID
-    // Note: pendingRequests tracking has been moved to WhizServerRepository for centralized management
+    private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
     
     /**
      * Check if a specific request ID is in the pending requests list
      * This is used for testing to verify WebSocket message sending
      */
     fun hasPendingRequest(requestId: String): Boolean {
-        return whizServerRepository.isInPendingRequests(requestId)
+        return pendingRequests.containsKey(requestId)
     }
     
     /**
      * Get all pending request IDs for testing purposes
      */
     fun getPendingRequestIds(): Set<String> {
-        return whizServerRepository.getPendingRequestIds()
+        return pendingRequests.keys.toSet()
     }
 
     /**
@@ -158,7 +158,7 @@ class ChatViewModel @Inject constructor(
     private fun updateRespondingStateForCurrentChat() {
         try {
             val currentChatId = _chatId.value
-            val hasPendingRequests = whizServerRepository.hasPendingRequestsForChat(currentChatId)
+            val hasPendingRequests = pendingRequests.values.any { it == currentChatId }
             val wasResponding = _isResponding.value
             
             // 🔧 CONCURRENT MODE: Only show responding state for UI feedback, don't block input
@@ -353,12 +353,6 @@ class ChatViewModel @Inject constructor(
                                     // The fetchMessagesWithDeduplication already handles storing messages
                                     // Just trigger UI refresh
                                     repository.refreshMessages()
-                                    
-                                    // Check for orphaned messages that need retry after reconnection
-                                    if (configUseRemoteAgent && currentChatId != 0L) {
-                                        Log.d(TAG, "WebSocketEvent.Connected: Checking for orphaned messages after reconnection")
-                                        checkAndRetryOrphanedMessages(currentChatId)
-                                    }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error syncing messages for chat $currentChatId", e)
                                     // Don't show error to user - this is a background sync
@@ -383,49 +377,11 @@ class ChatViewModel @Inject constructor(
                         // Don't show "Connection lost" message to user - handle reconnection silently
                         // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
-                        
-                        // Reconnect with the current chat ID if we have one
-                        val currentChatId = _chatId.value
-                        if (currentChatId != -1L && currentChatId != 0L) {
-                            Log.d(TAG, "WebSocketEvent.Reconnecting: Attempting to reconnect with chatId=$currentChatId")
-                            viewModelScope.launch {
-                                try {
-                                    whizServerRepository.connect(currentChatId)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error reconnecting to WebSocket", e)
-                                }
-                            }
-                        } else {
-                            Log.d(TAG, "WebSocketEvent.Reconnecting: No valid chat ID to reconnect with (currentChatId=$currentChatId)")
-                        }
                     }
                     is WebSocketEvent.Closed -> {
                         Log.d(TAG, "WebSocketEvent.Closed: Called. isDisconnectingForAuthError = $isDisconnectingForAuthError, _navigateToLogin = ${_navigateToLogin.value}")
                         _isConnectedToServer.value = false
-                        
-                        // Move pending requests to retry queue so they can be retried later
-                        val pendingRequestIds = whizServerRepository.getPendingRequestIds()
-                        if (pendingRequestIds.isNotEmpty()) {
-                            Log.d(TAG, "Moving ${pendingRequestIds.size} pending requests to retry queue for later retry")
-                            for (requestId in pendingRequestIds) {
-                                val chatId = whizServerRepository.removeFromPendingRequests(requestId)
-                                if (chatId != null) {
-                                    // Find the message to get its content
-                                    val message = messages.value.find { it.requestId == requestId }
-                                    if (message != null) {
-                                        Log.d(TAG, "Adding pending request $requestId (chat $chatId) to retry queue")
-                                        // Queue it for retry when reconnected
-                                        whizServerRepository.queueMessageForRetry(
-                                            message.content, 
-                                            requestId, 
-                                            chatId,
-                                            null // clientMessageId
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        whizServerRepository.clearPendingRequests() // Clear after moving to retry queue
+                        pendingRequests.clear() // 🔧 Clear all pending requests on connection close
                         
                         // Only set reconnecting flag if this is NOT an intentional disconnect
                         // (loadChat calls disconnect() which is intentional)
@@ -458,10 +414,9 @@ class ChatViewModel @Inject constructor(
                             isDisconnectingForAuthError = true
                             
                             // Clear all pending requests on auth error
-                            val pendingIds = whizServerRepository.getPendingRequestIds()
-                            Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingIds")
-                            whizServerRepository.clearPendingRequests()
-                            Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: {}")
+                            Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
+                            pendingRequests.clear()
+                            Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
                             _isResponding.value = false
                             
                             // Sign out to clear any invalid tokens
@@ -483,10 +438,9 @@ class ChatViewModel @Inject constructor(
                                 )
                             }
                             // Clear all pending requests on final connection error
-                            val pendingIds = whizServerRepository.getPendingRequestIds()
-                            Log.d(TAG, "🔥 CONNECTION ERROR: CLEARING all pending requests: $pendingIds")
-                            whizServerRepository.clearPendingRequests()
-                            Log.d(TAG, "🔥 CONNECTION ERROR: Pending requests map after clearing: {}")
+                            Log.d(TAG, "🔥 CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
+                            pendingRequests.clear()
+                            Log.d(TAG, "🔥 CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
                             _isResponding.value = false
                             // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         } else {
@@ -498,11 +452,10 @@ class ChatViewModel @Inject constructor(
                             // clear the responding state to allow user to interact with the microphone button
                             if (_isResponding.value) {
                                 Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
-                                val pendingIds = whizServerRepository.getPendingRequestIds()
-                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingIds")
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                                 _isResponding.value = false
-                                whizServerRepository.clearPendingRequests()
-                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: Pending requests map after clearing: {}")
+                                pendingRequests.clear()
+                                Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: Pending requests map after clearing: $pendingRequests")
                                 // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                             }
                         }
@@ -515,10 +468,9 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.AuthError -> {
                         Log.d(TAG, "WebSocketEvent.AuthError received: ${event.message}.")
                         _isConnectedToServer.value = false
-                        val pendingIds = whizServerRepository.getPendingRequestIds()
-                        Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingIds")
-                        whizServerRepository.clearPendingRequests() // 🔧 Clear all pending requests on auth error
-                        Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: {}")
+                        Log.d(TAG, "🔥 AUTH ERROR: CLEARING all pending requests: $pendingRequests")
+                        pendingRequests.clear() // 🔧 Clear all pending requests on auth error
+                        Log.d(TAG, "🔥 AUTH ERROR: Pending requests map after clearing: $pendingRequests")
                         viewModelScope.launch {
                             val refreshSuccessful = authRepository.refreshAccessToken()
                             if (refreshSuccessful) {
@@ -565,9 +517,8 @@ class ChatViewModel @Inject constructor(
                         
                         // Remove the cancelled request from pending requests
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
-                        whizServerRepository.removeFromPendingRequests(event.cancelledRequestId)
-                        val pendingIds = whizServerRepository.getPendingRequestIds()
-                        Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingIds")
+                        pendingRequests.remove(event.cancelledRequestId)
+                        Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                     }
@@ -577,7 +528,7 @@ class ChatViewModel @Inject constructor(
                         // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
                         // When multiple requests are sent rapidly, the server cancels previous ones
                         // All user messages stay in chat but only the latest gets a response
-                        val interruptedRequests = whizServerRepository.getPendingRequestIds().toList()
+                        val interruptedRequests = pendingRequests.keys.toList()
                         Log.d(TAG, "🔧 INTERRUPTION: ${interruptedRequests.size} user messages remain in chat (no assistant responses)")
                         interruptedRequests.forEach { requestId ->
                             Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
@@ -585,10 +536,9 @@ class ChatViewModel @Inject constructor(
                         
                         // The backend has cancelled previous requests automatically
                         // Clear all pending requests since they were cancelled
-                        val pendingIds = whizServerRepository.getPendingRequestIds()
-                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingIds")
-                        whizServerRepository.clearPendingRequests()
-                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: {}")
+                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
+                        pendingRequests.clear()
+                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: $pendingRequests")
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
@@ -620,7 +570,7 @@ class ChatViewModel @Inject constructor(
                                 // We have an optimistic ID for the current chat and received a real ID
                                 // Check if this message is actually for our current chat (might be a broadcast from another session)
                                 val isForCurrentChat = event.clientConversationId == currentChatId || 
-                                                       (event.requestId != null && whizServerRepository.isInPendingRequests(event.requestId))
+                                                       event.requestId in pendingRequests
                                 
                                 if (isForCurrentChat) {
                                     Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Received real conversation ID $effectiveConversationId for current optimistic chat $currentChatId")
@@ -701,12 +651,14 @@ class ChatViewModel @Inject constructor(
                                 Log.d(TAG, "🐛 VOICE_DEBUG: event.requestId = ${event.requestId}")
                                 Log.d(TAG, "🐛 VOICE_DEBUG: effectiveConversationId = $effectiveConversationId")
                                 Log.d(TAG, "🐛 VOICE_DEBUG: current _chatId.value = ${_chatId.value}")
-                                Log.d(TAG, "🐛 VOICE_DEBUG: pendingRequests = ${whizServerRepository.getPendingRequestIds()}")
+                                Log.d(TAG, "🐛 VOICE_DEBUG: pendingRequests = $pendingRequests")
                                 
                                 if (event.requestId != null) {
-                                    if (whizServerRepository.isInPendingRequests(event.requestId)) {
-                                        val originalChatId = whizServerRepository.removeFromPendingRequests(event.requestId)!!
+                                    if (pendingRequests.containsKey(event.requestId)) {
+                                        val originalChatId = pendingRequests[event.requestId]!!
                                         Log.d(TAG, "🐛 VOICE_DEBUG: Found requestId in pendingRequests, originalChatId = $originalChatId")
+                                        // Remove completed request from pending requests
+                                        pendingRequests.remove(event.requestId) // Remove completed request
                                         
                         // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
                         if (originalChatId == -1L && effectiveConversationId != null) {
@@ -1089,7 +1041,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
-                Log.d(TAG, "Loading chat $chatId. Current chat: ${_chatId.value}, Pending requests: ${whizServerRepository.getPendingRequestIds().size}")
+                Log.d(TAG, "Loading chat $chatId. Current chat: ${_chatId.value}, Pending requests: ${pendingRequests.size}")
                 
                 // Disconnect from server if switching chats or loading new
                 if (configUseRemoteAgent) {
@@ -1106,12 +1058,11 @@ class ChatViewModel @Inject constructor(
                 
                 // 🔧 Clear pending requests and log what we're clearing
                 try {
-                    val pendingIds = whizServerRepository.getPendingRequestIds()
-                    if (pendingIds.isNotEmpty()) {
-                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingIds.size} pending requests: $pendingIds")
-                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingIds")
-                        whizServerRepository.clearPendingRequests()
-                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: {}")
+                    if (pendingRequests.isNotEmpty()) {
+                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingRequests")
+                        pendingRequests.clear()
+                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: $pendingRequests")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
@@ -1243,8 +1194,7 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // Check for orphaned messages that need retry
-                // Include both positive (server) and negative (optimistic) chat IDs
-                if (configUseRemoteAgent && _chatId.value != 0L && _chatId.value != -1L) {
+                if (configUseRemoteAgent && _chatId.value > 0) {
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
@@ -1607,22 +1557,19 @@ class ChatViewModel @Inject constructor(
                 
                 // 🔧 FIX: Ensure requestId is non-null for WebSocket operations
                 val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
+                pendingRequests[nonNullRequestId] = chatIdForWebSocket
+                
+                // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
+                updateRespondingStateForCurrentChat()
                 
                 // Pass the chatId directly - WhizServerRepository will handle whether to send as
                 // conversation_id (positive) or client_conversation_id (negative)
                 val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
-                if (success) {
-                    // Only add to pendingRequests if message was actually sent
-                    whizServerRepository.addToPendingRequests(nonNullRequestId, chatIdForWebSocket)
-                    // Remove from retry queue to prevent double-sending
-                    whizServerRepository.removeFromRetryQueue(nonNullRequestId)
-                    
-                    // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
-                    updateRespondingStateForCurrentChat()
-                } else {
-                    // Message was queued for retry - don't add to pendingRequests
-                    Log.d(TAG, "Message queued for retry (not added to pendingRequests)")
+                if (!success) {
+                    // Message was queued for retry, don't clear the request tracking yet
+                    // The retry mechanism will handle this transparently
+                    Log.d(TAG, "Message queued for retry")
                 }
                 
                 // For new chats, refresh conversations but don't switch - we already created a local chat for optimistic UI
@@ -1737,12 +1684,11 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "ViewModel cleared. Releasing resources.")
         
         // 🔧 Enhanced cleanup logging
-        val pendingIds = whizServerRepository.getPendingRequestIds()
-        if (pendingIds.isNotEmpty()) {
-            Log.w(TAG, "🔥 onCleared: CLEARING ${pendingIds.size} pending requests: $pendingIds")
-            Log.w(TAG, "🔥 onCleared: Pending requests map before clearing: $pendingIds")
-            whizServerRepository.clearPendingRequests()
-            Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: {}")
+        if (pendingRequests.isNotEmpty()) {
+            Log.w(TAG, "🔥 onCleared: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
+            Log.w(TAG, "🔥 onCleared: Pending requests map before clearing: $pendingRequests")
+            pendingRequests.clear()
+            Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
         
         // VoiceManager is a singleton that manages its own cleanup
@@ -1986,7 +1932,8 @@ class ChatViewModel @Inject constructor(
     
     /**
      * Check for orphaned user messages in a chat that need to be retried.
-     * An orphaned message is a user message that never received an assistant response.
+     * An orphaned message is a user message that was sent more than 2 minutes ago
+     * but never received an assistant response.
      */
     private suspend fun checkAndRetryOrphanedMessages(chatId: Long) {
         try {
@@ -1999,51 +1946,25 @@ class ChatViewModel @Inject constructor(
                 return
             }
             
-            // Clean up stale pending requests (older than 10 seconds)
+            // Find the timestamp of the last assistant message (if any)
+            val lastAssistantMessageTime = allMessages
+                .filter { it.type == MessageType.ASSISTANT }
+                .maxByOrNull { it.timestamp }
+                ?.timestamp ?: 0L
+            
+            // Current time and 2-minute threshold
             val currentTime = System.currentTimeMillis()
-            val staleThreshold = 10_000L // 10 seconds
-            val staleRequests = mutableListOf<String>()
-            
-            // Find stale requests by checking message timestamps
-            for (requestId in whizServerRepository.getPendingRequestIdsForChat(chatId)) {
-                val pendingChatId = chatId
-                if (pendingChatId == chatId) {
-                    val message = allMessages.find { it.requestId == requestId }
-                    if (message != null && (currentTime - message.timestamp) > staleThreshold) {
-                        Log.d(TAG, "Removing stale pending request: $requestId (age: ${currentTime - message.timestamp}ms)")
-                        staleRequests.add(requestId)
-                    }
-                }
-            }
-            
-            // Remove stale requests
-            staleRequests.forEach { whizServerRepository.removeFromPendingRequests(it) }
-            if (staleRequests.isNotEmpty()) {
-                Log.d(TAG, "Cleaned up ${staleRequests.size} stale pending requests")
-                updateRespondingStateForCurrentChat()
-            }
+            val retryThresholdMs = 2 * 60 * 1000L // 2 minutes
             
             // Find orphaned user messages that need retry
-            // An orphaned message is a user message that doesn't have a corresponding assistant response after it
-            val userMessages = allMessages
-                .filter { it.type == MessageType.USER && it.requestId != null }
-                .sortedBy { it.timestamp }
-            
-            val orphanedMessages = mutableListOf<MessageEntity>()
-            
-            for (userMessage in userMessages) {
-                // Check if there's an assistant message after this user message
-                val hasResponse = allMessages.any { assistantMsg ->
-                    assistantMsg.type == MessageType.ASSISTANT &&
-                    assistantMsg.timestamp > userMessage.timestamp &&
-                    // Assistant message should be reasonably close in time (within 5 minutes)
-                    (assistantMsg.timestamp - userMessage.timestamp) < 300_000L
+            val orphanedMessages = allMessages
+                .filter { message ->
+                    message.type == MessageType.USER &&
+                    message.timestamp > lastAssistantMessageTime && // After last assistant response
+                    (currentTime - message.timestamp) > retryThresholdMs && // Older than 2 minutes
+                    message.requestId != null // Has a request ID for retry
                 }
-                
-                if (!hasResponse) {
-                    orphanedMessages.add(userMessage)
-                }
-            }
+                .sortedBy { it.timestamp } // Process in chronological order
             
             if (orphanedMessages.isEmpty()) {
                 Log.d(TAG, "No orphaned messages found in chat $chatId")
@@ -2063,13 +1984,17 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // Check if it's in pending requests (currently being processed)
-                if (whizServerRepository.isInPendingRequests(requestId)) {
+                if (pendingRequests.containsKey(requestId)) {
                     Log.d(TAG, "Message ${message.id} (requestId: $requestId) is in pending requests, skipping")
                     continue
                 }
                 
                 // This message needs to be retried
                 Log.d(TAG, "Retrying orphaned message ${message.id} (requestId: $requestId): ${message.content.take(50)}...")
+                
+                // Add to pending requests to track it
+                pendingRequests[requestId] = chatId
+                updateRespondingStateForCurrentChat()
                 
                 // Send the message again
                 // Pass the chatId directly - WhizServerRepository will handle whether to send as
@@ -2080,15 +2005,10 @@ class ChatViewModel @Inject constructor(
                     chatId
                 )
                 
-                if (success) {
-                    // Only add to pendingRequests if message was actually sent
-                    whizServerRepository.addToPendingRequests(requestId, chatId)
-                    // Remove from retry queue to prevent double-sending
-                    whizServerRepository.removeFromRetryQueue(requestId)
-                    updateRespondingStateForCurrentChat()
-                    Log.d(TAG, "Message ${message.id} sent successfully (requestId: $requestId)")
-                } else {
+                if (!success) {
                     Log.d(TAG, "Message ${message.id} queued for retry (requestId: $requestId)")
+                } else {
+                    Log.d(TAG, "Message ${message.id} sent successfully (requestId: $requestId)")
                 }
                 
                 // Small delay between retries to avoid overwhelming the server
