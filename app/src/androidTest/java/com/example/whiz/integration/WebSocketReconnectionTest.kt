@@ -28,7 +28,6 @@ import com.example.whiz.MainActivity
 import org.junit.Assert.*
 import android.util.Log
 import com.example.whiz.test_helpers.ComposeTestHelper
-import com.example.whiz.di.TestTimeController
 import com.example.whiz.di.TestInterceptor
 
 /**
@@ -477,18 +476,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 
                 // Wait for WebSocket to connect
-                withTimeout(10000) { // Increase timeout since we control time
-                    var totalTime = 0L
-                    while (!whizServerRepository.isConnected() && totalTime < 10000) {
-                        // Advance test time to trigger the periodic retry checker
-                        TestTimeController.advanceTimeBy(1000) // Advance by 1 second
-                        TestTimeController.runCurrent() // Process any pending coroutines
-                        delay(50) // Small real delay to let coroutines process
-                        totalTime += 1000
-                        
-                        if (totalTime % 2000 == 0L) {
-                            Log.d(TAG, "⏱️ Advanced test time by ${totalTime}ms, connected: ${whizServerRepository.isConnected()}")
-                        }
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
                     }
                 }
                 Log.d(TAG, "✅ WebSocket reconnected")
@@ -603,18 +593,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 // Wait for WebSocket to connect
-                withTimeout(10000) { // Increase timeout since we control time
-                    var totalTime = 0L
-                    while (!whizServerRepository.isConnected() && totalTime < 10000) {
-                        // Advance test time to trigger the periodic retry checker
-                        TestTimeController.advanceTimeBy(1000) // Advance by 1 second
-                        TestTimeController.runCurrent() // Process any pending coroutines
-                        delay(50) // Small real delay to let coroutines process
-                        totalTime += 1000
-                        
-                        if (totalTime % 2000 == 0L) {
-                            Log.d(TAG, "⏱️ Advanced test time by ${totalTime}ms, connected: ${whizServerRepository.isConnected()}")
-                        }
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        delay(100)
                     }
                 }
                 Log.d(TAG, "✅ WebSocket reconnected")
@@ -1052,18 +1033,9 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 try {
-                    withTimeout(10000) { // Increase timeout since we control time
-                        var totalTime = 0L
-                        while (!whizServerRepository.isConnected() && totalTime < 10000) {
-                            // Advance test time to trigger the periodic retry checker
-                            TestTimeController.advanceTimeBy(1000) // Advance by 1 second
-                            TestTimeController.runCurrent() // Process any pending coroutines
-                            delay(50) // Small real delay to let coroutines process
-                            totalTime += 1000
-                            
-                            if (totalTime % 2000 == 0L) {
-                                Log.d(TAG, "⏱️ Advanced test time by ${totalTime}ms, connected: ${whizServerRepository.isConnected()}")
-                            }
+                    withTimeout(3000) {
+                        while (!whizServerRepository.isConnected()) {
+                            delay(50)
                         }
                     }
                     Log.d(TAG, "✅ WebSocket reconnected for verification")

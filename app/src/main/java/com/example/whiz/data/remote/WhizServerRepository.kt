@@ -2,7 +2,6 @@ package com.example.whiz.data.remote
 
 import android.util.Log
 import com.example.whiz.data.auth.AuthRepository
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,12 +65,11 @@ data class TimestampedEvent(
 @Singleton
 class WhizServerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val authRepository: AuthRepository,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val authRepository: AuthRepository
 ) {
     private val TAG = "WhizServerRepo"
     private var webSocket: WebSocket? = null
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     // Connection state management
     private enum class ConnectionState {
@@ -414,7 +412,7 @@ class WhizServerRepository @Inject constructor(
 
         try {
             // Only use server token, no fallback to Google token  
-            val serverToken = withContext(ioDispatcher) {
+            val serverToken = withContext(Dispatchers.IO) {
                 authRepository.serverToken.firstOrNull()
             }
             
