@@ -1111,7 +1111,18 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ All user messages found in first chat")
                 
-                // Verify bot responses are present (check for Paris-related content)
+                // Verify bot responses are present and correct for France questions
+                Log.d(TAG, "🔍 Verifying France-specific bot responses...")
+                
+                // Expected responses for France chat (bot should respond with 1 word as requested)
+                val expectedFranceResponses = listOf(
+                    "Paris",     // Capital of France
+                    "324",       // Eiffel Tower height (might be "324m" or just "324")
+                    "2",         // Paris population (might be "2million" or just "2")
+                    "French"     // Language
+                )
+                
+                // Check for Paris response (should NOT contain Rome/Italy)
                 val parisResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -1127,29 +1138,66 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 )
                 
                 if (!parisResponseFound) {
-                    failWithScreenshot("Bot responses about Paris not found in first chat", "first_chat_no_paris_response")
+                    failWithScreenshot("Bot response 'Paris' not found in first chat", "first_chat_no_paris_response")
                 }
                 
-                // Check for Eiffel Tower response
-                val eiffelResponseFound = ComposeTestHelper.waitForElement(
+                // Check for French response
+                val frenchResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
                         composeTestRule.onNodeWithText(
-                            "Eiffel",
+                            "French",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
                         )
                     },
                     timeoutMs = 3000L,
-                    description = "Eiffel Tower response"
+                    description = "French language response"
                 )
                 
-                if (!eiffelResponseFound) {
-                    Log.w(TAG, "⚠️ Eiffel Tower response not found - may still be syncing")
+                if (!frenchResponseFound) {
+                    Log.w(TAG, "⚠️ 'French' response not found - bot may have given a different answer")
                 }
                 
-                Log.d(TAG, "✅ Bot responses found in first chat")
+                // IMPORTANT: Check that Italy-related responses are NOT in this chat
+                val romeInFirstChat = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            "Rome",
+                            substring = true,
+                            ignoreCase = true,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 1000L, // Short timeout - we expect NOT to find it
+                    description = "Rome (should NOT be in France chat)"
+                )
+                
+                if (romeInFirstChat) {
+                    failWithScreenshot("❌ CROSS-CONTAMINATION: Found 'Rome' in France chat!", "cross_contamination_rome_in_france")
+                }
+                
+                val pizzaInFirstChat = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            "Pizza",
+                            substring = true,
+                            ignoreCase = true,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 1000L, // Short timeout - we expect NOT to find it
+                    description = "Pizza (should NOT be in France chat)"
+                )
+                
+                if (pizzaInFirstChat) {
+                    failWithScreenshot("❌ CROSS-CONTAMINATION: Found 'Pizza' in France chat!", "cross_contamination_pizza_in_france")
+                }
+                
+                Log.d(TAG, "✅ France chat has correct responses with no Italy contamination")
                 
                 // Step 11: Verify second chat messages are sent and responded to
                 Log.d(TAG, "🔍 Step 11: Verifying second chat messages...")
@@ -1224,7 +1272,18 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ All user messages found in second chat")
                 
-                // Verify bot responses are present (check for Italy-related content)
+                // Verify bot responses are present and correct for Italy questions
+                Log.d(TAG, "🔍 Verifying Italy-specific bot responses...")
+                
+                // Expected responses for Italy chat (bot should respond with 1 word as requested)
+                val expectedItalyResponses = listOf(
+                    "Rome",      // Capital of Italy
+                    "48",        // Colosseum height (might be "48m" or just "48")
+                    "2.8",       // Rome population (might be "2.8million" or just "3")
+                    "Pizza"      // Pie-like food
+                )
+                
+                // Check for Rome response (should NOT contain Paris/France)
                 val romeResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -1240,31 +1299,29 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 )
                 
                 if (!romeResponseFound) {
-                    failWithScreenshot("Bot responses about Rome not found in second chat", "second_chat_no_rome_response")
+                    failWithScreenshot("Bot response 'Rome' not found in second chat", "second_chat_no_rome_response")
                 }
                 
-                // Check for Colosseum response
-                val colosseumResponseFound = ComposeTestHelper.waitForElement(
+                // Check for Pizza response
+                val pizzaResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
                         composeTestRule.onNodeWithText(
-                            "Colosseum",
+                            "Pizza",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
                         )
                     },
                     timeoutMs = 3000L,
-                    description = "Colosseum response"
+                    description = "Pizza response"
                 )
                 
-                if (!colosseumResponseFound) {
-                    Log.w(TAG, "⚠️ Colosseum response not found - may still be syncing")
+                if (!pizzaResponseFound) {
+                    Log.w(TAG, "⚠️ 'Pizza' response not found - bot may have given a different answer")
                 }
                 
-                Log.d(TAG, "✅ Bot responses found in second chat")
-                
-                // Verify no cross-contamination between chats
+                // IMPORTANT: Check that France-related responses are NOT in this chat
                 val parisInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -1275,16 +1332,35 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 500L,
-                    description = "Paris in second chat (should NOT be found)"
+                    timeoutMs = 1000L, // Short timeout - we expect NOT to find it
+                    description = "Paris (should NOT be in Italy chat)"
                 )
                 
                 if (parisInSecondChat) {
-                    failWithScreenshot("Cross-contamination: Found Paris content in Italy chat", "cross_contamination_paris_in_italy")
+                    failWithScreenshot("❌ CROSS-CONTAMINATION: Found 'Paris' in Italy chat!", "cross_contamination_paris_in_italy")
                 }
                 
-                Log.d(TAG, "✅ No cross-contamination between chats")
-                Log.d(TAG, "✅ Test passed: Multi-chat offline messaging works correctly")
+                val frenchInSecondChat = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            "French",
+                            substring = true,
+                            ignoreCase = true,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 1000L, // Short timeout - we expect NOT to find it
+                    description = "French (should NOT be in Italy chat)"
+                )
+                
+                if (frenchInSecondChat) {
+                    failWithScreenshot("❌ CROSS-CONTAMINATION: Found 'French' in Italy chat!", "cross_contamination_french_in_italy")
+                }
+                
+                Log.d(TAG, "✅ Italy chat has correct responses with no France contamination")
+                
+                Log.d(TAG, "✅✅✅ TEST PASSED: Multi-chat offline messaging works correctly with no cross-contamination")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Test failed with error: ${e.message}", e)
