@@ -35,6 +35,9 @@ import javax.inject.Named
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 
 /**
  * Test module that provides REAL dependencies for E2E testing with test credentials
@@ -46,6 +49,31 @@ import retrofit2.http.*
  */
 interface ViewModelCapture {
     fun onChatViewModelReady(viewModel: com.example.whiz.ui.viewmodels.ChatViewModel)
+}
+
+/**
+ * Singleton holder for TestDispatcher to allow tests to control time
+ */
+object TestTimeController {
+    var testDispatcher: TestDispatcher? = null
+        private set
+    
+    fun initialize(dispatcher: TestDispatcher) {
+        testDispatcher = dispatcher
+        Log.d("TestTimeController", "🕐 TestDispatcher initialized for time control")
+    }
+    
+    fun advanceTimeBy(delayTimeMillis: Long) {
+        testDispatcher?.let {
+            it.scheduler.advanceTimeBy(delayTimeMillis)
+            it.scheduler.runCurrent()
+            Log.d("TestTimeController", "🕐 Advanced time by ${delayTimeMillis}ms")
+        } ?: Log.w("TestTimeController", "⚠️ TestDispatcher not initialized!")
+    }
+    
+    fun runCurrent() {
+        testDispatcher?.scheduler?.runCurrent()
+    }
 }
 
 @Module
@@ -140,12 +168,22 @@ object TestAppModule {
 
     @Provides
     @Singleton
+    fun provideTestDispatcher(): TestDispatcher {
+        Log.d(TAG, "🔧 Creating StandardTestDispatcher for controlled timing in tests...")
+        val dispatcher = StandardTestDispatcher()
+        TestTimeController.initialize(dispatcher)
+        return dispatcher
+    }
+    
+    @Provides
+    @Singleton
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
-        authRepository: AuthRepository
+        authRepository: AuthRepository,
+        testDispatcher: TestDispatcher
     ): WhizServerRepository {
-        Log.d(TAG, "🔧 Creating REAL WhizServerRepository...")
-        return WhizServerRepository(okHttpClient, authRepository)
+        Log.d(TAG, "🔧 Creating REAL WhizServerRepository with TestDispatcher...")
+        return WhizServerRepository(okHttpClient, authRepository, testDispatcher)
     }
     
     @Provides
