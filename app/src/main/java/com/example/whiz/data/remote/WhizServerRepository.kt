@@ -111,6 +111,12 @@ class WhizServerRepository @Inject constructor(
         return persistentDisconnectForTest
     }
     
+    // Allow tests to reset the persistent disconnect flag to simulate network restoration
+    fun resetPersistentDisconnectForTest() {
+        Log.d(TAG, "Test: Resetting persistentDisconnectForTest flag to simulate network restoration")
+        persistentDisconnectForTest = false
+    }
+    
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
         // Track event in history for debugging
@@ -242,11 +248,16 @@ class WhizServerRepository @Inject constructor(
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
             // Reset persistent disconnect flag if requested
-            if (turnOffPersistentDisconnect && persistentDisconnectForTest) {
-                Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
-                persistentDisconnectForTest = false
-                // Continue with connection attempt after resetting the flag
-                // This allows tests to both reset the flag AND establish a connection in one call
+            if (turnOffPersistentDisconnect) {
+                if (persistentDisconnectForTest) {
+                    Log.d(TAG, "Resetting persistentDisconnectForTest flag from $persistentDisconnectForTest to false")
+                    persistentDisconnectForTest = false
+                } else {
+                    Log.d(TAG, "Tried to reset persistentDisconnectForTest flag from $persistentDisconnectForTest to false but it was already false")
+                }
+                if (conversationId == null) {
+                    return
+                }
             }
             
             // Validate that conversationId is not null (except when just resetting the flag)
@@ -916,15 +927,16 @@ class WhizServerRepository @Inject constructor(
         
         reconnectJob = scope.launch {
             try {
-                emitEvent(WebSocketEvent.Reconnecting) // Notify UI
+                // Wait for the delay FIRST before notifying about reconnection
                 delay(delayMs)
                 Log.i(TAG, "Attempting reconnect now (attempt $currentReconnectAttempts)...")
-                // Note: connect() requires a conversationId now - this reconnect attempt may fail
-                // The ChatViewModel should handle reconnection with the proper chatId
-                Log.w(TAG, "Reconnect attempt without conversationId - this may not work as expected")
+                // Now emit Reconnecting event after delay to trigger ChatViewModel reconnection
+                // ChatViewModel will handle the actual reconnection with the proper chatId
+                emitEvent(WebSocketEvent.Reconnecting)
+                Log.d(TAG, "Emitted Reconnecting event for ChatViewModel to handle with proper chatId")
             } catch (e: Exception) {
                 Log.e(TAG, "Exception in scheduled reconnect job", e)
-                // This catch is for the delay or emit itself. connect() has its own try-catch.
+                // This catch is for the delay or emit itself.
             }
         }
     }

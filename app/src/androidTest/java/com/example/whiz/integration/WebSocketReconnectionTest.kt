@@ -327,9 +327,24 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 Log.d(TAG, "✅ Confirmed: No bot response while disconnected")
                 
-                // Step 6: Reset persistent disconnect flag
-                Log.d(TAG, "🔌 Resetting persistent disconnect flag")
+                // Step 6: Simulate network restoration by resetting the test flag
+                // The retry mechanism should automatically reconnect within 1-2 seconds
+                Log.d(TAG, "🔌 Simulating network restoration by resetting persistent disconnect flag")
+                // Use the existing method for consistency with other tests
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                
+                // Give the retry mechanism time to fire and ChatViewModel to reconnect
+                Log.d(TAG, "⏳ Waiting for automatic reconnection via retry mechanism...")
+                delay(1500) // Wait for retry to fire (scheduled at 1000ms) + processing time
+                
+                // Wait for WebSocket to automatically reconnect
+                withTimeout(5000) {
+                    while (!whizServerRepository.isConnected()) {
+                        Log.d(TAG, "Waiting for automatic reconnection... Connected: ${whizServerRepository.isConnected()}")
+                        delay(100)
+                    }
+                }
+                Log.d(TAG, "✅ WebSocket automatically reconnected after network restoration")
 
                 // Step 7: Wait for bot response to appear after reconnection
                 Log.d(TAG, "⏳ Waiting for bot response to sync after reconnection...")

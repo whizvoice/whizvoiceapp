@@ -374,6 +374,24 @@ class ChatViewModel @Inject constructor(
                         // Remember which chat was active when we disconnected
                         chatIdWhenDisconnected = _chatId.value
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Saved chatIdWhenDisconnected=$chatIdWhenDisconnected")
+                        
+                        // IMPORTANT: Actually attempt to reconnect with the current chat ID
+                        val currentChatId = _chatId.value
+                        if (currentChatId != -1L && currentChatId != 0L) {
+                            Log.d(TAG, "WebSocketEvent.Reconnecting: Attempting to reconnect with chatId=$currentChatId")
+                            viewModelScope.launch {
+                                try {
+                                    // Don't reset persistentDisconnectForTest flag here - let the test control it
+                                    whizServerRepository.connect(currentChatId)
+                                    Log.d(TAG, "WebSocketEvent.Reconnecting: Reconnection initiated for chatId=$currentChatId")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "WebSocketEvent.Reconnecting: Failed to reconnect", e)
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "WebSocketEvent.Reconnecting: No valid chat ID to reconnect with (chatId=$currentChatId)")
+                        }
+                        
                         // Don't show "Connection lost" message to user - handle reconnection silently
                         // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
