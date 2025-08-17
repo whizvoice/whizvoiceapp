@@ -866,7 +866,14 @@ class WhizRepository @Inject constructor(
 
     /**
      * Deduplicate server messages with local optimistic messages.
-     * Removes local optimistic messages that have corresponding server messages.
+     * 
+     * Smart deduplication that:
+     * 1. Matches messages by request_id first (most reliable)
+     * 2. Falls back to content matching for messages without request_id
+     * 3. PRESERVES local messages that haven't synced to server yet (pending messages)
+     * 4. Only removes local messages when there's a matching server message
+     * 
+     * This ensures messages sent during poor connectivity aren't lost during sync.
      */
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
@@ -952,27 +959,73 @@ class WhizRepository @Inject constructor(
             val allLocalMessages = localMessages + optimisticMessages
             Log.d(TAG, "deduplicateMessages: Checking ${localMessages.size} current + ${optimisticMessages.size} optimistic = ${allLocalMessages.size} total local messages")
             
-            // Find optimistic messages that have server counterparts
-            val messagesToRemove = mutableListOf<Long>()
+            // 🔧 IMPROVED: Smart deduplication that preserves pending messages
+            // Build maps for efficient lookups
+            val serverMessagesByRequestId = serverMessages
+                .filter { it.requestId != null }
+                .associateBy { it.requestId!! }
             
+            val localMessagesByRequestId = allLocalMessages
+                .filter { it.requestId != null }
+                .associateBy { it.requestId!! }
+            
+            val messagesToRemove = mutableListOf<Long>()
+            val serverMessagesToInsert = mutableListOf<MessageEntity>()
+            
+            // Process server messages to find duplicates and new messages
             for (serverMessage in serverMessages) {
-                // Look for local messages with same content and type that could be duplicates
-                // IMPORTANT: Don't remove messages that already have the same ID as the server message
-                // (they're already synced from a previous fetch)
-                val duplicateLocal = allLocalMessages.find { localMsg ->
-                    // Skip if this is the exact same message (same ID means it's already from server)
-                    localMsg.id != serverMessage.id &&
-                    localMsg.content.trim() == serverMessage.content.trim() &&
-                    localMsg.type == serverMessage.type &&
-                    // Only consider recent local messages as potential optimistic duplicates
-                    (serverMessage.timestamp - localMsg.timestamp).let { timeDiff ->
-                        timeDiff >= 0 && timeDiff < 60000 // Server message should be within 60 seconds after local
+                var foundDuplicate = false
+                
+                // First try to match by request ID (most reliable)
+                if (serverMessage.requestId != null) {
+                    val localMatch = localMessagesByRequestId[serverMessage.requestId]
+                    if (localMatch != null && localMatch.id != serverMessage.id) {
+                        // Found a local message with same request ID - it's a duplicate
+                        Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local message ${localMatch.id} for server message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
+                        messagesToRemove.add(localMatch.id)
+                        foundDuplicate = true
                     }
                 }
                 
-                if (duplicateLocal != null) {
-                    Log.d(TAG, "deduplicateMessages: Found duplicate - removing local message ${duplicateLocal.id} (from chat ${duplicateLocal.chatId}) for server message ${serverMessage.id}")
-                    messagesToRemove.add(duplicateLocal.id)
+                // If no requestId match, try content matching as fallback (for backward compatibility)
+                if (!foundDuplicate) {
+                    val duplicateLocal = allLocalMessages.find { localMsg ->
+                        // Skip if this is the exact same message (same ID means it's already from server)
+                        localMsg.id != serverMessage.id &&
+                        localMsg.requestId == null && // Only content-match messages without requestId
+                        localMsg.content.trim() == serverMessage.content.trim() &&
+                        localMsg.type == serverMessage.type &&
+                        // Only consider recent local messages as potential optimistic duplicates
+                        (serverMessage.timestamp - localMsg.timestamp).let { timeDiff ->
+                            timeDiff >= 0 && timeDiff < 60000 // Server message should be within 60 seconds after local
+                        }
+                    }
+                    
+                    if (duplicateLocal != null) {
+                        Log.d(TAG, "deduplicateMessages: Found duplicate by content - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
+                        messagesToRemove.add(duplicateLocal.id)
+                        foundDuplicate = true
+                    }
+                }
+                
+                // Check if this server message already exists in database
+                val existingMessage = messageDao.getMessageById(serverMessage.id)
+                if (existingMessage == null) {
+                    serverMessagesToInsert.add(serverMessage)
+                }
+            }
+            
+            // 🔧 KEY IMPROVEMENT: Log which local messages are being preserved
+            val preservedLocalMessages = allLocalMessages.filter { localMsg ->
+                !messagesToRemove.contains(localMsg.id) && 
+                localMsg.requestId != null &&
+                !serverMessagesByRequestId.containsKey(localMsg.requestId)
+            }
+            
+            if (preservedLocalMessages.isNotEmpty()) {
+                Log.d(TAG, "deduplicateMessages: Preserving ${preservedLocalMessages.size} local messages that haven't synced yet:")
+                preservedLocalMessages.forEach { msg ->
+                    Log.d(TAG, "  - Message ${msg.id}: '${msg.content.take(50)}...' (requestId: ${msg.requestId})")
                 }
             }
             
@@ -984,16 +1037,14 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Removed ${messagesToRemove.size} duplicate local messages")
             }
             
-            // Store server messages in database (only if they don't already exist)
-            for (message in serverMessages) {
-                // Check if this message already exists in the database
-                val existingMessage = messageDao.getMessageById(message.id)
-                if (existingMessage == null) {
-                    val insertedId = messageDao.insertMessage(message)
-                    Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
-                } else {
-                    Log.d(TAG, "deduplicateMessages: Server message ${message.id} already exists in database, skipping insert")
-                }
+            // Store new server messages in database
+            for (message in serverMessagesToInsert) {
+                val insertedId = messageDao.insertMessage(message)
+                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
+            }
+            
+            if (serverMessagesToInsert.isEmpty() && messagesToRemove.isEmpty()) {
+                Log.d(TAG, "deduplicateMessages: No changes needed - all messages already synced")
             }
             
             // Return all messages for this chat (fresh from database after deduplication)
