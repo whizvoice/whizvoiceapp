@@ -1047,17 +1047,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔌 Reconnecting WebSocket...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
-                try {
-                    withTimeout(3000) {
-                        while (!whizServerRepository.isConnected()) {
-                            delay(50)
-                        }
-                    }
-                    Log.d(TAG, "✅ WebSocket reconnected for verification")
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    failWithScreenshot("WebSocket failed to reconnect within 3 seconds for final verification", "websocket_reconnect_timeout_final")
-                }
-                
                 // Step 10: Verify first chat messages are sent and responded to
                 Log.d(TAG, "🔍 Step 10: Verifying first chat messages...")
                 

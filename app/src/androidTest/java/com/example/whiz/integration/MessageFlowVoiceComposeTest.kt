@@ -25,6 +25,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import javax.inject.Inject
+import kotlinx.coroutines.runBlocking
 import com.example.whiz.di.AppModule
 import com.example.whiz.di.TestAppModule
 import com.example.whiz.data.repository.WhizRepository
@@ -89,9 +90,36 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     @Inject
     lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
+    // Track chats created during tests for cleanup
+    private val createdChatIds = mutableListOf<Long>()
+    
     @After
     fun tearDown() {
         Log.d(TAG, "TearDown: MessageFlowVoiceComposeTest")
+        
+        // Clean up test chats
+        runBlocking {
+            Log.d(TAG, "🧹 Cleaning up test chats created during voice test")
+            try {
+                cleanupTestChats(
+                    repository = repository,
+                    trackedChatIds = createdChatIds,
+                    additionalPatterns = listOf(
+                        "Pls always reply with just 1 word for test", // Match first message pattern
+                        "2nd voice msg", // Match second message pattern
+                        "3rd voice", // Match third message pattern
+                        "voice launch", // General voice launch pattern
+                        "voice interrupt" // Match interrupt message pattern
+                    ),
+                    enablePatternFallback = true // Enable pattern fallback for voice-created chats
+                )
+                createdChatIds.clear()
+                Log.d(TAG, "✅ Test chat cleanup completed")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+            }
+        }
+        
         // Clean up the test callback
         MainActivity.testViewModelCallback = null
         capturedViewModel = null
@@ -165,6 +193,19 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ ChatViewModel captured successfully")
             
+            // Track the chat ID from the ViewModel for cleanup
+            try {
+                val currentChatId = capturedViewModel?.chatId?.value
+                if (currentChatId != null && currentChatId != 0L) {
+                    if (!createdChatIds.contains(currentChatId)) {
+                        createdChatIds.add(currentChatId)
+                        Log.d(TAG, "📝 Tracked chat for cleanup: $currentChatId")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track chat ID: ${e.message}")
+            }
+            
             // step 2: Send first voice message
             Log.d(TAG, "🎤 step 2: Sending first voice message...")
             val firstMessage = "Pls always reply with just 1 word for test - ${System.currentTimeMillis()}"
@@ -202,6 +243,17 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             // Now verify it's actually displayed
             composeTestRule.onNodeWithText(firstMessage).assertIsDisplayed()
             Log.d(TAG, "✅ First message verified in UI")
+            
+            // Check if chat ID has changed (from optimistic to server ID)
+            try {
+                val updatedChatId = capturedViewModel?.chatId?.value
+                if (updatedChatId != null && updatedChatId > 0 && !createdChatIds.contains(updatedChatId)) {
+                    createdChatIds.add(updatedChatId)
+                    Log.d(TAG, "📝 Tracked server chat ID for cleanup: $updatedChatId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track updated chat ID: ${e.message}")
+            }
 
             // step 3: Send second message immediately (while bot is likely processing first message)
             Log.d(TAG, "💬 step 3: Sending second voice message immediately...")
@@ -388,6 +440,38 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             }
 
             Log.d(TAG, "🎉 Voice launch test with multiple messages and TTS completed successfully!")
+            
+            // Final chat ID tracking - capture any server-assigned IDs
+            try {
+                val finalChatId = capturedViewModel?.chatId?.value
+                if (finalChatId != null && finalChatId > 0 && !createdChatIds.contains(finalChatId)) {
+                    createdChatIds.add(finalChatId)
+                    Log.d(TAG, "📝 Tracked final server chat ID for cleanup: $finalChatId")
+                }
+                
+                // Also try to get all chats and track any new ones with our test messages
+                val allChats = repository.getAllChats()
+                val testMessagePatterns = listOf(
+                    "Pls always reply with just 1 word for test",
+                    "2nd voice msg",
+                    "3rd voice"
+                )
+                
+                allChats.forEach { chat ->
+                    // Check if this chat contains our test messages
+                    val chatMessages = chat.title ?: ""
+                    val isTestChat = testMessagePatterns.any { pattern ->
+                        chatMessages.contains(pattern, ignoreCase = true)
+                    }
+                    
+                    if (isTestChat && !createdChatIds.contains(chat.id)) {
+                        createdChatIds.add(chat.id)
+                        Log.d(TAG, "📝 Found and tracked test chat by pattern: ${chat.id} ('${chat.title}')")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track final chat IDs: ${e.message}")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Test failed with exception: ${e.message}", e)
