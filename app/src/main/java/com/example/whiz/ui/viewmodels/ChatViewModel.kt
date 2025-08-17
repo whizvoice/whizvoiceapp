@@ -608,6 +608,13 @@ class ChatViewModel @Inject constructor(
                                     // Register the migration FIRST
                                     repository.registerChatMigration(currentChatId, effectiveConversationId)
                                     
+                                    // Update pendingRequests to use the new chat ID
+                                    val requestsToUpdate = pendingRequests.filter { it.value == currentChatId }
+                                    requestsToUpdate.forEach { (requestId, _) ->
+                                        pendingRequests[requestId] = effectiveConversationId
+                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $currentChatId to $effectiveConversationId")
+                                    }
+                                    
                                     // Update the chat ID immediately so reconnections use the correct ID
                                     _chatId.value = effectiveConversationId
                                     
@@ -742,6 +749,13 @@ class ChatViewModel @Inject constructor(
                                                 if (oldChatId < 0 && effectiveConversationId > 0) {
                                                     repository.registerChatMigration(oldChatId, effectiveConversationId)
                                                     Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                                    
+                                                    // Update pendingRequests to use the new chat ID
+                                                    val requestsToUpdate = pendingRequests.filter { it.value == oldChatId }
+                                                    requestsToUpdate.forEach { (requestId, _) ->
+                                                        pendingRequests[requestId] = effectiveConversationId
+                                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $oldChatId to $effectiveConversationId")
+                                                    }
                                                 }
                                                 
                                                 Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
@@ -774,6 +788,13 @@ class ChatViewModel @Inject constructor(
                                 if (originalChatId < 0 && effectiveConversationId > 0) {
                                     repository.registerChatMigration(originalChatId, effectiveConversationId)
                                     Log.d(TAG, "🔄 Registered chat migration (scenario 2): $originalChatId → $effectiveConversationId")
+                                    
+                                    // Update pendingRequests to use the new chat ID
+                                    val requestsToUpdate = pendingRequests.filter { it.value == originalChatId }
+                                    requestsToUpdate.forEach { (requestId, _) ->
+                                        pendingRequests[requestId] = effectiveConversationId
+                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $originalChatId to $effectiveConversationId")
+                                    }
                                 }
                                 
                                 // No input text preservation needed - this is just ID sync
@@ -866,6 +887,13 @@ class ChatViewModel @Inject constructor(
                                     if (migrationSuccess) {
                                         Log.d(TAG, "✅ Successfully migrated messages from ${event.clientConversationId} to $effectiveConversationId")
                                         repository.registerChatMigration(event.clientConversationId, effectiveConversationId)
+                                        
+                                        // Update pendingRequests to use the new chat ID
+                                        val requestsToUpdate = pendingRequests.filter { it.value == event.clientConversationId }
+                                        requestsToUpdate.forEach { (requestId, _) ->
+                                            pendingRequests[requestId] = effectiveConversationId
+                                            Log.d(TAG, "📝 Updated pending request $requestId from chat ${event.clientConversationId} to $effectiveConversationId")
+                                        }
                                         
                                         // If the current chat is the optimistic one, update it to the server ID
                                         if (_chatId.value == event.clientConversationId) {
