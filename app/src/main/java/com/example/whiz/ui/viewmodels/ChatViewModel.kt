@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
 import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.data.ConnectionStateManager
 // SpeechRecognitionService is now accessed via VoiceManager
 import com.example.whiz.services.TTSManager
 
@@ -43,6 +44,7 @@ class ChatViewModel @Inject constructor(
     private val whizServerRepository: WhizServerRepository,
     private val authRepository: AuthRepository, // Add this
     private val userPreferences: UserPreferences,
+    private val connectionStateManager: ConnectionStateManager,
     savedStateHandle: SavedStateHandle,
     private val ttsManager: TTSManager,
     private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
@@ -279,6 +281,16 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "Init: Using remote agent. WebSocket will connect when sending first message or loading existing chat.")
             // Don't connect here - let sendMessage or loadChatWithVoiceMode handle it
             // This prevents duplicate connections when navigating to existing chats
+        }
+        
+        // Track active conversation in ConnectionStateManager
+        viewModelScope.launch {
+            _chatId.collect { id ->
+                if (id != 0L) { // Only update for valid chat IDs
+                    connectionStateManager.setActiveConversation(id)
+                    Log.d(TAG, "Updated active conversation in ConnectionStateManager: $id")
+                }
+            }
         }
         
         // Observe voice settings changes and apply them to TTS
@@ -599,8 +611,8 @@ class ChatViewModel @Inject constructor(
                                     // Update the chat ID immediately so reconnections use the correct ID
                                     _chatId.value = effectiveConversationId
                                     
-                                    // Update WhizServerRepository so WebSocket reconnections use the correct ID
-                                    // No longer needed - chatId is passed directly to sendMessage
+                                    // Update ConnectionStateManager with the real conversation ID
+                                    connectionStateManager.setActiveConversation(effectiveConversationId)
                                     
                                     Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Updated chat ID from $currentChatId to $effectiveConversationId BEFORE message migration")
                                     
@@ -734,6 +746,7 @@ class ChatViewModel @Inject constructor(
                                                 
                                                 Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                                 _chatId.value = effectiveConversationId
+                                                connectionStateManager.setActiveConversation(effectiveConversationId)
                                                 
                                                 // Update WhizServerRepository so reconnections use the correct ID
                                                 // No longer needed - chatId is passed directly to sendMessage
@@ -765,6 +778,7 @@ class ChatViewModel @Inject constructor(
                                 
                                 // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
+                                connectionStateManager.setActiveConversation(effectiveConversationId)
                                 // Update WhizServerRepository so reconnections use the correct ID
                                 // No longer needed - chatId is passed directly to sendMessage
                             } else {
@@ -857,6 +871,7 @@ class ChatViewModel @Inject constructor(
                                         if (_chatId.value == event.clientConversationId) {
                                             Log.d(TAG, "📝 Updating current chat ID from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
+                                            connectionStateManager.setActiveConversation(effectiveConversationId)
                                             // Update WhizServerRepository so reconnections use the correct ID
                                             // No longer needed - chatId is passed directly to sendMessage
                                         }
@@ -1714,10 +1729,12 @@ class ChatViewModel @Inject constructor(
         ttsManager.shutdown()
         persistenceJob?.cancel()
         
-        // Disconnect WebSocket
+        // Clear active conversation in ConnectionStateManager
+        // BUT DO NOT disconnect WebSocket - it should stay connected for retry logic
         if (configUseRemoteAgent) {
-            Log.d(TAG, "onCleared: Disconnecting WebSocket")
-            whizServerRepository.disconnect()
+            Log.d(TAG, "onCleared: Clearing active conversation (NOT disconnecting WebSocket for retry continuity)")
+            connectionStateManager.clearActiveConversation()
+            // whizServerRepository.disconnect() // REMOVED - let retries continue
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
         

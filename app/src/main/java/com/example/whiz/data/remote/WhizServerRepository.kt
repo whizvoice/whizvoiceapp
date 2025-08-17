@@ -2,6 +2,7 @@ package com.example.whiz.data.remote
 
 import android.util.Log
 import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.data.ConnectionStateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,7 +64,8 @@ data class TimestampedEvent(
 @Singleton
 class WhizServerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val connectionStateManager: ConnectionStateManager
 ) {
     private val TAG = "WhizServerRepo"
     private var webSocket: WebSocket? = null
@@ -232,13 +234,24 @@ class WhizServerRepository @Inject constructor(
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
         
+        // If we're turning off persistent disconnect, also try to reconnect with last known conversation
+        var effectiveConversationId = conversationId
+        if (turnOffPersistentDisconnect && conversationId == null) {
+            // Try to get the last active conversation from ConnectionStateManager
+            effectiveConversationId = connectionStateManager.activeConversationId.value 
+                ?: connectionStateManager.getLastActiveConversationId()
+            if (effectiveConversationId != null && effectiveConversationId != -1L) {
+                Log.d(TAG, "Using last active conversation ID for reconnection: $effectiveConversationId")
+            }
+        }
+        
         // Check if persistent disconnect is active and we're not explicitly turning it off
         if (!turnOffPersistentDisconnect) {
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
-            if (conversationId == null) {
-                Log.d(TAG, "NULL conversatio ID, returning without attempting connection.")
+            if (effectiveConversationId == null) {
+                Log.d(TAG, "NULL conversation ID, returning without attempting connection.")
                 return
             }
         }
@@ -338,8 +351,8 @@ class WhizServerRepository @Inject constructor(
             
             // Build WebSocket URL with conversation_id parameter if provided
             // Include any conversation ID except -1 (which represents "no chat")
-            val websocketUrl = if (conversationId != null && conversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
+            val websocketUrl = if (effectiveConversationId != null && effectiveConversationId != -1L) {
+                "$WHIZ_SERVER_URL?conversation_id=$effectiveConversationId"
             } else {
                 WHIZ_SERVER_URL
             }
@@ -361,7 +374,7 @@ class WhizServerRepository @Inject constructor(
                             return
                         }
                         
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$effectiveConversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
@@ -377,7 +390,7 @@ class WhizServerRepository @Inject constructor(
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
-                        processRetryQueue(conversationId)
+                        processRetryQueue(effectiveConversationId)
 
                         // Send timezone via API endpoint after connection is established
                         val timezone = java.util.TimeZone.getDefault().id
@@ -452,6 +465,15 @@ class WhizServerRepository @Inject constructor(
                                 val clientConversationId = if (jsonObject.has("client_conversation_id") && !jsonObject.isNull("client_conversation_id")) {
                                     jsonObject.getLong("client_conversation_id")
                                 } else null
+                                
+                                // Update ConnectionStateManager if this is a migration from optimistic to real ID
+                                if (conversationId != null && conversationId > 0 && clientConversationId != null && clientConversationId < 0) {
+                                    val lastActiveId = connectionStateManager.getLastActiveConversationId()
+                                    if (lastActiveId == clientConversationId) {
+                                        Log.d(TAG, "Updating ConnectionStateManager: migration from $clientConversationId to $conversationId")
+                                        connectionStateManager.setActiveConversation(conversationId)
+                                    }
+                                }
                                 
                                 // Log the message type for debugging
                                 val messageType = if (jsonObject.has("type")) {
@@ -615,7 +637,7 @@ class WhizServerRepository @Inject constructor(
                     
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
-                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$effectiveConversationId")))
                     
                     // Only attempt reconnect if not manually disconnected
                     if (!persistentDisconnectForTest) {
@@ -931,10 +953,20 @@ class WhizServerRepository @Inject constructor(
                 // Wait for the delay FIRST before notifying about reconnection
                 delay(delayMs)
                 Log.i(TAG, "Attempting reconnect now (attempt $currentReconnectAttempts)...")
-                // Now emit Reconnecting event after delay to trigger ChatViewModel reconnection
-                // ChatViewModel will handle the actual reconnection with the proper chatId
-                emitEvent(WebSocketEvent.Reconnecting)
-                Log.d(TAG, "Emitted Reconnecting event for ChatViewModel to handle with proper chatId")
+                
+                // Get the active or last active conversation ID from ConnectionStateManager
+                val conversationId = connectionStateManager.activeConversationId.value 
+                    ?: connectionStateManager.getLastActiveConversationId()
+                
+                if (conversationId != null && conversationId != -1L) {
+                    Log.d(TAG, "Attempting to reconnect with conversation ID: $conversationId")
+                    // Directly attempt to reconnect with the known conversation ID
+                    connect(conversationId)
+                } else {
+                    Log.w(TAG, "No valid conversation ID available for reconnection")
+                    // Still emit event so ChatViewModel can handle if it's active
+                    emitEvent(WebSocketEvent.Reconnecting)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Exception in scheduled reconnect job", e)
                 // This catch is for the delay or emit itself.

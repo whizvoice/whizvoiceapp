@@ -18,6 +18,7 @@ import javax.inject.Provider
 
 import okhttp3.OkHttpClient
 import com.example.whiz.data.remote.WhizServerRepository
+import com.example.whiz.data.ConnectionStateManager
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
@@ -135,11 +136,18 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideConnectionStateManager(): ConnectionStateManager {
+        return ConnectionStateManager()
+    }
+
+    @Provides
+    @Singleton
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
-        authRepository: AuthRepository
+        authRepository: AuthRepository,
+        connectionStateManager: ConnectionStateManager
     ): WhizServerRepository {
-        return WhizServerRepository(okHttpClient, authRepository)
+        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager)
     }
     
     @Provides
