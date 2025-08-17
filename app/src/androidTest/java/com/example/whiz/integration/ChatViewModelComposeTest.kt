@@ -403,13 +403,23 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ All ${sentMessages.size} messages verified to exist in chat")
             
-            // Step 8: Check for duplicates using Compose Testing
-            Log.d(TAG, "🔍 Step 8: Checking for duplicate messages...")
-            if (!ComposeTestHelper.noDuplicates(composeTestRule, sentMessages)) {
-                failWithScreenshot("chat_duplicates_detected", "Found duplicate message(s) in chat - indicates production bug")
+            // Step 8: Check for duplicates (only USER messages) and no consecutive assistant messages
+            Log.d(TAG, "🔍 Step 8: Checking for duplicate USER messages...")
+            
+            // Only check USER messages for duplicates (assistant messages can legitimately appear multiple times)
+            if (!ComposeTestHelper.noDuplicatesForUserMessages(composeTestRule, sentMessages)) {
+                failWithScreenshot("user_duplicates_detected", "Found duplicate USER message(s) in chat")
             }
             
-            Log.d(TAG, "✅ Duplicate checking completed")
+            Log.d(TAG, "✅ No duplicate USER messages found")
+            
+            // Check that there are no two ASSISTANT messages appearing consecutively
+            Log.d(TAG, "🔍 Checking for consecutive ASSISTANT messages...")
+            if (!ComposeTestHelper.hasNoConsecutiveAssistantMessages(composeTestRule)) {
+                failWithScreenshot("consecutive_assistant_messages", "Found consecutive ASSISTANT messages - indicates message ordering issue")
+            }
+            
+            Log.d(TAG, "✅ No consecutive ASSISTANT messages found")
             
             Log.d(TAG, "📊 Test summary:")
             Log.d(TAG, "   ✅ Sent 1 initial message asking for coffee-making professional")
@@ -417,7 +427,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "   ✅ All messages appeared immediately (optimistic UI)")
             Log.d(TAG, "   ✅ Barista response appeared in correct order after first message")
             Log.d(TAG, "   ✅ Rapid send working correctly - user can interrupt assistant")
-            Log.d(TAG, "   ✅ No duplicate messages detected")
+            Log.d(TAG, "   ✅ No duplicate USER messages detected")
+            Log.d(TAG, "   ✅ No consecutive ASSISTANT messages found")
             Log.d(TAG, "   ✅ Bot interruption test completed successfully with Compose Testing")
         }
     }

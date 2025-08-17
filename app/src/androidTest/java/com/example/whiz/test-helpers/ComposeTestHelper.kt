@@ -863,6 +863,90 @@ object ComposeTestHelper {
     }
     
     /**
+     * Check for duplicates only for USER messages using Compose testing
+     * Assistant messages can legitimately appear multiple times (bot responds to each interruption)
+     */
+    fun noDuplicatesForUserMessages(composeTestRule: ComposeTestRule, expectedUserMessages: List<String>): Boolean {
+        Log.d(TAG, "🔍 Compose: Checking for duplicate USER messages only...")
+        
+        var duplicatesFound = false
+        val duplicateMessages = mutableListOf<String>()
+        
+        for ((index, message) in expectedUserMessages.withIndex()) {
+            val userMessageContentDesc = "User message: $message"
+            val nodes = composeTestRule.onAllNodesWithContentDescription(userMessageContentDesc)
+            val nodeCount = nodes.fetchSemanticsNodes().size
+            
+            if (nodeCount > 1) {
+                Log.w(TAG, "❌ Duplicate USER message found: Message ${index + 1} appears $nodeCount times: '${message.take(30)}...'")
+                duplicatesFound = true
+                duplicateMessages.add(message.take(50))
+            } else if (nodeCount == 1) {
+                Log.d(TAG, "✅ No duplicate: USER message ${index + 1} appears once: '${message.take(30)}...'")
+            } else {
+                Log.w(TAG, "⚠️ USER message not found: '${message.take(30)}...' (this shouldn't happen if verifyAllMessagesExist passed)")
+            }
+        }
+        
+        if (duplicatesFound) {
+            Log.e(TAG, "❌ Compose: Found duplicate USER messages: $duplicateMessages")
+            return false
+        }
+        
+        Log.d(TAG, "✅ Compose: No duplicate USER messages found")
+        return true
+    }
+    
+    /**
+     * Check that there are no two consecutive ASSISTANT messages
+     * This validates proper message interleaving - user messages should separate assistant responses
+     */
+    fun hasNoConsecutiveAssistantMessages(composeTestRule: ComposeTestRule): Boolean {
+        Log.d(TAG, "🔍 Compose: Checking for consecutive ASSISTANT messages...")
+        
+        try {
+            // Get all message nodes with content descriptions
+            val allMessageNodes = composeTestRule.onAllNodes(hasContentDescriptionMatching(".*message:.*"))
+            val messageNodes = allMessageNodes.fetchSemanticsNodes()
+            
+            Log.d(TAG, "🔍 Compose: Found ${messageNodes.size} total message nodes")
+            
+            if (messageNodes.size < 2) {
+                Log.d(TAG, "✅ Compose: Less than 2 messages, no consecutive assistant messages possible")
+                return true
+            }
+            
+            // Extract message sequence with types
+            val messageSequence = mutableListOf<String>()
+            for (node in messageNodes) {
+                val contentDesc = node.config[SemanticsProperties.ContentDescription].firstOrNull() ?: continue
+                when {
+                    contentDesc.startsWith("User message:") -> messageSequence.add("USER")
+                    contentDesc.startsWith("Assistant message:") -> messageSequence.add("ASSISTANT")
+                }
+            }
+            
+            Log.d(TAG, "📊 Message sequence: ${messageSequence.joinToString(" -> ")}")
+            
+            // Check for consecutive ASSISTANT messages
+            for (i in 0 until messageSequence.size - 1) {
+                if (messageSequence[i] == "ASSISTANT" && messageSequence[i + 1] == "ASSISTANT") {
+                    Log.e(TAG, "❌ Found consecutive ASSISTANT messages at positions $i and ${i + 1}")
+                    Log.e(TAG, "❌ This indicates a message ordering issue - assistant responses not properly interleaved")
+                    return false
+                }
+            }
+            
+            Log.d(TAG, "✅ Compose: No consecutive ASSISTANT messages found - proper interleaving")
+            return true
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Compose: Error checking for consecutive assistant messages", e)
+            return false
+        }
+    }
+    
+    /**
      * Verify that a response message appears IMMEDIATELY after its corresponding user message
      * This tests the request ID pairing functionality to ensure responses appear in reply order, not timestamp order
      * The bug was that responses were appearing chronologically instead of being paired with their user messages
