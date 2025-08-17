@@ -961,13 +961,19 @@ class WhizRepository @Inject constructor(
             
             // 🔧 IMPROVED: Smart deduplication that preserves pending messages
             // Build maps for efficient lookups
-            val serverMessagesByRequestId = serverMessages
+            // Use requestId + type as key since USER and ASSISTANT messages can share requestIds
+            val serverMessagesByRequestIdAndType = serverMessages
                 .filter { it.requestId != null }
-                .associateBy { it.requestId!! }
+                .associateBy { "${it.requestId}_${it.type}" }
             
+            val localMessagesByRequestIdAndType = allLocalMessages
+                .filter { it.requestId != null }
+                .associateBy { "${it.requestId}_${it.type}" }
+            
+            // Also keep simple requestId maps for the lookup logic
             val localMessagesByRequestId = allLocalMessages
                 .filter { it.requestId != null }
-                .associateBy { it.requestId!! }
+                .groupBy { it.requestId!! }
             
             val messagesToRemove = mutableListOf<Long>()
             val serverMessagesToInsert = mutableListOf<MessageEntity>()
@@ -977,13 +983,23 @@ class WhizRepository @Inject constructor(
                 var foundDuplicate = false
                 
                 // First try to match by request ID (most reliable)
+                // CRITICAL: Also check message type to avoid removing USER messages when ASSISTANT messages arrive
                 if (serverMessage.requestId != null) {
-                    val localMatch = localMessagesByRequestId[serverMessage.requestId]
+                    // Look for local messages with the same requestId
+                    val localMatches = localMessagesByRequestId[serverMessage.requestId] ?: emptyList()
+                    
+                    // Find a match with the same type
+                    val localMatch = localMatches.find { it.type == serverMessage.type }
+                    
                     if (localMatch != null && localMatch.id != serverMessage.id) {
-                        // Found a local message with same request ID - it's a duplicate
-                        Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local message ${localMatch.id} for server message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
+                        // Found a local message with same request ID AND type - it's a duplicate
+                        Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local ${localMatch.type} message ${localMatch.id} for server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
                         messagesToRemove.add(localMatch.id)
                         foundDuplicate = true
+                    } else if (localMatches.isNotEmpty() && localMatch == null) {
+                        // Log when we have matches but skip due to type mismatch (for debugging)
+                        val typesFound = localMatches.map { it.type }.distinct().joinToString(", ")
+                        Log.d(TAG, "deduplicateMessages: Skipping removal - type mismatch: local types [$typesFound] vs server ${serverMessage.type} (requestId: ${serverMessage.requestId})")
                     }
                 }
                 
@@ -1019,7 +1035,8 @@ class WhizRepository @Inject constructor(
             val preservedLocalMessages = allLocalMessages.filter { localMsg ->
                 !messagesToRemove.contains(localMsg.id) && 
                 localMsg.requestId != null &&
-                !serverMessagesByRequestId.containsKey(localMsg.requestId)
+                // Check if there's a server message with same requestId AND type
+                !serverMessagesByRequestIdAndType.containsKey("${localMsg.requestId}_${localMsg.type}")
             }
             
             if (preservedLocalMessages.isNotEmpty()) {
