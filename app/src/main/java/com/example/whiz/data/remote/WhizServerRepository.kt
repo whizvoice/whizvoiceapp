@@ -238,6 +238,7 @@ class WhizServerRepository @Inject constructor(
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
             if (conversationId == null) {
+                Log.d(TAG, "NULL conversatio ID, returning without attempting connection.")
                 return
             }
         }
