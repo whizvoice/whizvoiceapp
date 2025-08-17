@@ -1031,7 +1031,7 @@ class WhizRepository @Inject constructor(
                 }
             }
             
-            // 🔧 KEY IMPROVEMENT: Log which local messages are being preserved
+            // 🔧 KEY IMPROVEMENT: Identify local messages that need to be preserved
             val preservedLocalMessages = allLocalMessages.filter { localMsg ->
                 !messagesToRemove.contains(localMsg.id) && 
                 localMsg.requestId != null &&
@@ -1060,7 +1060,25 @@ class WhizRepository @Inject constructor(
                 Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
             }
             
-            if (serverMessagesToInsert.isEmpty() && messagesToRemove.isEmpty()) {
+            // 🔧 CRITICAL FIX: Re-insert preserved local messages that might have been lost
+            // This handles the case where optimistic messages with low IDs need to be kept
+            for (preservedMsg in preservedLocalMessages) {
+                // Check if this message still exists in the database
+                val existingMsg = messageDao.getMessageById(preservedMsg.id)
+                if (existingMsg == null) {
+                    // Message was somehow lost, re-insert it
+                    Log.w(TAG, "deduplicateMessages: Re-inserting lost optimistic message ${preservedMsg.id}: '${preservedMsg.content.take(30)}...'")
+                    messageDao.insertMessage(preservedMsg)
+                } else {
+                    // Make sure the message is in the correct chat (in case of migration)
+                    if (existingMsg.chatId != chatId) {
+                        Log.d(TAG, "deduplicateMessages: Updating message ${preservedMsg.id} to chat $chatId (was ${existingMsg.chatId})")
+                        messageDao.updateMessageChatId(preservedMsg.id, chatId)
+                    }
+                }
+            }
+            
+            if (serverMessagesToInsert.isEmpty() && messagesToRemove.isEmpty() && preservedLocalMessages.isEmpty()) {
                 Log.d(TAG, "deduplicateMessages: No changes needed - all messages already synced")
             }
             
