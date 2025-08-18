@@ -77,9 +77,10 @@ object AppModule {
         apiService: ApiService,
         @ApplicationContext context: Context,
         messageDao: MessageDao,
-        chatDao: ChatDao
+        chatDao: ChatDao,
+        connectionStateManager: ConnectionStateManager
     ): WhizRepository {
-        return WhizRepository(apiService, context, messageDao, chatDao)
+        return WhizRepository(apiService, context, messageDao, chatDao, connectionStateManager)
     }
 
     @Provides

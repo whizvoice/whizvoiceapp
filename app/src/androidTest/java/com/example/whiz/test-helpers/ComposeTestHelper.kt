@@ -1030,8 +1030,13 @@ object ComposeTestHelper {
                     }
                     
                     if (contentDesc.contains("Assistant message:") && contentDesc.contains(expectedResponse)) {
-                        responseIndex = index
-                        Log.d(TAG, "🔍 Compose: Found expected response at index $index")
+                        // Only set responseIndex if we haven't found one yet (take the FIRST match)
+                        if (responseIndex == -1) {
+                            responseIndex = index
+                            Log.d(TAG, "🔍 Compose: Found expected response at index $index (first occurrence)")
+                        } else {
+                            Log.d(TAG, "🔍 Compose: Found another expected response at index $index (ignoring, using first at $responseIndex)")
+                        }
                     }
                 }
                 

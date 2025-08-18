@@ -2,6 +2,7 @@ package com.example.whiz.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.example.whiz.data.ConnectionStateManager
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.data.local.MessageType
@@ -34,6 +35,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 import java.io.IOException
 
@@ -43,7 +46,8 @@ class WhizRepository @Inject constructor(
     private val apiService: ApiService,
     private val context: Context,
     private val messageDao: com.example.whiz.data.local.MessageDao,
-    private val chatDao: com.example.whiz.data.local.ChatDao
+    private val chatDao: com.example.whiz.data.local.ChatDao,
+    private val connectionStateManager: ConnectionStateManager
 ) {
     private val TAG = "WhizRepository"
 
@@ -61,9 +65,7 @@ class WhizRepository @Inject constructor(
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
     
-    // Track optimistic chat ID → real chat ID migrations for deduplication
-    private val chatMigrationMapping = mutableMapOf<Long, Long>()
-    private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    // Chat migration tracking is now handled by ConnectionStateManager
     
     // Flow to notify when a chat migration occurs (optimistic ID -> server ID)
     private val _chatMigrationEvents = MutableSharedFlow<Pair<Long, Long>>()
@@ -71,6 +73,10 @@ class WhizRepository @Inject constructor(
     
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
+    
+    // Migration locks to prevent concurrent migrations of the same chat
+    private val migrationLocks = mutableMapOf<Pair<Long, Long>, Mutex>()
+    private val migrationLocksMutex = Mutex()
     
     init {
         repositoryScope.launch {
@@ -499,8 +505,22 @@ class WhizRepository @Inject constructor(
      * This ensures optimistic local messages appear in the correct server conversation
      */
     suspend fun migrateChatMessages(fromChatId: Long, toChatId: Long): Boolean {
-        return try {
-            Log.d(TAG, "migrateChatMessages: 🔄 STARTING migration from chat $fromChatId to chat $toChatId")
+        // Get or create a lock for this specific migration
+        val migrationKey = fromChatId to toChatId
+        val lock = migrationLocksMutex.withLock {
+            migrationLocks.getOrPut(migrationKey) { Mutex() }
+        }
+        
+        // Try to acquire the lock - if another migration is in progress, wait for it
+        return lock.withLock {
+            try {
+                // Check if migration was already completed by another coroutine
+                if (connectionStateManager.getMigratedChatId(fromChatId) == toChatId) {
+                    Log.d(TAG, "migrateChatMessages: Migration from $fromChatId to $toChatId already completed by another coroutine")
+                    return@withLock true
+                }
+                
+                Log.d(TAG, "migrateChatMessages: 🔄 STARTING migration from chat $fromChatId to chat $toChatId")
             
             // 🔧 DEBUG: Check all messages in database first
             try {
@@ -544,6 +564,11 @@ class WhizRepository @Inject constructor(
             val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
             Log.d(TAG, "migrateChatMessages: 📊 Found ${messagesToMigrate.size} messages to migrate from chat $fromChatId")
             
+            // 🔧 RACE CONDITION FIX: Also check if any messages were already added to the target chat
+            // This can happen if ConnectionStateManager returns the new chat ID while migration is in progress
+            val existingTargetMessages = messageDao.getMessagesForChatFlow(toChatId).first()
+            Log.d(TAG, "migrateChatMessages: 📊 Found ${existingTargetMessages.size} messages already in target chat $toChatId")
+            
             if (messagesToMigrate.isNotEmpty()) {
                 Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
                 
@@ -553,6 +578,11 @@ class WhizRepository @Inject constructor(
                     Log.d(TAG, "migrateChatMessages: 🚀 BATCH: Migrating ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId in single operation")
                     val updateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
                     Log.d(TAG, "migrateChatMessages: ✅ BATCH: Successfully migrated $updateCount messages in single operation")
+                    
+                    // Log the final state
+                    if (existingTargetMessages.isNotEmpty()) {
+                        Log.d(TAG, "migrateChatMessages: ℹ️ Target chat already had ${existingTargetMessages.size} messages - these are preserved")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "migrateChatMessages: ❌ BATCH: Error in batch migration", e)
                     throw e // Re-throw to fail the migration
@@ -613,10 +643,10 @@ class WhizRepository @Inject constructor(
                 
                 val totalMigrated = messagesToMigrate.size + totalOrphanedMessages
                 Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of $totalMigrated messages from chat $fromChatId to $toChatId (including $totalOrphanedMessages orphaned)")
-                return true
+                return@withLock true
             } else {
                 Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
-                return true
+                return@withLock true
             }
         } catch (e: Exception) {
             Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
@@ -624,8 +654,9 @@ class WhizRepository @Inject constructor(
             Log.e(TAG, "migrateChatMessages: ❌ Error message: ${e.message}")
             Log.e(TAG, "migrateChatMessages: ❌ Error cause: ${e.cause}")
             e.printStackTrace()
-            return false
+            return@withLock false
         }
+        } // End of lock.withLock
     }
 
     // Auto-save logic - now based on API call
@@ -699,7 +730,7 @@ class WhizRepository @Inject constructor(
                     
                     try {
                         // Check if we already have a migration mapping
-                        val migratedChatId = chatMigrationMapping[chatId]
+                        val migratedChatId = connectionStateManager.getMigratedChatId(chatId)
                         if (migratedChatId != null) {
                             // We already know this chat was migrated, fetch from the server chat
                             Log.d(TAG, "fetchMessagesWithDeduplication: Found existing migration $chatId → $migratedChatId, fetching from server chat")
@@ -779,51 +810,32 @@ class WhizRepository @Inject constructor(
 
     /**
      * Register that an optimistic chat has been migrated to a real server chat.
-     * This mapping is used for cross-chat deduplication.
+     * Delegates to ConnectionStateManager as the single source of truth.
      */
     fun registerChatMigration(optimisticChatId: Long, realChatId: Long) {
-        if (optimisticChatId >= 0) {
-            Log.w(TAG, "registerChatMigration: optimisticChatId $optimisticChatId is not negative, ignoring")
-            return
-        }
-        if (realChatId <= 0) {
-            Log.w(TAG, "registerChatMigration: realChatId $realChatId is not positive, ignoring")
-            return
-        }
-        
-        chatMigrationMapping[optimisticChatId] = realChatId
-        migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
-        Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        // Delegate to ConnectionStateManager
+        connectionStateManager.registerChatMigration(optimisticChatId, realChatId)
         
         // Emit migration event so ChatViewModel can update its chat ID
         repositoryScope.launch {
             _chatMigrationEvents.emit(optimisticChatId to realChatId)
         }
-        
-        // Clean up old mappings (older than 1 hour)
-        cleanupOldMigrations()
     }
     
     /**
      * Clean up old migration mappings to prevent memory leaks.
+     * Note: This is now handled by ConnectionStateManager internally.
      */
     private fun cleanupOldMigrations() {
-        val oneHourAgo = System.currentTimeMillis() - 3600000 // 1 hour
-        val toRemove = migrationTimestamps.filterValues { it < oneHourAgo }.keys
-        toRemove.forEach { optimisticChatId ->
-            chatMigrationMapping.remove(optimisticChatId)
-            migrationTimestamps.remove(optimisticChatId)
-        }
-        if (toRemove.isNotEmpty()) {
-            Log.d(TAG, "cleanupOldMigrations: Cleaned up ${toRemove.size} old migration mappings")
-        }
+        // Migration cleanup is now handled by ConnectionStateManager
+        // This method is kept for backward compatibility but does nothing
     }
     
     /**
      * Get the optimistic chat ID that was migrated to this real chat ID.
      */
     private fun getOptimisticChatId(realChatId: Long): Long? {
-        return chatMigrationMapping.entries.find { it.value == realChatId }?.key
+        return connectionStateManager.getOptimisticChatId(realChatId)
     }
     
     /**
@@ -831,13 +843,8 @@ class WhizRepository @Inject constructor(
      * If the chat was migrated, returns the new chat ID, otherwise returns the original.
      */
     fun getActualChatId(chatId: Long): Long {
-        // Check if this chat was migrated to a new ID
-        val migratedId = chatMigrationMapping[chatId]
-        if (migratedId != null) {
-            Log.d(TAG, "getActualChatId: Chat $chatId was migrated to $migratedId")
-            return migratedId
-        }
-        return chatId
+        // Delegate to ConnectionStateManager which is the single source of truth
+        return connectionStateManager.getEffectiveChatId(chatId) ?: chatId
     }
     
     /**
@@ -845,15 +852,8 @@ class WhizRepository @Inject constructor(
      * Returns true if chatId1 was migrated to chatId2 or vice versa.
      */
     fun areChatsMigrated(chatId1: Long, chatId2: Long): Boolean {
-        // Check if chatId1 was migrated to chatId2
-        if (chatMigrationMapping[chatId1] == chatId2) {
-            return true
-        }
-        // Check if chatId2 was migrated to chatId1
-        if (chatMigrationMapping[chatId2] == chatId1) {
-            return true
-        }
-        return false
+        // Delegate to ConnectionStateManager which is the single source of truth
+        return connectionStateManager.areChatsMigrated(chatId1, chatId2)
     }
     
     /**
@@ -861,7 +861,7 @@ class WhizRepository @Inject constructor(
      * Returns the server-backed chat ID if this optimistic chat was migrated, null otherwise.
      */
     fun getMigratedChatId(optimisticChatId: Long): Long? {
-        return chatMigrationMapping[optimisticChatId]
+        return connectionStateManager.getMigratedChatId(optimisticChatId)
     }
 
     /**
@@ -877,37 +877,43 @@ class WhizRepository @Inject constructor(
      */
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
+            // Use the effective chat ID from ConnectionStateManager (single source of truth)
+            val effectiveChatId = connectionStateManager.getEffectiveChatId(chatId) ?: chatId
+            
             // Check if server messages have a different chat ID (server resolved optimistic to real ID)
             val serverChatId = serverMessages.firstOrNull()?.chatId
             if (serverChatId != null && serverChatId != chatId && chatId < 0 && serverChatId > 0) {
                 Log.d(TAG, "deduplicateMessages: Server returned messages for chat $serverChatId instead of requested $chatId - triggering migration")
                 
                 // This is an optimistic->real chat migration scenario
-                // CRITICAL: Register the migration FIRST to prevent race conditions
-                // where new messages get added to the old chat during migration
-                registerChatMigration(chatId, serverChatId)
+                // CRITICAL FIX: Register migration IMMEDIATELY to prevent race condition
+                // where new messages get added to the wrong chat during migration
                 
-                // Now perform the actual migration
+                // First register the migration so any new messages immediately use the new chat ID
+                registerChatMigration(chatId, serverChatId)
+                Log.d(TAG, "deduplicateMessages: Registered migration $chatId -> $serverChatId, now performing actual migration")
+                
+                // Then perform the actual migration
                 // This handles:
                 // 1. Creating the target chat if needed
-                // 2. Migrating all messages
+                // 2. Migrating all existing messages
                 val migrationSuccess = migrateChatMessages(chatId, serverChatId)
                 
                 if (migrationSuccess) {
                     Log.d(TAG, "deduplicateMessages: Successfully migrated chat $chatId to $serverChatId")
                 } else {
                     Log.e(TAG, "deduplicateMessages: Failed to migrate chat $chatId to $serverChatId")
-                    // Consider: Should we unregister the migration if it failed?
-                    // For now, leave it registered to prevent retries
+                    // Migration failed, but keep the registration since new messages should still go to the server chat
                 }
             }
             
             // 🔧 FIX: Ensure chat exists in local database before inserting messages
-            val existingChat = chatDao.getChatById(chatId)
+            // Use effectiveChatId to check if the chat exists (handles migration)
+            val existingChat = chatDao.getChatById(effectiveChatId)
             if (existingChat == null) {
-                Log.d(TAG, "deduplicateMessages: Chat $chatId doesn't exist locally, fetching from server")
+                Log.d(TAG, "deduplicateMessages: Chat $effectiveChatId doesn't exist locally, fetching from server")
                 try {
-                    val serverChat = apiService.getConversation(chatId)
+                    val serverChat = apiService.getConversation(effectiveChatId)
                     val chatEntity = serverChat.toChatEntity()
                     
                     // Check if this server chat is linked to an existing optimistic chat
@@ -916,11 +922,14 @@ class WhizRepository @Inject constructor(
                             val optimisticId = optimisticIdStr.toLong()
                             val optimisticChat = chatDao.getChatById(optimisticId)
                             if (optimisticChat != null) {
-                                Log.d(TAG, "deduplicateMessages: Server chat $chatId is linked to existing optimistic chat $optimisticId")
-                                // Register the migration so we know these are the same chat
-                                registerChatMigration(optimisticId, chatId)
-                                // Migrate messages from optimistic to server chat
-                                migrateChatMessages(optimisticId, chatId)
+                                Log.d(TAG, "deduplicateMessages: Server chat $effectiveChatId is linked to existing optimistic chat $optimisticId")
+                                // Register the migration IMMEDIATELY to prevent race conditions
+                                registerChatMigration(optimisticId, effectiveChatId)
+                                // Then migrate messages from optimistic to server chat
+                                val migrationSuccess = migrateChatMessages(optimisticId, effectiveChatId)
+                                if (!migrationSuccess) {
+                                    Log.e(TAG, "deduplicateMessages: Failed to migrate messages from $optimisticId to $effectiveChatId")
+                                }
                             }
                         } catch (e: NumberFormatException) {
                             Log.e(TAG, "deduplicateMessages: Invalid optimistic_chat_id format: $optimisticIdStr", e)
@@ -928,22 +937,23 @@ class WhizRepository @Inject constructor(
                     }
                     
                     chatDao.insertChat(chatEntity)
-                    Log.d(TAG, "deduplicateMessages: Created local chat record for chat $chatId")
+                    Log.d(TAG, "deduplicateMessages: Created local chat record for chat $effectiveChatId")
                 } catch (e: Exception) {
-                    Log.e(TAG, "deduplicateMessages: Failed to fetch chat $chatId from server, creating placeholder", e)
+                    Log.e(TAG, "deduplicateMessages: Failed to fetch chat $effectiveChatId from server, creating placeholder", e)
                     // Create a placeholder chat record so messages can be stored
                     val placeholderChat = ChatEntity(
-                        id = chatId,
-                        title = "Chat $chatId",
+                        id = effectiveChatId,
+                        title = "Chat $effectiveChatId",
                         lastMessageTime = System.currentTimeMillis()
                     )
                     chatDao.insertChat(placeholderChat)
-                    Log.d(TAG, "deduplicateMessages: Created placeholder chat record for chat $chatId")
+                    Log.d(TAG, "deduplicateMessages: Created placeholder chat record for chat $effectiveChatId")
                 }
             }
             
             // Get current local messages for this chat
-            val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+            // Use effectiveChatId to get messages from the correct chat after migration
+            val localMessages = messageDao.getMessagesForChatFlow(effectiveChatId).first()
             
             // Check if this real chat was migrated from an optimistic chat
             val optimisticChatId = getOptimisticChatId(chatId)
@@ -1487,13 +1497,10 @@ class WhizRepository @Inject constructor(
                 serverChats.forEach { serverChat ->
                     // Check if this server chat has an optimistic_chat_id field
                     val optimisticId = serverChat.optimisticChatId
-                    if (optimisticId != null && optimisticId < 0 && chatMigrationMapping[optimisticId] == null) {
+                    if (optimisticId != null && optimisticId < 0 && connectionStateManager.getMigratedChatId(optimisticId) == null) {
                         // This server chat is linked to an optimistic chat that hasn't been migrated yet
                         Log.e(TAG, "🚨 MIGRATION TRIGGER: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId")
                         Log.e(TAG, "🚨 Is ${serverChat.id} a real server ID or locally generated? Stack trace:", Exception("Stack trace for migration trigger"))
-                        
-                        // Register the migration
-                        registerChatMigration(optimisticId, serverChat.id)
                         
                         // Trigger migration asynchronously
                         repositoryScope.launch {
@@ -1501,9 +1508,19 @@ class WhizRepository @Inject constructor(
                                 // Migrate the messages if the optimistic chat exists
                                 val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
                                 if (optimisticChatExists) {
-                                    Log.e(TAG, "🚨 CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
-                                    migrateChatMessages(optimisticId, serverChat.id)
-                                    Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
+                                    Log.e(TAG, "🚨 CALLING registerChatMigration FIRST for $optimisticId -> ${serverChat.id}")
+                                    // Register the migration IMMEDIATELY to prevent race conditions
+                                    registerChatMigration(optimisticId, serverChat.id)
+                                    Log.e(TAG, "🚨 NOW CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
+                                    val migrationSuccess = migrateChatMessages(optimisticId, serverChat.id)
+                                    if (migrationSuccess) {
+                                        Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
+                                    } else {
+                                        Log.e(TAG, "getAllChatsFlow: Migration failed for $optimisticId -> ${serverChat.id}")
+                                    }
+                                } else {
+                                    // If optimistic chat doesn't exist, we can safely register the mapping
+                                    registerChatMigration(optimisticId, serverChat.id)
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
@@ -1515,7 +1532,7 @@ class WhizRepository @Inject constructor(
                 // Check which optimistic chats haven't been migrated yet
                 val unmigratedOptimisticChats = optimisticChats.filter { optimisticChat ->
                     // Check if this optimistic chat has been migrated
-                    val migratedId = chatMigrationMapping[optimisticChat.id]
+                    val migratedId = connectionStateManager.getMigratedChatId(optimisticChat.id)
                     if (migratedId != null) {
                         // This chat has been migrated, don't include it
                         Log.d(TAG, "getAllChatsFlow: Optimistic chat ${optimisticChat.id} already migrated to $migratedId")
