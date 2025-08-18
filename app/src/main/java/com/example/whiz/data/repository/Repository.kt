@@ -878,7 +878,7 @@ class WhizRepository @Inject constructor(
     private suspend fun deduplicateMessages(chatId: Long, serverMessages: List<MessageEntity>): List<MessageEntity> {
         try {
             // Use the effective chat ID from ConnectionStateManager (single source of truth)
-            val effectiveChatId = connectionStateManager.getEffectiveChatId(chatId) ?: chatId
+            var effectiveChatId = connectionStateManager.getEffectiveChatId(chatId) ?: chatId
             
             // Check if server messages have a different chat ID (server resolved optimistic to real ID)
             val serverChatId = serverMessages.firstOrNull()?.chatId
@@ -901,9 +901,17 @@ class WhizRepository @Inject constructor(
                 
                 if (migrationSuccess) {
                     Log.d(TAG, "deduplicateMessages: Successfully migrated chat $chatId to $serverChatId")
+                    // CRITICAL FIX: Recalculate effective chat ID after migration
+                    // The migration has moved all messages to the new chat ID, so we must
+                    // use the new ID for all subsequent operations
+                    effectiveChatId = serverChatId
+                    Log.d(TAG, "deduplicateMessages: Updated effectiveChatId to $effectiveChatId after migration")
                 } else {
                     Log.e(TAG, "deduplicateMessages: Failed to migrate chat $chatId to $serverChatId")
                     // Migration failed, but keep the registration since new messages should still go to the server chat
+                    // Still update effectiveChatId since the registration was successful
+                    effectiveChatId = serverChatId
+                    Log.d(TAG, "deduplicateMessages: Migration failed but updated effectiveChatId to $effectiveChatId for consistency")
                 }
             }
             
@@ -956,12 +964,13 @@ class WhizRepository @Inject constructor(
             val localMessages = messageDao.getMessagesForChatFlow(effectiveChatId).first()
             
             // Check if this real chat was migrated from an optimistic chat
-            val optimisticChatId = getOptimisticChatId(chatId)
+            // Use effectiveChatId since it may have been updated after migration
+            val optimisticChatId = getOptimisticChatId(effectiveChatId)
             val optimisticMessages = if (optimisticChatId != null) {
-                Log.d(TAG, "deduplicateMessages: Found migration mapping $optimisticChatId → $chatId, checking optimistic messages")
+                Log.d(TAG, "deduplicateMessages: Found migration mapping $optimisticChatId → $effectiveChatId, checking optimistic messages")
                 messageDao.getMessagesForChatFlow(optimisticChatId).first()
             } else {
-                Log.d(TAG, "deduplicateMessages: No migration mapping found for chat $chatId")
+                Log.d(TAG, "deduplicateMessages: No migration mapping found for chat $effectiveChatId")
                 emptyList()
             }
             
@@ -1002,10 +1011,19 @@ class WhizRepository @Inject constructor(
                     val localMatch = localMatches.find { it.type == serverMessage.type }
                     
                     if (localMatch != null && localMatch.id != serverMessage.id) {
-                        // Found a local message with same request ID AND type - it's a duplicate
-                        Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local ${localMatch.type} message ${localMatch.id} for server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
-                        messagesToRemove.add(localMatch.id)
-                        foundDuplicate = true
+                        // CRITICAL: Also verify content matches to avoid removing different messages with reused requestIds
+                        // This can happen after migration when messages from different contexts are compared
+                        if (localMatch.content.trim() == serverMessage.content.trim()) {
+                            // Found a local message with same request ID, type, AND content - it's a duplicate
+                            Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local ${localMatch.type} message ${localMatch.id} for server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
+                            messagesToRemove.add(localMatch.id)
+                            foundDuplicate = true
+                        } else {
+                            // Same requestId and type but different content - not a duplicate!
+                            Log.d(TAG, "deduplicateMessages: SKIPPING removal - same requestId ${serverMessage.requestId} but different content:")
+                            Log.d(TAG, "  Local message ${localMatch.id}: '${localMatch.content.take(50)}...'")
+                            Log.d(TAG, "  Server message ${serverMessage.id}: '${serverMessage.content.take(50)}...'")
+                        }
                     } else if (localMatches.isNotEmpty() && localMatch == null) {
                         // Log when we have matches but skip due to type mismatch (for debugging)
                         val typesFound = localMatches.map { it.type }.distinct().joinToString(", ")
@@ -1081,9 +1099,10 @@ class WhizRepository @Inject constructor(
                     messageDao.insertMessage(preservedMsg)
                 } else {
                     // Make sure the message is in the correct chat (in case of migration)
-                    if (existingMsg.chatId != chatId) {
-                        Log.d(TAG, "deduplicateMessages: Updating message ${preservedMsg.id} to chat $chatId (was ${existingMsg.chatId})")
-                        messageDao.updateMessageChatId(preservedMsg.id, chatId)
+                    // CRITICAL: Use effectiveChatId which may have been updated after migration
+                    if (existingMsg.chatId != effectiveChatId) {
+                        Log.d(TAG, "deduplicateMessages: Updating message ${preservedMsg.id} to chat $effectiveChatId (was ${existingMsg.chatId})")
+                        messageDao.updateMessageChatId(preservedMsg.id, effectiveChatId)
                     }
                 }
             }
@@ -1093,8 +1112,9 @@ class WhizRepository @Inject constructor(
             }
             
             // Return all messages for this chat (fresh from database after deduplication)
-            val finalMessages = messageDao.getMessagesForChatFlow(chatId).first()
-            Log.d(TAG, "deduplicateMessages: Returning ${finalMessages.size} messages from database for chat $chatId")
+            // CRITICAL: Use effectiveChatId which may have been updated after migration
+            val finalMessages = messageDao.getMessagesForChatFlow(effectiveChatId).first()
+            Log.d(TAG, "deduplicateMessages: Returning ${finalMessages.size} messages from database for chat $effectiveChatId (original: $chatId)")
             return finalMessages
             
         } catch (e: Exception) {
