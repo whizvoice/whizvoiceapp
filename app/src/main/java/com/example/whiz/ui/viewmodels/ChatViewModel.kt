@@ -605,8 +605,8 @@ class ChatViewModel @Inject constructor(
                                 if (isForCurrentChat) {
                                     Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Received real conversation ID $effectiveConversationId for current optimistic chat $currentChatId")
                                     
-                                    // Register the migration FIRST
-                                    repository.registerChatMigration(currentChatId, effectiveConversationId)
+                                    // Migration will be registered when migrateChatMessages is called
+                                    // No need to register here
                                     
                                     // Update pendingRequests to use the new chat ID
                                     val requestsToUpdate = pendingRequests.filter { it.value == currentChatId }
@@ -744,11 +744,11 @@ class ChatViewModel @Inject constructor(
                                             // Check if migration was already done by immediate migration above
                                             val alreadyMigrated = _chatId.value == effectiveConversationId
                                             if (!alreadyMigrated) {
-                                                // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
+                                                // 🔧 Migration will be registered when migrateChatMessages is called
                                                 val oldChatId = _chatId.value
                                                 if (oldChatId < 0 && effectiveConversationId > 0) {
-                                                    repository.registerChatMigration(oldChatId, effectiveConversationId)
-                                                    Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                                    // No need to register here - migrateChatMessages will handle it
+                                                    Log.d(TAG, "🔄 Chat migration needed: $oldChatId → $effectiveConversationId")
                                                     
                                                     // Update pendingRequests to use the new chat ID
                                                     val requestsToUpdate = pendingRequests.filter { it.value == oldChatId }
@@ -784,10 +784,10 @@ class ChatViewModel @Inject constructor(
                                 // 🔧 SCENARIO 2: Regular message processing with request ID pairing
                                 // This is NOT a migration - just updating chat ID for consistency
                                 
-                                // 🔧 REGISTER MIGRATION: Check if this is actually an optimistic→real conversion
+                                // 🔧 Migration will be registered when migrateChatMessages is called
                                 if (originalChatId < 0 && effectiveConversationId > 0) {
-                                    repository.registerChatMigration(originalChatId, effectiveConversationId)
-                                    Log.d(TAG, "🔄 Registered chat migration (scenario 2): $originalChatId → $effectiveConversationId")
+                                    // No need to register here - migrateChatMessages will handle it
+                                    Log.d(TAG, "🔄 Chat migration needed (scenario 2): $originalChatId → $effectiveConversationId")
                                     
                                     // Update pendingRequests to use the new chat ID
                                     val requestsToUpdate = pendingRequests.filter { it.value == originalChatId }
@@ -886,7 +886,7 @@ class ChatViewModel @Inject constructor(
                                     
                                     if (migrationSuccess) {
                                         Log.d(TAG, "✅ Successfully migrated messages from ${event.clientConversationId} to $effectiveConversationId")
-                                        repository.registerChatMigration(event.clientConversationId, effectiveConversationId)
+                                        // Migration already registered by migrateChatMessages
                                         
                                         // Update pendingRequests to use the new chat ID
                                         val requestsToUpdate = pendingRequests.filter { it.value == event.clientConversationId }
