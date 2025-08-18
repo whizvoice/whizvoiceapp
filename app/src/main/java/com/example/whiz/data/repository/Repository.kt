@@ -1015,8 +1015,12 @@ class WhizRepository @Inject constructor(
                         // This can happen after migration when messages from different contexts are compared
                         if (localMatch.content.trim() == serverMessage.content.trim()) {
                             // Found a local message with same request ID, type, AND content - it's a duplicate
-                            Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - removing local ${localMatch.type} message ${localMatch.id} for server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
+                            Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - REPLACING local ${localMatch.type} message ${localMatch.id} with server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
                             messagesToRemove.add(localMatch.id)
+                            // CRITICAL FIX: Always ensure the server message replaces the local duplicate
+                            // This prevents messages from disappearing during sync
+                            serverMessagesToInsert.add(serverMessage)
+                            Log.d(TAG, "deduplicateMessages: Server message ${serverMessage.id} will replace local message ${localMatch.id}")
                             foundDuplicate = true
                         } else {
                             // Same requestId and type but different content - not a duplicate!
@@ -1046,16 +1050,23 @@ class WhizRepository @Inject constructor(
                     }
                     
                     if (duplicateLocal != null) {
-                        Log.d(TAG, "deduplicateMessages: Found duplicate by content - removing local message ${duplicateLocal.id} for server message ${serverMessage.id}")
+                        Log.d(TAG, "deduplicateMessages: Found duplicate by content - REPLACING local message ${duplicateLocal.id} with server message ${serverMessage.id}")
                         messagesToRemove.add(duplicateLocal.id)
+                        // CRITICAL FIX: Always ensure the server message replaces the local duplicate
+                        // This prevents messages from disappearing during sync
+                        serverMessagesToInsert.add(serverMessage)
+                        Log.d(TAG, "deduplicateMessages: Server message ${serverMessage.id} will replace local message ${duplicateLocal.id}")
                         foundDuplicate = true
                     }
                 }
                 
                 // Check if this server message already exists in database
-                val existingMessage = messageDao.getMessageById(serverMessage.id)
-                if (existingMessage == null) {
-                    serverMessagesToInsert.add(serverMessage)
+                // Skip this check if we already added it as a replacement for a duplicate
+                if (!foundDuplicate) {
+                    val existingMessage = messageDao.getMessageById(serverMessage.id)
+                    if (existingMessage == null) {
+                        serverMessagesToInsert.add(serverMessage)
+                    }
                 }
             }
             
