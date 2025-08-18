@@ -211,19 +211,23 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Track the newly created chat for cleanup
                 var chatId: Long? = null
-                withTimeout(5000) {
-                    while (true) {
-                        val currentChats = repository.getAllChats()
-                        val newChats = currentChats.filter { chat -> 
-                            !initialChats.map { it.id }.contains(chat.id) 
+                try {
+                    withTimeout(5000) {
+                        while (true) {
+                            val currentChats = repository.getAllChats()
+                            val newChats = currentChats.filter { chat -> 
+                                !initialChats.map { it.id }.contains(chat.id) 
+                            }
+                            if (newChats.isNotEmpty()) {
+                                chatId = newChats.first().id
+                                Log.d(TAG, "✅ Chat created with ID: $chatId")
+                                break
+                            }
+                            delay(200)
                         }
-                        if (newChats.isNotEmpty()) {
-                            chatId = newChats.first().id
-                            Log.d(TAG, "✅ Chat created with ID: $chatId")
-                            break
-                        }
-                        delay(200)
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for chat creation after 5 seconds", "chat_creation_timeout")
                 }
                 
                 // Track the chat for cleanup
@@ -242,12 +246,16 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Wait for WebSocket to disconnect
                 Log.d(TAG, "⏳ Waiting for WebSocket to disconnect...")
-                withTimeout(5000) {
-                    while (whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                    Log.d(TAG, "✅ WebSocket disconnected")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket to disconnect after 5 seconds", "websocket_disconnect_timeout")
                 }
-                Log.d(TAG, "✅ WebSocket disconnected")
                 
                 // Step 4: Send a second message while disconnected
                 Log.d(TAG, "📝 Sending second message while disconnected...")
@@ -310,7 +318,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Also check database to ensure no bot messages yet
                 val messagesWhileDisconnected = if (chatId != null) {
-                    repository.getMessagesForChat(chatId).first()
+                    repository.getMessagesForChat(chatId!!).first()
                 } else {
                     emptyList()
                 }
@@ -338,11 +346,15 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 delay(1500) // Wait for retry to fire (scheduled at 1000ms) + processing time
                 
                 // Wait for WebSocket to automatically reconnect
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        Log.d(TAG, "Waiting for automatic reconnection... Connected: ${whizServerRepository.isConnected()}")
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (!whizServerRepository.isConnected()) {
+                            Log.d(TAG, "Waiting for automatic reconnection... Connected: ${whizServerRepository.isConnected()}")
+                            delay(100)
+                        }
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket to reconnect after 5 seconds", "websocket_reconnect_timeout")
                 }
                 Log.d(TAG, "✅ WebSocket automatically reconnected after network restoration")
 
@@ -365,7 +377,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 if (!botResponseAfterReconnect) {
                     // Check if message is in database but not UI
                     val messagesAfterReconnect = if (chatId != null) {
-                        repository.getMessagesForChat(chatId).first()
+                        repository.getMessagesForChat(chatId!!).first()
                     } else {
                         emptyList()
                     }
@@ -435,29 +447,37 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect
-                withTimeout(5000) {
-                    while (whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                    Log.d(TAG, "✅ WebSocket disconnected after first message")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket disconnect after first message", "websocket_disconnect_timeout_first_msg")
                 }
-                Log.d(TAG, "✅ WebSocket disconnected after first message")
                 
                 // Get the first chat ID from local database since we're disconnected
                 var chatId1: Long? = null
-                withTimeout(5000) {
-                    while (true) {
-                        // Use DAO directly to get local chats when disconnected
-                        val localChats = repository.getChatDao().getAllChatsFlow().first()
-                        val newChats = localChats.filter { chat ->
-                            !initialChats.map { it.id }.contains(chat.id)
+                try {
+                    withTimeout(5000) {
+                        while (true) {
+                            // Use DAO directly to get local chats when disconnected
+                            val localChats = repository.getChatDao().getAllChatsFlow().first()
+                            val newChats = localChats.filter { chat ->
+                                !initialChats.map { it.id }.contains(chat.id)
+                            }
+                            if (newChats.isNotEmpty()) {
+                                chatId1 = newChats.firstOrNull()?.id
+                                Log.d(TAG, "First chat created with ID: $chatId1")
+                                break
+                            }
+                            delay(200)
                         }
-                        if (newChats.isNotEmpty()) {
-                            chatId1 = newChats.firstOrNull()?.id
-                            Log.d(TAG, "First chat created with ID: $chatId1")
-                            break
-                        }
-                        delay(200)
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for first chat creation in local database", "first_chat_creation_timeout")
                 }
                 
                 if (chatId1 == null) {
@@ -491,12 +511,16 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 
                 // Wait for WebSocket to connect
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (!whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                    Log.d(TAG, "✅ WebSocket reconnected")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket reconnect after navigation", "websocket_reconnect_timeout_nav")
                 }
-                Log.d(TAG, "✅ WebSocket reconnected")
                 
                 // Wait for the chat to appear in the list before navigating
                 
@@ -525,39 +549,47 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect
-                withTimeout(5000) {
-                    while (whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                    Log.d(TAG, "✅ WebSocket disconnected after second message")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket disconnect after second message", "websocket_disconnect_timeout_second_msg")
                 }
-                Log.d(TAG, "✅ WebSocket disconnected after second message")
                 
                 // Get the second chat ID from local database since we're disconnected
                 var chatId2: Long? = null
-                withTimeout(5000) {
-                    while (true) {
-                        val localChats = repository.getChatDao().getAllChatsFlow().first()
-                        val newChats = localChats.filter { chat ->
-                            !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
-                        }
-                        if (newChats.isNotEmpty()) {
-                            // Check each new chat to find the one with the second message
-                            for (chat in newChats) {
-                                try {
-                                    val messages = repository.getMessagesForChat(chat.id).first()
-                                    if (messages.any { it.content.contains("pasta") || it.content.contains("alfredo") }) {
-                                        chatId2 = chat.id
-                                        Log.d(TAG, "Second chat created with ID: $chatId2")
-                                        break
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Could not get messages for chat ${chat.id}: ${e.message}")
-                                }
+                try {
+                    withTimeout(5000) {
+                        while (true) {
+                            val localChats = repository.getChatDao().getAllChatsFlow().first()
+                            val newChats = localChats.filter { chat ->
+                                !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
                             }
-                            if (chatId2 != null) break
+                            if (newChats.isNotEmpty()) {
+                                // Check each new chat to find the one with the second message
+                                for (chat in newChats) {
+                                    try {
+                                        val messages = repository.getMessagesForChat(chat.id).first()
+                                        if (messages.any { it.content.contains("pasta") || it.content.contains("alfredo") }) {
+                                            chatId2 = chat.id
+                                            Log.d(TAG, "Second chat created with ID: $chatId2")
+                                            break
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Could not get messages for chat ${chat.id}: ${e.message}")
+                                    }
+                                }
+                                if (chatId2 != null) break
+                            }
+                            delay(200)
                         }
-                        delay(200)
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for second chat creation in local database", "second_chat_creation_timeout")
                 }
                 
                 if (chatId2 == null) {
@@ -565,8 +597,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Track the second chat for cleanup if it's different from the first
-                if (chatId2 != chatId1 && !createdChatIds.contains(chatId2)) {
-                    createdChatIds.add(chatId2)
+                if (chatId2 != null && chatId2 != chatId1 && !createdChatIds.contains(chatId2!!)) {
+                    createdChatIds.add(chatId2!!)
                 }
                 
                 // Also track any other new chats that were created during the test
@@ -608,12 +640,16 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 // Wait for WebSocket to connect
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (!whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                    Log.d(TAG, "✅ WebSocket reconnected")
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket reconnect before opening first chat", "websocket_reconnect_timeout_first_chat")
                 }
-                Log.d(TAG, "✅ WebSocket reconnected")
                 
                 // Wait for the first chat to appear in the list
                 val firstChatInList = ComposeTestHelper.waitForElement(
@@ -672,10 +708,14 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Wait for WebSocket to reconnect with the specific chat ID
                 // (ChatViewModel disconnects and reconnects when loading a specific chat)
-                withTimeout(5000) {
-                    while (!whizServerRepository.isConnected()) {
-                        delay(100)
+                try {
+                    withTimeout(5000) {
+                        while (!whizServerRepository.isConnected()) {
+                            delay(100)
+                        }
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("Timeout waiting for WebSocket reconnect when opening first chat", "websocket_reconnect_timeout_open_first_chat")
                 }
                 
                 // WebSocket should now be connected with the specific chat ID
