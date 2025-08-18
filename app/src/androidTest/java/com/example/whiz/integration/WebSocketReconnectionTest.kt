@@ -1130,8 +1130,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val parisResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Paris",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Paris",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1149,8 +1149,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val frenchResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "French",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: French",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1168,8 +1168,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val romeInFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Rome",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Rome",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1186,8 +1186,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val pizzaInFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Pizza",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Pizza",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1291,8 +1291,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val romeResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Rome",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Rome",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1310,8 +1310,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val pizzaResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Pizza",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Pizza",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1329,8 +1329,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val parisInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "Paris",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: Paris",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
@@ -1347,8 +1347,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val frenchInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            "French",
+                        composeTestRule.onNodeWithContentDescription(
+                            "Assistant message: French",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true
