@@ -27,6 +27,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 
 
 sealed class WebSocketEvent {
@@ -330,8 +332,9 @@ class WhizServerRepository @Inject constructor(
                 persistentDisconnectForTest = false
             }
             
-            // Cancel any pending reconnect job
-            reconnectJob?.cancel()
+            // Don't cancel reconnect job here - it might be the one calling connect()
+            // The job will complete naturally after this connect() call
+            // reconnectJob?.cancel() // REMOVED to avoid self-cancellation
         }  // End of connectionLock.withLock block
 
         try {
@@ -653,6 +656,32 @@ class WhizServerRepository @Inject constructor(
             // Reset connection state on error
             connectionState = ConnectionState.IDLE
             scope.launch { emitEvent(WebSocketEvent.Error(e)) }
+            
+            // Schedule reconnect to continue exponential backoff retry chain
+            // This is crucial for network errors (including test-simulated ones)
+            // so that retries continue when the network/flag is restored
+            if (e is IOException) {
+                Log.d(TAG, "Scheduling reconnect after network error: ${e.message}")
+                scheduleReconnect()
+            } else if (e is CancellationException) {
+                // JobCancellationException can happen during connection failures and should retry
+                // But other CancellationExceptions might be intentional cancellations
+                if (e.message?.contains("was cancelled") == true) {
+                    // This looks like a connection failure side effect, not intentional cancellation
+                    Log.d(TAG, "Scheduling reconnect after connection cancellation: ${e.message}")
+                    scheduleReconnect()
+                } else {
+                    Log.d(TAG, "Coroutine intentionally cancelled, not scheduling reconnect: ${e.message}")
+                    // Don't retry on intentional cancellation
+                }
+            } else if (e.message?.contains("auth", ignoreCase = true) == true) {
+                Log.w(TAG, "Not scheduling reconnect for auth error: ${e.message}")
+                // Don't retry on auth errors
+            } else {
+                // For other exceptions, also attempt reconnect
+                Log.d(TAG, "Scheduling reconnect after unexpected error: ${e.message}")
+                scheduleReconnect()
+            }
         }
     }
 
