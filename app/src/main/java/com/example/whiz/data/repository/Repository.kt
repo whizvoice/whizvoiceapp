@@ -523,7 +523,7 @@ class WhizRepository @Inject constructor(
                     if (targetMessages.isNotEmpty()) {
                         Log.d(TAG, "migrateChatMessages: Migration from $fromChatId to $toChatId already completed - source empty, target has ${targetMessages.size} messages")
                         // Ensure registration is complete (in case it wasn't)
-                        connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                        registerChatMigration(fromChatId, toChatId)
                         return@withLock true
                     }
                 }
@@ -541,7 +541,7 @@ class WhizRepository @Inject constructor(
 
                 // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
                 // This tells all parts of the system to use the new chat ID immediately
-                connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                registerChatMigration(fromChatId, toChatId)
                 Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
             
                 // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
@@ -1547,7 +1547,7 @@ class WhizRepository @Inject constructor(
                                 } else {
                                     // If optimistic chat doesn't exist, we can safely register the mapping
                                     // since there are no messages to migrate
-                                    connectionStateManager.registerChatMigration(optimisticId, serverChat.id)
+                                    registerChatMigration(optimisticId, serverChat.id)
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
