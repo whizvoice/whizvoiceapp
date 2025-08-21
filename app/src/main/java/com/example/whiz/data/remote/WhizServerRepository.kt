@@ -725,12 +725,19 @@ class WhizServerRepository @Inject constructor(
             } else {
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
                 queueMessageForRetry(message, requestId, chatId, clientMessageId)
-                // Attempt to reconnect
-                if (!persistentDisconnectForTest) {
+                
+                // Attempt to reconnect if we're not in test disconnect mode
+                // and if we don't already have a retry job running
+                if (!persistentDisconnectForTest && connectionState != ConnectionState.CONNECTING) {
+                    Log.d(TAG, "Attempting to reconnect for chat $chatId (retry job active: ${retryJob?.isActive})")
                     scope.launch {
                         delay(100L) // Small delay before reconnect
                         connect(chatId)
                     }
+                } else if (persistentDisconnectForTest) {
+                    Log.d(TAG, "Not reconnecting - persistent disconnect is enabled")
+                } else {
+                    Log.d(TAG, "Not reconnecting - already connecting")
                 }
                 false
             }
@@ -774,7 +781,7 @@ class WhizServerRepository @Inject constructor(
         }
         
         // Only process messages that match the conversation we're connected to
-        // Discard messages for other conversations (they'll be synced when that chat is opened)
+        // Discard messages for other conversations (they'll be synced from local DB when those chats are opened)
         val allMessages = messageRetryQueue.toList()
         val messagesToRetry = if (conversationId != null) {
             allMessages.filter { msg ->
@@ -788,7 +795,7 @@ class WhizServerRepository @Inject constructor(
         
         val discardedCount = allMessages.size - messagesToRetry.size
         if (discardedCount > 0) {
-            Log.d(TAG, "Discarding $discardedCount messages for other conversations (will be synced when those chats are opened)")
+            Log.d(TAG, "Discarding $discardedCount messages for other conversations (will be synced from local DB when those chats are opened)")
         }
         
         if (messagesToRetry.isEmpty()) {

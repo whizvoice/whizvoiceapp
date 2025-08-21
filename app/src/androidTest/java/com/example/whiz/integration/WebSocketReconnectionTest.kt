@@ -338,8 +338,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Step 6: Simulate network restoration by resetting the test flag
                 // The retry mechanism should automatically reconnect within 1-2 seconds
                 Log.d(TAG, "🔌 Simulating network restoration by resetting persistent disconnect flag")
-                // Use the existing method for consistency with other tests
-                whizServerRepository.connect(turnOffPersistentDisconnect = true)
+                // Pass the conversation ID since we're staying in the same chat
+                whizServerRepository.connect(chatId, turnOffPersistentDisconnect = true)
                 
                 // Give the retry mechanism time to fire and ChatViewModel to reconnect
                 Log.d(TAG, "⏳ Waiting for automatic reconnection via retry mechanism...")
@@ -1109,14 +1109,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 composeTestRule.onNodeWithText(firstMessage.take(20), substring = true).performClick()
                 
-                // Wait for chat to load by checking for the unique timestamp part of the first message
+                // Wait for chat to load by checking for the unique message using content description
                 val chatLoaded = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            firstMessage.substringBefore(":"), // Use the unique "Test 1755237427034" part
-                            substring = true,
-                            useUnmergedTree = true
+                        composeTestRule.onNode(
+                            ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(firstMessage.substringBefore(":"))}.*")
                         )
                     },
                     timeoutMs = 2000L,
@@ -1126,31 +1124,38 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("First chat did not load after clicking", "first_chat_not_loaded_after_click")
                 }
                 
-                // Verify all user messages are present
+                // Verify all user messages are present using content descriptions
                 for (message in listOf(firstMessage) + offlineMessages1) {
-                    // Use substring matching for better reliability
-                    val searchText = if (message.contains(":")) {
-                        // For messages with prefixes like "Test 123456:", search for the part after the colon
-                        message.substringAfter(":").trim().take(30)
-                    } else {
-                        message.take(30)
-                    }
+                    // Use content description which is more reliable
+                    val contentDesc = "User message: $message"
                     
                     val messageFound = ComposeTestHelper.waitForElement(
                         composeTestRule = composeTestRule,
                         selector = { 
-                            composeTestRule.onNodeWithText(
-                                searchText,
-                                substring = true,
-                                useUnmergedTree = true
+                            composeTestRule.onNodeWithContentDescription(
+                                contentDesc
                             )
                         },
                         timeoutMs = 3000L,
-                        description = "user message: ${searchText}"
+                        description = "user message with content description"
                     )
                     
                     if (!messageFound) {
-                        failWithScreenshot("User message not found in first chat: ${searchText}", "first_chat_missing_user_message")
+                        // Fallback: Try with substring matching on the content description
+                        val fallbackFound = ComposeTestHelper.waitForElement(
+                            composeTestRule = composeTestRule,
+                            selector = { 
+                                composeTestRule.onNode(
+                                    ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(message.take(30))}.*")
+                                )
+                            },
+                            timeoutMs = 1000L,
+                            description = "user message with regex content description"
+                        )
+                        
+                        if (!fallbackFound) {
+                            failWithScreenshot("User message not found in first chat: ${message.take(50)}", "first_chat_missing_user_message")
+                        }
                     }
                 }
                 Log.d(TAG, "✅ All user messages found in first chat")
@@ -1270,14 +1275,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 composeTestRule.onNodeWithText(secondChatFirstMessage.take(20), substring = true).performClick()
                 
-                // Wait for chat to load by checking for the first message
+                // Wait for chat to load by checking for the first message using content description
                 val secondChatLoaded = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithText(
-                            secondChatFirstMessage.substringAfter(":").trim().take(20),
-                            substring = true,
-                            useUnmergedTree = true
+                        composeTestRule.onNode(
+                            ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(secondChatFirstMessage.substringBefore(":"))}.*")
                         )
                     },
                     timeoutMs = 2000L,
@@ -1287,31 +1290,38 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Second chat did not load after clicking", "second_chat_not_loaded_after_click")
                 }
                 
-                // Verify all user messages are present in second chat
+                // Verify all user messages are present in second chat using content descriptions
                 for (message in listOf(secondChatFirstMessage) + offlineMessages2) {
-                    // Use substring matching for better reliability
-                    val searchText = if (message.contains(":")) {
-                        // For messages with prefixes like "Test 123456:", search for the part after the colon
-                        message.substringAfter(":").trim().take(30)
-                    } else {
-                        message.take(30)
-                    }
+                    // Use content description which is more reliable
+                    val contentDesc = "User message: $message"
                     
                     val messageFound = ComposeTestHelper.waitForElement(
                         composeTestRule = composeTestRule,
                         selector = { 
-                            composeTestRule.onNodeWithText(
-                                searchText,
-                                substring = true,
-                                useUnmergedTree = true
+                            composeTestRule.onNodeWithContentDescription(
+                                contentDesc
                             )
                         },
                         timeoutMs = 3000L,
-                        description = "user message in second chat: ${searchText}"
+                        description = "user message with content description"
                     )
                     
                     if (!messageFound) {
-                        failWithScreenshot("User message not found in second chat: ${searchText}", "second_chat_missing_user_message")
+                        // Fallback: Try with substring matching on the content description
+                        val fallbackFound = ComposeTestHelper.waitForElement(
+                            composeTestRule = composeTestRule,
+                            selector = { 
+                                composeTestRule.onNode(
+                                    ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(message.take(30))}.*")
+                                )
+                            },
+                            timeoutMs = 1000L,
+                            description = "user message with regex content description"
+                        )
+                        
+                        if (!fallbackFound) {
+                            failWithScreenshot("User message not found in second chat: ${message.take(50)}", "second_chat_missing_user_message")
+                        }
                     }
                 }
                 Log.d(TAG, "✅ All user messages found in second chat")

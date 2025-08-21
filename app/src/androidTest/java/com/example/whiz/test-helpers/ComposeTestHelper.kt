@@ -947,6 +947,22 @@ object ComposeTestHelper {
     }
     
     /**
+     * Count occurrences of a specific text in the UI
+     */
+    fun countTextOccurrences(composeTestRule: ComposeTestRule, text: String): Int {
+        return try {
+            // Try to find all nodes with the text
+            val nodes = composeTestRule.onAllNodesWithText(text, substring = false, ignoreCase = true)
+            val count = nodes.fetchSemanticsNodes().size
+            Log.d(TAG, "🔍 Compose: Found $count occurrences of text '$text'")
+            count
+        } catch (e: Exception) {
+            Log.d(TAG, "🔍 Compose: No occurrences of text '$text' found (exception: ${e.message})")
+            0
+        }
+    }
+    
+    /**
      * Verify that a response message appears IMMEDIATELY after its corresponding user message
      * This tests the request ID pairing functionality to ensure responses appear in reply order, not timestamp order
      * The bug was that responses were appearing chronologically instead of being paired with their user messages

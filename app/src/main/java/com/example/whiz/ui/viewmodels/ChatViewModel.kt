@@ -353,7 +353,7 @@ class ChatViewModel @Inject constructor(
                         
                         // Always sync messages when WebSocket connects to ensure we have the latest
                         val currentChatId = _chatId.value
-                        if (currentChatId != -1L) {
+                        if (currentChatId != -1L && currentChatId != 0L) {
                             Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for chat $currentChatId (reconnect=$isReconnectingAfterDisconnect)")
                             viewModelScope.launch {
                                 try {
@@ -365,6 +365,10 @@ class ChatViewModel @Inject constructor(
                                     // The fetchMessagesWithDeduplication already handles storing messages
                                     // Just trigger UI refresh
                                     repository.refreshMessages()
+                                    
+                                    // Check for orphaned messages that need to be sent
+                                    // This handles messages that were created while offline
+                                    checkAndRetryOrphanedMessages(currentChatId)
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error syncing messages for chat $currentChatId", e)
                                     // Don't show error to user - this is a background sync
@@ -1255,7 +1259,8 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // Check for orphaned messages that need retry
-                if (configUseRemoteAgent && _chatId.value > 0) {
+                // Include optimistic chats (negative IDs) that may have unsent messages
+                if (configUseRemoteAgent && _chatId.value != 0L && _chatId.value != -1L) {
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
@@ -1997,6 +2002,7 @@ class ChatViewModel @Inject constructor(
      * Check for orphaned user messages in a chat that need to be retried.
      * An orphaned message is a user message that was sent more than 2 minutes ago
      * but never received an assistant response.
+     * For optimistic chats (negative IDs), retry all user messages immediately.
      */
     private suspend fun checkAndRetryOrphanedMessages(chatId: Long) {
         try {
@@ -2015,16 +2021,22 @@ class ChatViewModel @Inject constructor(
                 .maxByOrNull { it.timestamp }
                 ?.timestamp ?: 0L
             
-            // Current time and 2-minute threshold
+            // Current time and threshold
             val currentTime = System.currentTimeMillis()
-            val retryThresholdMs = 2 * 60 * 1000L // 2 minutes
+            val retryThresholdMs = if (chatId < 0) {
+                // For optimistic chats, retry messages immediately (1 second threshold)
+                1 * 1000L
+            } else {
+                // For server-backed chats, use 2-minute threshold
+                2 * 60 * 1000L
+            }
             
             // Find orphaned user messages that need retry
             val orphanedMessages = allMessages
                 .filter { message ->
                     message.type == MessageType.USER &&
                     message.timestamp > lastAssistantMessageTime && // After last assistant response
-                    (currentTime - message.timestamp) > retryThresholdMs && // Older than 2 minutes
+                    (currentTime - message.timestamp) > retryThresholdMs && // Older than threshold
                     message.requestId != null // Has a request ID for retry
                 }
                 .sortedBy { it.timestamp } // Process in chronological order

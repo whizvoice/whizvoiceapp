@@ -636,19 +636,6 @@ class WhizRepository @Inject constructor(
             }
             
             if (messagesToMigrate.isNotEmpty() || totalOrphanedMessages > 0) {
-                // Delete the old optimistic chat if it was temporary (negative ID means optimistic)
-                if (fromChatId < 0) {
-                    try {
-                        chatDao.deleteChat(fromChatId)
-                        Log.d(TAG, "migrateChatMessages: deleted optimistic chat $fromChatId")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "migrateChatMessages: could not delete optimistic chat $fromChatId", e)
-                        // Not critical - continue
-                    }
-                } else if (fromChatId == -1L) {
-                    Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
-                }
-                
                 val totalMigrated = messagesToMigrate.size + totalOrphanedMessages
                 Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of $totalMigrated messages from chat $fromChatId to $toChatId (including $totalOrphanedMessages orphaned)")
                 
@@ -667,6 +654,35 @@ class WhizRepository @Inject constructor(
                 }
                 
                 Log.d(TAG, "migrateChatMessages: ✅ Verification: source has ${finalSourceMessages.size} messages, target has ${finalTargetMessages.size} messages")
+                
+                // Delete the old optimistic chat AFTER verification (to avoid race conditions with messages being added)
+                // This gives more time for any in-flight message additions to complete
+                if (fromChatId < 0) {
+                    // Add a small delay before deletion to allow any final in-flight operations to complete
+                    delay(200L)
+                    
+                    // Final check for any last-minute messages before deletion
+                    val lastCheckMessages = messageDao.getMessagesForChatFlow(fromChatId).first()
+                    if (lastCheckMessages.isNotEmpty()) {
+                        Log.w(TAG, "migrateChatMessages: 🚨 Found ${lastCheckMessages.size} messages added just before deletion!")
+                        try {
+                            val lastMinuteCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
+                            Log.d(TAG, "migrateChatMessages: ✅ Migrated $lastMinuteCount last-minute messages")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "migrateChatMessages: ❌ Error migrating last-minute messages", e)
+                        }
+                    }
+                    
+                    try {
+                        chatDao.deleteChat(fromChatId)
+                        Log.d(TAG, "migrateChatMessages: deleted optimistic chat $fromChatId")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "migrateChatMessages: could not delete optimistic chat $fromChatId", e)
+                        // Not critical - continue
+                    }
+                } else if (fromChatId == -1L) {
+                    Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
+                }
                 
                 // CRITICAL FIX: Register migration AFTER successful message migration
                 // This ensures registration only happens when messages are actually moved
