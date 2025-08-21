@@ -530,116 +530,84 @@ class WhizRepository @Inject constructor(
                 
                 Log.d(TAG, "migrateChatMessages: 🔄 STARTING migration from chat $fromChatId to chat $toChatId (${sourceMessages.size} messages to migrate)")
             
-            // 🔧 DEBUG: Check all messages in database first
-            try {
-                val allMessages = messageDao.getAllMessages()
-                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
-                Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-            } catch (e: Exception) {
-                Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", e)
-            }
-            
-            // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
-            val targetChatExists = chatDao.getChatById(toChatId) != null
-            if (!targetChatExists) {
-                Log.d(TAG, "migrateChatMessages: 🏗️ Target chat $toChatId doesn't exist, creating it first")
-                
-                // Get the source chat to copy its title and metadata
-                val sourceChat = chatDao.getChatById(fromChatId)
-                if (sourceChat != null) {
-                    val targetChat = sourceChat.copy(
-                        id = toChatId,
-                        lastMessageTime = System.currentTimeMillis()
-                    )
-                    chatDao.insertChat(targetChat)
-                    Log.d(TAG, "migrateChatMessages: ✅ Created target chat $toChatId with title '${targetChat.title}'")
-                } else {
-                    // Create a default chat if source doesn't exist
-                    val defaultChat = ChatEntity(
-                        id = toChatId,
-                        title = "Chat $toChatId",
-                        createdAt = System.currentTimeMillis(),
-                        lastMessageTime = System.currentTimeMillis()
-                    )
-                    chatDao.insertChat(defaultChat)
-                    Log.d(TAG, "migrateChatMessages: ✅ Created default target chat $toChatId")
-                }
-            } else {
-                Log.d(TAG, "migrateChatMessages: ✅ Target chat $toChatId already exists")
-            }
-            
-            // Get all messages from the source chat
-            val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
-            Log.d(TAG, "migrateChatMessages: 📊 Found ${messagesToMigrate.size} messages to migrate from chat $fromChatId")
-            
-            // 🔧 RACE CONDITION FIX: Also check if any messages were already added to the target chat
-            // This can happen if ConnectionStateManager returns the new chat ID while migration is in progress
-            val existingTargetMessages = messageDao.getMessagesForChatFlow(toChatId).first()
-            Log.d(TAG, "migrateChatMessages: 📊 Found ${existingTargetMessages.size} messages already in target chat $toChatId")
-            
-            if (messagesToMigrate.isNotEmpty()) {
-                Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
-                
-                // 🔧 PERFORMANCE FIX: Use batch SQL update instead of individual message updates
-                // This prevents multiple Flow emissions that cause UI recompositions
+                // 🔧 DEBUG: Check all messages in database first
                 try {
-                    Log.d(TAG, "migrateChatMessages: 🚀 BATCH: Migrating ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId in single operation")
-                    val updateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
-                    Log.d(TAG, "migrateChatMessages: ✅ BATCH: Successfully migrated $updateCount messages in single operation")
-                    
-                    // Log the final state
-                    if (existingTargetMessages.isNotEmpty()) {
-                        Log.d(TAG, "migrateChatMessages: ℹ️ Target chat already had ${existingTargetMessages.size} messages - these are preserved")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "migrateChatMessages: ❌ BATCH: Error in batch migration", e)
-                    throw e // Re-throw to fail the migration
+                    val allMessages = messageDao.getAllMessages()
+                    Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - Total messages in DB: ${allMessages.size}")
+                    Log.d(TAG, "migrateChatMessages: 🔍 DEBUG - All messages: ${allMessages.map { "ID:${it.id} ChatID:${it.chatId} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                } catch (debugError: Exception) {
+                    Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", debugError)
                 }
-            } else {
-                Log.w(TAG, "migrateChatMessages: ⚠️ No messages found for chat $fromChatId - this might be a timing issue")
-            }
+
+                // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
+                // This tells all parts of the system to use the new chat ID immediately
+                connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
             
-            // 🔧 RACE CONDITION FIX: Check for any messages that were added during migration
-            // Multiple checks with delays to catch messages added at different timing windows
-            var totalOrphanedMessages = 0
-            
-            // Check multiple times with delays to catch messages at different stages
-            for (checkAttempt in 1..3) {
-                // Delay to allow in-flight database writes to complete
-                val delayMs = if (checkAttempt == 1) 100L else 50L
-                delay(delayMs)
-                
-                // Check if any new messages appeared in the optimistic chat
-                val orphanedMessages = messageDao.getMessagesForChatFlow(fromChatId).first()
-                if (orphanedMessages.isNotEmpty()) {
-                    Log.w(TAG, "migrateChatMessages: 🚨 Check #$checkAttempt found ${orphanedMessages.size} orphaned messages!")
-                    Log.w(TAG, "migrateChatMessages: 📋 Orphaned messages: ${orphanedMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
+                val targetChatExists = chatDao.getChatById(toChatId) != null
+                if (!targetChatExists) {
+                    Log.d(TAG, "migrateChatMessages: 🏗️ Target chat $toChatId doesn't exist, creating it first")
                     
-                    // Migrate these orphaned messages to the new chat
-                    try {
-                        Log.d(TAG, "migrateChatMessages: 🔄 Migrating ${orphanedMessages.size} orphaned messages to chat $toChatId")
-                        val orphanUpdateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
-                        Log.d(TAG, "migrateChatMessages: ✅ Successfully migrated $orphanUpdateCount orphaned messages in check #$checkAttempt")
-                        totalOrphanedMessages += orphanUpdateCount
-                    } catch (e: Exception) {
-                        Log.e(TAG, "migrateChatMessages: ❌ Error migrating orphaned messages in check #$checkAttempt", e)
-                        // Continue anyway - better to have the main messages migrated
+                    // Get the source chat to copy its title and metadata
+                    val sourceChat = chatDao.getChatById(fromChatId)
+                    if (sourceChat != null) {
+                        val targetChat = sourceChat.copy(
+                            id = toChatId,
+                            lastMessageTime = System.currentTimeMillis()
+                        )
+                        chatDao.insertChat(targetChat)
+                        Log.d(TAG, "migrateChatMessages: ✅ Created target chat $toChatId with title '${targetChat.title}'")
+                    } else {
+                        // Create a default chat if source doesn't exist
+                        val defaultChat = ChatEntity(
+                            id = toChatId,
+                            title = "Chat $toChatId",
+                            createdAt = System.currentTimeMillis(),
+                            lastMessageTime = System.currentTimeMillis()
+                        )
+                        chatDao.insertChat(defaultChat)
+                        Log.d(TAG, "migrateChatMessages: ✅ Created default target chat $toChatId")
                     }
-                } else if (checkAttempt == 1) {
-                    // No orphaned messages on first check, continue checking
-                    Log.d(TAG, "migrateChatMessages: Check #$checkAttempt found no orphaned messages, will check again")
                 } else {
-                    // No more orphaned messages, can stop checking
-                    Log.d(TAG, "migrateChatMessages: Check #$checkAttempt found no orphaned messages, stopping checks")
-                    break
+                    Log.d(TAG, "migrateChatMessages: ✅ Target chat $toChatId already exists")
                 }
-            }
-            
-            if (messagesToMigrate.isNotEmpty() || totalOrphanedMessages > 0) {
-                val totalMigrated = messagesToMigrate.size + totalOrphanedMessages
-                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of $totalMigrated messages from chat $fromChatId to $toChatId (including $totalOrphanedMessages orphaned)")
                 
-                // CRITICAL VERIFICATION: Ensure messages actually moved before registering
+                // Get all messages from the source chat
+                val messagesToMigrate = messageDao.getMessagesForChatFlow(fromChatId).first()
+                Log.d(TAG, "migrateChatMessages: 📊 Found ${messagesToMigrate.size} messages to migrate from chat $fromChatId")
+                
+                // 🔧 RACE CONDITION FIX: Also check if any messages were already added to the target chat
+                // This can happen if ConnectionStateManager returns the new chat ID while migration is in progress
+                val existingTargetMessages = messageDao.getMessagesForChatFlow(toChatId).first()
+                Log.d(TAG, "migrateChatMessages: 📊 Found ${existingTargetMessages.size} messages already in target chat $toChatId")
+                
+                if (messagesToMigrate.isNotEmpty()) {
+                    Log.d(TAG, "migrateChatMessages: 📋 Messages to migrate: ${messagesToMigrate.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                    
+                    // 🔧 PERFORMANCE FIX: Use batch SQL update instead of individual message updates
+                    // This prevents multiple Flow emissions that cause UI recompositions
+                    try {
+                        Log.d(TAG, "migrateChatMessages: 🚀 BATCH: Migrating ${messagesToMigrate.size} messages from chat $fromChatId to $toChatId in single operation")
+                        val updateCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
+                        Log.d(TAG, "migrateChatMessages: ✅ BATCH: Successfully migrated $updateCount messages in single operation")
+                        
+                        // Log the final state
+                        if (existingTargetMessages.isNotEmpty()) {
+                            Log.d(TAG, "migrateChatMessages: ℹ️ Target chat already had ${existingTargetMessages.size} messages - these are preserved")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "migrateChatMessages: ❌ BATCH: Error in batch migration", e)
+                        throw e // Re-throw to fail the migration
+                    }
+                } else {
+                    Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
+                    return@withLock true
+                }
+                val totalMigrated = messagesToMigrate.size
+                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED migration of $totalMigrated messages from chat $fromChatId to $toChatId")
+                
+                // Ensure messages actually moved
                 val finalSourceMessages = messageDao.getMessagesForChatFlow(fromChatId).first()
                 val finalTargetMessages = messageDao.getMessagesForChatFlow(toChatId).first()
                 
@@ -655,12 +623,7 @@ class WhizRepository @Inject constructor(
                 
                 Log.d(TAG, "migrateChatMessages: ✅ Verification: source has ${finalSourceMessages.size} messages, target has ${finalTargetMessages.size} messages")
                 
-                // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
-                // This tells all parts of the system to use the new chat ID immediately
-                connectionStateManager.registerChatMigration(fromChatId, toChatId)
-                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
-                
-                // Delete the old optimistic chat (now that migration is registered)
+                // Delete the old optimistic chat
                 if (fromChatId < 0) {
                     // Final check for any messages that were added AFTER migration was registered
                     // This should NEVER happen - if it does, we have a bug
@@ -685,25 +648,15 @@ class WhizRepository @Inject constructor(
                 }
                 
                 return@withLock true
-            } else {
-                Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
-                
-                // Even if no messages to migrate, register the migration if both chats exist
-                // This handles the case where chat was created but no messages sent yet
-                connectionStateManager.registerChatMigration(fromChatId, toChatId)
-                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId (no messages to migrate)")
-                
-                return@withLock true
+            } catch (e: Exception) {
+                Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
+                Log.e(TAG, "migrateChatMessages: ❌ Error type: ${e.javaClass.simpleName}")
+                Log.e(TAG, "migrateChatMessages: ❌ Error message: ${e.message}")
+                Log.e(TAG, "migrateChatMessages: ❌ Error cause: ${e.cause}")
+                e.printStackTrace()
+                return@withLock false
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
-            Log.e(TAG, "migrateChatMessages: ❌ Error type: ${e.javaClass.simpleName}")
-            Log.e(TAG, "migrateChatMessages: ❌ Error message: ${e.message}")
-            Log.e(TAG, "migrateChatMessages: ❌ Error cause: ${e.cause}")
-            e.printStackTrace()
-            return@withLock false
         }
-        } // End of lock.withLock
     }
 
     // Auto-save logic - now based on API call

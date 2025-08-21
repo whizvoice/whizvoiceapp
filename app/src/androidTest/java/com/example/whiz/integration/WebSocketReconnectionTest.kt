@@ -398,7 +398,87 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     }
                 }
                 
-                Log.d(TAG, "✅ Test passed: Bot response synced and appeared after reconnection")
+                Log.d(TAG, "✅ Bot response synced and appeared after reconnection")
+                
+                // Step 8: Verify BOTH user messages are still visible after reconnection
+                Log.d(TAG, "🔍 Step 8: Verifying both user messages are still visible after reconnection...")
+                
+                // Check first message is still visible
+                val firstMessageStillVisible = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            "Tell me the history of the major name brand stacking brick",
+                            substring = true,
+                            ignoreCase = false,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 2000L,
+                    description = "first user message after reconnection"
+                )
+                
+                if (!firstMessageStillVisible) {
+                    failWithScreenshot(
+                        "First user message is not visible after reconnection - UI sync issue",
+                        "first_message_missing_after_reconnect"
+                    )
+                }
+                
+                // Check second message is still visible
+                val secondMessageStillVisible = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText(
+                            secondMessage,
+                            substring = false,
+                            ignoreCase = false,
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 2000L,
+                    description = "second user message after reconnection"
+                )
+                
+                if (!secondMessageStillVisible) {
+                    failWithScreenshot(
+                        "Second user message '$secondMessage' is not visible after reconnection - UI sync issue",
+                        "second_message_missing_after_reconnect"
+                    )
+                }
+                
+                Log.d(TAG, "✅ Both user messages are still visible after reconnection")
+                
+                // Get messages from database to verify order
+                val finalMessages = if (chatId != null) {
+                    repository.getMessagesForChat(chatId!!).first()
+                } else {
+                    emptyList()
+                }
+                
+                val userMessages = finalMessages.filter { 
+                    it.type == com.example.whiz.data.local.MessageType.USER 
+                }
+                
+                // Verify the messages are in correct order
+                val firstUserMessage = userMessages.getOrNull(0)
+                val secondUserMessage = userMessages.getOrNull(1)
+                
+                if (firstUserMessage != null && !firstUserMessage.content.contains("stacking brick")) {
+                    failWithScreenshot(
+                        "First user message in database doesn't match expected content: ${firstUserMessage.content.take(50)}",
+                        "wrong_first_message_in_db"
+                    )
+                }
+                
+                if (secondUserMessage != null && secondUserMessage.content != secondMessage) {
+                    failWithScreenshot(
+                        "Second user message in database doesn't match expected: '${secondUserMessage.content}' != '$secondMessage'",
+                        "wrong_second_message_in_db"
+                    )
+                }
+                
+                Log.d(TAG, "✅ Test passed: Both user messages persisted correctly and bot response synced after reconnection")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Test failed with error: ${e.message}", e)
