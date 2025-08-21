@@ -655,22 +655,22 @@ class WhizRepository @Inject constructor(
                 
                 Log.d(TAG, "migrateChatMessages: ✅ Verification: source has ${finalSourceMessages.size} messages, target has ${finalTargetMessages.size} messages")
                 
-                // Delete the old optimistic chat AFTER verification (to avoid race conditions with messages being added)
-                // This gives more time for any in-flight message additions to complete
+                // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
+                // This tells all parts of the system to use the new chat ID immediately
+                connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
+                
+                // Delete the old optimistic chat (now that migration is registered)
                 if (fromChatId < 0) {
-                    // Add a small delay before deletion to allow any final in-flight operations to complete
-                    delay(200L)
-                    
-                    // Final check for any last-minute messages before deletion
+                    // Final check for any messages that were added AFTER migration was registered
+                    // This should NEVER happen - if it does, we have a bug
                     val lastCheckMessages = messageDao.getMessagesForChatFlow(fromChatId).first()
                     if (lastCheckMessages.isNotEmpty()) {
-                        Log.w(TAG, "migrateChatMessages: 🚨 Found ${lastCheckMessages.size} messages added just before deletion!")
-                        try {
-                            val lastMinuteCount = messageDao.migrateChatIdForMessages(fromChatId, toChatId)
-                            Log.d(TAG, "migrateChatMessages: ✅ Migrated $lastMinuteCount last-minute messages")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "migrateChatMessages: ❌ Error migrating last-minute messages", e)
-                        }
+                        Log.e(TAG, "migrateChatMessages: ❌ BUG DETECTED: ${lastCheckMessages.size} messages were added to chat $fromChatId AFTER migration was registered!")
+                        Log.e(TAG, "migrateChatMessages: Messages added after migration: ${lastCheckMessages.map { "ID:${it.id} Type:${it.type} Content:'${it.content.take(30)}...'" }}")
+                        
+                        // This is a critical error - the system should not be adding messages to a migrated chat
+                        throw IllegalStateException("Messages were added to optimistic chat $fromChatId after migration to $toChatId was registered. This indicates a race condition bug.")
                     }
                     
                     try {
@@ -683,11 +683,6 @@ class WhizRepository @Inject constructor(
                 } else if (fromChatId == -1L) {
                     Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
                 }
-                
-                // CRITICAL FIX: Register migration AFTER successful message migration
-                // This ensures registration only happens when messages are actually moved
-                connectionStateManager.registerChatMigration(fromChatId, toChatId)
-                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId after successful message migration")
                 
                 return@withLock true
             } else {

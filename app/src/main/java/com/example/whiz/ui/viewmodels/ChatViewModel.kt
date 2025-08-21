@@ -1490,6 +1490,9 @@ class ChatViewModel @Inject constructor(
         val trimmedText = text.trim()
         if (trimmedText.isBlank()) return
         
+        // 🔧 CRITICAL LOGGING: Log what we're about to send
+        Log.d(TAG, "📤 SEND_USER_INPUT: Starting send for content='$trimmedText'")
+        
         // Always send messages - server will handle interrupts automatically based on its state
 
         viewModelScope.launch {
@@ -1630,6 +1633,8 @@ class ChatViewModel @Inject constructor(
                 
                 // Pass the chatId directly - WhizServerRepository will handle whether to send as
                 // conversation_id (positive) or client_conversation_id (negative)
+                // 🔧 CRITICAL LOGGING: Log what we're sending to the server
+                Log.d(TAG, "📤 CALLING whizServerRepository.sendMessage: requestId=$nonNullRequestId, content='$trimmedText', chatId=$chatIdForWebSocket")
                 val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
                 
                 if (!success) {

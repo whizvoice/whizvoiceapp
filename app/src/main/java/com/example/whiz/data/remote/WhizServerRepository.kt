@@ -686,6 +686,9 @@ class WhizServerRepository @Inject constructor(
     }
 
     fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null): Boolean {
+        // 🔧 CRITICAL LOGGING: Log what we're about to send
+        Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...'")
+        
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !persistentDisconnectForTest) {
@@ -713,12 +716,16 @@ class WhizServerRepository @Inject constructor(
                 }
                 val jsonMessage = messageJson.toString()
                 
+                // 🔧 CRITICAL LOGGING: Log the actual JSON being sent
+                Log.d(TAG, "📤 WEBSOCKET SEND: Attempting to send message with requestId=$requestId")
+                
                 // Try to send the message
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
+                    Log.d(TAG, "✅ WEBSOCKET SEND SUCCESS: requestId=$requestId, content='${message.take(50)}...'")
                     true
                 } else {
-                    Log.w(TAG, "WebSocket send failed - queueing message for retry")
+                    Log.w(TAG, "❌ WEBSOCKET SEND FAILED: requestId=$requestId - queueing message for retry")
                     queueMessageForRetry(message, requestId, chatId, clientMessageId)
                     false
                 }
@@ -749,7 +756,8 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null) {
-        Log.d(TAG, "Queueing message for retry: $message with requestId: $requestId for chatId: $chatId")
+        // 🔧 CRITICAL LOGGING: Log complete message content being queued
+        Log.d(TAG, "📥 QUEUEING MESSAGE FOR RETRY: requestId=$requestId, chatId=$chatId, content='$message'")
         val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId)
         
         // Remove any existing message with the same requestId to avoid duplicates
@@ -830,7 +838,8 @@ class WhizServerRepository @Inject constructor(
                 
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
-                    Log.d(TAG, "Successfully retried message: ${pendingMessage.message}")
+                    // 🔧 CRITICAL LOGGING: Log successful retry with full content
+                    Log.d(TAG, "✅ RETRY SUCCESS: requestId=${pendingMessage.requestId}, content='${pendingMessage.message}'")
                 } else {
                     val newRetryCount = pendingMessage.retryCount + 1
                     if (newRetryCount < maxMessageRetries) {
