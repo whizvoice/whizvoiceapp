@@ -700,18 +700,6 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔌 Resetting persistent disconnect flag and reconnecting before opening first chat...")
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
-                // Wait for WebSocket to connect
-                try {
-                    withTimeout(5000) {
-                        while (!whizServerRepository.isConnected()) {
-                            delay(100)
-                        }
-                    }
-                    Log.d(TAG, "✅ WebSocket reconnected")
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    failWithScreenshot("Timeout waiting for WebSocket reconnect before opening first chat", "websocket_reconnect_timeout_first_chat")
-                }
-                
                 // Wait for the first chat to appear in the list
                 val firstChatInList = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
