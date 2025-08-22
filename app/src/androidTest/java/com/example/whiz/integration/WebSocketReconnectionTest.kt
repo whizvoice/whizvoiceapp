@@ -962,7 +962,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to navigate to new chat", "new_chat_navigation_failed_first")
                 }
                 
-                val firstMessage = "Test ${System.currentTimeMillis()}: Pls always respond with 1 word. What is the capital of France?"
+                val firstMessage = "Test ${System.currentTimeMillis()}: Pls respond with 1 word for the following test questions. What is the capital of France?"
                 val sent1 = ComposeTestHelper.sendMessage(composeTestRule, firstMessage)
                 if (!sent1) {
                     failWithScreenshot("Failed to send first message", "first_message_send_failed")
