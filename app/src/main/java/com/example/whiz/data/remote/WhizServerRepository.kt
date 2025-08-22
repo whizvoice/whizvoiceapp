@@ -876,29 +876,6 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun cancelRequest(requestId: String): Boolean {
-        return try {
-            if (webSocket != null) {
-                val cancelRequestId = java.util.UUID.randomUUID().toString()
-                val cancelJson = org.json.JSONObject().apply {
-                    put("type", "cancel")
-                    put("cancel_request_id", requestId)
-                    put("request_id", cancelRequestId)
-                }
-                val jsonMessage = cancelJson.toString()
-                Log.d(TAG, "Sending cancel request: $jsonMessage")
-                webSocket!!.send(jsonMessage)
-                true
-            } else {
-                Log.w(TAG, "Cannot send cancel request, WebSocket is not connected.")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending cancel request", e)
-            false
-        }
-    }
-
     fun disconnect(setPersistentDisconnect: Boolean = false) {
         try {
             Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect, currentState=$connectionState, generation=$currentGeneration")
