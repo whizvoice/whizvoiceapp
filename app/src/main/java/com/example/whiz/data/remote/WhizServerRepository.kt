@@ -899,12 +899,6 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendInterruptMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null): Boolean {
-        // This is the same as sendMessage since the backend automatically handles interrupts
-        // when a new message arrives while there are active requests
-        return sendMessage(message, requestId, chatId, clientMessageId)
-    }
-
     fun disconnect(setPersistentDisconnect: Boolean = false) {
         try {
             Log.d(TAG, "Disconnecting WebSocket manually. setPersistentDisconnect=$setPersistentDisconnect, currentState=$connectionState, generation=$currentGeneration")
