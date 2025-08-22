@@ -1030,6 +1030,13 @@ class WhizRepository @Inject constructor(
                         // Log when we have matches but skip due to type mismatch (for debugging)
                         val typesFound = localMatches.map { it.type }.distinct().joinToString(", ")
                         Log.d(TAG, "deduplicateMessages: Skipping removal - type mismatch: local types [$typesFound] vs server ${serverMessage.type} (requestId: ${serverMessage.requestId})")
+                        // CRITICAL FIX: Still need to add the ASSISTANT message when there's a type mismatch
+                        // This handles the case where USER message exists but ASSISTANT response needs to be added
+                        if (serverMessage.type == MessageType.ASSISTANT) {
+                            Log.d(TAG, "deduplicateMessages: Adding ASSISTANT message with requestId ${serverMessage.requestId} (no local ASSISTANT found)")
+                            serverMessagesToInsert.add(serverMessage)
+                            foundDuplicate = true // Mark as handled so we don't try to insert again
+                        }
                     }
                 }
                 

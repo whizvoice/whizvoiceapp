@@ -116,7 +116,7 @@ fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
 // Convert API MessageResponse to local MessageEntity  
 fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
     return MessageEntity(
-        id = this.id,
+        id = 0,  // Let Room auto-generate the ID - don't use server ID!
         chatId = this.conversation_id,
         content = this.content,
         type = parseMessageType(this.message_type),
