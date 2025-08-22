@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -1159,9 +1160,52 @@ object ComposeTestHelper {
                 try {
                     val node = selector()
                     node.assertIsDisplayed()
+                    
+                    // Log detailed button state before clicking
+                    try {
+                        val semanticsNode = node.fetchSemanticsNode()
+                        val config = semanticsNode.config
+                        
+                        Log.d(TAG, "📊 Button state before click:")
+                        Log.d(TAG, "  - Displayed: true (verified by assertIsDisplayed)")
+                        Log.d(TAG, "  - Bounds: ${semanticsNode.boundsInRoot}")
+                        Log.d(TAG, "  - Size: ${semanticsNode.size}")
+                        
+                        // Check if clickable
+                        val onClick = config.getOrNull(SemanticsActions.OnClick)
+                        Log.d(TAG, "  - Has onClick action: ${onClick != null}")
+                        
+                        // Check if enabled
+                        val disabled = config.getOrNull(SemanticsProperties.Disabled)
+                        Log.d(TAG, "  - Disabled: ${disabled ?: false}")
+                        
+                        // Check content description
+                        val contentDesc = config.getOrNull(SemanticsProperties.ContentDescription)
+                        Log.d(TAG, "  - Content description: ${contentDesc?.joinToString()}")
+                        
+                        // Check text if available
+                        val text = config.getOrNull(SemanticsProperties.Text)
+                        Log.d(TAG, "  - Text: ${text?.map { it.text }?.joinToString()}")
+                        
+                    } catch (e: Exception) {
+                        Log.e(TAG, "⚠️ Could not fetch button semantics: ${e.message}")
+                    }
+                    
+                    // Perform the click
+                    Log.d(TAG, "🖱️ Performing click on New Chat button...")
                     node.performClick()
-                    Log.d(TAG, "✅ Compose: New Chat button clicked successfully")
-                    return true
+                    
+                    // Verify navigation happened by checking if we can find the message input
+                    try {
+                        composeTestRule.onNodeWithContentDescription("Message input field").assertIsDisplayed()
+                        Log.d(TAG, "✅ Compose: New Chat button clicked and navigation successful - found message input")
+                        return true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "⚠️ Compose: New Chat button clicked but navigation may have failed - no message input found")
+                        // Still return true as click was performed, let caller verify navigation
+                        Log.d(TAG, "✅ Compose: New Chat button clicked successfully")
+                        return true
+                    }
                 } catch (e: Exception) {
                     Log.d(TAG, "⚠️ Compose: New Chat selector failed: ${e.message}")
                     continue

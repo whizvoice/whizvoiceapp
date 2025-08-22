@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onRoot
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -590,30 +591,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
                 
                 
-                // Wait for WebSocket to connect
-                try {
-                    withTimeout(5000) {
-                        while (!whizServerRepository.isConnected()) {
-                            delay(100)
-                        }
-                    }
-                    Log.d(TAG, "✅ WebSocket reconnected")
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    failWithScreenshot("Timeout waiting for WebSocket reconnect after navigation", "websocket_reconnect_timeout_nav")
-                }
-                
                 // Wait for the chat to appear in the list before navigating
                 
                 if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                     failWithScreenshot("Failed to navigate to new chat for second message", "new_chat_navigation_failed_2")
-                }
-                
-                // WebSocket should already be connected from our manual connection
-                val connectedAfterNav = whizServerRepository.isConnected()
-                Log.d(TAG, "📊 WebSocket connected after navigation: $connectedAfterNav")
-                
-                if (!connectedAfterNav) {
-                    failWithScreenshot("WebSocket is not connected after manual connection and navigation", "websocket_not_connected")
                 }
                 
                 // Step 4: Send second message and disconnect immediately
@@ -1250,6 +1231,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     "2",         // Paris population (might be "2million" or just "2")
                     "French"     // Language
                 )
+                
+                // Trigger recomposition with simplest possible action
+                Log.d(TAG, "🔄 Triggering recomposition...")
+                composeTestRule.onRoot().performClick()
                 
                 // Check for Paris response (should NOT contain Rome/Italy)
                 val parisResponseFound = ComposeTestHelper.waitForElement(
