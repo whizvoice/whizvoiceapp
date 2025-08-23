@@ -53,8 +53,8 @@ data class PendingMessage(
     val requestId: String,
     val chatId: Long,
     val clientMessageId: String? = null,
-    val retryCount: Int = 0,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long? = null,
+    val retryCount: Int = 0
 )
 
 // Debug event tracking
@@ -685,9 +685,9 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null): Boolean {
+    fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
-        Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...'")
+        Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
         
         return try {
             val currentSocket = webSocket
@@ -695,7 +695,7 @@ class WhizServerRepository @Inject constructor(
                 // 🔧 ENHANCED: Check connection state before sending
                 if (connectionState != ConnectionState.CONNECTED) {
                     Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing message for retry")
-                    queueMessageForRetry(message, requestId, chatId, clientMessageId)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
                     return false
                 }
                 
@@ -713,6 +713,13 @@ class WhizServerRepository @Inject constructor(
                     }
                     
                     clientMessageId?.let { put("client_message_id", it) }
+                    
+                    // Include timestamp if provided
+                    timestamp?.let { 
+                        // Convert milliseconds to ISO format string for server
+                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                        put("timestamp", isoTimestamp)
+                    }
                 }
                 val jsonMessage = messageJson.toString()
                 
@@ -726,12 +733,12 @@ class WhizServerRepository @Inject constructor(
                     true
                 } else {
                     Log.w(TAG, "❌ WEBSOCKET SEND FAILED: requestId=$requestId - queueing message for retry")
-                    queueMessageForRetry(message, requestId, chatId, clientMessageId)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
                     false
                 }
             } else {
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
-                queueMessageForRetry(message, requestId, chatId, clientMessageId)
+                queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
                 
                 // Attempt to reconnect if we're not in test disconnect mode
                 // and if we don't already have a retry job running
@@ -755,10 +762,10 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null) {
+    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null) {
         // 🔧 CRITICAL LOGGING: Log complete message content being queued
-        Log.d(TAG, "📥 QUEUEING MESSAGE FOR RETRY: requestId=$requestId, chatId=$chatId, content='$message'")
-        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId)
+        Log.d(TAG, "📥 QUEUEING MESSAGE FOR RETRY: requestId=$requestId, chatId=$chatId, content='$message', timestamp=$timestamp")
+        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId, timestamp)
         
         // Remove any existing message with the same requestId to avoid duplicates
         messageRetryQueue.removeAll { it.requestId == requestId }
@@ -833,6 +840,13 @@ class WhizServerRepository @Inject constructor(
                     }
                     
                     pendingMessage.clientMessageId?.let { put("client_message_id", it) }
+                    
+                    // Include timestamp if provided
+                    pendingMessage.timestamp?.let { 
+                        // Convert milliseconds to ISO format string for server
+                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                        put("timestamp", isoTimestamp)
+                    }
                 }
                 val jsonMessage = messageJson.toString()
                 

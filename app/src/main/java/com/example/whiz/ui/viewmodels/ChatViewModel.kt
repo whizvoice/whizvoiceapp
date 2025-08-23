@@ -1504,6 +1504,9 @@ class ChatViewModel @Inject constructor(
             
             // 🔧 NEW: Generate request ID early for optimistic UI pairing
             val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
+            
+            // Capture timestamp for message consistency between local and server
+            val messageTimestamp = System.currentTimeMillis()
 
             // 🔧 FIXED: Use existing chat ID for all messages in a conversation
             // Only create a new chat if we don't have any chat yet (first message)
@@ -1634,8 +1637,8 @@ class ChatViewModel @Inject constructor(
                 // Pass the chatId directly - WhizServerRepository will handle whether to send as
                 // conversation_id (positive) or client_conversation_id (negative)
                 // 🔧 CRITICAL LOGGING: Log what we're sending to the server
-                Log.d(TAG, "📤 CALLING whizServerRepository.sendMessage: requestId=$nonNullRequestId, content='$trimmedText', chatId=$chatIdForWebSocket")
-                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
+                Log.d(TAG, "📤 CALLING whizServerRepository.sendMessage: requestId=$nonNullRequestId, content='$trimmedText', chatId=$chatIdForWebSocket, timestamp=$messageTimestamp")
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket, timestamp = messageTimestamp)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
@@ -2082,7 +2085,8 @@ class ChatViewModel @Inject constructor(
                 val success = whizServerRepository.sendMessage(
                     message.content, 
                     requestId, 
-                    chatId
+                    chatId,
+                    timestamp = message.timestamp
                 )
                 
                 if (!success) {
