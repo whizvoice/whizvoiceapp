@@ -64,6 +64,65 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
         private const val TAG = "WebSocketReconnectionTest"
         private const val TEST_TIMEOUT = 30000L // 30 seconds for reconnection test
     }
+    
+    /**
+     * Enhanced failure method that dumps database contents before failing
+     * This helps debug test failures on GitHub Actions
+     */
+    private suspend fun failWithDatabaseDump(message: String, reason: String, chatId: Long? = null) {
+        Log.e(TAG, "❌ TEST FAILURE: $message")
+        Log.e(TAG, "📊 Dumping database contents for debugging...")
+        
+        try {
+            // If a specific chat ID is provided, dump messages for that chat
+            if (chatId != null) {
+                Log.e(TAG, "📊 Messages for chat $chatId:")
+                val messages = repository.getMessagesForChat(chatId).first()
+                messages.forEachIndexed { index, msg ->
+                    Log.e(TAG, "  Message[$index] ID=${msg.id}, Type=${msg.type}, Timestamp=${msg.timestamp}, Content='${msg.content.take(50)}...'")
+                }
+                Log.e(TAG, "📊 Total messages in chat $chatId: ${messages.size}")
+                
+                // Also check if messages are ordered correctly
+                val sortedByTimestamp = messages.sortedBy { it.timestamp }
+                if (messages != sortedByTimestamp) {
+                    Log.e(TAG, "⚠️ MESSAGES ARE NOT IN TIMESTAMP ORDER!")
+                    Log.e(TAG, "📊 Expected order by timestamp:")
+                    sortedByTimestamp.forEachIndexed { index, msg ->
+                        Log.e(TAG, "  Expected[$index] ID=${msg.id}, Timestamp=${msg.timestamp}, Content='${msg.content.take(50)}...'")
+                    }
+                }
+            }
+            
+            // Dump all chats
+            Log.e(TAG, "📊 All chats in database:")
+            val allChats = repository.getChatDao().getAllChatsFlow().first()
+            allChats.forEach { chat ->
+                Log.e(TAG, "  Chat ID=${chat.id}, Title='${chat.title}', LastMessageTime=${chat.lastMessageTime}")
+            }
+            
+            // Dump all messages (limited to avoid huge logs)
+            Log.e(TAG, "📊 All messages in database (last 20):")
+            // Get recent messages from all chats for debugging
+            val recentChats = allChats.takeLast(3)
+            recentChats.forEach { chat ->
+                try {
+                    val chatMessages = repository.getMessagesForChat(chat.id).first().takeLast(5)
+                    chatMessages.forEach { msg ->
+                        Log.e(TAG, "  Chat ${chat.id} Msg: ID=${msg.id}, Type=${msg.type}, Timestamp=${msg.timestamp}, Content='${msg.content.take(30)}...'")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "  Could not get messages for chat ${chat.id}: ${e.message}")
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to dump database: ${e.message}")
+        }
+        
+        // Call the original failWithScreenshot
+        failWithScreenshot(message, reason)
+    }
 
     @Before
     override fun setUpAuthentication() {
@@ -466,9 +525,10 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val secondUserMessage = userMessages.getOrNull(1)
                 
                 if (firstUserMessage != null && !firstUserMessage.content.contains("stacking brick")) {
-                    failWithScreenshot(
+                    failWithDatabaseDump(
                         "First user message in database doesn't match expected content: ${firstUserMessage.content.take(50)}",
-                        "wrong_first_message_in_db"
+                        "wrong_first_message_in_db",
+                        chatId = chatId
                     )
                 }
                 
@@ -1240,7 +1300,24 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 )
                 
                 if (!parisResponseFound) {
-                    failWithScreenshot("Bot response 'Paris' not found in first chat", "first_chat_no_paris_response")
+                    // Get the actual chat ID for database dump
+                    val actualChatId = try {
+                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val firstChat = localChats.find { chat -> 
+                            chat.title?.contains("capital of France") == true ||
+                            chat.title?.contains("Test message") == true
+                        }
+                        firstChat?.id ?: chatId1
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Could not determine chat ID for database dump: ${e.message}")
+                        chatId1
+                    }
+                    
+                    failWithDatabaseDump(
+                        "Bot response 'Paris' not found in first chat",
+                        "first_chat_no_paris_response",
+                        chatId = actualChatId
+                    )
                 }
                 
                 // Check for French response
@@ -1406,7 +1483,24 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 )
                 
                 if (!romeResponseFound) {
-                    failWithScreenshot("Bot response 'Rome' not found in second chat", "second_chat_no_rome_response")
+                    // Get the actual chat ID for database dump
+                    val actualChatId = try {
+                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val secondChat = localChats.find { chat -> 
+                            chat.title?.contains("capital of Italy") == true ||
+                            chat.title?.contains("following test questions") == true
+                        }
+                        secondChat?.id ?: chatId2
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Could not determine chat ID for database dump: ${e.message}")
+                        chatId2
+                    }
+                    
+                    failWithDatabaseDump(
+                        "Bot response 'Rome' not found in second chat",
+                        "second_chat_no_rome_response",
+                        chatId = actualChatId
+                    )
                 }
                 
                 // Check for Pizza response
