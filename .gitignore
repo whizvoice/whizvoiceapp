@@ -16,3 +16,4 @@ test_summary.log
 test_logcat_output.log
 test_gradle_output.log
 test_screenshots/
+testing
