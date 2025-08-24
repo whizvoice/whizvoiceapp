@@ -331,7 +331,7 @@ class WhizRepository @Inject constructor(
             // Check if this chat has been migrated to a server-backed chat
             val actualChatId = getActualChatId(chatId)
             
-            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $actualChatId (original: $chatId, migrated: ${actualChatId != chatId}) with requestId: $requestId")
+            Log.d(TAG, "addUserMessageOptimistic: adding optimistic user message to chat $actualChatId (original: $chatId, migrated: ${actualChatId != chatId}) with requestId: $requestId, timestamp: $timestamp")
             
             // 🔧 FIXED: Ensure chat exists locally before adding optimistic message
             // This prevents foreign key constraint failures for server-only chats
