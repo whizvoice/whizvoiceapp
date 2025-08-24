@@ -1519,8 +1519,8 @@ class ChatViewModel @Inject constructor(
                 // Don't update _chatId yet to avoid race condition
                 currentChatId = tempChatId
                 
-                // Add the message first
-                val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId)
+                // Add the message first with the captured timestamp
+                val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId, messageTimestamp)
                 
                 // Now update the chat ID - the message is already in the database
                 _chatId.value = tempChatId
@@ -1546,7 +1546,7 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // Always use optimistic UI since configUseRemoteAgent is always true
-                val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
+                val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId, messageTimestamp)
                 
                 // Ensure WebSocket is connected to the correct conversation
                 // This handles the case where we're switching between existing chats

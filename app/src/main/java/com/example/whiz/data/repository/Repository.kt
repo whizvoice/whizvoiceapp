@@ -324,8 +324,9 @@ class WhizRepository @Inject constructor(
      * Add user message for optimistic UI - only stores locally, doesn't make API call.
      * Used when we want immediate UI feedback before server processes the message.
      * The actual server message will be received via WebSocket and deduplicated.
+     * @param timestamp Optional timestamp in milliseconds. If not provided, uses current time.
      */
-    suspend fun addUserMessageOptimistic(chatId: Long, content: String, requestId: String? = null): Long {
+    suspend fun addUserMessageOptimistic(chatId: Long, content: String, requestId: String? = null, timestamp: Long? = null): Long {
         return try {
             // Check if this chat has been migrated to a server-backed chat
             val actualChatId = getActualChatId(chatId)
@@ -368,7 +369,7 @@ class WhizRepository @Inject constructor(
                 chatId = actualChatId,
                 content = content,
                 type = MessageType.USER,
-                timestamp = System.currentTimeMillis(),
+                timestamp = timestamp ?: System.currentTimeMillis(), // Use provided timestamp or current time
                 requestId = requestId // 🔧 NEW: Store requestId for pairing with response
             )
             
