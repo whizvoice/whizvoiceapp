@@ -583,8 +583,27 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ Sent first message: $message1")
                 
-                // Disconnect WebSocket immediately
-                Log.d(TAG, "🔌 Disconnecting WebSocket immediately after first message...")
+                // Wait for retry queue to be empty before disconnecting (up to 3 seconds)
+                Log.d(TAG, "⏳ Waiting for retry queue to empty before disconnecting...")
+                val startTime = System.currentTimeMillis()
+                val timeout = 3000L // 3 seconds
+                var retryQueueEmpty = false
+                
+                while (System.currentTimeMillis() - startTime < timeout) {
+                    if (whizServerRepository.isRetryQueueEmpty()) {
+                        retryQueueEmpty = true
+                        Log.d(TAG, "✅ Retry queue is empty after ${System.currentTimeMillis() - startTime}ms")
+                        break
+                    }
+                    delay(100) // Wait 100ms before checking again
+                }
+                
+                if (!retryQueueEmpty) {
+                    Log.w(TAG, "⚠️ Retry queue not empty after ${timeout}ms, disconnecting anyway")
+                }
+                
+                // Disconnect WebSocket
+                Log.d(TAG, "🔌 Disconnecting WebSocket after first message...")
                 whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect
@@ -665,8 +684,27 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ Sent second message: $message2")
                 
-                // Disconnect WebSocket immediately
-                Log.d(TAG, "🔌 Disconnecting WebSocket immediately after second message...")
+                // Wait for retry queue to be empty before disconnecting (up to 3 seconds)
+                Log.d(TAG, "⏳ Waiting for retry queue to empty before disconnecting second chat...")
+                val startTime2 = System.currentTimeMillis()
+                val timeout2 = 3000L // 3 seconds
+                var retryQueueEmpty2 = false
+                
+                while (System.currentTimeMillis() - startTime2 < timeout2) {
+                    if (whizServerRepository.isRetryQueueEmpty()) {
+                        retryQueueEmpty2 = true
+                        Log.d(TAG, "✅ Retry queue is empty after ${System.currentTimeMillis() - startTime2}ms")
+                        break
+                    }
+                    delay(100) // Wait 100ms before checking again
+                }
+                
+                if (!retryQueueEmpty2) {
+                    Log.w(TAG, "⚠️ Retry queue not empty after ${timeout2}ms, disconnecting anyway")
+                }
+                
+                // Disconnect WebSocket
+                Log.d(TAG, "🔌 Disconnecting WebSocket after second message...")
                 whizServerRepository.disconnect(setPersistentDisconnect = true)
                 
                 // Wait for disconnect

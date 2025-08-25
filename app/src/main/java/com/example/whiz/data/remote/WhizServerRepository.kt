@@ -216,6 +216,13 @@ class WhizServerRepository @Inject constructor(
     }
     
     /**
+     * Returns true if the retry queue is empty, false otherwise.
+     */
+    fun isRetryQueueEmpty(): Boolean {
+        return messageRetryQueue.isEmpty()
+    }
+    
+    /**
      * Extract the conversation ID from the current WebSocket connection's URL
      * Checks for both conversation_id (positive) and client_conversation_id (negative) parameters
      */
