@@ -1221,9 +1221,11 @@ class ChatViewModel @Inject constructor(
                 }
 
                 // Refresh messages to ensure we have latest data
-                if (_chatId.value > 0) {
+                // Fetch for both real chats (>0) and optimistic chats (<-1) that might have been migrated
+                // Skip only for new chat placeholder (-1) and uninitialized (0)
+                if (_chatId.value != 0L && _chatId.value != -1L) {
                     try {
-                        Log.d(TAG, "loadChat: Performing sync for existing chat ${_chatId.value}")
+                        Log.d(TAG, "loadChat: Performing sync for chat ${_chatId.value}")
                         // Use existing deduplicated sync method to get messages from server
                         val serverMessages = repository.fetchMessagesWithDeduplication(_chatId.value)
                         Log.d(TAG, "loadChat: Retrieved ${serverMessages.size} messages from server for chat ${_chatId.value}")
