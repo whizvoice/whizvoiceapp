@@ -1015,6 +1015,8 @@ class WhizRepository @Inject constructor(
                         if (localMatch.content.trim() == serverMessage.content.trim()) {
                             // Found a local message with same request ID, type, AND content - it's a duplicate
                             Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - REPLACING local ${localMatch.type} message ${localMatch.id} with server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
+                            Log.d(TAG, "deduplicateMessages: TIMESTAMP DEBUG - Local message timestamp: ${localMatch.timestamp}, Server message timestamp: ${serverMessage.timestamp}")
+                            Log.d(TAG, "deduplicateMessages: TIMESTAMP DEBUG - Time difference: ${serverMessage.timestamp - localMatch.timestamp}ms")
                             messagesToRemove.add(localMatch.id)
                             // CRITICAL FIX: Always ensure the server message replaces the local duplicate
                             // This prevents messages from disappearing during sync
@@ -1101,8 +1103,9 @@ class WhizRepository @Inject constructor(
             
             // Store new server messages in database
             for (message in serverMessagesToInsert) {
+                Log.d(TAG, "deduplicateMessages: INSERTING server message with timestamp: ${message.timestamp}, requestId: ${message.requestId}, content: '${message.content.take(50)}'")
                 val insertedId = messageDao.insertMessage(message)
-                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId}")
+                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId} with timestamp ${message.timestamp}")
             }
             
             // 🔧 CRITICAL FIX: Re-insert preserved local messages that might have been lost

@@ -115,12 +115,22 @@ fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
 
 // Convert API MessageResponse to local MessageEntity  
 fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
+    // Log the raw server response for debugging
+    android.util.Log.d("DatabaseEntities", "Converting server message to entity:")
+    android.util.Log.d("DatabaseEntities", "  Server timestamp: '${this.timestamp}'")
+    android.util.Log.d("DatabaseEntities", "  Request ID: '${this.request_id}'")
+    android.util.Log.d("DatabaseEntities", "  Content preview: '${this.content.take(50)}'")
+    android.util.Log.d("DatabaseEntities", "  Message type: '${this.message_type}'")
+    
+    val parsedTimestamp = parseTimestampToMillis(this.timestamp)
+    android.util.Log.d("DatabaseEntities", "  Parsed timestamp: $parsedTimestamp (${java.time.Instant.ofEpochMilli(parsedTimestamp)})")
+    
     return MessageEntity(
         id = 0,  // Let Room auto-generate the ID - don't use server ID!
         chatId = this.conversation_id,
         content = this.content,
         type = parseMessageType(this.message_type),
-        timestamp = parseTimestampToMillis(this.timestamp),
+        timestamp = parsedTimestamp,
         requestId = this.request_id  // 🔧 FIXED: Preserve request_id from server
     )
 }
