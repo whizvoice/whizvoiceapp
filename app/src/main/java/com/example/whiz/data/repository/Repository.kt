@@ -1388,8 +1388,8 @@ class WhizRepository @Inject constructor(
     
     /**
      * Calculate the proper 'since' timestamp for message fetching:
-     * - Use timestamp of the last user message that has a bot response after it
-     * - If none exists, use timestamp of the first user message
+     * - Return timestamp of the most recent (last) user message that has a bot response after it
+     * - If none exists, return timestamp of the first (earliest) user message
      * - Returns null if no messages exist (fetch all)
      */
     private suspend fun calculateMessageSyncTimestamp(chatId: Long): Long? {
@@ -1397,7 +1397,7 @@ class WhizRepository @Inject constructor(
             val messages = messageDao.getMessagesForChatFlow(chatId).first()
             if (messages.isEmpty()) return null
             
-            // Find last user message with a bot response after it
+            // Find the LAST (most recent) user message that has a bot response after it
             var lastUserMessageWithResponse: MessageEntity? = null
             for (i in messages.indices) {
                 val msg = messages[i]
@@ -1405,14 +1405,24 @@ class WhizRepository @Inject constructor(
                     // Check if there's a bot message after this
                     val hasResponseAfter = messages.drop(i + 1).any { it.type == MessageType.ASSISTANT }
                     if (hasResponseAfter) {
+                        // Keep updating to get the LAST one
                         lastUserMessageWithResponse = msg
                     }
                 }
             }
             
-            // Use the last user message with response, or first user message if none
-            val syncMessage = lastUserMessageWithResponse 
-                ?: messages.firstOrNull { it.type == MessageType.USER }
+            // Use the last user message with response, or first user message if none have responses
+            val syncMessage = if (lastUserMessageWithResponse != null) {
+                Log.d(TAG, "Using timestamp of last user message with bot response for sync: ${lastUserMessageWithResponse.timestamp}")
+                lastUserMessageWithResponse
+            } else {
+                // No user messages have responses, use the first user message
+                val firstUserMessage = messages.firstOrNull { it.type == MessageType.USER }
+                if (firstUserMessage != null) {
+                    Log.d(TAG, "No user messages have bot responses, using first user message timestamp: ${firstUserMessage.timestamp}")
+                }
+                firstUserMessage
+            }
             
             return syncMessage?.timestamp
         } catch (e: Exception) {
