@@ -1544,7 +1544,8 @@ class WhizRepository @Inject constructor(
     // Modified getMessagesForChat to support incremental sync
     suspend fun getMessagesForChatIncremental(chatId: Long, forceFullSync: Boolean = false): List<MessageEntity> {
         return try {
-            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("messages", chatId)
+            // Use message-based timestamp calculation for individual chats
+            val lastSync = if (forceFullSync) null else calculateSyncTimestampString(chatId)
             Log.d("Repository", "getMessagesForChatIncremental: chatId=$chatId, lastSync=$lastSync, forceFullSync=$forceFullSync")
             
             val response = if (lastSync != null) {
@@ -1555,8 +1556,7 @@ class WhizRepository @Inject constructor(
             
             Log.d("Repository", "Incremental sync returned ${response.count} messages for chat $chatId (incremental: ${response.is_incremental})")
             
-            // Update sync timestamp
-            updateLastSyncTimestamp("messages", response.server_timestamp, chatId)
+            // Note: No longer updating sync timestamp as we calculate it dynamically from messages
             
             // Return the messages mapped to MessageEntity
             response.messages.map { it.toMessageEntity() }
