@@ -709,8 +709,11 @@ class WhizRepository @Inject constructor(
         // Start a new request and track it
         val deferred = CoroutineScope(Dispatchers.IO).async {
             try {
-                Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId")
-                val response = apiService.getMessagesIncremental(chatId, since = null)
+                // Calculate the proper 'since' timestamp based on existing messages
+                val sinceString = calculateSyncTimestampString(chatId)
+                
+                Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId with since=$sinceString")
+                val response = apiService.getMessagesIncremental(chatId, since = sinceString)
                 val serverMessages = response.messages.map { it.toMessageEntity() }
                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
                 // Debug: Log the conversation IDs of the messages
@@ -1361,22 +1364,80 @@ class WhizRepository @Inject constructor(
         }
     }
 
-    // ================== INCREMENTAL SYNC SUPPORT ==================
+    // ================== SYNC TIMESTAMP MANAGEMENT ==================
     
-    private fun getLastSyncTimestamp(entityType: String, entityId: Long? = null): String? {
-        val key = if (entityId != null) "${entityType}_${entityId}" else entityType
-        return syncPrefs.getString("last_sync_$key", null)
+    /**
+     * Get the last sync timestamp for a given entity type (conversations or messages:chatId)
+     * Used by getAllChatsIncremental for conversation sync
+     */
+    private fun getLastSyncTimestamp(entityType: String): String? {
+        return syncPrefs.getString("last_sync_$entityType", null)
     }
     
-    private fun updateLastSyncTimestamp(entityType: String, timestamp: String, entityId: Long? = null) {
-        val key = if (entityId != null) "${entityType}_${entityId}" else entityType
-        syncPrefs.edit()
-            .putString("last_sync_$key", timestamp)
-            .apply()
-        Log.d("Repository", "Updated sync timestamp for $key: $timestamp")
+    /**
+     * Update the last sync timestamp for a given entity type
+     * Used by getAllChatsIncremental to track conversation sync progress
+     */
+    private fun updateLastSyncTimestamp(entityType: String, timestamp: String?) {
+        if (timestamp != null) {
+            syncPrefs.edit().putString("last_sync_$entityType", timestamp).apply()
+        }
     }
     
-    // Modified getAllChats to support incremental sync
+    // ================== MESSAGE-BASED SYNC SUPPORT ==================
+    
+    /**
+     * Calculate the proper 'since' timestamp for message fetching:
+     * - Use timestamp of the last user message that has a bot response after it
+     * - If none exists, use timestamp of the first user message
+     * - Returns null if no messages exist (fetch all)
+     */
+    private suspend fun calculateMessageSyncTimestamp(chatId: Long): Long? {
+        try {
+            val messages = messageDao.getMessagesForChatFlow(chatId).first()
+            if (messages.isEmpty()) return null
+            
+            // Find last user message with a bot response after it
+            var lastUserMessageWithResponse: MessageEntity? = null
+            for (i in messages.indices) {
+                val msg = messages[i]
+                if (msg.type == MessageType.USER) {
+                    // Check if there's a bot message after this
+                    val hasResponseAfter = messages.drop(i + 1).any { it.type == MessageType.ASSISTANT }
+                    if (hasResponseAfter) {
+                        lastUserMessageWithResponse = msg
+                    }
+                }
+            }
+            
+            // Use the last user message with response, or first user message if none
+            val syncMessage = lastUserMessageWithResponse 
+                ?: messages.firstOrNull { it.type == MessageType.USER }
+            
+            return syncMessage?.timestamp
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calculating message sync timestamp for chat $chatId", e)
+            return null
+        }
+    }
+    
+    /**
+     * Calculate the proper 'since' timestamp string for API calls
+     * Converts the timestamp from calculateMessageSyncTimestamp to ISO-8601 format
+     * Returns null if no timestamp should be used (fetch all messages)
+     */
+    suspend fun calculateSyncTimestampString(chatId: Long): String? {
+        val timestampMillis = calculateMessageSyncTimestamp(chatId)
+        return timestampMillis?.let {
+            try {
+                java.time.Instant.ofEpochMilli(it).toString()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error converting timestamp to ISO-8601 for chat $chatId", e)
+                null
+            }
+        }
+    }
+    
     suspend fun getAllChatsIncremental(
         forceFullSync: Boolean = false,
         useAggressiveSync: Boolean = false
