@@ -156,17 +156,40 @@ fun MessageEntity.toMessageCreate(): ApiService.MessageCreate {
 
 // Helper function to parse ISO timestamp to millis
 private fun parseTimestampToMillis(timestamp: String): Long {
-    return try {
-        // Parse ISO format like "2023-12-15T10:30:00Z" or "2023-12-15T10:30:00.123456+00:00"
-        val instant = Instant.parse(timestamp)
-        instant.toEpochMilli()
-    } catch (e: DateTimeParseException) {
-        // Fallback: try to parse as epoch millis if it's a number
+    // First, try to parse as epoch millis if it's a number
+    if (timestamp.all { it.isDigit() }) {
         try {
-            timestamp.toLong()
+            val millis = timestamp.toLong()
+            android.util.Log.d("DatabaseEntities", "Parsed timestamp '$timestamp' as epoch millis: $millis")
+            return millis
         } catch (e: NumberFormatException) {
-            // If all parsing fails, use current time
-            System.currentTimeMillis()
+            android.util.Log.e("DatabaseEntities", "Failed to parse numeric timestamp '$timestamp': ${e.message}")
         }
+    }
+    
+    // Try to parse as ISO format
+    return try {
+        // Handle both Z and +00:00 timezone formats
+        // Instant.parse handles: "2023-12-15T10:30:00Z", "2023-12-15T10:30:00.123Z"
+        // For +00:00 format, we need to normalize it
+        val normalizedTimestamp = if (timestamp.contains("+00:00")) {
+            android.util.Log.d("DatabaseEntities", "Normalizing timestamp with +00:00 timezone: '$timestamp' -> '${timestamp.replace("+00:00", "Z")}'")
+            timestamp.replace("+00:00", "Z")
+        } else {
+            android.util.Log.d("DatabaseEntities", "Timestamp already in compatible format: '$timestamp'")
+            timestamp
+        }
+        
+        val instant = Instant.parse(normalizedTimestamp)
+        val millis = instant.toEpochMilli()
+        android.util.Log.d("DatabaseEntities", "Successfully parsed timestamp '$timestamp' (normalized: '$normalizedTimestamp') to $millis (${Instant.ofEpochMilli(millis)})")
+        millis
+    } catch (e: DateTimeParseException) {
+        android.util.Log.e("DatabaseEntities", "Failed to parse timestamp '$timestamp' as ISO format: ${e.message}")
+        
+        // Last resort: use current time but log it as a critical error
+        val currentTime = System.currentTimeMillis()
+        android.util.Log.e("DatabaseEntities", "CRITICAL: Failed to parse timestamp '$timestamp' - using current time $currentTime as fallback!")
+        currentTime
     }
 }
