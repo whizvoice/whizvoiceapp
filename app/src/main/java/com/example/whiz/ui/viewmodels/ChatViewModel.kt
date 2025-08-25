@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
 import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.data.ConnectionStateManager
 // SpeechRecognitionService is now accessed via VoiceManager
 import com.example.whiz.services.TTSManager
 
@@ -43,6 +44,7 @@ class ChatViewModel @Inject constructor(
     private val whizServerRepository: WhizServerRepository,
     private val authRepository: AuthRepository, // Add this
     private val userPreferences: UserPreferences,
+    private val connectionStateManager: ConnectionStateManager,
     savedStateHandle: SavedStateHandle,
     private val ttsManager: TTSManager,
     private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
@@ -189,6 +191,9 @@ class ChatViewModel @Inject constructor(
     val speechError = voiceManager.speechError
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
+    
+    // Track when app was last backgrounded to prevent TTS replay of old messages
+    private var lastBackgroundedTime = 0L
 
     // Responses are in progress
     private val _isResponding = MutableStateFlow(false)
@@ -273,11 +278,19 @@ class ChatViewModel @Inject constructor(
 
         // Start observing messages immediately
         if (configUseRemoteAgent) {
-            Log.d(TAG, "Init: Using remote agent. Attempting WebSocket connection.")
-            viewModelScope.launch {
-                whizServerRepository.connect()
+            Log.d(TAG, "Init: Using remote agent. WebSocket will connect when sending first message or loading existing chat.")
+            // Don't connect here - let sendMessage or loadChatWithVoiceMode handle it
+            // This prevents duplicate connections when navigating to existing chats
+        }
+        
+        // Track active conversation in ConnectionStateManager
+        viewModelScope.launch {
+            _chatId.collect { id ->
+                if (id != 0L) { // Only update for valid chat IDs
+                    connectionStateManager.setActiveConversation(id)
+                    Log.d(TAG, "Updated active conversation in ConnectionStateManager: $id")
+                }
             }
-            // Enhanced server message collection with interrupt handling - moved inline above
         }
         
         // Observe voice settings changes and apply them to TTS
@@ -297,6 +310,9 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Chat migration detected: updating chat ID from $optimisticId to $serverId")
                     _chatId.value = serverId
                     // The messages flow will automatically update since it observes _chatId
+                    
+                    // No longer needed - chatId is passed directly to sendMessage
+                    Log.d(TAG, "Chat ID migration complete: $serverId")
                 }
             }
         }
@@ -337,7 +353,7 @@ class ChatViewModel @Inject constructor(
                         
                         // Always sync messages when WebSocket connects to ensure we have the latest
                         val currentChatId = _chatId.value
-                        if (currentChatId != -1L) {
+                        if (currentChatId != -1L && currentChatId != 0L) {
                             Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for chat $currentChatId (reconnect=$isReconnectingAfterDisconnect)")
                             viewModelScope.launch {
                                 try {
@@ -349,6 +365,10 @@ class ChatViewModel @Inject constructor(
                                     // The fetchMessagesWithDeduplication already handles storing messages
                                     // Just trigger UI refresh
                                     repository.refreshMessages()
+                                    
+                                    // Check for orphaned messages that need to be sent
+                                    // This handles messages that were created while offline
+                                    checkAndRetryOrphanedMessages(currentChatId)
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error syncing messages for chat $currentChatId", e)
                                     // Don't show error to user - this is a background sync
@@ -370,6 +390,24 @@ class ChatViewModel @Inject constructor(
                         // Remember which chat was active when we disconnected
                         chatIdWhenDisconnected = _chatId.value
                         Log.d(TAG, "WebSocketEvent.Reconnecting: Saved chatIdWhenDisconnected=$chatIdWhenDisconnected")
+                        
+                        // IMPORTANT: Actually attempt to reconnect with the current chat ID
+                        val currentChatId = _chatId.value
+                        if (currentChatId != -1L && currentChatId != 0L) {
+                            Log.d(TAG, "WebSocketEvent.Reconnecting: Attempting to reconnect with chatId=$currentChatId")
+                            viewModelScope.launch {
+                                try {
+                                    // Don't reset persistentDisconnectForTest flag here - let the test control it
+                                    whizServerRepository.connect(currentChatId)
+                                    Log.d(TAG, "WebSocketEvent.Reconnecting: Reconnection initiated for chatId=$currentChatId")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "WebSocketEvent.Reconnecting: Failed to reconnect", e)
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "WebSocketEvent.Reconnecting: No valid chat ID to reconnect with (chatId=$currentChatId)")
+                        }
+                        
                         // Don't show "Connection lost" message to user - handle reconnection silently
                         // _connectionError.value = "Connection lost. Attempting to reconnect..."
                         _isResponding.value = false
@@ -473,8 +511,12 @@ class ChatViewModel @Inject constructor(
                                 Log.i(TAG, "Token refresh successful after WebSocket AuthError. Attempting to reconnect WebSocket.")
                                 isDisconnectingForAuthError = false
                                 _navigateToLogin.value = false
-                                val conversationId = if (_chatId.value > 0) _chatId.value else null
-                                whizServerRepository.connect(conversationId)
+                                // Reconnect to the same conversation we were in
+                                // Don't reconnect only for the "new chat" state (chatId = -1)
+                                // DO reconnect for existing chats (chatId > 0) and optimistic chats (chatId < -1)
+                                if (_chatId.value != -1L && _chatId.value != 0L) {
+                                    whizServerRepository.connect(_chatId.value)
+                                }
                             } else {
                                 Log.w(TAG, "Token refresh failed after WebSocket AuthError. Navigating to login.")
                                 _navigateToLogin.value = true 
@@ -555,6 +597,40 @@ class ChatViewModel @Inject constructor(
                             // Don't try to re-parse the response text as JSON since it's just the response content
                             effectiveConversationId = event.conversationId
                             
+                            // 🔧 CRITICAL FIX: Immediately update conversation ID when we receive a real ID for the CURRENT chat
+                            // This ensures reconnections use the correct ID even if they happen during migration
+                            val currentChatId = _chatId.value
+                            if (effectiveConversationId != null && effectiveConversationId > 0 && currentChatId < 0) {
+                                // We have an optimistic ID for the current chat and received a real ID
+                                // Check if this message is actually for our current chat (might be a broadcast from another session)
+                                val isForCurrentChat = event.clientConversationId == currentChatId || 
+                                                       event.requestId in pendingRequests
+                                
+                                if (isForCurrentChat) {
+                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Received real conversation ID $effectiveConversationId for current optimistic chat $currentChatId")
+                                    
+                                    // Migration will be registered when migrateChatMessages is called
+                                    // No need to register here
+                                    
+                                    // Update pendingRequests to use the new chat ID
+                                    val requestsToUpdate = pendingRequests.filter { it.value == currentChatId }
+                                    requestsToUpdate.forEach { (requestId, _) ->
+                                        pendingRequests[requestId] = effectiveConversationId
+                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $currentChatId to $effectiveConversationId")
+                                    }
+                                    
+                                    // Update the chat ID immediately so reconnections use the correct ID
+                                    _chatId.value = effectiveConversationId
+                                    
+                                    // Update ConnectionStateManager with the real conversation ID
+                                    connectionStateManager.setActiveConversation(effectiveConversationId)
+                                    
+                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Updated chat ID from $currentChatId to $effectiveConversationId BEFORE message migration")
+                                    
+                                    // Message migration will happen later in the flow if needed
+                                }
+                            }
+                            
                             // Only attempt JSON parsing for error handling if the text looks like JSON
                             try {
                                 if (event.text.trimStart().startsWith("{")) {
@@ -629,6 +705,8 @@ class ChatViewModel @Inject constructor(
                         if (originalChatId == -1L && effectiveConversationId != null) {
                             // Update local chat ID to match server-assigned ID
                             _chatId.value = effectiveConversationId
+                            // Update WhizServerRepository so reconnections use the correct ID
+                            // No longer needed - chatId is passed directly to sendMessage
                             // Updated local chat ID to server-assigned conversation ID
                             effectiveConversationId
                         } else if (effectiveConversationId != null && originalChatId != effectiveConversationId) {
@@ -667,15 +745,33 @@ class ChatViewModel @Inject constructor(
                                         Log.d(TAG, "🔧 CHAT_ID_UPDATE: currentChatIsOptimistic=$currentChatIsOptimistic, shouldSwitch=$shouldSwitchToMigratedChat, _chatId=${_chatId.value}, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId")
                                         
                                         if (shouldSwitchToMigratedChat) {
-                                            // 🔧 REGISTER MIGRATION: Track optimistic→real chat ID conversion for deduplication
-                                            val oldChatId = _chatId.value
-                                            if (oldChatId < 0 && effectiveConversationId > 0) {
-                                                repository.registerChatMigration(oldChatId, effectiveConversationId)
-                                                Log.d(TAG, "🔄 Registered chat migration: $oldChatId → $effectiveConversationId")
+                                            // Check if migration was already done by immediate migration above
+                                            val alreadyMigrated = _chatId.value == effectiveConversationId
+                                            if (!alreadyMigrated) {
+                                                // 🔧 Migration will be registered when migrateChatMessages is called
+                                                val oldChatId = _chatId.value
+                                                if (oldChatId < 0 && effectiveConversationId > 0) {
+                                                    // No need to register here - migrateChatMessages will handle it
+                                                    Log.d(TAG, "🔄 Chat migration needed: $oldChatId → $effectiveConversationId")
+                                                    
+                                                    // Update pendingRequests to use the new chat ID
+                                                    val requestsToUpdate = pendingRequests.filter { it.value == oldChatId }
+                                                    requestsToUpdate.forEach { (requestId, _) ->
+                                                        pendingRequests[requestId] = effectiveConversationId
+                                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $oldChatId to $effectiveConversationId")
+                                                    }
+                                                }
+                                                
+                                                Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
+                                                _chatId.value = effectiveConversationId
+                                                connectionStateManager.setActiveConversation(effectiveConversationId)
+                                                
+                                                // Update WhizServerRepository so reconnections use the correct ID
+                                                // No longer needed - chatId is passed directly to sendMessage
+                                                Log.d(TAG, "Updated WhizServerRepository conversation ID to $effectiveConversationId for proper reconnection")
+                                            } else {
+                                                Log.d(TAG, "🔧 CHAT_ID_UPDATE: Chat ID already migrated to $effectiveConversationId")
                                             }
-                                            
-                                            Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
-                                            _chatId.value = effectiveConversationId
                                             
                                             // Note: Input text preservation removed - StateFlow maintains input across recomposition
                                             // The old preservation logic could cause issues if user sent message during migration
@@ -692,14 +788,24 @@ class ChatViewModel @Inject constructor(
                                 // 🔧 SCENARIO 2: Regular message processing with request ID pairing
                                 // This is NOT a migration - just updating chat ID for consistency
                                 
-                                // 🔧 REGISTER MIGRATION: Check if this is actually an optimistic→real conversion
+                                // 🔧 Migration will be registered when migrateChatMessages is called
                                 if (originalChatId < 0 && effectiveConversationId > 0) {
-                                    repository.registerChatMigration(originalChatId, effectiveConversationId)
-                                    Log.d(TAG, "🔄 Registered chat migration (scenario 2): $originalChatId → $effectiveConversationId")
+                                    // No need to register here - migrateChatMessages will handle it
+                                    Log.d(TAG, "🔄 Chat migration needed (scenario 2): $originalChatId → $effectiveConversationId")
+                                    
+                                    // Update pendingRequests to use the new chat ID
+                                    val requestsToUpdate = pendingRequests.filter { it.value == originalChatId }
+                                    requestsToUpdate.forEach { (requestId, _) ->
+                                        pendingRequests[requestId] = effectiveConversationId
+                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $originalChatId to $effectiveConversationId")
+                                    }
                                 }
                                 
                                 // No input text preservation needed - this is just ID sync
                                 _chatId.value = effectiveConversationId
+                                connectionStateManager.setActiveConversation(effectiveConversationId)
+                                // Update WhizServerRepository so reconnections use the correct ID
+                                // No longer needed - chatId is passed directly to sendMessage
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
@@ -784,12 +890,22 @@ class ChatViewModel @Inject constructor(
                                     
                                     if (migrationSuccess) {
                                         Log.d(TAG, "✅ Successfully migrated messages from ${event.clientConversationId} to $effectiveConversationId")
-                                        repository.registerChatMigration(event.clientConversationId, effectiveConversationId)
+                                        // Migration already registered by migrateChatMessages
+                                        
+                                        // Update pendingRequests to use the new chat ID
+                                        val requestsToUpdate = pendingRequests.filter { it.value == event.clientConversationId }
+                                        requestsToUpdate.forEach { (requestId, _) ->
+                                            pendingRequests[requestId] = effectiveConversationId
+                                            Log.d(TAG, "📝 Updated pending request $requestId from chat ${event.clientConversationId} to $effectiveConversationId")
+                                        }
                                         
                                         // If the current chat is the optimistic one, update it to the server ID
                                         if (_chatId.value == event.clientConversationId) {
                                             Log.d(TAG, "📝 Updating current chat ID from ${_chatId.value} to $effectiveConversationId")
                                             _chatId.value = effectiveConversationId
+                                            connectionStateManager.setActiveConversation(effectiveConversationId)
+                                            // Update WhizServerRepository so reconnections use the correct ID
+                                            // No longer needed - chatId is passed directly to sendMessage
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -857,6 +973,33 @@ class ChatViewModel @Inject constructor(
                             updateRespondingStateForCurrentChat()
                             
                             try {
+                                // Determine if this message is fresh enough to speak
+                                val currentTime = System.currentTimeMillis()
+                                val timeSinceBackgrounding = if (lastBackgroundedTime > 0) {
+                                    currentTime - lastBackgroundedTime
+                                } else {
+                                    Long.MAX_VALUE // Never backgrounded
+                                }
+                                
+                                val isMessageFresh = if (timeSinceBackgrounding <= 3000L) {
+                                    // We JUST returned from background (within 3 seconds)
+                                    // Only speak messages that arrived AFTER backgrounding
+                                    val isFresh = messageReceivedTime > lastBackgroundedTime
+                                    if (!isFresh) {
+                                        Log.d(TAG, "[LOG] Skipping TTS - message received at $messageReceivedTime before backgrounding at $lastBackgroundedTime")
+                                    }
+                                    isFresh
+                                } else {
+                                    // Either never backgrounded OR backgrounded long ago (>3 seconds)
+                                    // Only speak recent messages (arrived within last 3 seconds)
+                                    val messageAge = currentTime - messageReceivedTime
+                                    val isFresh = messageAge <= 3000L
+                                    if (!isFresh) {
+                                        Log.d(TAG, "[LOG] Skipping TTS - message is ${messageAge}ms old (too old to speak)")
+                                    }
+                                    isFresh
+                                }
+                                
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
                                 val shouldSpeak = _isVoiceResponseEnabled.value && 
@@ -865,7 +1008,8 @@ class ChatViewModel @Inject constructor(
                                                 messageContentForChat.isNotBlank() &&
                                                 isResponseForCurrentChat && 
                                                 targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
-                                                targetChatId == _chatId.value // Double-check current chat
+                                                targetChatId == _chatId.value && // Double-check current chat
+                                                isMessageFresh // Only speak fresh messages
                                 
                                 
                                 if (shouldSpeak) {
@@ -1043,11 +1187,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // Reset states
-                Log.d(TAG, "[LOG] loadChat: Clearing _inputText.value. Previous value: '${_inputText.value}'")
-                Log.d(TAG, "[RACE_DEBUG] loadChat: About to clear input text due to chat load. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
-                _inputText.value = ""
-                Log.d(TAG, "[RACE_DEBUG] loadChat: Input text cleared, now: '${_inputText.value}'")
+                // Don't clear input text - if it's the same chat, preserve what user was typing
+                // If it's a different chat, we have a new ViewModel instance anyway
+                Log.d(TAG, "[LOG] loadChat: Preserving input text. Current value: '${_inputText.value}'")
                 // 🔧 Update responding state based on current chat's pending requests
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
@@ -1098,13 +1240,15 @@ class ChatViewModel @Inject constructor(
                 // Connect to server if needed *after* chat ID is set
                 // BUT respect manual disconnect flag (for testing connection errors)
                 Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
-                if (configUseRemoteAgent && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
+                // Connect for existing chats (chatId > 0) and optimistic chats (chatId < -1)
+                // Don't connect only for the "new chat" placeholder (chatId = -1) or uninitialized state (chatId = 0)
+                // New chats will connect when sending the first message with an optimistic ID
+                if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
-                        Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat...")
+                        Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat for chat ${_chatId.value}...")
                         delay(100) // Small delay to ensure state propagation
-                        // Pass the conversation ID for existing chats, null for new chats (chatId = -1)
-                        val conversationId = if (_chatId.value > 0) _chatId.value else null
-                        whizServerRepository.connect(conversationId)
+                        // Connect with the specific chat ID
+                        whizServerRepository.connect(_chatId.value)
                         Log.d(TAG, "🔌 WebSocket reconnect initiated for chat ${_chatId.value}")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error connecting to WebSocket during loadChat", e)
@@ -1115,7 +1259,8 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 // Check for orphaned messages that need retry
-                if (configUseRemoteAgent && _chatId.value > 0) {
+                // Include optimistic chats (negative IDs) that may have unsent messages
+                if (configUseRemoteAgent && _chatId.value != 0L && _chatId.value != -1L) {
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
@@ -1345,6 +1490,9 @@ class ChatViewModel @Inject constructor(
         val trimmedText = text.trim()
         if (trimmedText.isBlank()) return
         
+        // 🔧 CRITICAL LOGGING: Log what we're about to send
+        Log.d(TAG, "📤 SEND_USER_INPUT: Starting send for content='$trimmedText'")
+        
         // Always send messages - server will handle interrupts automatically based on its state
 
         viewModelScope.launch {
@@ -1356,48 +1504,71 @@ class ChatViewModel @Inject constructor(
             
             // 🔧 NEW: Generate request ID early for optimistic UI pairing
             val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
+            
+            // Capture timestamp for message consistency between local and server
+            val messageTimestamp = System.currentTimeMillis()
 
             // 🔧 FIXED: Use existing chat ID for all messages in a conversation
             // Only create a new chat if we don't have any chat yet (first message)
             // Note: Negative chat IDs are valid optimistic chats, not "no chat"
             if (currentChatId == -1L) {
-                if (configUseRemoteAgent) {
-                    // For remote agent: Create optimistic chat only for the first message
-                    // Let the WebSocket server create it and then sync
-                    val tempTitle = repository.deriveChatTitle(trimmedText)
-                    val tempChatId = repository.createChatOptimistic(tempTitle)
-                    // Don't update _chatId yet to avoid race condition
-                    currentChatId = tempChatId
-                    
-                    // Add the message first
-                    val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId)
-                    
-                    // Now update the chat ID - the message is already in the database
-                    _chatId.value = tempChatId
-                    _chatTitle.value = tempTitle
-                } else {
-                    // For local agent: Create conversation locally as before
-                    val chatTitle = repository.deriveChatTitle(trimmedText)
-                    val newChatId = repository.createChat(chatTitle)
-                    _chatId.value = newChatId
-                    _chatTitle.value = chatTitle
-                    currentChatId = newChatId
-                }
+                // Create optimistic chat only for the first message
+                // Let the WebSocket server create it and then sync
+                val tempTitle = repository.deriveChatTitle(trimmedText)
+                val tempChatId = repository.createChatOptimistic(tempTitle)
+                // Don't update _chatId yet to avoid race condition
+                currentChatId = tempChatId
+                
+                // Add the message first with the captured timestamp
+                val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId, messageTimestamp)
+                
+                // Now update the chat ID - the message is already in the database
+                _chatId.value = tempChatId
+                _chatTitle.value = tempTitle
 
-                // Connect to WebSocket if using remote agent and not connected
-                if(configUseRemoteAgent && !whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
-                    // For new chats, we don't have a conversation_id yet, so pass null
-                    whizServerRepository.connect(null)
+                // Connect to WebSocket with the new optimistic chat ID
+                if(!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
+                    // Pass the optimistic chat ID we just created - the server will handle it as a client_conversation_id
+                    whizServerRepository.connect(tempChatId)
+                } else if (whizServerRepository.isConnected()) {
+                    // Already connected but possibly to a different chat - reconnect with new chat ID
+                    whizServerRepository.connect(tempChatId)
                 }
             } else {
-                // Existing chat - add message normally
-                val actualChatId = _chatId.value
-                val localMessageId = if (configUseRemoteAgent) {
-                    // For remote agent: use optimistic UI (local only, no API call)
-                    repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId)
-                } else {
-                    // For local agent: use regular method (creates via API)
-                    repository.addUserMessage(actualChatId, trimmedText)
+                // Existing chat - check for migration first
+                val originalChatId = _chatId.value
+                val actualChatId = repository.getActualChatId(originalChatId)
+                
+                // If the chat was migrated, update our local reference
+                if (actualChatId != originalChatId) {
+                    Log.d(TAG, "Chat was migrated: using chat ID $actualChatId instead of $originalChatId for new message")
+                    _chatId.value = actualChatId
+                }
+                
+                // Always use optimistic UI since configUseRemoteAgent is always true
+                val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId, messageTimestamp)
+                
+                // Ensure WebSocket is connected to the correct conversation
+                // This handles the case where we're switching between existing chats
+                if (!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
+                    whizServerRepository.connect(actualChatId)
+                    // After connecting, check for unsent messages
+                    viewModelScope.launch {
+                        // Wait for the WebSocket to actually connect
+                        whizServerRepository.webSocketEvents
+                            .first { it is WebSocketEvent.Connected }
+                        checkAndRetryOrphanedMessages(actualChatId)
+                    }
+                } else if (whizServerRepository.isConnected()) {
+                    // Already connected but possibly to a different chat - reconnect with correct chat ID
+                    whizServerRepository.connect(actualChatId)
+                    // After reconnecting, check for unsent messages
+                    viewModelScope.launch {
+                        // Wait for the WebSocket to actually connect
+                        whizServerRepository.webSocketEvents
+                            .first { it is WebSocketEvent.Connected }
+                        checkAndRetryOrphanedMessages(actualChatId)
+                    }
                 }
             }
             
@@ -1422,12 +1593,16 @@ class ChatViewModel @Inject constructor(
                 Log.w(TAG, "[LOG] sendUserInput: Timeout waiting for message to appear, clearing input anyway")
             }
             
-            if (_inputText.value.isNotBlank()) {
+            // Only clear the input if it still contains the message we just sent
+            // This prevents clearing text that the user is currently typing
+            if (_inputText.value.trim() == trimmedText) {
                 Log.d(TAG, "[LOG] sendUserInput: Clearing input field after optimistic message added: '${_inputText.value}'")
-                Log.d(TAG, "[RACE_DEBUG] sendUserInput: About to clear input text after message sent. Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString { it.toString() }}")
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: Current input matches sent message ('${_inputText.value}' == '$trimmedText'), clearing...")
                 _inputText.value = ""
                 Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text cleared to: '${_inputText.value}'")
                 _isInputFromVoice.value = false
+            } else {
+                Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text has changed ('${_inputText.value}' != '$trimmedText'), NOT clearing to avoid race condition")
             }
 
             // Send to agent (local or remote)
@@ -1459,7 +1634,11 @@ class ChatViewModel @Inject constructor(
                 // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
                 updateRespondingStateForCurrentChat()
                 
-                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket)
+                // Pass the chatId directly - WhizServerRepository will handle whether to send as
+                // conversation_id (positive) or client_conversation_id (negative)
+                // 🔧 CRITICAL LOGGING: Log what we're sending to the server
+                Log.d(TAG, "📤 CALLING whizServerRepository.sendMessage: requestId=$nonNullRequestId, content='$trimmedText', chatId=$chatIdForWebSocket, timestamp=$messageTimestamp")
+                val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket, timestamp = messageTimestamp)
                 
                 if (!success) {
                     // Message was queued for retry, don't clear the request tracking yet
@@ -1591,10 +1770,12 @@ class ChatViewModel @Inject constructor(
         ttsManager.shutdown()
         persistenceJob?.cancel()
         
-        // Disconnect WebSocket
+        // Clear active conversation in ConnectionStateManager
+        // BUT DO NOT disconnect WebSocket - it should stay connected for retry logic
         if (configUseRemoteAgent) {
-            Log.d(TAG, "onCleared: Disconnecting WebSocket")
-            whizServerRepository.disconnect()
+            Log.d(TAG, "onCleared: Clearing active conversation (NOT disconnecting WebSocket for retry continuity)")
+            connectionStateManager.clearActiveConversation()
+            // whizServerRepository.disconnect() // REMOVED - let retries continue
         }
         serverMessageCollectorJob?.cancel() // Stop collecting events
         
@@ -1652,6 +1833,10 @@ class ChatViewModel @Inject constructor(
     // Called when app goes to background
     fun onAppBackgrounded() {
         Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
+        
+        // Record when we're backgrounding to prevent TTS replay of old messages
+        lastBackgroundedTime = System.currentTimeMillis()
+        Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
         
         // Stop TTS when app goes to background
         if (ttsManager.isSpeaking.value) {
@@ -1825,6 +2010,7 @@ class ChatViewModel @Inject constructor(
      * Check for orphaned user messages in a chat that need to be retried.
      * An orphaned message is a user message that was sent more than 2 minutes ago
      * but never received an assistant response.
+     * For optimistic chats (negative IDs), retry all user messages immediately.
      */
     private suspend fun checkAndRetryOrphanedMessages(chatId: Long) {
         try {
@@ -1843,16 +2029,22 @@ class ChatViewModel @Inject constructor(
                 .maxByOrNull { it.timestamp }
                 ?.timestamp ?: 0L
             
-            // Current time and 2-minute threshold
+            // Current time and threshold
             val currentTime = System.currentTimeMillis()
-            val retryThresholdMs = 2 * 60 * 1000L // 2 minutes
+            val retryThresholdMs = if (chatId < 0) {
+                // For optimistic chats, retry messages immediately (1 second threshold)
+                1 * 1000L
+            } else {
+                // For server-backed chats, use 2-minute threshold
+                2 * 60 * 1000L
+            }
             
             // Find orphaned user messages that need retry
             val orphanedMessages = allMessages
                 .filter { message ->
                     message.type == MessageType.USER &&
                     message.timestamp > lastAssistantMessageTime && // After last assistant response
-                    (currentTime - message.timestamp) > retryThresholdMs && // Older than 2 minutes
+                    (currentTime - message.timestamp) > retryThresholdMs && // Older than threshold
                     message.requestId != null // Has a request ID for retry
                 }
                 .sortedBy { it.timestamp } // Process in chronological order
@@ -1888,10 +2080,13 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 
                 // Send the message again
+                // Pass the chatId directly - WhizServerRepository will handle whether to send as
+                // conversation_id (positive) or client_conversation_id (negative)
                 val success = whizServerRepository.sendMessage(
                     message.content, 
                     requestId, 
-                    chatId
+                    chatId,
+                    timestamp = message.timestamp
                 )
                 
                 if (!success) {

@@ -53,7 +53,8 @@ interface ApiService {
         val conversation_id: Long,
         val content: String,
         val message_type: String,  // 'USER' or 'ASSISTANT'
-        val request_id: String? = null  // Client-generated UUID for request tracking
+        val request_id: String? = null,  // Client-generated UUID for request tracking
+        val timestamp: String? = null  // Optional timestamp in ISO format for preserving message order
     )
 
     data class MessageResponse(

@@ -48,7 +48,7 @@ class ApiServiceTest {
         
         val messageEntity = apiMessage.toMessageEntity()
         
-        assertEquals(456L, messageEntity.id)
+        assertEquals(0L, messageEntity.id)  // We now auto-generate IDs, not using server IDs
         assertEquals(789L, messageEntity.chatId)
         assertEquals("Hello, can you help me with the quarterly report?", messageEntity.content)
         assertEquals(MessageType.USER, messageEntity.type)

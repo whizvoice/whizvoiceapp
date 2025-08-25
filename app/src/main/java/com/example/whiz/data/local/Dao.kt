@@ -42,6 +42,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChatFlow(chatId: Long): Flow<List<MessageEntity>>
 
+    @Query("SELECT * FROM messages WHERE id = :messageId")
+    suspend fun getMessageById(messageId: Long): MessageEntity?
+
     @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId")
     suspend fun getMessageCountForChat(chatId: Long): Int
 
@@ -74,6 +77,9 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE chatId = :chatId AND requestId = :requestId AND type = 'USER' LIMIT 1")
     suspend fun getUserMessageByRequestId(chatId: Long, requestId: String): MessageEntity?
+    
+    @Query("UPDATE messages SET chatId = :newChatId WHERE id = :messageId")
+    suspend fun updateMessageChatId(messageId: Long, newChatId: Long): Int
 }
 
 @Database(

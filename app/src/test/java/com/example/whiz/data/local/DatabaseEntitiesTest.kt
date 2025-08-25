@@ -42,7 +42,7 @@ class DatabaseEntitiesTest {
         val messageEntity = apiMessage.toMessageEntity()
 
         // Then
-        assertThat(messageEntity.id).isEqualTo(1L)
+        assertThat(messageEntity.id).isEqualTo(0L)  // We now auto-generate IDs, not using server IDs
         assertThat(messageEntity.chatId).isEqualTo(TestData.TEST_CONVERSATION_ID)
         assertThat(messageEntity.content).isEqualTo(TestData.TEST_MESSAGE_CONTENT)
         assertThat(messageEntity.type).isEqualTo(MessageType.USER)

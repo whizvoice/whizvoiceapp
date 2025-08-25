@@ -63,6 +63,9 @@ class SpeechRecognitionService @Inject constructor(
     // Note: Continuous listening state is now managed by VoiceManager
     // This callback provides the current state when needed
     var continuousListeningCallback: (() -> Boolean)? = null
+    
+    // Callback to check if we should actually restart listening (considers all conditions)
+    var shouldRestartCallback: (() -> Boolean)? = null
 
     fun initialize() {
         // Ensure initialization always happens on the main thread
@@ -360,9 +363,12 @@ class SpeechRecognitionService @Inject constructor(
 
                 // --- Continuous listening auto-restart logic with smart rate limiting ---
                 val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
-                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
+                // Use shouldRestartCallback if available, otherwise fall back to continuousListeningEnabled
+                val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
                 
-                if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && continuousListeningEnabled && !manualStopInProgress) {
+                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
+                
+                if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && shouldRestart && !manualStopInProgress) {
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
@@ -374,11 +380,11 @@ class SpeechRecognitionService @Inject constructor(
                     
                     Log.d(TAG, "🔄 RESTART_DEBUG: Error qualifies for restart - errorRestartCount=$errorRestartCount, MAX_ERROR_RESTARTS=$MAX_ERROR_RESTARTS")
                     
-                    if (errorRestartCount <= MAX_ERROR_RESTARTS && continuousListeningEnabled && !manualStopInProgress) {
+                    if (errorRestartCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
                         startListening(recognitionCallback ?: { })
                     } else {
-                        Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms")
+                        Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms or shouldRestart=$shouldRestart")
                     }
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restart conditions not met - skipping restart")

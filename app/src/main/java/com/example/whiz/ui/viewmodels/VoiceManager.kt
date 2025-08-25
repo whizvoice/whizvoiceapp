@@ -74,8 +74,27 @@ class VoiceManager @Inject constructor(
         observePermissionChanges()
         observeAppLifecycle()
         
-        // Set up callback for SpeechRecognitionService to get continuous listening state
+        // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
+        speechRecognitionService.shouldRestartCallback = { shouldBeListening() }
+    }
+    
+    /**
+     * Determines if the speech service should actually be listening right now.
+     * This is the authoritative check that considers all conditions.
+     */
+    private fun shouldBeListening(): Boolean {
+        val isInForeground = appLifecycleService.isInForeground()
+        val hasPermission = permissionManager.microphonePermissionGranted.value
+        val notSpeaking = !isSpeaking.value
+        
+        val should = continuousListeningEnabled && isInForeground && hasPermission && notSpeaking
+        
+        Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
+                "foreground=$isInForeground, permission=$hasPermission, notSpeaking=$notSpeaking, " +
+                "result=$should")
+        
+        return should
     }
 
     private fun initializeTTS() {

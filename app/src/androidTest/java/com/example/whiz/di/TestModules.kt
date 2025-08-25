@@ -10,6 +10,7 @@ import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import com.example.whiz.data.remote.WhizServerRepository
+import com.example.whiz.data.ConnectionStateManager
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
@@ -86,10 +87,11 @@ object TestAppModule {
         apiService: ApiService,
         @ApplicationContext context: Context,
         messageDao: MessageDao,
-        chatDao: ChatDao
+        chatDao: ChatDao,
+        connectionStateManager: ConnectionStateManager
     ): WhizRepository {
         Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService and database DAOs")
-        return WhizRepository(apiService, context, messageDao, chatDao)
+        return WhizRepository(apiService, context, messageDao, chatDao, connectionStateManager)
     }
 
     @Provides
@@ -140,12 +142,20 @@ object TestAppModule {
 
     @Provides
     @Singleton
+    fun provideConnectionStateManager(): ConnectionStateManager {
+        Log.d(TAG, "🔧 Creating ConnectionStateManager for tests...")
+        return ConnectionStateManager()
+    }
+
+    @Provides
+    @Singleton
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
-        authRepository: AuthRepository
+        authRepository: AuthRepository,
+        connectionStateManager: ConnectionStateManager
     ): WhizServerRepository {
         Log.d(TAG, "🔧 Creating REAL WhizServerRepository...")
-        return WhizServerRepository(okHttpClient, authRepository)
+        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager)
     }
     
     @Provides

@@ -9,6 +9,7 @@ On my phone, which is what I use for testing as well as running the production a
 - Only update this CLAUDE.md file when explicitly asked by the user
 - Don't do git operations; user prefers to do it themselves
 - Don't try to run the webserver. It's on a different machine.
+- Don't do anything extra outside of what the user asked. For example if user asked you to add logging to debug a test, don't add code to try to make the test pass.
 
 ## Testing
 
