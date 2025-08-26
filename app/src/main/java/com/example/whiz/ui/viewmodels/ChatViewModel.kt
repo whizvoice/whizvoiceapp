@@ -359,7 +359,8 @@ class ChatViewModel @Inject constructor(
                                 try {
                                     // Fetch any messages we might have missed
                                     // Server now handles optimistic chat IDs via optimistic_chat_id column
-                                    val serverMessages = repository.fetchMessagesWithDeduplication(currentChatId)
+                                    // Use retry mechanism to handle race conditions with optimistic chats
+                                    val serverMessages = repository.fetchMessagesWithRetry(currentChatId)
                                     Log.d(TAG, "WebSocketEvent.Connected: Retrieved ${serverMessages.size} messages from server for chat $currentChatId")
                                     
                                     // The fetchMessagesWithDeduplication already handles storing messages
@@ -1226,11 +1227,11 @@ class ChatViewModel @Inject constructor(
                 if (_chatId.value != 0L && _chatId.value != -1L) {
                     try {
                         Log.d(TAG, "loadChat: Performing sync for chat ${_chatId.value}")
-                        // Use existing deduplicated sync method to get messages from server
-                        val serverMessages = repository.fetchMessagesWithDeduplication(_chatId.value)
+                        // Use retry mechanism to handle race conditions with optimistic chats
+                        val serverMessages = repository.fetchMessagesWithRetry(_chatId.value)
                         Log.d(TAG, "loadChat: Retrieved ${serverMessages.size} messages from server for chat ${_chatId.value}")
                         
-                        // The fetchMessagesWithDeduplication method already handles storing messages and deduplication
+                        // The fetchMessagesWithRetry method already handles storing messages and deduplication
                         // Just trigger messages refresh to update UI
                         repository.refreshMessages()
                     } catch (e: Exception) {

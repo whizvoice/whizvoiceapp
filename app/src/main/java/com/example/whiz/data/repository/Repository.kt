@@ -37,6 +37,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
 import java.io.IOException
 
@@ -64,6 +65,11 @@ class WhizRepository @Inject constructor(
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
+    
+    // Message fetch retry configuration (similar to WebSocket retry pattern)
+    private val initialMessageRetryDelayMs = 500L  // Start with 500ms for message fetches
+    private val messageRetryBackoffFactor = 2.0     // Double the delay each retry
+    private val maxMessageRetryAttempts = 4         // Max 4 attempts: 500ms, 1s, 2s, 4s = ~7.5s total
     
     // Chat migration tracking is now handled by ConnectionStateManager
     
@@ -695,6 +701,156 @@ class WhizRepository @Inject constructor(
         Log.d(TAG, "refreshMessages: cleared ongoing request tracking")
         
         triggerMessagesRefresh()
+    }
+    
+    /**
+     * Fetch messages with exponential backoff retry for handling race conditions.
+     * This wrapper adds retry logic around fetchMessagesWithDeduplication.
+     * 
+     * Retry configuration:
+     * - Initial delay: 500ms (faster than WebSocket since message creation is quicker)
+     * - Backoff factor: 2.0 (doubles each retry)
+     * - Max attempts: 4 (500ms + 1s + 2s + 4s = ~7.5s total)
+     * 
+     * When to retry:
+     * - 404 errors for optimistic chats (server might still be creating it)
+     * - Network errors (IOException)
+     * - 500/503 server errors (temporary unavailability)
+     * 
+     * @param chatId The chat ID to fetch messages for (can be optimistic/negative)
+     * @return List of messages, empty if all retries fail
+     */
+    suspend fun fetchMessagesWithRetry(chatId: Long): List<MessageEntity> {
+        var currentAttempt = 0
+        var lastException: Exception? = null
+        
+        while (currentAttempt < maxMessageRetryAttempts) {
+            try {
+                Log.d(TAG, "fetchMessagesWithRetry: Attempt ${currentAttempt + 1}/$maxMessageRetryAttempts for chat $chatId")
+                
+                // Try to fetch messages
+                val messages = fetchMessagesWithDeduplication(chatId)
+                
+                // Success! Return the messages
+                if (messages.isNotEmpty() || currentAttempt > 0) {
+                    // If we got messages, or if this isn't the first attempt (meaning we already retried),
+                    // consider it successful
+                    Log.d(TAG, "fetchMessagesWithRetry: Success on attempt ${currentAttempt + 1} for chat $chatId, got ${messages.size} messages")
+                    return messages
+                }
+                
+                // For optimistic chats, empty result on first attempt might mean server is still creating it
+                if (chatId < 0 && currentAttempt == 0) {
+                    Log.d(TAG, "fetchMessagesWithRetry: Empty result for optimistic chat $chatId on first attempt, will retry")
+                    // Fall through to retry logic
+                } else {
+                    // For server chats or after retries, empty is a valid result
+                    return messages
+                }
+                
+            } catch (e: HttpException) {
+                lastException = e
+                val shouldRetry = when (e.code()) {
+                    404 -> {
+                        // For optimistic chats, 404 might mean server is still creating it
+                        if (chatId < 0) {
+                            Log.d(TAG, "fetchMessagesWithRetry: Got 404 for optimistic chat $chatId, will retry (attempt ${currentAttempt + 1}/$maxMessageRetryAttempts)")
+                            true
+                        } else {
+                            Log.d(TAG, "fetchMessagesWithRetry: Got 404 for server chat $chatId, not retrying")
+                            false
+                        }
+                    }
+                    500, 502, 503, 504 -> {
+                        // Server errors - worth retrying
+                        Log.d(TAG, "fetchMessagesWithRetry: Got server error ${e.code()} for chat $chatId, will retry")
+                        true
+                    }
+                    else -> {
+                        // Other HTTP errors (401, 403, etc) - don't retry
+                        Log.e(TAG, "fetchMessagesWithRetry: Got HTTP ${e.code()} for chat $chatId, not retrying", e)
+                        false
+                    }
+                }
+                
+                if (!shouldRetry) {
+                    throw e  // Re-throw to let caller handle
+                }
+                
+            } catch (e: IOException) {
+                // Network error - always retry
+                lastException = e
+                Log.d(TAG, "fetchMessagesWithRetry: Network error for chat $chatId, will retry (attempt ${currentAttempt + 1}/$maxMessageRetryAttempts)", e)
+                
+            } catch (e: Exception) {
+                // Unexpected error - log but don't retry
+                Log.e(TAG, "fetchMessagesWithRetry: Unexpected error for chat $chatId", e)
+                throw e
+            }
+            
+            // Calculate delay for next retry
+            currentAttempt++
+            if (currentAttempt < maxMessageRetryAttempts) {
+                val delayMs = (initialMessageRetryDelayMs * Math.pow(messageRetryBackoffFactor, (currentAttempt - 1).toDouble())).toLong()
+                Log.d(TAG, "fetchMessagesWithRetry: Waiting ${delayMs}ms before retry ${currentAttempt + 1}/$maxMessageRetryAttempts for chat $chatId")
+                
+                // Use withTimeoutOrNull to allow cancellation during delay
+                withTimeoutOrNull(delayMs) {
+                    delay(delayMs)
+                }
+                
+                // After delay, also re-check server conversations for optimistic chats
+                if (chatId < 0) {
+                    try {
+                        Log.d(TAG, "fetchMessagesWithRetry: Re-checking server conversations for optimistic chat $chatId")
+                        val conversations = getAllChatsIncremental(forceFullSync = false)
+                        val serverChat = conversations.find { 
+                            it.optimisticChatId == chatId || 
+                            connectionStateManager.areChatsMigrated(chatId, it.id)
+                        }
+                        
+                        if (serverChat != null) {
+                            Log.d(TAG, "fetchMessagesWithRetry: Found server chat ${serverChat.id} for optimistic chat $chatId during retry")
+                            // Trigger migration and fetch from server chat
+                            if (!connectionStateManager.areChatsMigrated(chatId, serverChat.id)) {
+                                val migrationSuccess = migrateChatMessages(chatId, serverChat.id)
+                                if (migrationSuccess) {
+                                    Log.d(TAG, "fetchMessagesWithRetry: Successfully migrated $chatId to ${serverChat.id}")
+                                    // Fetch from the migrated chat instead
+                                    return fetchMessagesWithDeduplication(serverChat.id)
+                                }
+                            } else {
+                                // Already migrated, fetch from server chat
+                                return fetchMessagesWithDeduplication(serverChat.id)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "fetchMessagesWithRetry: Error checking server conversations during retry", e)
+                        // Continue with normal retry
+                    }
+                }
+            }
+        }
+        
+        // All retries exhausted
+        Log.e(TAG, "fetchMessagesWithRetry: All $maxMessageRetryAttempts attempts failed for chat $chatId")
+        
+        // For optimistic chats, fall back to local data
+        if (chatId < 0) {
+            try {
+                val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+                Log.d(TAG, "fetchMessagesWithRetry: Falling back to ${localMessages.size} local messages for optimistic chat $chatId")
+                return localMessages
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchMessagesWithRetry: Failed to get local messages for fallback", e)
+            }
+        }
+        
+        // If we have a last exception, throw it
+        lastException?.let { throw it }
+        
+        // Otherwise return empty list
+        return emptyList()
     }
     
     // Deduplicated message fetching - prevents multiple concurrent API calls for the same chat
