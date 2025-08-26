@@ -387,6 +387,53 @@ class WhizRepository @Inject constructor(
             messageId
         } catch (e: Exception) {
             Log.e(TAG, "Error adding optimistic user message to chat $chatId: ${e.message}", e)
+            
+            // 🔧 MIGRATION RETRY: If this is a foreign key constraint error for an optimistic chat,
+            // check if a migration has been registered and retry with the new chat ID
+            if (e is android.database.sqlite.SQLiteConstraintException && 
+                e.message?.contains("FOREIGN KEY") == true && 
+                chatId < 0) {
+                
+                Log.d(TAG, "Foreign key error for optimistic chat $chatId, checking for migration...")
+                val migratedChatId = connectionStateManager.getMigratedChatId(chatId)
+                
+                if (migratedChatId != null && migratedChatId != chatId) {
+                    Log.d(TAG, "Found migration: $chatId → $migratedChatId, retrying message insert with new ID")
+                    
+                    return try {
+                        // Ensure the migrated chat exists
+                        val migratedChat = chatDao.getChatById(migratedChatId)
+                        if (migratedChat == null) {
+                            Log.w(TAG, "Migrated chat $migratedChatId not found, creating placeholder")
+                            val placeholderChat = ChatEntity(
+                                id = migratedChatId,
+                                title = "Loading...",
+                                createdAt = System.currentTimeMillis(),
+                                lastMessageTime = System.currentTimeMillis()
+                            )
+                            chatDao.insertChat(placeholderChat)
+                        }
+                        
+                        // Try inserting with the migrated chat ID
+                        val messageEntity = MessageEntity(
+                            id = 0,
+                            chatId = migratedChatId,
+                            content = content,
+                            type = MessageType.USER,
+                            timestamp = timestamp ?: System.currentTimeMillis(),
+                            requestId = requestId
+                        )
+                        
+                        val retryMessageId = messageDao.insertMessage(messageEntity)
+                        Log.d(TAG, "Successfully added message $retryMessageId to migrated chat $migratedChatId after retry")
+                        retryMessageId
+                    } catch (retryError: Exception) {
+                        Log.e(TAG, "Failed to add message even after migration retry: ${retryError.message}", retryError)
+                        -1
+                    }
+                }
+            }
+            
             -1
         }
     }
