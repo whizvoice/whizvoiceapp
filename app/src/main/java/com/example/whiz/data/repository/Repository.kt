@@ -54,7 +54,6 @@ class WhizRepository @Inject constructor(
 
     // Reactive state for data invalidation
     private val _conversationsRefreshTrigger = MutableStateFlow(0L)
-    private val _messagesRefreshTrigger = MutableStateFlow(0L)
     
     // Current conversations cache
     private val _conversations = MutableStateFlow<List<ChatEntity>>(emptyList())
@@ -123,9 +122,6 @@ class WhizRepository @Inject constructor(
         _conversationsRefreshTrigger.value = System.currentTimeMillis()
     }
     
-    private fun triggerMessagesRefresh() {
-        _messagesRefreshTrigger.value = System.currentTimeMillis()
-    }
 
     // Chat operations
     suspend fun getAllChats(forceFullSync: Boolean = false): List<ChatEntity> {
@@ -279,7 +275,6 @@ class WhizRepository @Inject constructor(
             
             // Trigger incremental refresh - tombstone record will remove the deleted chat
             triggerConversationsRefresh()
-            triggerMessagesRefresh()
         } catch (e: Exception) {
             Log.e(TAG, "Error deleting chat $chatId via API", e)
         }
@@ -294,7 +289,6 @@ class WhizRepository @Inject constructor(
             // Clear caches and trigger refresh
             _conversations.value = emptyList()
             triggerConversationsRefresh()
-            triggerMessagesRefresh()
         } catch (e: Exception) {
             Log.e(TAG, "Error deleting all chats via API", e)
         }
@@ -451,9 +445,8 @@ class WhizRepository @Inject constructor(
             val message = apiService.createMessage(createRequest)
             Log.d(TAG, "addAssistantMessage: added assistant message ${message.id} to chat $actualChatId")
             
-            // Remove arbitrary delay - trigger immediate refresh
-            triggerMessagesRefresh()
-            triggerConversationsRefresh() // Also refresh conversations for lastMessageTime
+            // Trigger immediate refresh for conversations for lastMessageTime
+            triggerConversationsRefresh()
             
             message.id
         } catch (e: Exception) {
@@ -746,8 +739,6 @@ class WhizRepository @Inject constructor(
         ongoingMessageRequests.clear()
         ongoingConversationRequests.clear()
         Log.d(TAG, "refreshMessages: cleared ongoing request tracking")
-        
-        triggerMessagesRefresh()
     }
     
     /**
@@ -1526,8 +1517,6 @@ class WhizRepository @Inject constructor(
             _conversations.value = result.chats
             Log.d(TAG, "performIncrementalSync: completed, got ${result.chats.size} conversations, cached=${result.isCachedData}")
             
-            // Trigger messages refresh for any active chat flows
-            triggerMessagesRefresh()
             Log.d(TAG, "performIncrementalSync: incremental sync completed successfully")
             
             result
@@ -1553,16 +1542,13 @@ class WhizRepository @Inject constructor(
             _conversations.value = conversations
             Log.d(TAG, "forceFullRefresh: completed conversations sync, got ${conversations.size} conversations")
             
-            // Trigger messages refresh for any active chat flows
-            triggerMessagesRefresh()
-            Log.d(TAG, "forceFullRefresh: triggered messages refresh")
+            Log.d(TAG, "forceFullRefresh: completed")
             
             Log.d(TAG, "forceFullRefresh: hard sync completed successfully")
         } catch (e: Exception) {
             Log.e(TAG, "forceFullRefresh: error during hard sync", e)
             // Trigger normal refresh as fallback
             triggerConversationsRefresh()
-            triggerMessagesRefresh()
             throw e // Re-throw so the UI can show the error
         }
     }
@@ -1753,39 +1739,6 @@ class WhizRepository @Inject constructor(
             }
         }
     }
-    
-    // Modified getMessagesForChat to support incremental sync
-    suspend fun getMessagesForChatIncremental(chatId: Long, forceFullSync: Boolean = false): List<MessageEntity> {
-        return try {
-            // Use message-based timestamp calculation for individual chats
-            val lastSync = if (forceFullSync) null else calculateSyncTimestampString(chatId)
-            Log.d("Repository", "getMessagesForChatIncremental: chatId=$chatId, lastSync=$lastSync, forceFullSync=$forceFullSync")
-            
-            val response = if (lastSync != null) {
-                apiService.getMessagesIncremental(chatId, since = lastSync)
-            } else {
-                apiService.getMessagesIncremental(chatId, since = null)
-            }
-            
-            Log.d("Repository", "Incremental sync returned ${response.count} messages for chat $chatId (incremental: ${response.is_incremental})")
-            
-            // Note: No longer updating sync timestamp as we calculate it dynamically from messages
-            
-            // Return the messages mapped to MessageEntity
-            response.messages.map { it.toMessageEntity() }
-            
-        } catch (e: Exception) {
-            Log.e("Repository", "Error in incremental sync for messages", e)
-            // Fall back to regular API call on error
-            try {
-                apiService.getMessages(chatId).map { it.toMessageEntity() }
-            } catch (fallbackException: Exception) {
-                Log.e("Repository", "Fallback also failed", fallbackException)
-                emptyList()
-            }
-        }
-    }
-
     // Reactive flow version for UI
     fun getAllChatsFlow(forceFullSync: Boolean = false): Flow<List<ChatEntity>> = _conversationsRefreshTrigger.flatMapLatest {
         flow {

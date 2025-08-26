@@ -98,6 +98,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.res.painterResource
 import com.example.whiz.R
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -529,6 +531,7 @@ fun ChatScreen(
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
+    val isRefreshing by viewModel.isRefreshing.collectAsState() // For pull-to-refresh
     
 
 
@@ -833,15 +836,24 @@ fun ChatScreen(
                     // Show messages list normally
                     else -> {
                         Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
-                        MessagesList(
-                            messages = messages,
-                            listState = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                            showTypingIndicator = isResponding && !isSpeaking,
-                            onLongPressMessage = ::copyMessageToClipboard
-                        )
+                        
+                        // Wrap MessagesList with SwipeRefresh
+                        val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
+                        SwipeRefresh(
+                            state = swipeRefreshState,
+                            onRefresh = { viewModel.refreshMessages() },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            MessagesList(
+                                messages = messages,
+                                listState = listState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
+                                showTypingIndicator = isResponding && !isSpeaking,
+                                onLongPressMessage = ::copyMessageToClipboard
+                            )
+                        }
                     }
                 }
             }
