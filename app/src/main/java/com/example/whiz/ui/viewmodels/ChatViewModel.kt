@@ -215,9 +215,6 @@ class ChatViewModel @Inject constructor(
     // --- WebSocket State ---
     private val _isConnectedToServer = MutableStateFlow(false)
     val isConnectedToServer = _isConnectedToServer.asStateFlow()
-    
-    private val _isRefreshing = MutableStateFlow(false)
-    val isRefreshing = _isRefreshing.asStateFlow()
     private var serverMessageCollectorJob: Job? = null
 
     // State to track permission status
@@ -1930,36 +1927,6 @@ class ChatViewModel @Inject constructor(
         val currentChatId = _chatId.value
         if (currentChatId > 0) {
             loadChat(currentChatId)
-        }
-    }
-    
-    fun refreshMessages() {
-        val currentChatId = _chatId.value
-        if (currentChatId != 0L && currentChatId != -1L) {
-            viewModelScope.launch {
-                _isRefreshing.value = true
-                try {
-                    Log.d(TAG, "refreshMessages: Starting refresh for chat $currentChatId")
-                    
-                    // Use fetchMessagesWithRetry which includes deduplication and retry logic
-                    val serverMessages = repository.fetchMessagesWithRetry(currentChatId)
-                    Log.d(TAG, "refreshMessages: Retrieved ${serverMessages.size} messages from server")
-                    
-                    // The fetchMessagesWithRetry already handles storing messages with deduplication
-                    // Just trigger UI refresh
-                    repository.refreshMessages()
-                    
-                    _errorState.value = null
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error refreshing messages for chat $currentChatId", e)
-                    _errorState.value = "Failed to refresh messages: ${e.message}"
-                } finally {
-                    _isRefreshing.value = false
-                }
-            }
-        } else {
-            Log.d(TAG, "refreshMessages: Skipping refresh - invalid chat ID: $currentChatId")
-            _isRefreshing.value = false
         }
     }
 

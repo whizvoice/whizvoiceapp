@@ -1753,6 +1753,39 @@ class WhizRepository @Inject constructor(
             }
         }
     }
+    
+    // Modified getMessagesForChat to support incremental sync
+    suspend fun getMessagesForChatIncremental(chatId: Long, forceFullSync: Boolean = false): List<MessageEntity> {
+        return try {
+            // Use message-based timestamp calculation for individual chats
+            val lastSync = if (forceFullSync) null else calculateSyncTimestampString(chatId)
+            Log.d("Repository", "getMessagesForChatIncremental: chatId=$chatId, lastSync=$lastSync, forceFullSync=$forceFullSync")
+            
+            val response = if (lastSync != null) {
+                apiService.getMessagesIncremental(chatId, since = lastSync)
+            } else {
+                apiService.getMessagesIncremental(chatId, since = null)
+            }
+            
+            Log.d("Repository", "Incremental sync returned ${response.count} messages for chat $chatId (incremental: ${response.is_incremental})")
+            
+            // Note: No longer updating sync timestamp as we calculate it dynamically from messages
+            
+            // Return the messages mapped to MessageEntity
+            response.messages.map { it.toMessageEntity() }
+            
+        } catch (e: Exception) {
+            Log.e("Repository", "Error in incremental sync for messages", e)
+            // Fall back to regular API call on error
+            try {
+                apiService.getMessages(chatId).map { it.toMessageEntity() }
+            } catch (fallbackException: Exception) {
+                Log.e("Repository", "Fallback also failed", fallbackException)
+                emptyList()
+            }
+        }
+    }
+
     // Reactive flow version for UI
     fun getAllChatsFlow(forceFullSync: Boolean = false): Flow<List<ChatEntity>> = _conversationsRefreshTrigger.flatMapLatest {
         flow {
