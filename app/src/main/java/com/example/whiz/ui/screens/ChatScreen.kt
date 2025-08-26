@@ -641,12 +641,21 @@ fun ChatScreen(
     
     // Sync messages when returning to the screen (e.g., from chats list)
     // This ensures we get any messages that arrived while away
+    // Track if this is the initial load to avoid double-syncing
+    var isInitialLoad by remember { mutableStateOf(true) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, chatId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && chatId != -1L && chatId != 0L) {
-                Log.d("ChatScreen", "🔄 Screen resumed - checking for message sync for chat $chatId")
-                viewModel.syncMessagesIfNeeded(chatId)
+                // Only sync on resume if this is NOT the initial load
+                // Initial load already syncs via loadChat
+                if (!isInitialLoad) {
+                    Log.d("ChatScreen", "🔄 Screen resumed after navigation - syncing messages for chat $chatId")
+                    viewModel.syncMessagesIfNeeded(chatId)
+                } else {
+                    Log.d("ChatScreen", "🔄 Screen resumed for initial load - skipping sync (loadChat handles it)")
+                    isInitialLoad = false
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
