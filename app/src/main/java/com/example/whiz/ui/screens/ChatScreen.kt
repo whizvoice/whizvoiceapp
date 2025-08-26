@@ -57,6 +57,10 @@ import com.example.whiz.ui.navigation.Screen // Update this import
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import android.util.Log
 import androidx.navigation.NavHostController
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardActions
@@ -632,6 +636,31 @@ fun ChatScreen(
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
+        }
+    }
+    
+    // Sync messages when returning to the screen (e.g., from chats list)
+    // This ensures we get any messages that arrived while away
+    // Track if this is the initial load to avoid double-syncing
+    var isInitialLoad by remember { mutableStateOf(true) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, chatId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && chatId != -1L && chatId != 0L) {
+                // Only sync on resume if this is NOT the initial load
+                // Initial load already syncs via loadChat
+                if (!isInitialLoad) {
+                    Log.d("ChatScreen", "🔄 Screen resumed after navigation - syncing messages for chat $chatId")
+                    viewModel.syncMessagesIfNeeded(chatId)
+                } else {
+                    Log.d("ChatScreen", "🔄 Screen resumed for initial load - skipping sync (loadChat handles it)")
+                    isInitialLoad = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
     

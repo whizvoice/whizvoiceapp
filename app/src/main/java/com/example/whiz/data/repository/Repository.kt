@@ -37,6 +37,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
 import java.io.IOException
 
@@ -64,6 +65,11 @@ class WhizRepository @Inject constructor(
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
     private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
+    
+    // Message fetch retry configuration (similar to WebSocket retry pattern)
+    private val initialMessageRetryDelayMs = 500L  // Start with 500ms for message fetches
+    private val messageRetryBackoffFactor = 2.0     // Double the delay each retry
+    private val maxMessageRetryAttempts = 4         // Max 4 attempts: 500ms, 1s, 2s, 4s = ~7.5s total
     
     // Chat migration tracking is now handled by ConnectionStateManager
     
@@ -381,6 +387,53 @@ class WhizRepository @Inject constructor(
             messageId
         } catch (e: Exception) {
             Log.e(TAG, "Error adding optimistic user message to chat $chatId: ${e.message}", e)
+            
+            // 🔧 MIGRATION RETRY: If this is a foreign key constraint error for an optimistic chat,
+            // check if a migration has been registered and retry with the new chat ID
+            if (e is android.database.sqlite.SQLiteConstraintException && 
+                e.message?.contains("FOREIGN KEY") == true && 
+                chatId < 0) {
+                
+                Log.d(TAG, "Foreign key error for optimistic chat $chatId, checking for migration...")
+                val migratedChatId = connectionStateManager.getMigratedChatId(chatId)
+                
+                if (migratedChatId != null && migratedChatId != chatId) {
+                    Log.d(TAG, "Found migration: $chatId → $migratedChatId, retrying message insert with new ID")
+                    
+                    return try {
+                        // Ensure the migrated chat exists
+                        val migratedChat = chatDao.getChatById(migratedChatId)
+                        if (migratedChat == null) {
+                            Log.w(TAG, "Migrated chat $migratedChatId not found, creating placeholder")
+                            val placeholderChat = ChatEntity(
+                                id = migratedChatId,
+                                title = "Loading...",
+                                createdAt = System.currentTimeMillis(),
+                                lastMessageTime = System.currentTimeMillis()
+                            )
+                            chatDao.insertChat(placeholderChat)
+                        }
+                        
+                        // Try inserting with the migrated chat ID
+                        val messageEntity = MessageEntity(
+                            id = 0,
+                            chatId = migratedChatId,
+                            content = content,
+                            type = MessageType.USER,
+                            timestamp = timestamp ?: System.currentTimeMillis(),
+                            requestId = requestId
+                        )
+                        
+                        val retryMessageId = messageDao.insertMessage(messageEntity)
+                        Log.d(TAG, "Successfully added message $retryMessageId to migrated chat $migratedChatId after retry")
+                        retryMessageId
+                    } catch (retryError: Exception) {
+                        Log.e(TAG, "Failed to add message even after migration retry: ${retryError.message}", retryError)
+                        -1
+                    }
+                }
+            }
+            
             -1
         }
     }
@@ -697,6 +750,156 @@ class WhizRepository @Inject constructor(
         triggerMessagesRefresh()
     }
     
+    /**
+     * Fetch messages with exponential backoff retry for handling race conditions.
+     * This wrapper adds retry logic around fetchMessagesWithDeduplication.
+     * 
+     * Retry configuration:
+     * - Initial delay: 500ms (faster than WebSocket since message creation is quicker)
+     * - Backoff factor: 2.0 (doubles each retry)
+     * - Max attempts: 4 (500ms + 1s + 2s + 4s = ~7.5s total)
+     * 
+     * When to retry:
+     * - 404 errors for optimistic chats (server might still be creating it)
+     * - Network errors (IOException)
+     * - 500/503 server errors (temporary unavailability)
+     * 
+     * @param chatId The chat ID to fetch messages for (can be optimistic/negative)
+     * @return List of messages, empty if all retries fail
+     */
+    suspend fun fetchMessagesWithRetry(chatId: Long): List<MessageEntity> {
+        var currentAttempt = 0
+        var lastException: Exception? = null
+        
+        while (currentAttempt < maxMessageRetryAttempts) {
+            try {
+                Log.d(TAG, "fetchMessagesWithRetry: Attempt ${currentAttempt + 1}/$maxMessageRetryAttempts for chat $chatId")
+                
+                // Try to fetch messages
+                val messages = fetchMessagesWithDeduplication(chatId)
+                
+                // Success! Return the messages
+                if (messages.isNotEmpty() || currentAttempt > 0) {
+                    // If we got messages, or if this isn't the first attempt (meaning we already retried),
+                    // consider it successful
+                    Log.d(TAG, "fetchMessagesWithRetry: Success on attempt ${currentAttempt + 1} for chat $chatId, got ${messages.size} messages")
+                    return messages
+                }
+                
+                // For optimistic chats, empty result on first attempt might mean server is still creating it
+                if (chatId < 0 && currentAttempt == 0) {
+                    Log.d(TAG, "fetchMessagesWithRetry: Empty result for optimistic chat $chatId on first attempt, will retry")
+                    // Fall through to retry logic
+                } else {
+                    // For server chats or after retries, empty is a valid result
+                    return messages
+                }
+                
+            } catch (e: HttpException) {
+                lastException = e
+                val shouldRetry = when (e.code()) {
+                    404 -> {
+                        // For optimistic chats, 404 might mean server is still creating it
+                        if (chatId < 0) {
+                            Log.d(TAG, "fetchMessagesWithRetry: Got 404 for optimistic chat $chatId, will retry (attempt ${currentAttempt + 1}/$maxMessageRetryAttempts)")
+                            true
+                        } else {
+                            Log.d(TAG, "fetchMessagesWithRetry: Got 404 for server chat $chatId, not retrying")
+                            false
+                        }
+                    }
+                    500, 502, 503, 504 -> {
+                        // Server errors - worth retrying
+                        Log.d(TAG, "fetchMessagesWithRetry: Got server error ${e.code()} for chat $chatId, will retry")
+                        true
+                    }
+                    else -> {
+                        // Other HTTP errors (401, 403, etc) - don't retry
+                        Log.e(TAG, "fetchMessagesWithRetry: Got HTTP ${e.code()} for chat $chatId, not retrying", e)
+                        false
+                    }
+                }
+                
+                if (!shouldRetry) {
+                    throw e  // Re-throw to let caller handle
+                }
+                
+            } catch (e: IOException) {
+                // Network error - always retry
+                lastException = e
+                Log.d(TAG, "fetchMessagesWithRetry: Network error for chat $chatId, will retry (attempt ${currentAttempt + 1}/$maxMessageRetryAttempts)", e)
+                
+            } catch (e: Exception) {
+                // Unexpected error - log but don't retry
+                Log.e(TAG, "fetchMessagesWithRetry: Unexpected error for chat $chatId", e)
+                throw e
+            }
+            
+            // Calculate delay for next retry
+            currentAttempt++
+            if (currentAttempt < maxMessageRetryAttempts) {
+                val delayMs = (initialMessageRetryDelayMs * Math.pow(messageRetryBackoffFactor, (currentAttempt - 1).toDouble())).toLong()
+                Log.d(TAG, "fetchMessagesWithRetry: Waiting ${delayMs}ms before retry ${currentAttempt + 1}/$maxMessageRetryAttempts for chat $chatId")
+                
+                // Use withTimeoutOrNull to allow cancellation during delay
+                withTimeoutOrNull(delayMs) {
+                    delay(delayMs)
+                }
+                
+                // After delay, also re-check server conversations for optimistic chats
+                if (chatId < 0) {
+                    try {
+                        Log.d(TAG, "fetchMessagesWithRetry: Re-checking server conversations for optimistic chat $chatId")
+                        val conversations = getAllChatsIncremental(forceFullSync = false)
+                        val serverChat = conversations.find { 
+                            it.optimisticChatId == chatId || 
+                            connectionStateManager.areChatsMigrated(chatId, it.id)
+                        }
+                        
+                        if (serverChat != null) {
+                            Log.d(TAG, "fetchMessagesWithRetry: Found server chat ${serverChat.id} for optimistic chat $chatId during retry")
+                            // Trigger migration and fetch from server chat
+                            if (!connectionStateManager.areChatsMigrated(chatId, serverChat.id)) {
+                                val migrationSuccess = migrateChatMessages(chatId, serverChat.id)
+                                if (migrationSuccess) {
+                                    Log.d(TAG, "fetchMessagesWithRetry: Successfully migrated $chatId to ${serverChat.id}")
+                                    // Fetch from the migrated chat instead
+                                    return fetchMessagesWithDeduplication(serverChat.id)
+                                }
+                            } else {
+                                // Already migrated, fetch from server chat
+                                return fetchMessagesWithDeduplication(serverChat.id)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "fetchMessagesWithRetry: Error checking server conversations during retry", e)
+                        // Continue with normal retry
+                    }
+                }
+            }
+        }
+        
+        // All retries exhausted
+        Log.e(TAG, "fetchMessagesWithRetry: All $maxMessageRetryAttempts attempts failed for chat $chatId")
+        
+        // For optimistic chats, fall back to local data
+        if (chatId < 0) {
+            try {
+                val localMessages = messageDao.getMessagesForChatFlow(chatId).first()
+                Log.d(TAG, "fetchMessagesWithRetry: Falling back to ${localMessages.size} local messages for optimistic chat $chatId")
+                return localMessages
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchMessagesWithRetry: Failed to get local messages for fallback", e)
+            }
+        }
+        
+        // If we have a last exception, throw it
+        lastException?.let { throw it }
+        
+        // Otherwise return empty list
+        return emptyList()
+    }
+    
     // Deduplicated message fetching - prevents multiple concurrent API calls for the same chat
     suspend fun fetchMessagesWithDeduplication(chatId: Long): List<MessageEntity> {
         // Check if there's already an ongoing request for this chat
@@ -709,8 +912,11 @@ class WhizRepository @Inject constructor(
         // Start a new request and track it
         val deferred = CoroutineScope(Dispatchers.IO).async {
             try {
-                Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId")
-                val response = apiService.getMessagesIncremental(chatId, since = null)
+                // Calculate the proper 'since' timestamp based on existing messages
+                val sinceString = calculateSyncTimestampString(chatId)
+                
+                Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId with since=$sinceString")
+                val response = apiService.getMessagesIncremental(chatId, since = sinceString)
                 val serverMessages = response.messages.map { it.toMessageEntity() }
                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
                 // Debug: Log the conversation IDs of the messages
@@ -1361,22 +1567,90 @@ class WhizRepository @Inject constructor(
         }
     }
 
-    // ================== INCREMENTAL SYNC SUPPORT ==================
+    // ================== SYNC TIMESTAMP MANAGEMENT ==================
     
-    private fun getLastSyncTimestamp(entityType: String, entityId: Long? = null): String? {
-        val key = if (entityId != null) "${entityType}_${entityId}" else entityType
-        return syncPrefs.getString("last_sync_$key", null)
+    /**
+     * Get the last sync timestamp for a given entity type (conversations or messages:chatId)
+     * Used by getAllChatsIncremental for conversation sync
+     */
+    private fun getLastSyncTimestamp(entityType: String): String? {
+        return syncPrefs.getString("last_sync_$entityType", null)
     }
     
-    private fun updateLastSyncTimestamp(entityType: String, timestamp: String, entityId: Long? = null) {
-        val key = if (entityId != null) "${entityType}_${entityId}" else entityType
-        syncPrefs.edit()
-            .putString("last_sync_$key", timestamp)
-            .apply()
-        Log.d("Repository", "Updated sync timestamp for $key: $timestamp")
+    /**
+     * Update the last sync timestamp for a given entity type
+     * Used by getAllChatsIncremental to track conversation sync progress
+     */
+    private fun updateLastSyncTimestamp(entityType: String, timestamp: String?) {
+        if (timestamp != null) {
+            syncPrefs.edit().putString("last_sync_$entityType", timestamp).apply()
+        }
     }
     
-    // Modified getAllChats to support incremental sync
+    // ================== MESSAGE-BASED SYNC SUPPORT ==================
+    
+    /**
+     * Calculate the proper 'since' timestamp for message fetching:
+     * - Return timestamp of the most recent (last) user message that has a bot response after it
+     * - If none exists, return timestamp of the first (earliest) user message
+     * - Returns null if no messages exist (fetch all)
+     */
+    private suspend fun calculateMessageSyncTimestamp(chatId: Long): Long? {
+        try {
+            val messages = messageDao.getMessagesForChatFlow(chatId).first()
+            if (messages.isEmpty()) return null
+            
+            // Find the LAST (most recent) user message that has a bot response after it
+            var lastUserMessageWithResponse: MessageEntity? = null
+            for (i in messages.indices) {
+                val msg = messages[i]
+                if (msg.type == MessageType.USER) {
+                    // Check if there's a bot message after this
+                    val hasResponseAfter = messages.drop(i + 1).any { it.type == MessageType.ASSISTANT }
+                    if (hasResponseAfter) {
+                        // Keep updating to get the LAST one
+                        lastUserMessageWithResponse = msg
+                    }
+                }
+            }
+            
+            // Use the last user message with response, or first user message if none have responses
+            val syncMessage = if (lastUserMessageWithResponse != null) {
+                Log.d(TAG, "Using timestamp of last user message with bot response for sync: ${lastUserMessageWithResponse.timestamp}")
+                lastUserMessageWithResponse
+            } else {
+                // No user messages have responses, use the first user message
+                val firstUserMessage = messages.firstOrNull { it.type == MessageType.USER }
+                if (firstUserMessage != null) {
+                    Log.d(TAG, "No user messages have bot responses, using first user message timestamp: ${firstUserMessage.timestamp}")
+                }
+                firstUserMessage
+            }
+            
+            return syncMessage?.timestamp
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calculating message sync timestamp for chat $chatId", e)
+            return null
+        }
+    }
+    
+    /**
+     * Calculate the proper 'since' timestamp string for API calls
+     * Converts the timestamp from calculateMessageSyncTimestamp to ISO-8601 format
+     * Returns null if no timestamp should be used (fetch all messages)
+     */
+    suspend fun calculateSyncTimestampString(chatId: Long): String? {
+        val timestampMillis = calculateMessageSyncTimestamp(chatId)
+        return timestampMillis?.let {
+            try {
+                java.time.Instant.ofEpochMilli(it).toString()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error converting timestamp to ISO-8601 for chat $chatId", e)
+                null
+            }
+        }
+    }
+    
     suspend fun getAllChatsIncremental(
         forceFullSync: Boolean = false,
         useAggressiveSync: Boolean = false
@@ -1483,7 +1757,8 @@ class WhizRepository @Inject constructor(
     // Modified getMessagesForChat to support incremental sync
     suspend fun getMessagesForChatIncremental(chatId: Long, forceFullSync: Boolean = false): List<MessageEntity> {
         return try {
-            val lastSync = if (forceFullSync) null else getLastSyncTimestamp("messages", chatId)
+            // Use message-based timestamp calculation for individual chats
+            val lastSync = if (forceFullSync) null else calculateSyncTimestampString(chatId)
             Log.d("Repository", "getMessagesForChatIncremental: chatId=$chatId, lastSync=$lastSync, forceFullSync=$forceFullSync")
             
             val response = if (lastSync != null) {
@@ -1494,8 +1769,7 @@ class WhizRepository @Inject constructor(
             
             Log.d("Repository", "Incremental sync returned ${response.count} messages for chat $chatId (incremental: ${response.is_incremental})")
             
-            // Update sync timestamp
-            updateLastSyncTimestamp("messages", response.server_timestamp, chatId)
+            // Note: No longer updating sync timestamp as we calculate it dynamically from messages
             
             // Return the messages mapped to MessageEntity
             response.messages.map { it.toMessageEntity() }

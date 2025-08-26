@@ -964,6 +964,37 @@ object ComposeTestHelper {
     }
     
     /**
+     * Count total words in all assistant responses
+     */
+    fun countTotalAssistantWords(composeTestRule: ComposeTestRule): Int {
+        return try {
+            // Find all assistant message nodes (those with "Whiz" label)
+            val whizNodes = composeTestRule.onAllNodesWithText("Whiz").fetchSemanticsNodes()
+            var totalWords = 0
+            
+            whizNodes.forEach { node ->
+                // Get the text content of each assistant message
+                val textContent = node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
+                    ?.firstOrNull()?.text ?: ""
+                
+                // Skip if it's just the "Whiz" label itself
+                if (textContent != "Whiz") {
+                    // Count words by splitting on whitespace
+                    val wordCount = textContent.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }.size
+                    Log.d(TAG, "📊 Assistant message: \"$textContent\" has $wordCount words")
+                    totalWords += wordCount
+                }
+            }
+            
+            Log.d(TAG, "📊 Total words across all assistant responses: $totalWords")
+            totalWords
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error counting assistant words: ${e.message}")
+            0
+        }
+    }
+    
+    /**
      * Verify that a response message appears IMMEDIATELY after its corresponding user message
      * This tests the request ID pairing functionality to ensure responses appear in reply order, not timestamp order
      * The bug was that responses were appearing chronologically instead of being paired with their user messages

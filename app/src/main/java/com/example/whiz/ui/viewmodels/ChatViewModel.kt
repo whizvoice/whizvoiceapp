@@ -359,7 +359,8 @@ class ChatViewModel @Inject constructor(
                                 try {
                                     // Fetch any messages we might have missed
                                     // Server now handles optimistic chat IDs via optimistic_chat_id column
-                                    val serverMessages = repository.fetchMessagesWithDeduplication(currentChatId)
+                                    // Use retry mechanism to handle race conditions with optimistic chats
+                                    val serverMessages = repository.fetchMessagesWithRetry(currentChatId)
                                     Log.d(TAG, "WebSocketEvent.Connected: Retrieved ${serverMessages.size} messages from server for chat $currentChatId")
                                     
                                     // The fetchMessagesWithDeduplication already handles storing messages
@@ -1221,14 +1222,16 @@ class ChatViewModel @Inject constructor(
                 }
 
                 // Refresh messages to ensure we have latest data
-                if (_chatId.value > 0) {
+                // Fetch for both real chats (>0) and optimistic chats (<-1) that might have been migrated
+                // Skip only for new chat placeholder (-1) and uninitialized (0)
+                if (_chatId.value != 0L && _chatId.value != -1L) {
                     try {
-                        Log.d(TAG, "loadChat: Performing sync for existing chat ${_chatId.value}")
-                        // Use existing deduplicated sync method to get messages from server
-                        val serverMessages = repository.fetchMessagesWithDeduplication(_chatId.value)
+                        Log.d(TAG, "loadChat: Performing sync for chat ${_chatId.value}")
+                        // Use retry mechanism to handle race conditions with optimistic chats
+                        val serverMessages = repository.fetchMessagesWithRetry(_chatId.value)
                         Log.d(TAG, "loadChat: Retrieved ${serverMessages.size} messages from server for chat ${_chatId.value}")
                         
-                        // The fetchMessagesWithDeduplication method already handles storing messages and deduplication
+                        // The fetchMessagesWithRetry method already handles storing messages and deduplication
                         // Just trigger messages refresh to update UI
                         repository.refreshMessages()
                     } catch (e: Exception) {
@@ -1290,6 +1293,34 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Sync messages when returning to a chat screen
+     * This is lighter weight than loadChat - it just fetches new messages without resetting state
+     */
+    fun syncMessagesIfNeeded(chatId: Long) {
+        viewModelScope.launch {
+            try {
+                // Only sync if this is the current chat
+                if (_chatId.value == chatId && chatId != 0L && chatId != -1L) {
+                    Log.d(TAG, "📥 Syncing messages for chat $chatId on screen resume")
+                    
+                    // Use the retry mechanism to fetch any new messages
+                    val serverMessages = repository.fetchMessagesWithRetry(chatId)
+                    Log.d(TAG, "📥 Sync complete: Retrieved ${serverMessages.size} messages for chat $chatId")
+                    
+                    // The fetchMessagesWithRetry method already handles storing messages and deduplication
+                    // Just trigger messages refresh to update UI
+                    repository.refreshMessages()
+                } else {
+                    Log.d(TAG, "📥 Skipping sync - chat ID mismatch or invalid. Current: ${_chatId.value}, Requested: $chatId")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error syncing messages on resume", e)
+                // Don't show error to user - this is a background sync
+            }
+        }
+    }
+    
     /**
      * Migrate chat ID without disconnecting WebSocket - used for chat state transitions
      * like -1 to negative (new chat creation) or negative to positive (optimistic to server-backed)

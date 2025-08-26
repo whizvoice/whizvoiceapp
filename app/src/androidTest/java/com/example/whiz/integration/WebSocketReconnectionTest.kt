@@ -888,7 +888,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L,  // Increased timeout to handle server processing time
+                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
                     description = "coffee response after reconnection"
                 )
                 
@@ -989,7 +989,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L,  // Increased timeout to handle server processing time
+                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
                     description = "fettuccine response after reconnection"
                 )
                 
