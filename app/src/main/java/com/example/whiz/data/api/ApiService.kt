@@ -126,6 +126,9 @@ interface ApiService {
 
     // ========== MESSAGE ENDPOINTS ==========
     @GET("/api/conversations/{id}/messages")
+    suspend fun getMessages(@Path("id") conversationId: Long): List<MessageResponse>
+
+    @GET("/api/conversations/{id}/messages")
     suspend fun getMessagesIncremental(
         @Path("id") conversationId: Long,
         @Query("since") since: String? = null,
