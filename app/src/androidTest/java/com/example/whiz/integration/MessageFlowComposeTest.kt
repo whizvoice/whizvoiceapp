@@ -650,6 +650,19 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ could not check bot message count: ${e.message}")
         }
         
+        // 4. Validate total word count in assistant responses
+        Log.d(TAG, "📊 Validating assistant response word count...")
+        val totalAssistantWords = ComposeTestHelper.countTotalAssistantWords(composeTestRule)
+        val totalUserMessages = sentMessages.size
+        Log.d(TAG, "📊 Total assistant words: $totalAssistantWords, Total user messages: $totalUserMessages")
+        
+        if (totalAssistantWords > totalUserMessages) {
+            Log.e(TAG, "❌ FAILURE: Assistant used too many words - expected at most $totalUserMessages words total, but got $totalAssistantWords")
+            failWithScreenshot("assistant_word_count_exceeded", "Assistant word count ($totalAssistantWords) exceeds user message count ($totalUserMessages)")
+            return false
+        }
+        Log.d(TAG, "✅ Assistant word count validation passed: $totalAssistantWords words <= $totalUserMessages messages")
+        
         Log.d(TAG, "✅ comprehensive final verification completed successfully")
         return true
     }

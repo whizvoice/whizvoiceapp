@@ -439,6 +439,19 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Third message verified in UI (without mic button)")
             }
 
+            // Validate total word count in assistant responses
+            Log.d(TAG, "📊 Validating assistant response word count...")
+            val totalAssistantWords = ComposeTestHelper.countTotalAssistantWords(composeTestRule)
+            val totalUserMessages = 3 // We send 3 messages in this test
+            Log.d(TAG, "📊 Total assistant words: $totalAssistantWords, Total user messages: $totalUserMessages")
+            
+            if (totalAssistantWords > totalUserMessages) {
+                Log.e(TAG, "❌ FAILURE: Assistant used too many words - expected at most $totalUserMessages words total, but got $totalAssistantWords")
+                failWithScreenshot("assistant_word_count_exceeded", "Assistant word count ($totalAssistantWords) exceeds user message count ($totalUserMessages)")
+                throw AssertionError("Assistant word count validation failed: $totalAssistantWords words > $totalUserMessages messages")
+            }
+            Log.d(TAG, "✅ Assistant word count validation passed: $totalAssistantWords words <= $totalUserMessages messages")
+            
             Log.d(TAG, "🎉 Voice launch test with multiple messages and TTS completed successfully!")
             
             // Final chat ID tracking - capture any server-assigned IDs
