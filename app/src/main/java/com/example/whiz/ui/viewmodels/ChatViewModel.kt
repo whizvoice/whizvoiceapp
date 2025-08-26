@@ -1294,6 +1294,34 @@ class ChatViewModel @Inject constructor(
     }
 
     /**
+     * Sync messages when returning to a chat screen
+     * This is lighter weight than loadChat - it just fetches new messages without resetting state
+     */
+    fun syncMessagesIfNeeded(chatId: Long) {
+        viewModelScope.launch {
+            try {
+                // Only sync if this is the current chat
+                if (_chatId.value == chatId && chatId != 0L && chatId != -1L) {
+                    Log.d(TAG, "📥 Syncing messages for chat $chatId on screen resume")
+                    
+                    // Use the retry mechanism to fetch any new messages
+                    val serverMessages = repository.fetchMessagesWithRetry(chatId)
+                    Log.d(TAG, "📥 Sync complete: Retrieved ${serverMessages.size} messages for chat $chatId")
+                    
+                    // The fetchMessagesWithRetry method already handles storing messages and deduplication
+                    // Just trigger messages refresh to update UI
+                    repository.refreshMessages()
+                } else {
+                    Log.d(TAG, "📥 Skipping sync - chat ID mismatch or invalid. Current: ${_chatId.value}, Requested: $chatId")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error syncing messages on resume", e)
+                // Don't show error to user - this is a background sync
+            }
+        }
+    }
+    
+    /**
      * Migrate chat ID without disconnecting WebSocket - used for chat state transitions
      * like -1 to negative (new chat creation) or negative to positive (optimistic to server-backed)
      */

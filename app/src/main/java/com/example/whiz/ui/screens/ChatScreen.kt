@@ -57,6 +57,10 @@ import com.example.whiz.ui.navigation.Screen // Update this import
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import android.util.Log
 import androidx.navigation.NavHostController
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardActions
@@ -632,6 +636,22 @@ fun ChatScreen(
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
+        }
+    }
+    
+    // Sync messages when returning to the screen (e.g., from chats list)
+    // This ensures we get any messages that arrived while away
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, chatId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && chatId != -1L && chatId != 0L) {
+                Log.d("ChatScreen", "🔄 Screen resumed - checking for message sync for chat $chatId")
+                viewModel.syncMessagesIfNeeded(chatId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
     
