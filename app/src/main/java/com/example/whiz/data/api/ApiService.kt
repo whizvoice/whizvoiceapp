@@ -144,4 +144,30 @@ interface ApiService {
     
     @POST("/api/user/preference")
     suspend fun setUserPreference(@Query("key") key: String, @Body value: String): Map<String, String>
+    
+    // ========== SUBSCRIPTION ENDPOINTS ==========
+    data class CreateCheckoutSessionRequest(
+        val success_url: String,
+        val cancel_url: String
+    )
+    
+    data class CreateCheckoutSessionResponse(
+        val checkout_url: String,
+        val session_id: String
+    )
+    
+    data class CancelSubscriptionResponse(
+        val status: String,
+        val message: String,
+        val canceled_at: Long? = null
+    )
+    
+    @GET("/api/subscription/status")
+    suspend fun getSubscriptionStatus(): com.example.whiz.data.local.SubscriptionStatus
+    
+    @POST("/api/subscription/create-checkout-session")
+    suspend fun createCheckoutSession(@Body request: CreateCheckoutSessionRequest): CreateCheckoutSessionResponse
+    
+    @POST("/api/subscription/cancel")
+    suspend fun cancelSubscription(): CancelSubscriptionResponse
 } 

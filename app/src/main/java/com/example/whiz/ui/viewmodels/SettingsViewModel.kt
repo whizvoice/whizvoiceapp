@@ -14,15 +14,20 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.util.Log
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import com.example.whiz.data.auth.AuthenticationRequiredException
 import com.example.whiz.services.TTSManager
+import com.example.whiz.data.local.SubscriptionStatus
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: WhizRepository,
     private val authRepository: AuthRepository,
     private val userPreferences: UserPreferences,
-    private val ttsManager: TTSManager
+    private val ttsManager: TTSManager,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
     private val TAG = "SettingsViewModel"
 
@@ -55,6 +60,16 @@ class SettingsViewModel @Inject constructor(
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
     val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
+    
+    // Subscription states
+    private val _subscriptionStatus = MutableStateFlow<SubscriptionStatus?>(null)
+    val subscriptionStatus: StateFlow<SubscriptionStatus?> = _subscriptionStatus.asStateFlow()
+    
+    private val _isLoadingSubscription = MutableStateFlow(true)
+    val isLoadingSubscription: StateFlow<Boolean> = _isLoadingSubscription.asStateFlow()
+    
+    private val _isProcessingSubscription = MutableStateFlow(false)
+    val isProcessingSubscription: StateFlow<Boolean> = _isProcessingSubscription.asStateFlow()
 
     init {
         Log.d(TAG, "Initializing SettingsViewModel")
@@ -64,6 +79,9 @@ class SettingsViewModel @Inject constructor(
                 // Explicitly load voice settings to ensure they're up to date
                 userPreferences.loadVoiceSettings()
                 Log.d(TAG, "Voice settings after init: ${userPreferences.voiceSettings.value}")
+                
+                // Load subscription status
+                loadSubscriptionStatus()
             } catch (e: AuthenticationRequiredException) {
                 Log.w(TAG, "Authentication required, navigating to login screen.", e)
                 _navigateToLogin.value = true
@@ -223,6 +241,67 @@ class SettingsViewModel @Inject constructor(
                 Log.d(TAG, "Voice settings refreshed: ${userPreferences.voiceSettings.value}")
             } catch (e: Exception) {
                 Log.e(TAG, "Error refreshing voice settings", e)
+            }
+        }
+    }
+    
+    // Subscription functions
+    private fun loadSubscriptionStatus() {
+        viewModelScope.launch {
+            _isLoadingSubscription.value = true
+            try {
+                val status = repository.getSubscriptionStatus()
+                _subscriptionStatus.value = status
+                Log.d(TAG, "Subscription status loaded: $status")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading subscription status", e)
+                _errorMessage.value = "Failed to load subscription status"
+            } finally {
+                _isLoadingSubscription.value = false
+            }
+        }
+    }
+    
+    fun startSubscription() {
+        viewModelScope.launch {
+            _isProcessingSubscription.value = true
+            try {
+                val checkoutUrl = repository.createCheckoutSession(
+                    successUrl = "whizvoice://subscription/success",
+                    cancelUrl = "whizvoice://subscription/cancel"
+                )
+                
+                // Open the checkout URL in browser
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(checkoutUrl))
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(intent)
+                
+                // Refresh subscription status after a delay
+                kotlinx.coroutines.delay(2000)
+                loadSubscriptionStatus()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting subscription", e)
+                _errorMessage.value = "Failed to start subscription: ${e.message}"
+            } finally {
+                _isProcessingSubscription.value = false
+            }
+        }
+    }
+    
+    fun cancelSubscription() {
+        viewModelScope.launch {
+            _isProcessingSubscription.value = true
+            try {
+                repository.cancelSubscription()
+                _errorMessage.value = "Subscription will be canceled at the end of the billing period"
+                
+                // Reload subscription status
+                loadSubscriptionStatus()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error canceling subscription", e)
+                _errorMessage.value = "Failed to cancel subscription: ${e.message}"
+            } finally {
+                _isProcessingSubscription.value = false
             }
         }
     }

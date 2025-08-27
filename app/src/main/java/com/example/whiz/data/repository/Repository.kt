@@ -1845,6 +1845,40 @@ class WhizRepository @Inject constructor(
     
     // Expose ChatDao for testing purposes
     fun getChatDao(): com.example.whiz.data.local.ChatDao = chatDao
+    
+    // Subscription methods
+    suspend fun getSubscriptionStatus(): com.example.whiz.data.local.SubscriptionStatus {
+        return try {
+            apiService.getSubscriptionStatus()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting subscription status", e)
+            throw e
+        }
+    }
+    
+    suspend fun createCheckoutSession(successUrl: String, cancelUrl: String): String {
+        return try {
+            val response = apiService.createCheckoutSession(
+                com.example.whiz.data.api.ApiService.CreateCheckoutSessionRequest(
+                    success_url = successUrl,
+                    cancel_url = cancelUrl
+                )
+            )
+            response.checkout_url
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating checkout session", e)
+            throw e
+        }
+    }
+    
+    suspend fun cancelSubscription() {
+        try {
+            apiService.cancelSubscription()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error canceling subscription", e)
+            throw e
+        }
+    }
 }
 
 // Result class to indicate if we're returning cached data

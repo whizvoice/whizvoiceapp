@@ -179,6 +179,16 @@ fun SettingsScreen(
                 onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
             )
 
+            // Subscription Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Subscription", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(thickness = Dp.Hairline)
+            
+            SubscriptionSection(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxWidth()
+            )
+            
             // Data Management Section
             Spacer(modifier = Modifier.height(16.dp))
             Text("Data Management", style = MaterialTheme.typography.titleMedium)
@@ -576,4 +586,192 @@ fun VoiceSettingsSection(
             }
         }
     }
+}
+
+@Composable
+fun SubscriptionSection(
+    viewModel: SettingsViewModel,
+    modifier: Modifier = Modifier
+) {
+    val subscriptionStatus by viewModel.subscriptionStatus.collectAsState()
+    val isLoadingSubscription by viewModel.isLoadingSubscription.collectAsState()
+    val isProcessingSubscription by viewModel.isProcessingSubscription.collectAsState()
+    
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        when {
+            isLoadingSubscription -> {
+                // Loading state
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Loading subscription status...")
+                }
+            }
+            subscriptionStatus?.has_subscription == true -> {
+                // User has an active subscription
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Active subscription",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Premium Subscription Active",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        
+                        if (subscriptionStatus?.cancel_at_period_end == true) {
+                            Text(
+                                "Subscription will end on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                "Renews on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        
+                        if (subscriptionStatus?.cancel_at_period_end != true) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { viewModel.cancelSubscription() },
+                                enabled = !isProcessingSubscription,
+                                colors = ButtonDefaults.outlinedButtonColors(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (isProcessingSubscription) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Processing...")
+                                } else {
+                                    Text("Cancel Subscription")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                // User doesn't have a subscription
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "Premium Subscription",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            "Get unlimited access to all features for $10/month",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        
+                        // Benefits list
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            BenefitRow("Unlimited conversations")
+                            BenefitRow("Priority support")
+                            BenefitRow("Advanced features")
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.startSubscription() },
+                            enabled = !isProcessingSubscription,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            if (isProcessingSubscription) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Processing...")
+                            } else {
+                                Text("Subscribe for $10/month")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BenefitRow(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    }
+}
+
+fun formatTimestamp(timestamp: Long): String {
+    if (timestamp == 0L) return "Unknown"
+    val date = java.util.Date(timestamp * 1000)
+    val format = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
+    return format.format(date)
 }
