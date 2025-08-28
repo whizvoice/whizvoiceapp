@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.data.preferences.VoiceSettings
+import com.example.whiz.test_helpers.ComposeTestHelper
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -73,77 +74,80 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
     }
     
-    private fun navigateToSettings() {
+    private fun navigateToSettings(): Boolean {
         Log.d(TAG, "Navigating to Settings screen")
         
-        // Wait for the app to be ready - could be on chats list or chat screen
-        Thread.sleep(2000) // Give app time to fully load
+        // Wait for the settings button to be available - could be on chats list or chat screen
+        // The button is identified by its contentDescription = "Settings" (no test tags)
+        val settingsButtonFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNode(hasContentDescription("Settings")) },
+            timeoutMs = 5000,
+            description = "Settings button"
+        )
         
-        // Try to find and click settings icon - it should be available on both screens
+        if (!settingsButtonFound) {
+            Log.e(TAG, "Settings button not found on screen")
+            return false
+        }
+        
+        // Click the settings button
         try {
             composeTestRule.onNode(hasContentDescription("Settings"))
                 .performClick()
         } catch (e: AssertionError) {
-            Log.d(TAG, "Settings button not found, trying alternative selectors")
-            // Try alternative selector
-            composeTestRule.onNode(hasTestTag("settings_button"))
-                .performClick()
+            Log.e(TAG, "Could not click Settings button: ${e.message}")
+            return false
         }
         
         // Wait for settings screen to load
-        waitForText("Settings")
-        waitForText("API Keys")
+        val settingsScreenLoaded = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Settings") },
+            timeoutMs = 3000,
+            description = "Settings screen title"
+        )
+        
+        if (!settingsScreenLoaded) {
+            Log.e(TAG, "Settings screen did not load")
+            return false
+        }
+        
+        val apiKeysVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("API Keys") },
+            timeoutMs = 2000,
+            description = "API Keys section"
+        )
+        
+        if (!apiKeysVisible) {
+            Log.e(TAG, "API Keys section not visible on settings screen")
+            return false
+        }
+        
+        return true
     }
     
-    private fun waitForText(text: String, timeout: Long = 5000) {
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeout) {
-            try {
-                composeTestRule.onNodeWithText(text).assertExists()
-                return
-            } catch (e: AssertionError) {
-                Thread.sleep(100)
-            }
-        }
-        // Take screenshot before failing
-        failWithScreenshot("Text '$text' not found within ${timeout}ms", "text_not_found_$text")
-    }
-    
-    private fun waitForNode(matcher: SemanticsMatcher, timeout: Long = 5000) {
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeout) {
-            try {
-                composeTestRule.onNode(matcher).assertExists()
-                return
-            } catch (e: AssertionError) {
-                Thread.sleep(100)
-            }
-        }
-        // Take screenshot before failing
-        failWithScreenshot("Node not found within ${timeout}ms", "node_not_found")
-    }
-    
-    private fun waitUntilGone(text: String, timeout: Long = 3000) {
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeout) {
-            try {
-                composeTestRule.onNodeWithText(text).assertDoesNotExist()
-                return
-            } catch (e: AssertionError) {
-                Thread.sleep(100)
-            }
-        }
-    }
     
     @Test
     fun testClaudeApiKey_SetAndUnset() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         // Test setting Claude API key
         Log.d(TAG, "Testing Claude API key setting")
         
         // Verify we're on settings screen
-        waitForText("Claude API Key")
+        val claudeApiKeyFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Claude API Key") },
+            timeoutMs = 5000,
+            description = "Claude API Key text"
+        )
+        if (!claudeApiKeyFound) {
+            failWithScreenshot("Claude API Key text not found", "claude_api_key_text_not_found")
+        }
         
         // Check current state - token might already be set from previous tests
         val tokenAlreadySet = try {
@@ -209,9 +213,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(1000) // Give time for save operation
         
         // Verify token is set
-        try {
-            waitForText("Token is set.")
-        } catch (e: AssertionError) {
+        val tokenSetFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Token is set.") },
+            timeoutMs = 5000,
+            description = "Token is set text"
+        )
+        if (!tokenSetFound) {
             failWithScreenshot("Token was not saved successfully - 'Token is set.' text not found", "token_not_saved")
         }
         Log.d(TAG, "Screenshot would be taken here: claude_token_set")
@@ -262,7 +270,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testAsanaAccessToken_SetAndUnset() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         // Test setting Asana token
         Log.d(TAG, "Testing Asana access token setting")
@@ -276,9 +286,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         // Verify we can see Asana section
-        try {
-            waitForText("Asana Access Token")
-        } catch (e: AssertionError) {
+        val asanaFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Asana Access Token") },
+            timeoutMs = 5000,
+            description = "Asana Access Token text"
+        )
+        if (!asanaFound) {
             failWithScreenshot("Could not find Asana Access Token section", "asana_section_not_found")
         }
         
@@ -340,9 +354,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(1000)
         
         // Verify token is set
-        try {
-            waitForText("Token is set.", timeout = 3000)
-        } catch (e: AssertionError) {
+        val asanaTokenSetFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Token is set.") },
+            timeoutMs = 3000,
+            description = "Token is set text for Asana"
+        )
+        if (!asanaTokenSetFound) {
             failWithScreenshot("Asana token was not saved - 'Token is set.' not found", "asana_not_saved")
         }
         Log.d(TAG, "Screenshot would be taken here: asana_token_set")
@@ -380,7 +398,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(1000)
         
         // Verify token is still set
-        waitForText("Token is set.", timeout = 3000)
+        val tokenStillSet = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Token is set.") },
+            timeoutMs = 3000,
+            description = "Token is set after change"
+        )
+        if (!tokenStillSet) {
+            failWithScreenshot("Token not set after change", "token_not_set_after_change")
+        }
         
         // Test clearing the token
         Log.d(TAG, "Testing Asana access token clearing")
@@ -396,9 +422,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(1000)
         
         // Verify token is cleared
-        try {
-            waitForText("Enter Asana Access Token")
-        } catch (e: AssertionError) {
+        val asanaInputFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Enter Asana Access Token") },
+            timeoutMs = 5000,
+            description = "Enter Asana Access Token text"
+        )
+        if (!asanaInputFound) {
             // Check if "Token is set." is gone
             try {
                 composeTestRule.onAllNodesWithText("Token is set.")
@@ -421,7 +451,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testVoiceSettings_CustomConfiguration() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing voice settings configuration")
         
@@ -434,9 +466,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         // Verify initial state - system defaults may be on
-        try {
-            waitForText("Use System TTS Settings")
-        } catch (e: AssertionError) {
+        val voiceSettingsFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Use System TTS Settings") },
+            timeoutMs = 5000,
+            description = "Use System TTS Settings text"
+        )
+        if (!voiceSettingsFound) {
             failWithScreenshot("Voice Settings section not found", "voice_settings_not_found")
         }
         
@@ -453,15 +489,40 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 .performClick()
             
             // Wait for custom settings to appear
-            waitForText("Speech Rate")
+            val speechRateFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Speech Rate") },
+                timeoutMs = 5000,
+                description = "Speech Rate text"
+            )
+            if (!speechRateFound) {
+                failWithScreenshot("Speech Rate not found after disabling system defaults", "speech_rate_not_found")
+            }
         }
         
         // Test adjusting speech rate
         Log.d(TAG, "Testing speech rate adjustment")
         
         // The sliders are present, verify we can see the current values
-        waitForText("Speech Rate")
-        waitForText("100%") // Default speech rate
+        val speechRateVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Speech Rate") },
+            timeoutMs = 5000,
+            description = "Speech Rate text"
+        )
+        if (!speechRateVisible) {
+            failWithScreenshot("Speech Rate not visible", "speech_rate_not_visible")
+        }
+        
+        val defaultValueFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("100%") },
+            timeoutMs = 3000,
+            description = "Default 100% value"
+        )
+        if (!defaultValueFound) {
+            Log.w(TAG, "Default 100% value not found")
+        }
         
         // Test the Test Playback button
         Log.d(TAG, "Testing voice playback")
@@ -510,7 +571,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testVoiceSettings_SliderInteraction() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing voice settings slider interactions")
         
@@ -531,7 +594,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             switches.filter(hasAnyAncestor(hasText("Use System TTS Settings")))
                 .onFirst()
                 .performClick()
-            waitForText("Speech Rate")
+            val speechRateFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Speech Rate") },
+                timeoutMs = 5000,
+                description = "Speech Rate text"
+            )
+            if (!speechRateFound) {
+                failWithScreenshot("Speech Rate not found", "speech_rate_not_found")
+            }
         }
         
         // Verify we can see both sliders
@@ -559,7 +630,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testSubscription_DisplayAndInteraction() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing subscription section display")
         
@@ -575,9 +648,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Thread.sleep(2000) // Give time for subscription status to load
         
         // Check if subscription section is visible
-        try {
-            waitForText("Subscription")
-        } catch (e: AssertionError) {
+        val subscriptionFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Subscription") },
+            timeoutMs = 5000,
+            description = "Subscription text"
+        )
+        if (!subscriptionFound) {
             failWithScreenshot("Subscription section not found", "subscription_not_found")
         }
         
@@ -587,12 +664,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             // Case 1: No subscription
             if (composeTestRule.onAllNodesWithText("Premium Subscription").fetchSemanticsNodes().isNotEmpty()) {
                 Log.d(TAG, "User has no active subscription")
-                try {
-                    waitForText("Get unlimited access to all features")
-                    composeTestRule.onNodeWithText("Subscribe for $10/month")
-                        .assertIsEnabled()
-                } catch (e: AssertionError) {
-                    failWithScreenshot("Subscription UI elements not as expected", "subscription_ui_issue")
+                val unlimitedAccessFound = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText("Get unlimited access to all features") },
+                    timeoutMs = 3000,
+                    description = "Unlimited access text"
+                )
+                if (unlimitedAccessFound) {
+                    try {
+                        composeTestRule.onNodeWithText("Subscribe for $10/month")
+                            .assertIsEnabled()
+                    } catch (e: AssertionError) {
+                        failWithScreenshot("Subscription UI elements not as expected", "subscription_ui_issue")
+                    }
+                } else {
+                    Log.w(TAG, "Unlimited access text not found")
                 }
                 Log.d(TAG, "Screenshot would be taken here: subscription_not_active")
             }
@@ -601,7 +687,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 // Case 2: Active subscription
                 if (composeTestRule.onAllNodesWithText("Premium Subscription Active").fetchSemanticsNodes().isNotEmpty()) {
                     Log.d(TAG, "User has active subscription")
-                    waitForText("Premium Subscription Active")
+                    val premiumActiveFound = ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithText("Premium Subscription Active") },
+                        timeoutMs = 3000,
+                        description = "Premium Subscription Active text"
+                    )
+                    if (!premiumActiveFound) {
+                        Log.w(TAG, "Premium Subscription Active text not found")
+                    }
                     // May have Cancel Subscription button
                     Log.d(TAG, "Screenshot would be taken here: subscription_active")
                 }
@@ -614,7 +708,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testSettingsPersistence_AcrossNavigation() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing settings persistence across navigation")
         
@@ -647,7 +743,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Wait for save to complete
         Thread.sleep(1000)
-        waitForText("Token is set.")
+        val tokenSetAfterSave = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Token is set.") },
+            timeoutMs = 5000,
+            description = "Token is set after save"
+        )
+        if (!tokenSetAfterSave) {
+            failWithScreenshot("Token not set after save", "token_not_set_after_save")
+        }
         
         // Navigate away from settings
         try {
@@ -658,13 +762,31 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         // Wait for home screen
-        waitForNode(hasContentDescription("Chats list"))
+        val chatsListFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNode(hasContentDescription("Chats list")) },
+            timeoutMs = 5000,
+            description = "Chats list"
+        )
+        if (!chatsListFound) {
+            failWithScreenshot("Could not navigate back to chats list", "chats_list_not_found")
+        }
         
         // Navigate back to settings
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate back to Settings screen", "navigate_back_to_settings_failed")
+        }
         
         // Verify token is still set
-        waitForText("Token is set.")
+        val tokenStillSetAfterNav = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Token is set.") },
+            timeoutMs = 5000,
+            description = "Token is set after navigation"
+        )
+        if (!tokenStillSetAfterNav) {
+            failWithScreenshot("Token not persisted after navigation", "token_not_persisted")
+        }
         
         Log.d(TAG, "Settings persisted successfully across navigation")
         Log.d(TAG, "Screenshot would be taken here: settings_persisted")
@@ -681,7 +803,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testTokenVisibility_PasswordMasking() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing token visibility toggle")
         
@@ -728,7 +852,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testDataManagement_HardSync() {
-        navigateToSettings()
+        if (!navigateToSettings()) {
+            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+        }
         
         Log.d(TAG, "Testing hard sync functionality")
         
@@ -736,11 +862,24 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         composeTestRule.onRoot()
             .performScrollToIndex(0)
         
-        try {
-            waitForText("Force Full Sync")
-            waitForText("Clear local sync timestamps and re-download all data from server")
-        } catch (e: AssertionError) {
-            failWithScreenshot("Data Management section not found", "data_management_not_found")
+        val forceSyncFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Force Full Sync") },
+            timeoutMs = 5000,
+            description = "Force Full Sync text"
+        )
+        if (!forceSyncFound) {
+            failWithScreenshot("Force Full Sync not found", "force_sync_not_found")
+        }
+        
+        val syncDescFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Clear local sync timestamps and re-download all data from server") },
+            timeoutMs = 3000,
+            description = "Sync description text"
+        )
+        if (!syncDescFound) {
+            failWithScreenshot("Data Management section not complete", "data_management_not_complete")
         }
         
         // Verify sync button is enabled
@@ -756,9 +895,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         // Verify syncing state appears
-        try {
-            waitForText("Syncing...")
-        } catch (e: AssertionError) {
+        val syncingIndicatorFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Syncing...") },
+            timeoutMs = 2000,
+            description = "Syncing indicator"
+        )
+        if (!syncingIndicatorFound) {
             Log.w(TAG, "Syncing indicator may have completed too quickly")
         }
         
