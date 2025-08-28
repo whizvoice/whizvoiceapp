@@ -8,6 +8,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.Path
 import retrofit2.http.Query
 import android.util.Log
+import com.google.gson.annotations.SerializedName
 
 interface ApiService {
     data class TokenUpdateRequest(
@@ -16,8 +17,8 @@ interface ApiService {
     )
 
     data class UserApiKeySetRequest(
-        val key_name: String,
-        val key_value: String?
+        @SerializedName("key_name") val key_name: String,
+        @SerializedName("key_value") val key_value: String? = null  // Add default value
     )
 
     data class TokenResponse(
