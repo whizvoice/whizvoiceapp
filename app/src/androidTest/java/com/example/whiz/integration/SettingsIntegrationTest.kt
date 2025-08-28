@@ -229,19 +229,31 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "Step 4: Testing invalid token scenario")
         val invalidToken = "invalid-token-12345"
         
-        // Click on the input field first to focus it, then input text
+        // Enter text into the input field
         try {
-            // The actual EditText is the parent of the placeholder text
-            composeTestRule.onNode(
-                hasSetTextAction().and(hasAnyDescendant(hasText("Enter Claude API Key")))
-            ).performClick()
+            // First try the simple approach - just find any text field that has SetTextAction
+            val inputFieldNode = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
             
-            composeTestRule.onNode(
-                hasSetTextAction().and(hasAnyDescendant(hasText("Enter Claude API Key")))
-            ).performTextInput(invalidToken)
+            // Clear any existing text first
+            inputFieldNode.performTextClearance()
+            
+            // Now set the invalid token text
+            inputFieldNode.performTextInput(invalidToken)
+            Log.d(TAG, "Successfully entered invalid token: $invalidToken")
         } catch (e: AssertionError) {
-            Log.e(TAG, "FAILURE: Could not enter invalid token into input field: ${e.message}")
-            failWithScreenshot("invalid_token_input_failed", "Could not enter invalid token: ${e.message}")
+            // If that fails, try alternative approach
+            Log.w(TAG, "First approach failed, trying alternative: ${e.message}")
+            try {
+                // Try finding by placeholder text
+                composeTestRule.onNodeWithText("Enter Claude API Key")
+                    .performTextReplacement(invalidToken)
+                Log.d(TAG, "Successfully entered invalid token using text replacement")
+            } catch (e2: AssertionError) {
+                Log.e(TAG, "FAILURE: Could not enter invalid token into input field")
+                Log.e(TAG, "Error 1: ${e.message}")
+                Log.e(TAG, "Error 2: ${e2.message}")
+                failWithScreenshot("invalid_token_input_failed", "Could not enter invalid token: ${e2.message}")
+            }
         }
         
         // Save the invalid token
@@ -410,9 +422,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Restore the actual test account token
         try {
-            composeTestRule.onNode(
-                hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
-            ).performTextInput(actualClaudeKey)
+            // Use simpler approach with unmerged tree
+            val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+            inputField.performTextClearance()
+            inputField.performTextInput(actualClaudeKey)
+            Log.d(TAG, "Entered test account's Claude API key")
             
             // Save the valid token
             val saveButton2Found = ComposeTestHelper.waitForElement(
@@ -510,16 +524,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Enter a test token
         val testToken = "0/test-asana-token-${System.currentTimeMillis()}"
         try {
-            composeTestRule.onNodeWithText("Enter Asana Access Token")
-                .performTextInput(testToken)
+            // Find all text input fields and use the second one (first is Claude, second is Asana)
+            val allInputFields = composeTestRule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)
+            val asanaInput = allInputFields[1] // Second input field should be Asana
+            asanaInput.performTextClearance()
+            asanaInput.performTextInput(testToken)
+            Log.d(TAG, "Entered test Asana token: $testToken")
         } catch (e: AssertionError) {
-            // Try finding input field differently
+            // Fallback: try finding by placeholder text
+            Log.w(TAG, "Could not find Asana input by index, trying by placeholder: ${e.message}")
             try {
-                composeTestRule.onNode(
-                    hasSetTextAction()
-                        .and(hasAnyAncestor(hasText("Asana Access Token")))
-                ).performTextInput(testToken)
+                composeTestRule.onNodeWithText("Enter Asana Access Token")
+                    .performTextReplacement(testToken)
+                Log.d(TAG, "Entered test Asana token using text replacement")
             } catch (e2: AssertionError) {
+                Log.e(TAG, "FAILURE: Could not find Asana input field")
                 failWithScreenshot("asana_input_not_found", "Could not find Asana input field: ${e2.message}")
             }
         }
@@ -640,10 +659,12 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // IMPORTANT: Restore the actual test account's Asana token
         Log.d(TAG, "Restoring test account's Asana token")
         try {
-            // Enter the actual test account token
-            composeTestRule.onNode(
-                hasSetTextAction().and(hasAnyAncestor(hasText("Asana Access Token")))
-            ).performTextInput(actualAsanaToken)
+            // Enter the actual test account token using simpler approach
+            val allInputFields = composeTestRule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)
+            val asanaInput = allInputFields[1] // Second input field should be Asana
+            asanaInput.performTextClearance()
+            asanaInput.performTextInput(actualAsanaToken)
+            Log.d(TAG, "Entered test account's Asana token")
             
             // Save it
             val saveAsanaFound = ComposeTestHelper.waitForElement(
@@ -948,15 +969,22 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Set a Claude token
         val testToken = "sk-ant-persistence-test-${System.currentTimeMillis()}"
         try {
-            composeTestRule.onNodeWithText("Enter Claude API Key")
-                .performTextInput(testToken)
+            // Use simple approach with unmerged tree
+            val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+            inputField.performTextClearance()
+            inputField.performTextInput(testToken)
+            Log.d(TAG, "Entered persistence test token: $testToken")
         } catch (e: AssertionError) {
-            // If token is already set, clear it first
+            // If that fails, token might be set - clear it first
+            Log.w(TAG, "Could not directly enter token, attempting to clear first: ${e.message}")
             try {
                 composeTestRule.onAllNodesWithText("Clear").onFirst().performClick()
                 Thread.sleep(1500)
-                composeTestRule.onNode(hasSetTextAction()).performTextInput(testToken)
+                val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+                inputField.performTextInput(testToken)
+                Log.d(TAG, "Entered persistence test token after clearing")
             } catch (e2: Exception) {
+                Log.e(TAG, "FAILURE: Could not enter token for persistence test")
                 failWithScreenshot("persistence_input_failed", "Could not enter token for persistence test: ${e2.message}")
             }
         }
@@ -1043,15 +1071,14 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Enter a token
         val testToken = "sk-ant-visible-test-123"
         try {
-            composeTestRule.onNodeWithText("Enter Claude API Key")
-                .performTextInput(testToken)
+            // Use simple approach with unmerged tree
+            val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+            inputField.performTextClearance()
+            inputField.performTextInput(testToken)
+            Log.d(TAG, "Entered visibility test token: $testToken")
         } catch (e: AssertionError) {
-            // Token might be already set, try to find input field differently
-            try {
-                composeTestRule.onNode(hasSetTextAction()).performTextInput(testToken)
-            } catch (e2: AssertionError) {
-                failWithScreenshot("visibility_input_failed", "Could not enter token for visibility test")
-            }
+            Log.e(TAG, "FAILURE: Could not enter token for visibility test: ${e.message}")
+            failWithScreenshot("visibility_input_failed", "Could not enter token for visibility test")
         }
         
         // Find the visibility toggle icon
