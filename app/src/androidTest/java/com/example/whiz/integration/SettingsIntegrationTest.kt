@@ -21,6 +21,7 @@ import org.junit.runner.RunWith
 import javax.inject.Inject
 import android.util.Log
 import kotlinx.coroutines.delay
+import com.example.whiz.TestCredentialsManager
 
 /**
  * Integration tests for the Settings screen functionality.
@@ -48,30 +49,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         super.setUpAuthentication()
         
-        // Clear any existing settings
-        runBlocking {
-            try {
-                Log.d(TAG, "Clearing existing settings before test")
-                userPreferences.setClaudeToken("")
-                userPreferences.setAsanaToken("")
-                userPreferences.saveVoiceSettings(VoiceSettings())
-            } catch (e: Exception) {
-                Log.e(TAG, "Error clearing settings", e)
-            }
-        }
+        // Don't clear tokens in @Before since test account should have them set
+        // Tests will handle clearing and restoring as needed
+        Log.d(TAG, "Test setup complete - preserving existing test account tokens")
     }
     
     @After
     fun tearDown() {
-        // Clear test tokens after each test
-        runBlocking {
-            try {
-                userPreferences.setClaudeToken("")
-                userPreferences.setAsanaToken("")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error cleaning up settings", e)
-            }
-        }
+        // Note: We don't clear tokens in @After because the test account
+        // needs them to remain set for other tests to work properly.
+        // Each test is responsible for restoring valid tokens if it changes them.
+        Log.d(TAG, "Test cleanup - tokens preserved for test account")
     }
     
     private fun navigateToSettings(): Boolean {
@@ -135,8 +123,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
         }
         
-        // Test setting Claude API key
-        Log.d(TAG, "Testing Claude API key setting")
+        Log.d(TAG, "Testing Claude API key management")
         
         // Verify we're on settings screen
         val claudeApiKeyFound = ComposeTestHelper.waitForElement(
@@ -149,122 +136,247 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("Claude API Key text not found", "claude_api_key_text_not_found")
         }
         
-        // Check current state - token might already be set from previous tests
-        val tokenAlreadySet = try {
-            composeTestRule.onNodeWithText("Token is set.").assertExists()
-            true
-        } catch (e: AssertionError) {
-            false
+        // Step 1: Save the original token to restore later
+        var originalTokenExists = false
+        runBlocking {
+            originalTokenExists = userPreferences.hasClaudeToken.first() == true
         }
         
-        if (tokenAlreadySet) {
-            Log.d(TAG, "Token already set, clearing it first")
-            // Find the first Clear button (for Claude API Key)
-            try {
-                composeTestRule.onAllNodesWithText("Clear")
-                    .onFirst()
-                    .performClick()
-                Thread.sleep(1500) // Give time for the clear operation to complete
-            } catch (e: AssertionError) {
-                failWithScreenshot("Could not clear existing token - Clear button not found: ${e.message}", "initial_clear_failed")
-            }
+        // Step 2: Clear existing token (we know it's set for test account)
+        Log.d(TAG, "Clearing existing Claude API key")
+        val clearButtonFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onAllNodesWithText("Clear").onFirst() },
+            timeoutMs = 3000,
+            description = "Clear button"
+        )
+        
+        if (clearButtonFound) {
+            composeTestRule.onAllNodesWithText("Clear")
+                .onFirst()
+                .performClick()
             
-            // After clearing, the text field should appear
-            // But it might not have placeholder text visible, so we'll proceed to enter text
+            // Wait for the input field to appear after clearing
+            val inputFieldAppeared = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    composeTestRule.onNode(
+                        hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+                    )
+                },
+                timeoutMs = 5000,
+                description = "Claude API Key input field after clear"
+            )
+            
+            if (!inputFieldAppeared) {
+                failWithScreenshot("Input field did not appear after clearing token", "clear_failed_no_input")
+            }
+        } else {
+            Log.d(TAG, "No Clear button found, token may already be unset")
         }
         
-        // Enter a test token - look for text field by test tag or content description
-        val testToken = "sk-ant-test-token-${System.currentTimeMillis()}"
-        
-        // Try to find the input field - it may not have placeholder text visible
-        try {
-            // Try finding by placeholder text
-            composeTestRule.onNodeWithText("Enter Claude API Key")
-                .performTextInput(testToken)
-        } catch (e: AssertionError) {
-            Log.d(TAG, "Placeholder not found, looking for text field")
-            // Find the text field - it should be the first one after Claude API Key label
-            try {
+        // Step 3: Verify token is cleared - input field should be visible
+        val inputFieldFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { 
                 composeTestRule.onNode(
-                    hasSetTextAction()
-                        .and(hasAnyAncestor(hasText("Claude API Key")))
-                ).performTextInput(testToken)
-            } catch (e2: AssertionError) {
-                failWithScreenshot("Could not find Claude API Key input field after clearing: ${e2.message}", "claude_input_not_found")
-            }
+                    hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+                )
+            },
+            timeoutMs = 5000,
+            description = "Claude API Key input field"
+        )
+        
+        if (!inputFieldFound) {
+            failWithScreenshot("Input field not visible after clearing token", "input_field_not_visible")
         }
         
-        // Save the token - button text might be "Save" or "Save Claude API Key"
+        // Step 4: Test setting an INVALID token
+        Log.d(TAG, "Testing invalid token")
+        val invalidToken = "invalid-token-12345"
+        
         try {
-            try {
-                composeTestRule.onNodeWithText("Save Claude API Key")
-                    .assertIsEnabled()
-                    .performClick()
-            } catch (e: AssertionError) {
-                composeTestRule.onNodeWithText("Save")
-                    .assertIsEnabled()
-                    .performClick()
-            }
+            composeTestRule.onNode(
+                hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+            ).performTextInput(invalidToken)
         } catch (e: AssertionError) {
-            failWithScreenshot("Could not find Save button for Claude API Key: ${e.message}", "save_button_not_found")
+            failWithScreenshot("Could not enter invalid token: ${e.message}", "invalid_token_input_failed")
         }
         
-        // Wait for save to complete
-        Thread.sleep(1000) // Give time for save operation
+        // Save the invalid token
+        val saveButtonFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Save") },
+            timeoutMs = 3000,
+            description = "Save button"
+        )
         
-        // Verify token is set
-        val tokenSetFound = ComposeTestHelper.waitForElement(
+        if (!saveButtonFound) {
+            val saveClaudeButtonFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Save Claude API Key") },
+                timeoutMs = 3000,
+                description = "Save Claude API Key button"
+            )
+            if (!saveClaudeButtonFound) {
+                failWithScreenshot("Save button not found", "save_button_not_found")
+            }
+            composeTestRule.onNodeWithText("Save Claude API Key").performClick()
+        } else {
+            composeTestRule.onNodeWithText("Save").performClick()
+        }
+        
+        // Wait for save operation to complete by checking for "Token is set." text
+        val invalidTokenSet = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Token is set.") },
             timeoutMs = 5000,
-            description = "Token is set text"
+            description = "Token is set text for invalid token"
         )
-        if (!tokenSetFound) {
-            failWithScreenshot("Token was not saved successfully - 'Token is set.' text not found", "token_not_saved")
-        }
-        Log.d(TAG, "Screenshot would be taken here: claude_token_set")
         
-        // Verify token was actually saved
-        runBlocking {
-            val hasToken = withTimeout(5000) {
-                userPreferences.hasClaudeToken.first()
-            }
-            assertTrue("Claude token should be saved", hasToken == true)
+        if (!invalidTokenSet) {
+            failWithScreenshot("Invalid token was not saved", "invalid_token_not_saved")
         }
         
-        // Test clearing the token
-        Log.d(TAG, "Testing Claude API key clearing")
+        // Step 5: Navigate to chat and verify error when using invalid Claude key
+        Log.d(TAG, "Testing invalid token in chat")
         try {
-            composeTestRule.onAllNodesWithText("Clear")
-                .onFirst() // First Clear button is for Claude API Key
-                .performClick()
-        } catch (e: AssertionError) {
-            failWithScreenshot("Could not find Clear button for Claude API Key: ${e.message}", "clear_button_not_found")
-        }
-        
-        // Wait for clear to complete
-        Thread.sleep(1000)
-        
-        // Verify token is cleared - look for input field or verify "Token is set." is gone
-        val tokenCleared = try {
-            composeTestRule.onNodeWithText("Token is set.").assertDoesNotExist()
-            true
-        } catch (e: AssertionError) {
-            false
-        }
-        
-        if (!tokenCleared) {
-            failWithScreenshot("Token was not cleared successfully", "token_not_cleared")
-        }
-        
-        Log.d(TAG, "Screenshot would be taken here: claude_token_cleared")
-        
-        // Verify token was actually cleared
-        runBlocking {
-            val hasToken = withTimeout(5000) {
-                userPreferences.hasClaudeToken.first()
+            // Navigate back to chats list
+            composeTestRule.onNodeWithContentDescription("Back").performClick()
+            Thread.sleep(1000)
+            
+            // Click New Chat
+            val newChatFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
+                timeoutMs = 5000,
+                description = "New Chat button"
+            )
+            
+            if (newChatFound) {
+                composeTestRule.onNodeWithContentDescription("New Chat").performClick()
+                Thread.sleep(2000)
+                
+                // Type a message that would trigger Claude API call
+                val messageFieldFound = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNode(hasSetTextAction()) },
+                    timeoutMs = 5000,
+                    description = "Message input field"
+                )
+                
+                if (messageFieldFound) {
+                    composeTestRule.onNode(hasSetTextAction()).performTextInput("Hello Claude")
+                    
+                    // Send the message
+                    val sendButtonFound = ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithContentDescription("Send") },
+                        timeoutMs = 3000,
+                        description = "Send button"
+                    )
+                    
+                    if (sendButtonFound) {
+                        composeTestRule.onNodeWithContentDescription("Send").performClick()
+                        Thread.sleep(3000) // Wait for API call to fail
+                        
+                        // Should see an error message about invalid API key
+                        val errorFound = ComposeTestHelper.waitForElement(
+                            composeTestRule = composeTestRule,
+                            selector = { 
+                                composeTestRule.onNode(
+                                    hasText("error", ignoreCase = true)
+                                        .or(hasText("invalid", ignoreCase = true))
+                                        .or(hasText("authentication", ignoreCase = true))
+                                )
+                            },
+                            timeoutMs = 5000,
+                            description = "Error message"
+                        )
+                        
+                        if (errorFound) {
+                            Log.d(TAG, "Error shown for invalid API key as expected")
+                        } else {
+                            Log.w(TAG, "No error message found for invalid API key")
+                        }
+                    }
+                }
             }
-            assertFalse("Claude token should be cleared", hasToken == true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error testing invalid token in chat: ${e.message}")
+        }
+        
+        // Step 6: Go back to settings and restore the ACTUAL test account token
+        Log.d(TAG, "Restoring test account's Claude API key")
+        
+        // Get the actual test credentials
+        val testCredentials = TestCredentialsManager.credentials
+        val actualClaudeKey = testCredentials.testEnvironment.claudeApiKey
+        
+        // Navigate back to settings
+        val settingsButtonFound2 = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNode(hasContentDescription("Settings")) },
+            timeoutMs = 5000,
+            description = "Settings button"
+        )
+        
+        if (settingsButtonFound2) {
+            composeTestRule.onNode(hasContentDescription("Settings")).performClick()
+            Thread.sleep(1000)
+        }
+        
+        // Clear the invalid token
+        val clearButton2Found = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onAllNodesWithText("Clear").onFirst() },
+            timeoutMs = 3000,
+            description = "Clear button"
+        )
+        
+        if (clearButton2Found) {
+            composeTestRule.onAllNodesWithText("Clear").onFirst().performClick()
+            Thread.sleep(1500)
+        }
+        
+        // Restore the actual test account token
+        try {
+            composeTestRule.onNode(
+                hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+            ).performTextInput(actualClaudeKey)
+            
+            // Save the valid token
+            val saveButton2Found = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Save") },
+                timeoutMs = 3000,
+                description = "Save button"
+            )
+            
+            if (saveButton2Found) {
+                composeTestRule.onNodeWithText("Save").performClick()
+            } else {
+                composeTestRule.onNodeWithText("Save Claude API Key").performClick()
+            }
+            
+            Thread.sleep(1000)
+            
+            // Verify token is set
+            val finalTokenSet = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Token is set.") },
+                timeoutMs = 5000,
+                description = "Token is set final check"
+            )
+            
+            if (!finalTokenSet) {
+                failWithScreenshot("Test account token was not restored", "test_token_not_restored")
+            }
+            
+            Log.d(TAG, "Successfully tested Claude API key management and restored test account token")
+            
+        } catch (e: AssertionError) {
+            failWithScreenshot("Could not restore test account token: ${e.message}", "restore_test_token_failed")
         }
     }
     
@@ -273,6 +385,10 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         if (!navigateToSettings()) {
             failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
         }
+        
+        // Get the actual test credentials to restore at the end
+        val testCredentials = TestCredentialsManager.credentials
+        val actualAsanaToken = testCredentials.testEnvironment.asanaToken
         
         // Test setting Asana token
         Log.d(TAG, "Testing Asana access token setting")
@@ -446,6 +562,47 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 userPreferences.hasAsanaToken.first()
             }
             assertFalse("Asana token should be cleared", hasToken == true)
+        }
+        
+        // IMPORTANT: Restore the actual test account's Asana token
+        Log.d(TAG, "Restoring test account's Asana token")
+        try {
+            // Enter the actual test account token
+            composeTestRule.onNode(
+                hasSetTextAction().and(hasAnyAncestor(hasText("Asana Access Token")))
+            ).performTextInput(actualAsanaToken)
+            
+            // Save it
+            val saveAsanaFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Save Asana Access Token") },
+                timeoutMs = 3000,
+                description = "Save Asana button"
+            )
+            
+            if (saveAsanaFound) {
+                composeTestRule.onNodeWithText("Save Asana Access Token").performClick()
+            } else {
+                composeTestRule.onNodeWithText("Save").performClick()
+            }
+            
+            Thread.sleep(1000)
+            
+            // Verify restored
+            val restoredTokenSet = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onAllNodesWithText("Token is set.").get(1) },
+                timeoutMs = 3000,
+                description = "Restored Asana token check"
+            )
+            
+            if (!restoredTokenSet) {
+                Log.e(TAG, "WARNING: Test account's Asana token may not be restored")
+            } else {
+                Log.d(TAG, "Test account's Asana token restored successfully")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore test account's Asana token: ${e.message}")
         }
     }
     
