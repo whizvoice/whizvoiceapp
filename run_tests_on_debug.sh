@@ -707,9 +707,9 @@ run_integration_tests_with_logcat() {
         echo "" >> test_summary.log
         
         if [[ -f "test_logcat_output.log" && -s "test_logcat_output.log" ]]; then
-            # Get all discovered test tags like before
-            local discovered_tags=$(find app/src/androidTest -name "*.kt" -exec grep -ho 'val TAG = "[^"]*"' {} \; 2>/dev/null | \
-                sed 's/val TAG = "\([^"]*\)".*/\1/' | \
+            # Get all discovered test tags like before (including companion object constants)
+            local discovered_tags=$(find app/src/androidTest -name "*.kt" -exec grep -ho '\(val\|const val\) TAG = "[^"]*"' {} \; 2>/dev/null | \
+                sed 's/.*TAG = "\([^"]*\)".*/\1/' | \
                 sort -u)
             
             # Get failing test classes from gradle output to filter tags
@@ -723,6 +723,12 @@ run_integration_tests_with_logcat() {
                                                  # Check if this tag corresponds to a failing test class
                          local tag_matches_failure=false
                          for failing_class in $failing_test_classes; do
+                             # Direct exact match first (e.g., SettingsIntegrationTest == SettingsIntegrationTest)
+                             if [[ "$tag" == "$failing_class" ]]; then
+                                 tag_matches_failure=true
+                                 break
+                             fi
+                             
                              # More flexible matching: check if tag is contained in class name or vice versa
                              # Remove common suffixes for better matching
                              local tag_base=$(echo "$tag" | sed 's/Test$//')
@@ -824,9 +830,9 @@ discover_test_log_tags() {
     
     # Find all androidTest .kt files and extract log tags
     if find app/src/androidTest -name "*.kt" >/dev/null 2>&1; then
-        # Extract TAG variable definitions (e.g., private val TAG = "MessageDisplayTest")
-        local discovered_tags=$(find app/src/androidTest -name "*.kt" -exec grep -ho 'val TAG = "[^"]*"' {} \; 2>/dev/null | \
-            sed 's/val TAG = "\([^"]*\)".*/\1/' | \
+        # Extract TAG variable definitions (e.g., private val TAG = "MessageDisplayTest" or companion object { private const val TAG = "..." })
+        local discovered_tags=$(find app/src/androidTest -name "*.kt" -exec grep -ho '\(val\|const val\) TAG = "[^"]*"' {} \; 2>/dev/null | \
+            sed 's/.*TAG = "\([^"]*\)".*/\1/' | \
             sort -u)
         
         # Build logcat tag filter string with appropriate log levels

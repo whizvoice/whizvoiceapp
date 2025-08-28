@@ -119,13 +119,16 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testClaudeApiKey_SetAndUnset() {
+        Log.d(TAG, "========== Starting testClaudeApiKey_SetAndUnset ==========")
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            Log.e(TAG, "FAILURE: Could not navigate to Settings screen")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing Claude API key management")
         
         // Verify we're on settings screen
+        Log.d(TAG, "Verifying Settings screen loaded - looking for 'Claude API Key' text")
         val claudeApiKeyFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Claude API Key") },
@@ -133,7 +136,10 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Claude API Key text"
         )
         if (!claudeApiKeyFound) {
-            failWithScreenshot("Claude API Key text not found", "claude_api_key_text_not_found")
+            Log.e(TAG, "FAILURE: 'Claude API Key' text not found on Settings screen")
+            failWithScreenshot("claude_api_key_text_not_found", "Claude API Key text not found")
+        } else {
+            Log.d(TAG, "✓ Settings screen loaded successfully")
         }
         
         // Step 1: Save the original token to restore later
@@ -142,68 +148,104 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             originalTokenExists = userPreferences.hasClaudeToken.first() == true
         }
         
-        // Step 2: Clear existing token (we know it's set for test account)
-        Log.d(TAG, "Clearing existing Claude API key")
-        val clearButtonFound = ComposeTestHelper.waitForElement(
+        // Step 2: Check if Claude token needs clearing
+        Log.d(TAG, "Checking if Claude API key needs clearing")
+        
+        // First check if the input field is already visible (token already cleared)
+        // Need to wait for UI to load and fetch token status from server
+        val inputFieldAlreadyVisible = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onAllNodesWithText("Clear").onFirst() },
-            timeoutMs = 3000,
-            description = "Clear button"
+            selector = { 
+                composeTestRule.onNodeWithText("Enter Claude API Key")
+            },
+            timeoutMs = 5000,  // Longer timeout to allow for server fetch
+            description = "Claude API Key input field (initial check)"
         )
         
-        if (clearButtonFound) {
-            composeTestRule.onAllNodesWithText("Clear")
-                .onFirst()
-                .performClick()
+        if (!inputFieldAlreadyVisible) {
+            // Token is set, need to clear it
+            Log.d(TAG, "Claude token is currently set, need to clear it first")
             
-            // Wait for the input field to appear after clearing
-            val inputFieldAppeared = ComposeTestHelper.waitForElement(
+            // Find the Clear button specifically in the Claude API Key section
+            val clearButtonFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { 
                     composeTestRule.onNode(
-                        hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+                        hasText("Clear").and(hasAnyAncestor(hasText("Claude API Key")))
                     )
                 },
-                timeoutMs = 5000,
-                description = "Claude API Key input field after clear"
+                timeoutMs = 3000,
+                description = "Clear button for Claude API Key"
             )
             
-            if (!inputFieldAppeared) {
-                failWithScreenshot("Input field did not appear after clearing token", "clear_failed_no_input")
+            if (clearButtonFound) {
+                composeTestRule.onNode(
+                    hasText("Clear").and(hasAnyAncestor(hasText("Claude API Key")))
+                ).performClick()
+                
+                // Wait for the input field to appear after clearing
+                val inputFieldAppeared = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNodeWithText("Enter Claude API Key")
+                    },
+                    timeoutMs = 5000,
+                    description = "Claude API Key input field after clear"
+                )
+                
+                if (!inputFieldAppeared) {
+                    Log.e(TAG, "FAILURE: Input field did not appear after clicking Clear button")
+                    failWithScreenshot("clear_failed_no_input", "Input field did not appear after clearing token")
+                } else {
+                    Log.d(TAG, "✓ Token cleared successfully, input field visible")
+                }
+            } else {
+                Log.e(TAG, "FAILURE: Could not find Clear button for Claude API Key")
+                failWithScreenshot("clear_button_not_found", "Could not find Clear button for Claude API Key")
             }
         } else {
-            Log.d(TAG, "No Clear button found, token may already be unset")
+            Log.d(TAG, "Claude API key already cleared, input field is visible")
         }
         
         // Step 3: Verify token is cleared - input field should be visible
+        Log.d(TAG, "Step 3: Verifying token is cleared")
         val inputFieldFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { 
-                composeTestRule.onNode(
-                    hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
-                )
+                composeTestRule.onNodeWithText("Enter Claude API Key")
             },
             timeoutMs = 5000,
             description = "Claude API Key input field"
         )
         
         if (!inputFieldFound) {
-            failWithScreenshot("Input field not visible after clearing token", "input_field_not_visible")
+            Log.e(TAG, "FAILURE: Input field not visible after clearing token - clear operation may have failed")
+            failWithScreenshot("input_field_not_visible", "Input field not visible after clearing token")
+        } else {
+            Log.d(TAG, "✓ Step 3 complete: Token cleared, ready to test invalid token")
         }
         
         // Step 4: Test setting an INVALID token
-        Log.d(TAG, "Testing invalid token")
+        Log.d(TAG, "Step 4: Testing invalid token scenario")
         val invalidToken = "invalid-token-12345"
         
+        // Click on the input field first to focus it, then input text
         try {
+            // The actual EditText is the parent of the placeholder text
             composeTestRule.onNode(
-                hasSetTextAction().and(hasAnyAncestor(hasText("Claude API Key")))
+                hasSetTextAction().and(hasAnyDescendant(hasText("Enter Claude API Key")))
+            ).performClick()
+            
+            composeTestRule.onNode(
+                hasSetTextAction().and(hasAnyDescendant(hasText("Enter Claude API Key")))
             ).performTextInput(invalidToken)
         } catch (e: AssertionError) {
-            failWithScreenshot("Could not enter invalid token: ${e.message}", "invalid_token_input_failed")
+            Log.e(TAG, "FAILURE: Could not enter invalid token into input field: ${e.message}")
+            failWithScreenshot("invalid_token_input_failed", "Could not enter invalid token: ${e.message}")
         }
         
         // Save the invalid token
+        Log.d(TAG, "Looking for Save button to save invalid token")
         val saveButtonFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Save") },
@@ -212,6 +254,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (!saveButtonFound) {
+            Log.e(TAG, "Save button not found, looking for 'Save Claude API Key' button")
             val saveClaudeButtonFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Save Claude API Key") },
@@ -219,14 +262,18 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 description = "Save Claude API Key button"
             )
             if (!saveClaudeButtonFound) {
-                failWithScreenshot("Save button not found", "save_button_not_found")
+                Log.e(TAG, "FAILURE: Neither 'Save' nor 'Save Claude API Key' button found on screen")
+                failWithScreenshot("save_button_not_found", "Save button not found")
             }
+            Log.d(TAG, "Clicking 'Save Claude API Key' button")
             composeTestRule.onNodeWithText("Save Claude API Key").performClick()
         } else {
+            Log.d(TAG, "Clicking 'Save' button")
             composeTestRule.onNodeWithText("Save").performClick()
         }
         
         // Wait for save operation to complete by checking for "Token is set." text
+        Log.d(TAG, "Waiting for 'Token is set.' confirmation after saving invalid token")
         val invalidTokenSet = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Token is set.") },
@@ -235,17 +282,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (!invalidTokenSet) {
-            failWithScreenshot("Invalid token was not saved", "invalid_token_not_saved")
+            Log.e(TAG, "FAILURE: 'Token is set.' text not found after saving invalid token - save operation may have failed")
+            failWithScreenshot("invalid_token_not_saved", "Invalid token was not saved")
+        } else {
+            Log.d(TAG, "✓ Step 4a complete: Invalid token saved successfully")
         }
         
         // Step 5: Navigate to chat and verify error when using invalid Claude key
-        Log.d(TAG, "Testing invalid token in chat")
+        Log.d(TAG, "Step 5: Testing invalid token behavior in chat")
         try {
             // Navigate back to chats list
             composeTestRule.onNodeWithContentDescription("Back").performClick()
             Thread.sleep(1000)
             
             // Click New Chat
+            Log.d(TAG, "Looking for New Chat button to test invalid token")
             val newChatFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithContentDescription("New Chat") },
@@ -254,6 +305,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             
             if (newChatFound) {
+                Log.d(TAG, "Found New Chat button, clicking it")
                 composeTestRule.onNodeWithContentDescription("New Chat").performClick()
                 Thread.sleep(2000)
                 
@@ -266,6 +318,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 )
                 
                 if (messageFieldFound) {
+                    Log.d(TAG, "Message field found, typing test message")
                     composeTestRule.onNode(hasSetTextAction()).performTextInput("Hello Claude")
                     
                     // Send the message
@@ -277,7 +330,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     )
                     
                     if (sendButtonFound) {
+                        Log.d(TAG, "Send button found, sending message with invalid API key")
                         composeTestRule.onNodeWithContentDescription("Send").performClick()
+                        Log.d(TAG, "Waiting 3 seconds for API call to complete/fail")
                         Thread.sleep(3000) // Wait for API call to fail
                         
                         // Should see an error message about invalid API key
@@ -295,19 +350,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                         )
                         
                         if (errorFound) {
-                            Log.d(TAG, "Error shown for invalid API key as expected")
+                            Log.d(TAG, "✓ Error shown for invalid API key as expected")
                         } else {
-                            Log.w(TAG, "No error message found for invalid API key")
+                            Log.w(TAG, "WARNING: No error message found for invalid API key - API might have accepted invalid token or UI didn't show error")
                         }
+                    } else {
+                        Log.e(TAG, "Send button not found after typing message")
                     }
+                } else {
+                    Log.e(TAG, "Message input field not found in chat screen")
                 }
+            } else {
+                Log.e(TAG, "New Chat button not found on chats list screen")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error testing invalid token in chat: ${e.message}")
+            Log.e(TAG, "Exception during invalid token chat test: ${e.message}")
+            Log.e(TAG, "This is non-critical - continuing to restore valid token")
         }
+        Log.d(TAG, "✓ Step 5 complete: Invalid token chat test finished")
         
         // Step 6: Go back to settings and restore the ACTUAL test account token
-        Log.d(TAG, "Restoring test account's Claude API key")
+        Log.d(TAG, "Step 6: Restoring test account's Claude API key to prevent test pollution")
         
         // Get the actual test credentials
         val testCredentials = TestCredentialsManager.credentials
@@ -322,8 +385,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (settingsButtonFound2) {
+            Log.d(TAG, "Navigating back to Settings to restore valid token")
             composeTestRule.onNode(hasContentDescription("Settings")).performClick()
             Thread.sleep(1000)
+        } else {
+            Log.e(TAG, "ERROR: Could not find Settings button to restore valid token")
         }
         
         // Clear the invalid token
@@ -335,8 +401,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (clearButton2Found) {
+            Log.d(TAG, "Clearing invalid token before restoring valid one")
             composeTestRule.onAllNodesWithText("Clear").onFirst().performClick()
             Thread.sleep(1500)
+        } else {
+            Log.w(TAG, "Clear button not found, attempting to overwrite token directly")
         }
         
         // Restore the actual test account token
@@ -370,20 +439,24 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             
             if (!finalTokenSet) {
-                failWithScreenshot("Test account token was not restored", "test_token_not_restored")
+                Log.e(TAG, "FAILURE: Test account's Claude token was not restored - 'Token is set.' not found")
+                failWithScreenshot("test_token_not_restored", "Test account token was not restored")
             }
             
-            Log.d(TAG, "Successfully tested Claude API key management and restored test account token")
+            Log.d(TAG, "✓ TEST COMPLETE: Successfully tested Claude API key management and restored test account token")
+            Log.d(TAG, "========== testClaudeApiKey_SetAndUnset completed successfully ==========")
             
         } catch (e: AssertionError) {
-            failWithScreenshot("Could not restore test account token: ${e.message}", "restore_test_token_failed")
+            Log.e(TAG, "CRITICAL FAILURE: Could not restore test account token: ${e.message}")
+            Log.e(TAG, "Stack trace: ${e.stackTraceToString()}")
+            failWithScreenshot("restore_test_token_failed", "Could not restore test account token: ${e.message}")
         }
     }
     
     @Test
     fun testAsanaAccessToken_SetAndUnset() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         // Get the actual test credentials to restore at the end
@@ -409,7 +482,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Asana Access Token text"
         )
         if (!asanaFound) {
-            failWithScreenshot("Could not find Asana Access Token section", "asana_section_not_found")
+            failWithScreenshot("asana_section_not_found", "Could not find Asana Access Token section")
         }
         
         // Check current state - token might already be set
@@ -430,7 +503,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     .performClick()
                 Thread.sleep(1500)
             } catch (e: Exception) {
-                failWithScreenshot("Could not clear existing Asana token: ${e.message}", "asana_clear_failed")
+                failWithScreenshot("asana_clear_failed", "Could not clear existing Asana token: ${e.message}")
             }
         }
         
@@ -447,7 +520,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                         .and(hasAnyAncestor(hasText("Asana Access Token")))
                 ).performTextInput(testToken)
             } catch (e2: AssertionError) {
-                failWithScreenshot("Could not find Asana input field: ${e2.message}", "asana_input_not_found")
+                failWithScreenshot("asana_input_not_found", "Could not find Asana input field: ${e2.message}")
             }
         }
         
@@ -462,7 +535,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     .assertIsEnabled()
                     .performClick()
             } catch (e2: AssertionError) {
-                failWithScreenshot("Could not find Save button for Asana: ${e2.message}", "asana_save_not_found")
+                failWithScreenshot("asana_save_not_found", "Could not find Save button for Asana: ${e2.message}")
             }
         }
         
@@ -477,7 +550,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Token is set text for Asana"
         )
         if (!asanaTokenSetFound) {
-            failWithScreenshot("Asana token was not saved - 'Token is set.' not found", "asana_not_saved")
+            failWithScreenshot("asana_not_saved", "Asana token was not saved - 'Token is set.' not found")
         }
         Log.d(TAG, "Screenshot would be taken here: asana_token_set")
         
@@ -521,7 +594,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Token is set after change"
         )
         if (!tokenStillSet) {
-            failWithScreenshot("Token not set after change", "token_not_set_after_change")
+            failWithScreenshot("token_not_set_after_change", "Token not set after change")
         }
         
         // Test clearing the token
@@ -531,7 +604,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 .get(1) // Second "Clear" button for Asana
                 .performClick()
         } catch (e: Exception) {
-            failWithScreenshot("Could not find Asana Clear button: ${e.message}", "asana_clear_button_not_found")
+            failWithScreenshot("asana_clear_button_not_found", "Could not find Asana Clear button: ${e.message}")
         }
         
         // Wait for clear to complete
@@ -551,7 +624,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     .get(1)
                     .assertDoesNotExist()
             } catch (e2: Exception) {
-                failWithScreenshot("Asana token was not cleared", "asana_not_cleared")
+                failWithScreenshot("asana_not_cleared", "Asana token was not cleared")
             }
         }
         Log.d(TAG, "Screenshot would be taken here: asana_token_cleared")
@@ -589,6 +662,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Thread.sleep(1000)
             
             // Verify restored
+            Log.d(TAG, "Verifying Asana token restoration")
             val restoredTokenSet = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onAllNodesWithText("Token is set.").get(1) },
@@ -597,9 +671,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             
             if (!restoredTokenSet) {
-                Log.e(TAG, "WARNING: Test account's Asana token may not be restored")
+                Log.e(TAG, "CRITICAL WARNING: Test account's Asana token may not be restored - this will affect other tests!")
             } else {
-                Log.d(TAG, "Test account's Asana token restored successfully")
+                Log.d(TAG, "✓ Test account's Asana token restored successfully")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to restore test account's Asana token: ${e.message}")
@@ -609,7 +683,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testVoiceSettings_CustomConfiguration() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing voice settings configuration")
@@ -630,7 +704,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Use System TTS Settings text"
         )
         if (!voiceSettingsFound) {
-            failWithScreenshot("Voice Settings section not found", "voice_settings_not_found")
+            failWithScreenshot("voice_settings_not_found", "Voice Settings section not found")
         }
         
         // Check current state and ensure custom settings are enabled
@@ -653,7 +727,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 description = "Speech Rate text"
             )
             if (!speechRateFound) {
-                failWithScreenshot("Speech Rate not found after disabling system defaults", "speech_rate_not_found")
+                failWithScreenshot("speech_rate_not_found", "Speech Rate not found after disabling system defaults")
             }
         }
         
@@ -668,7 +742,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Speech Rate text"
         )
         if (!speechRateVisible) {
-            failWithScreenshot("Speech Rate not visible", "speech_rate_not_visible")
+            failWithScreenshot("speech_rate_not_visible", "Speech Rate not visible")
         }
         
         val defaultValueFound = ComposeTestHelper.waitForElement(
@@ -688,7 +762,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 .assertIsEnabled()
                 .performClick()
         } catch (e: AssertionError) {
-            failWithScreenshot("Test Playback button not found or disabled", "test_playback_not_found")
+            failWithScreenshot("test_playback_not_found", "Test Playback button not found or disabled")
         }
         
         // Take screenshot of voice settings
@@ -729,7 +803,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testVoiceSettings_SliderInteraction() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing voice settings slider interactions")
@@ -758,7 +832,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 description = "Speech Rate text"
             )
             if (!speechRateFound) {
-                failWithScreenshot("Speech Rate not found", "speech_rate_not_found")
+                failWithScreenshot("speech_rate_not_found", "Speech Rate not found")
             }
         }
         
@@ -767,7 +841,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             composeTestRule.onNodeWithText("Speech Rate").assertExists()
             composeTestRule.onNodeWithText("Voice Pitch").assertExists()
         } catch (e: AssertionError) {
-            failWithScreenshot("Voice sliders not found", "voice_sliders_not_found")
+            failWithScreenshot("voice_sliders_not_found", "Voice sliders not found")
         }
         
         // Verify percentage displays
@@ -788,7 +862,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testSubscription_DisplayAndInteraction() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing subscription section display")
@@ -812,7 +886,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Subscription text"
         )
         if (!subscriptionFound) {
-            failWithScreenshot("Subscription section not found", "subscription_not_found")
+            failWithScreenshot("subscription_not_found", "Subscription section not found")
         }
         
         // The subscription status could be either active or not
@@ -832,7 +906,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                         composeTestRule.onNodeWithText("Subscribe for $10/month")
                             .assertIsEnabled()
                     } catch (e: AssertionError) {
-                        failWithScreenshot("Subscription UI elements not as expected", "subscription_ui_issue")
+                        failWithScreenshot("subscription_ui_issue", "Subscription UI elements not as expected")
                     }
                 } else {
                     Log.w(TAG, "Unlimited access text not found")
@@ -866,7 +940,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testSettingsPersistence_AcrossNavigation() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing settings persistence across navigation")
@@ -883,7 +957,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 Thread.sleep(1500)
                 composeTestRule.onNode(hasSetTextAction()).performTextInput(testToken)
             } catch (e2: Exception) {
-                failWithScreenshot("Could not enter token for persistence test: ${e2.message}", "persistence_input_failed")
+                failWithScreenshot("persistence_input_failed", "Could not enter token for persistence test: ${e2.message}")
             }
         }
         
@@ -894,7 +968,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             try {
                 composeTestRule.onNodeWithText("Save").performClick()
             } catch (e2: AssertionError) {
-                failWithScreenshot("Could not save token for persistence test", "persistence_save_failed")
+                failWithScreenshot("persistence_save_failed", "Could not save token for persistence test")
             }
         }
         
@@ -907,7 +981,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Token is set after save"
         )
         if (!tokenSetAfterSave) {
-            failWithScreenshot("Token not set after save", "token_not_set_after_save")
+            failWithScreenshot("token_not_set_after_save", "Token not set after save")
         }
         
         // Navigate away from settings
@@ -915,7 +989,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             composeTestRule.onNodeWithContentDescription("Back")
                 .performClick()
         } catch (e: AssertionError) {
-            failWithScreenshot("Could not navigate back from settings", "back_button_not_found")
+            failWithScreenshot("back_button_not_found", "Could not navigate back from settings")
         }
         
         // Wait for home screen
@@ -926,12 +1000,12 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Chats list"
         )
         if (!chatsListFound) {
-            failWithScreenshot("Could not navigate back to chats list", "chats_list_not_found")
+            failWithScreenshot("chats_list_not_found", "Could not navigate back to chats list")
         }
         
         // Navigate back to settings
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate back to Settings screen", "navigate_back_to_settings_failed")
+            failWithScreenshot("navigate_back_to_settings_failed", "Failed to navigate back to Settings screen")
         }
         
         // Verify token is still set
@@ -942,7 +1016,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Token is set after navigation"
         )
         if (!tokenStillSetAfterNav) {
-            failWithScreenshot("Token not persisted after navigation", "token_not_persisted")
+            failWithScreenshot("token_not_persisted", "Token not persisted after navigation")
         }
         
         Log.d(TAG, "Settings persisted successfully across navigation")
@@ -961,7 +1035,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testTokenVisibility_PasswordMasking() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing token visibility toggle")
@@ -976,7 +1050,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             try {
                 composeTestRule.onNode(hasSetTextAction()).performTextInput(testToken)
             } catch (e2: AssertionError) {
-                failWithScreenshot("Could not enter token for visibility test", "visibility_input_failed")
+                failWithScreenshot("visibility_input_failed", "Could not enter token for visibility test")
             }
         }
         
@@ -989,7 +1063,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             // Click to show the token
             visibilityIcon.performClick()
         } catch (e: AssertionError) {
-            failWithScreenshot("Could not find visibility toggle icon", "visibility_toggle_not_found")
+            failWithScreenshot("visibility_toggle_not_found", "Could not find visibility toggle icon")
         }
         
         Log.d(TAG, "Screenshot would be taken here: token_visible")
@@ -1010,7 +1084,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Test
     fun testDataManagement_HardSync() {
         if (!navigateToSettings()) {
-            failWithScreenshot("Failed to navigate to Settings screen", "navigate_to_settings_failed")
+            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
         
         Log.d(TAG, "Testing hard sync functionality")
@@ -1026,7 +1100,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Force Full Sync text"
         )
         if (!forceSyncFound) {
-            failWithScreenshot("Force Full Sync not found", "force_sync_not_found")
+            failWithScreenshot("force_sync_not_found", "Force Full Sync not found")
         }
         
         val syncDescFound = ComposeTestHelper.waitForElement(
@@ -1036,7 +1110,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             description = "Sync description text"
         )
         if (!syncDescFound) {
-            failWithScreenshot("Data Management section not complete", "data_management_not_complete")
+            failWithScreenshot("data_management_not_complete", "Data Management section not complete")
         }
         
         // Verify sync button is enabled
@@ -1048,7 +1122,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             composeTestRule.onNodeWithText("Sync Now")
                 .performClick()
         } catch (e: AssertionError) {
-            failWithScreenshot("Sync Now button not found or disabled", "sync_button_issue")
+            failWithScreenshot("sync_button_issue", "Sync Now button not found or disabled")
         }
         
         // Verify syncing state appears
