@@ -270,6 +270,11 @@ fun TokenInputSection(
     var clearOperationInitiated by remember { mutableStateOf(false) }
 
     Log.d("TokenInputSection", "[$title] Recomposing. hasToken: $hasToken, isBusy: $isBusy, editMode: $editMode, inputValue: '$inputValue', saveOpInit: $saveOperationInitiated, clearOpInit: $clearOperationInitiated")
+    
+    // Additional debug logging for Clear button issue
+    if (hasToken == true && !editMode) {
+        Log.d("TokenInputSection", "[$title] Should show Clear button. Token is set and not in edit mode. isBusy=$isBusy")
+    }
 
     var previousIsBusy by remember { mutableStateOf(isBusy) } // Track previous busy state
 
@@ -324,17 +329,22 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         Spacer(modifier = Modifier.width(8.dp))
+                        val changeEnabled = !isBusy
+                        Log.d("TokenInputSection", "[$title] Change button state - enabled: $changeEnabled, isBusy: $isBusy")
                         LoadingButton(
                             text = "Change",
                             onClick = { onInputChange(""); editMode = true },
                             isLoading = false,
-                            enabled = !isBusy
+                            enabled = changeEnabled
                         )
                         Spacer(modifier = Modifier.width(8.dp))
+                        // Clear should always be enabled when token exists - user should always be able to remove a token
+                        val clearEnabled = true // Always allow clearing when token is set
+                        Log.d("TokenInputSection", "[$title] Clear button state - enabled: $clearEnabled, isBusy: $isBusy, clearOpInitiated: $clearOperationInitiated")
                         ClearButton(
                             onClick = { clearOperationInitiated = true; onClearClick() },
                             isLoading = isBusy && clearOperationInitiated,
-                            enabled = !isBusy
+                            enabled = clearEnabled
                         )
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
