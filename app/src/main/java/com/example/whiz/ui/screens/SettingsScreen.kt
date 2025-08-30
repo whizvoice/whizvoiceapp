@@ -278,6 +278,10 @@ fun TokenInputSection(
 
     var previousIsBusy by remember { mutableStateOf(isBusy) } // Track previous busy state
 
+    // State for optimistic updates
+    var optimisticSaveAttempted by remember { mutableStateOf(false) }
+    var saveSucceeded by remember { mutableStateOf(false) }
+    
     // Reset local operation trackers when isBusy becomes false
     // Also, handle UI changes post-operation
     LaunchedEffect(isBusy, previousIsBusy, saveOperationInitiated, clearOperationInitiated, inputValue, hasToken) {
@@ -285,13 +289,15 @@ fun TokenInputSection(
         if (previousIsBusy && !isBusy) { // Operation just finished
             if (saveOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Save operation finished. inputValue: '$inputValue'")
-                // If a non-blank token was saved, we want to exit edit mode.
-                // The hasToken check ensures we don't prematurely exit editMode if the token status is still false/null after a failed save.
-                if (inputValue.isNotBlank() && hasToken == true) {
-                    Log.d("TokenInputSection", "[$title] Save successful for non-blank token and hasToken is true. Setting editMode = false.")
-                    editMode = false
+                // Check if the save actually succeeded by looking at hasToken
+                saveSucceeded = (inputValue.isNotBlank() && hasToken == true)
+                if (!saveSucceeded && optimisticSaveAttempted) {
+                    // Save failed, revert the optimistic UI update
+                    Log.d("TokenInputSection", "[$title] Save failed, reverting optimistic update. Setting editMode = true.")
+                    editMode = true
                 }
                 saveOperationInitiated = false
+                optimisticSaveAttempted = false
             }
             if (clearOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Clear operation finished.")
@@ -325,7 +331,13 @@ fun TokenInputSection(
                     Log.d("TokenInputSection", "[$title] State: hasToken is true. editMode: $editMode")
                     if (!editMode) {
                         Log.d("TokenInputSection", "[$title] Displaying: Token is set (not in editMode)")
-                        Icon(Icons.Default.CheckCircle, contentDescription = "Token set", tint = MaterialTheme.colorScheme.primary)
+                        // Use title-specific content description for better test targeting and accessibility
+                        val tokenSetDescription = when(title) {
+                            "Claude API Key" -> "Claude token set"
+                            "Asana Access Token" -> "Asana token set"
+                            else -> "$title token set"
+                        }
+                        Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         Spacer(modifier = Modifier.width(8.dp))
@@ -341,17 +353,26 @@ fun TokenInputSection(
                         // Clear should always be enabled when token exists - user should always be able to remove a token
                         val clearEnabled = true // Always allow clearing when token is set
                         Log.d("TokenInputSection", "[$title] Clear button state - enabled: $clearEnabled, isBusy: $isBusy, clearOpInitiated: $clearOperationInitiated")
+                        // Use title-specific content description for Clear button
+                        val clearButtonDescription = when(title) {
+                            "Claude API Key" -> "Clear Claude token"
+                            "Asana Access Token" -> "Clear Asana token"
+                            else -> "Clear $title"
+                        }
                         ClearButton(
                             onClick = { clearOperationInitiated = true; onClearClick() },
                             isLoading = isBusy && clearOperationInitiated,
-                            enabled = clearEnabled
+                            enabled = clearEnabled,
+                            modifier = Modifier.semantics { contentDescription = clearButtonDescription }
                         )
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
                         // In edit mode for an existing token (user clicked "Change")
                         Column(modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = "$title input field" },
                                 value = inputValue,
                                 onValueChange = onInputChange,
                                 label = { Text("Enter new $title") },
@@ -377,9 +398,19 @@ fun TokenInputSection(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 SaveButton(
                                     text = "Save $title",
-                                    onClick = { saveOperationInitiated = true; onSaveClick() },
+                                    onClick = { 
+                                        saveOperationInitiated = true
+                                        optimisticSaveAttempted = true
+                                        // Optimistic update: exit edit mode immediately
+                                        if (inputValue.isNotBlank()) {
+                                            Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
+                                            editMode = false
+                                        }
+                                        onSaveClick() 
+                                    },
                                     isLoading = isBusy && saveOperationInitiated,
-                                    enabled = !isBusy && inputValue.isNotBlank()
+                                    enabled = !isBusy && inputValue.isNotBlank(),
+                                    modifier = Modifier.semantics { contentDescription = "Save $title button" }
                                 )
                             }
                         }
@@ -389,7 +420,9 @@ fun TokenInputSection(
                     Log.d("TokenInputSection", "[$title] State: hasToken is false. editMode: $editMode (should be true)")
                     Column(modifier = Modifier.fillMaxWidth()) { // Make column take full width for alignment
                         OutlinedTextField(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentDescription = "$title input field" },
                             value = inputValue,
                             onValueChange = onInputChange,
                             label = { Text("Enter $title") },
@@ -409,10 +442,21 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.height(8.dp))
                         SaveButton(
                             text = "Save $title",
-                            onClick = { saveOperationInitiated = true; onSaveClick() },
+                            onClick = { 
+                                saveOperationInitiated = true
+                                optimisticSaveAttempted = true
+                                // Optimistic update: exit edit mode immediately
+                                if (inputValue.isNotBlank()) {
+                                    Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
+                                    editMode = false
+                                }
+                                onSaveClick() 
+                            },
                             isLoading = isBusy && saveOperationInitiated,
                             enabled = !isBusy && inputValue.isNotBlank(),
-                            modifier = Modifier.align(Alignment.End)
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .semantics { contentDescription = "Save $title button" }
                         )
                     }
                 }
