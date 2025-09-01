@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithTag
@@ -342,6 +343,49 @@ object ComposeTestHelper {
             Log.e(TAG, "❌ Compose: AssertionError checking app readiness", e)
             Log.e(TAG, "🔍 Compose: AssertionError details: ${e.message}")
             Log.e(TAG, "🔍 Compose: Stack trace: ${e.stackTrace.joinToString("\n")}")
+            false
+        }
+    }
+    
+    /**
+     * Wait for a specific UI element to be enabled using Compose Testing
+     * This checks both that the element exists AND is enabled
+     * Uses fast polling for reliable detection on slow emulators
+     */
+    fun waitForElementEnabled(
+        composeTestRule: ComposeTestRule,
+        selector: () -> SemanticsNodeInteraction,
+        timeoutMs: Long = 10000L,
+        description: String = "UI element"
+    ): Boolean {
+        return try {
+            val startTime = System.currentTimeMillis()
+            
+            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    val node = selector()
+                    // Check if the node exists and is enabled
+                    node.assertIsEnabled()
+                    Log.d(TAG, "✅ Found $description and it is enabled after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                } catch (e: Exception) {
+                    // Node not found, not ready, or not enabled, continue waiting
+                    Log.v(TAG, "⏳ $description not ready/enabled yet: ${e.javaClass.simpleName}")
+                } catch (e: AssertionError) {
+                    // Node not found, not ready, or not enabled, continue waiting  
+                    Log.v(TAG, "⏳ $description assertion failed (may be disabled): ${e.javaClass.simpleName}")
+                }
+                Thread.sleep(50) // Use shorter sleep for more responsive waiting
+            }
+            
+            Log.e(TAG, "❌ $description not found or not enabled within ${timeoutMs}ms")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception waiting for $description to be enabled", e)
+            false
+        } catch (e: AssertionError) {
+            Log.e(TAG, "❌ AssertionError waiting for $description to be enabled", e)
             false
         }
     }

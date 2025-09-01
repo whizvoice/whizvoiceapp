@@ -26,6 +26,7 @@ import com.example.whiz.data.auth.TokenAuthenticator
 import com.example.whiz.data.preferences.UserPreferences
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.google.gson.GsonBuilder
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -169,10 +170,14 @@ object AppModule {
     @Provides
     @Singleton
     fun provideApiService(okHttpClient: OkHttpClient): ApiService {
+        val gson = GsonBuilder()
+            .serializeNulls() // Include null values in JSON
+            .create()
+        
         return Retrofit.Builder()
             .baseUrl("https://whizvoice.com/api/")
             .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
             .create(ApiService::class.java)
     }

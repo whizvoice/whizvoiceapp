@@ -8,6 +8,8 @@ import javax.inject.Singleton
 import android.util.Log
 import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.auth.AuthenticationRequiredException
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.flow.first
 import retrofit2.HttpException
 import org.json.JSONObject
@@ -79,14 +81,22 @@ class UserPreferences @Inject constructor(
         // val serverToken = authRepository.serverToken.value // May not be needed if auth handled by interceptor
         Log.d(TAG, "Attempting to update Claude token on server via /user/api_key. New token (empty if clearing): '$token'")
         try {
-            apiService.setUserApiKey( // Use the new function
-                ApiService.UserApiKeySetRequest(
-                    key_name = "claude_api_key", // Key name as expected by backend
-                    key_value = token.ifBlank { null } // Send null if token is blank to clear
-                )
+            val request = ApiService.UserApiKeySetRequest(
+                key_name = "claude_api_key", // Key name as expected by backend
+                key_value = token.ifBlank { null } // Send null if token is blank to clear
             )
-            Log.i(TAG, "Successfully sent Claude token update to server. Refreshing local status...")
-            refreshApiTokenStatus()
+            // Log the request for debugging
+            Log.d(TAG, "Sending UserApiKeySetRequest: key_name='${request.key_name}', key_value=${if (request.key_value == null) "null" else "'${request.key_value}'"}")
+            val gsonWithNulls = GsonBuilder().serializeNulls().create()
+            val json = gsonWithNulls.toJson(request)
+            Log.d(TAG, "Request as JSON with nulls: $json")
+            val response = apiService.setUserApiKey(request)
+            Log.i(TAG, "Successfully sent Claude token update to server. Response: $response")
+            
+            // Update local state immediately from response
+            _hasClaudeToken.value = response.has_claude_token
+            _hasAsanaToken.value = response.has_asana_token
+            Log.d(TAG, "Updated token status from response: Claude=${response.has_claude_token}, Asana=${response.has_asana_token}")
         } catch (e: Exception) {
             Log.e(TAG, "Error updating Claude token on server via /user/api_key", e)
             throw e 
@@ -97,14 +107,22 @@ class UserPreferences @Inject constructor(
         // val serverToken = authRepository.serverToken.value // May not be needed if auth handled by interceptor
         Log.d(TAG, "Attempting to update Asana token on server via /user/api_key. New token (empty if clearing): '$token'")
         try {
-            apiService.setUserApiKey( // Use the new function
-                ApiService.UserApiKeySetRequest(
-                    key_name = "asana_access_token", // Key name as expected by backend
-                    key_value = token.ifBlank { null } // Send null if token is blank to clear
-                )
+            val request = ApiService.UserApiKeySetRequest(
+                key_name = "asana_access_token", // Key name as expected by backend
+                key_value = token.ifBlank { null } // Send null if token is blank to clear
             )
-            Log.i(TAG, "Successfully sent Asana token update to server. Refreshing local status...")
-            refreshApiTokenStatus()
+            // Log the request for debugging
+            Log.d(TAG, "Sending UserApiKeySetRequest for Asana: key_name='${request.key_name}', key_value=${if (request.key_value == null) "null" else "'${request.key_value}'"}")
+            val gsonWithNulls = GsonBuilder().serializeNulls().create()
+            val json = gsonWithNulls.toJson(request)
+            Log.d(TAG, "Asana Request as JSON with nulls: $json")
+            val response = apiService.setUserApiKey(request)
+            Log.i(TAG, "Successfully sent Asana token update to server. Response: $response")
+            
+            // Update local state immediately from response
+            _hasClaudeToken.value = response.has_claude_token
+            _hasAsanaToken.value = response.has_asana_token
+            Log.d(TAG, "Updated token status from response: Claude=${response.has_claude_token}, Asana=${response.has_asana_token}")
         } catch (e: Exception) {
             Log.e(TAG, "Error updating Asana token on server via /user/api_key", e)
             throw e

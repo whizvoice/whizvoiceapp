@@ -37,6 +37,17 @@ class TestInterceptor @Inject constructor() : Interceptor {
         // Callback to check if WebSocket has persistent disconnect for testing
         @Volatile
         var persistentDisconnectForTestCheck: (() -> Boolean)? = null
+        
+        // Subscription test modes
+        enum class SubscriptionTestMode {
+            NONE,  // Default - normal API behavior
+            NO_SUBSCRIPTION,
+            ACTIVE_WITH_RENEWAL,
+            ACTIVE_WITH_END_DATE
+        }
+        
+        @Volatile
+        var subscriptionTestMode: SubscriptionTestMode = SubscriptionTestMode.NONE
     }
     
     // Track if we should return an error for the success-after-error chat
@@ -57,6 +68,58 @@ class TestInterceptor @Inject constructor() : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
+        
+        // Handle subscription API requests
+        if (url.contains("/api/subscription/status") && subscriptionTestMode != SubscriptionTestMode.NONE) {
+            Log.d(TAG, "Intercepting subscription status request with mode: $subscriptionTestMode")
+            
+            val responseBody = when (subscriptionTestMode) {
+                SubscriptionTestMode.NO_SUBSCRIPTION -> {
+                    """
+                    {
+                        "has_subscription": false,
+                        "subscription_id": null,
+                        "status": null,
+                        "current_period_end": null,
+                        "cancel_at_period_end": null
+                    }
+                    """.trimIndent()
+                }
+                SubscriptionTestMode.ACTIVE_WITH_RENEWAL -> {
+                    val futureTimestamp = System.currentTimeMillis() / 1000 + 2592000 // 30 days from now
+                    """
+                    {
+                        "has_subscription": true,
+                        "subscription_id": "sub_test_renewal_123",
+                        "status": "active",
+                        "current_period_end": $futureTimestamp,
+                        "cancel_at_period_end": false
+                    }
+                    """.trimIndent()
+                }
+                SubscriptionTestMode.ACTIVE_WITH_END_DATE -> {
+                    val futureTimestamp = System.currentTimeMillis() / 1000 + 1296000 // 15 days from now
+                    """
+                    {
+                        "has_subscription": true,
+                        "subscription_id": "sub_test_canceled_456",
+                        "status": "active",
+                        "current_period_end": $futureTimestamp,
+                        "cancel_at_period_end": true
+                    }
+                    """.trimIndent()
+                }
+                else -> "" // Should not happen
+            }
+            
+            return Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(responseBody.toResponseBody("application/json".toMediaType()))
+                .build()
+        }
         
         // Only intercept conversation GET requests
         if (request.method == "GET" && url.contains("/api/conversations/") && !url.contains("/messages")) {

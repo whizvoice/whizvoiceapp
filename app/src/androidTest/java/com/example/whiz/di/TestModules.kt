@@ -35,6 +35,7 @@ import dagger.hilt.InstallIn
 import javax.inject.Named
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.google.gson.GsonBuilder
 import retrofit2.http.*
 
 /**
@@ -188,10 +189,14 @@ object TestAppModule {
         // Ensure baseUrl ends with / as required by Retrofit
         val retrofitBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         
+        val gson = GsonBuilder()
+            .serializeNulls() // Include null values in JSON
+            .create()
+        
         val retrofit = Retrofit.Builder()
             .baseUrl(retrofitBaseUrl)
             .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
         
         return retrofit.create(ApiService::class.java)

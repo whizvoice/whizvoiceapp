@@ -193,3 +193,12 @@ private fun parseTimestampToMillis(timestamp: String): Long {
         currentTime
     }
 }
+
+// Subscription Status data class (not a Room entity, just a data model)
+data class SubscriptionStatus(
+    val has_subscription: Boolean,
+    val subscription_id: String? = null,
+    val status: String? = null,
+    val current_period_end: Long? = null,
+    val cancel_at_period_end: Boolean? = null
+)

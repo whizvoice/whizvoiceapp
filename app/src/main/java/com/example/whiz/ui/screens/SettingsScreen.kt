@@ -168,10 +168,15 @@ fun SettingsScreen(
 
             // Voice Settings Section
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Voice Settings", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Voice Settings",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Voice Settings header" }
+            )
             HorizontalDivider(thickness = Dp.Hairline)
             
             VoiceSettingsSection(
+                modifier = Modifier.semantics { contentDescription = "Voice Settings content" },
                 settings = localVoiceSettings,
                 onSettingsChange = { localVoiceSettings = it },
                 onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
@@ -179,14 +184,34 @@ fun SettingsScreen(
                 onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
             )
 
+            // Subscription Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Subscription",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Subscription section header" }
+            )
+            HorizontalDivider(thickness = Dp.Hairline)
+            
+            SubscriptionSection(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxWidth()
+            )
+            
             // Data Management Section
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Data Management", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Data Management",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Data Management header" }
+            )
             HorizontalDivider(thickness = Dp.Hairline)
 
             // Hard Sync Section
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Data Management content" },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -260,9 +285,18 @@ fun TokenInputSection(
     var clearOperationInitiated by remember { mutableStateOf(false) }
 
     Log.d("TokenInputSection", "[$title] Recomposing. hasToken: $hasToken, isBusy: $isBusy, editMode: $editMode, inputValue: '$inputValue', saveOpInit: $saveOperationInitiated, clearOpInit: $clearOperationInitiated")
+    
+    // Additional debug logging for Clear button issue
+    if (hasToken == true && !editMode) {
+        Log.d("TokenInputSection", "[$title] Should show Clear button. Token is set and not in edit mode. isBusy=$isBusy")
+    }
 
     var previousIsBusy by remember { mutableStateOf(isBusy) } // Track previous busy state
 
+    // State for optimistic updates
+    var optimisticSaveAttempted by remember { mutableStateOf(false) }
+    var saveSucceeded by remember { mutableStateOf(false) }
+    
     // Reset local operation trackers when isBusy becomes false
     // Also, handle UI changes post-operation
     LaunchedEffect(isBusy, previousIsBusy, saveOperationInitiated, clearOperationInitiated, inputValue, hasToken) {
@@ -270,13 +304,15 @@ fun TokenInputSection(
         if (previousIsBusy && !isBusy) { // Operation just finished
             if (saveOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Save operation finished. inputValue: '$inputValue'")
-                // If a non-blank token was saved, we want to exit edit mode.
-                // The hasToken check ensures we don't prematurely exit editMode if the token status is still false/null after a failed save.
-                if (inputValue.isNotBlank() && hasToken == true) {
-                    Log.d("TokenInputSection", "[$title] Save successful for non-blank token and hasToken is true. Setting editMode = false.")
-                    editMode = false
+                // Check if the save actually succeeded by looking at hasToken
+                saveSucceeded = (inputValue.isNotBlank() && hasToken == true)
+                if (!saveSucceeded && optimisticSaveAttempted) {
+                    // Save failed, revert the optimistic UI update
+                    Log.d("TokenInputSection", "[$title] Save failed, reverting optimistic update. Setting editMode = true.")
+                    editMode = true
                 }
                 saveOperationInitiated = false
+                optimisticSaveAttempted = false
             }
             if (clearOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Clear operation finished.")
@@ -310,28 +346,55 @@ fun TokenInputSection(
                     Log.d("TokenInputSection", "[$title] State: hasToken is true. editMode: $editMode")
                     if (!editMode) {
                         Log.d("TokenInputSection", "[$title] Displaying: Token is set (not in editMode)")
-                        Icon(Icons.Default.CheckCircle, contentDescription = "Token set", tint = MaterialTheme.colorScheme.primary)
+                        // Use title-specific content description for better test targeting and accessibility
+                        val tokenSetDescription = when(title) {
+                            "Claude API Key" -> "Claude token set"
+                            "Asana Access Token" -> "Asana token set"
+                            else -> "$title token set"
+                        }
+                        Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         Spacer(modifier = Modifier.width(8.dp))
+                        val changeEnabled = !isBusy
+                        Log.d("TokenInputSection", "[$title] Change button state - enabled: $changeEnabled, isBusy: $isBusy")
+                        // Use title-specific content description for Change button
+                        val changeButtonDescription = when(title) {
+                            "Claude API Key" -> "Change Claude token"
+                            "Asana Access Token" -> "Change Asana token"
+                            else -> "Change $title"
+                        }
                         LoadingButton(
                             text = "Change",
                             onClick = { onInputChange(""); editMode = true },
                             isLoading = false,
-                            enabled = !isBusy
+                            enabled = changeEnabled,
+                            contentDescription = changeButtonDescription
                         )
                         Spacer(modifier = Modifier.width(8.dp))
+                        // Clear should always be enabled when token exists - user should always be able to remove a token
+                        val clearEnabled = true // Always allow clearing when token is set
+                        Log.d("TokenInputSection", "[$title] Clear button state - enabled: $clearEnabled, isBusy: $isBusy, clearOpInitiated: $clearOperationInitiated")
+                        // Use title-specific content description for Clear button
+                        val clearButtonDescription = when(title) {
+                            "Claude API Key" -> "Clear Claude token"
+                            "Asana Access Token" -> "Clear Asana token"
+                            else -> "Clear $title"
+                        }
                         ClearButton(
                             onClick = { clearOperationInitiated = true; onClearClick() },
                             isLoading = isBusy && clearOperationInitiated,
-                            enabled = !isBusy
+                            enabled = clearEnabled,
+                            modifier = Modifier.semantics { contentDescription = clearButtonDescription }
                         )
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
                         // In edit mode for an existing token (user clicked "Change")
                         Column(modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = "$title input field" },
                                 value = inputValue,
                                 onValueChange = onInputChange,
                                 label = { Text("Enter new $title") },
@@ -357,9 +420,19 @@ fun TokenInputSection(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 SaveButton(
                                     text = "Save $title",
-                                    onClick = { saveOperationInitiated = true; onSaveClick() },
+                                    onClick = { 
+                                        saveOperationInitiated = true
+                                        optimisticSaveAttempted = true
+                                        // Optimistic update: exit edit mode immediately
+                                        if (inputValue.isNotBlank()) {
+                                            Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
+                                            editMode = false
+                                        }
+                                        onSaveClick() 
+                                    },
                                     isLoading = isBusy && saveOperationInitiated,
-                                    enabled = !isBusy && inputValue.isNotBlank()
+                                    enabled = !isBusy && inputValue.isNotBlank(),
+                                    modifier = Modifier.semantics { contentDescription = "Save $title button" }
                                 )
                             }
                         }
@@ -369,7 +442,9 @@ fun TokenInputSection(
                     Log.d("TokenInputSection", "[$title] State: hasToken is false. editMode: $editMode (should be true)")
                     Column(modifier = Modifier.fillMaxWidth()) { // Make column take full width for alignment
                         OutlinedTextField(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentDescription = "$title input field" },
                             value = inputValue,
                             onValueChange = onInputChange,
                             label = { Text("Enter $title") },
@@ -389,10 +464,21 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.height(8.dp))
                         SaveButton(
                             text = "Save $title",
-                            onClick = { saveOperationInitiated = true; onSaveClick() },
+                            onClick = { 
+                                saveOperationInitiated = true
+                                optimisticSaveAttempted = true
+                                // Optimistic update: exit edit mode immediately
+                                if (inputValue.isNotBlank()) {
+                                    Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
+                                    editMode = false
+                                }
+                                onSaveClick() 
+                            },
                             isLoading = isBusy && saveOperationInitiated,
                             enabled = !isBusy && inputValue.isNotBlank(),
-                            modifier = Modifier.align(Alignment.End)
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .semantics { contentDescription = "Save $title button" }
                         )
                     }
                 }
@@ -403,6 +489,7 @@ fun TokenInputSection(
 
 @Composable
 fun VoiceSettingsSection(
+    modifier: Modifier = Modifier,
     settings: VoiceSettings,
     onSettingsChange: (VoiceSettings) -> Unit,
     onTestPlayback: () -> Unit,
@@ -410,7 +497,7 @@ fun VoiceSettingsSection(
     onSaveSettings: (VoiceSettings) -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Use System Defaults Switch
@@ -435,7 +522,10 @@ fun VoiceSettingsSection(
                 onCheckedChange = { useSystem ->
                     onSettingsChange(settings.copy(useSystemDefaults = useSystem))
                 },
-                enabled = !isSaving
+                enabled = !isSaving,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Use System TTS Settings switch"
+                }
             )
         }
 
@@ -576,4 +666,201 @@ fun VoiceSettingsSection(
             }
         }
     }
+}
+
+@Composable
+fun SubscriptionSection(
+    viewModel: SettingsViewModel,
+    modifier: Modifier = Modifier
+) {
+    val subscriptionStatus by viewModel.subscriptionStatus.collectAsState()
+    val isLoadingSubscription by viewModel.isLoadingSubscription.collectAsState()
+    val isProcessingSubscription by viewModel.isProcessingSubscription.collectAsState()
+    
+    Column(
+        modifier = modifier.semantics { contentDescription = "Subscription section" },
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        when {
+            isLoadingSubscription -> {
+                // Loading state
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Loading subscription status...")
+                }
+            }
+            subscriptionStatus?.has_subscription == true -> {
+                // User has an active subscription
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Active subscription",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Premium Subscription Active",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.semantics { contentDescription = "Premium subscription active status" }
+                            )
+                        }
+                        
+                        if (subscriptionStatus?.cancel_at_period_end == true) {
+                            Text(
+                                "Subscription will end on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics { contentDescription = "Subscription end date" }
+                            )
+                        } else {
+                            Text(
+                                "Renews on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.semantics { contentDescription = "Subscription renewal date" }
+                            )
+                        }
+                        
+                        if (subscriptionStatus?.cancel_at_period_end != true) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { viewModel.cancelSubscription() },
+                                enabled = !isProcessingSubscription,
+                                colors = ButtonDefaults.outlinedButtonColors(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = "Cancel subscription button" }
+                            ) {
+                                if (isProcessingSubscription) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Processing...")
+                                } else {
+                                    Text("Cancel Subscription")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                // User doesn't have a subscription
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "Premium Subscription",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.semantics { contentDescription = "Premium subscription title" }
+                        )
+                        Text(
+                            "Get unlimited access to all features for $10/month",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.semantics { contentDescription = "Subscription benefits description" }
+                        )
+                        
+                        // Benefits list
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            BenefitRow("Unlimited conversations")
+                            BenefitRow("Priority support")
+                            BenefitRow("Advanced features")
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.startSubscription() },
+                            enabled = !isProcessingSubscription,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentDescription = "Subscribe button" },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            if (isProcessingSubscription) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Processing...")
+                            } else {
+                                Text("Subscribe for $10/month")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BenefitRow(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    }
+}
+
+fun formatTimestamp(timestamp: Long): String {
+    if (timestamp == 0L) return "Unknown"
+    val date = java.util.Date(timestamp * 1000)
+    val format = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
+    return format.format(date)
 }

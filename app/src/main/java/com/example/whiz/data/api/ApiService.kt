@@ -8,6 +8,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.Path
 import retrofit2.http.Query
 import android.util.Log
+import com.google.gson.annotations.SerializedName
 
 interface ApiService {
     data class TokenUpdateRequest(
@@ -16,13 +17,20 @@ interface ApiService {
     )
 
     data class UserApiKeySetRequest(
-        val key_name: String,
-        val key_value: String?
+        @SerializedName("key_name") val key_name: String,
+        @SerializedName("key_value") val key_value: String? = null  // Add default value
     )
 
     data class TokenResponse(
         val has_claude_token: Boolean,
         val has_asana_token: Boolean
+    )
+    
+    data class ApiKeyUpdateResponse(
+        val message: String,
+        val has_claude_token: Boolean,
+        val has_asana_token: Boolean,
+        val cleared: Boolean? = null
     )
 
     // ========== CONVERSATION API MODELS ==========
@@ -95,7 +103,7 @@ interface ApiService {
     suspend fun updateApiTokens(@Body request: TokenUpdateRequest): Map<String, String>
 
     @POST("/api/user/api_key")
-    suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): Map<String, String>
+    suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): ApiKeyUpdateResponse
 
     // ========== CONVERSATION ENDPOINTS ==========
     @GET("/api/conversations")
@@ -144,4 +152,30 @@ interface ApiService {
     
     @POST("/api/user/preference")
     suspend fun setUserPreference(@Query("key") key: String, @Body value: String): Map<String, String>
+    
+    // ========== SUBSCRIPTION ENDPOINTS ==========
+    data class CreateCheckoutSessionRequest(
+        val success_url: String,
+        val cancel_url: String
+    )
+    
+    data class CreateCheckoutSessionResponse(
+        val checkout_url: String,
+        val session_id: String
+    )
+    
+    data class CancelSubscriptionResponse(
+        val status: String,
+        val message: String,
+        val canceled_at: Long? = null
+    )
+    
+    @GET("/api/subscription/status")
+    suspend fun getSubscriptionStatus(): com.example.whiz.data.local.SubscriptionStatus
+    
+    @POST("/api/subscription/create-checkout-session")
+    suspend fun createCheckoutSession(@Body request: CreateCheckoutSessionRequest): CreateCheckoutSessionResponse
+    
+    @POST("/api/subscription/cancel")
+    suspend fun cancelSubscription(): CancelSubscriptionResponse
 } 

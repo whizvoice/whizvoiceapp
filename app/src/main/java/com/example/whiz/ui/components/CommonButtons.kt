@@ -10,6 +10,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 /**
@@ -22,7 +25,8 @@ fun LoadingButton(
     isLoading: Boolean,
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
-    containerColor: Color? = null
+    containerColor: Color? = null,
+    contentDescription: String? = null
 ) {
     val buttonColors = if (containerColor != null) {
         ButtonDefaults.buttonColors(containerColor = containerColor)
@@ -30,10 +34,16 @@ fun LoadingButton(
         ButtonDefaults.buttonColors()
     }
     
+    val buttonModifier = if (contentDescription != null) {
+        modifier.semantics { this.contentDescription = contentDescription }
+    } else {
+        modifier
+    }
+    
     Button(
         onClick = onClick,
         enabled = enabled && !isLoading,
-        modifier = modifier,
+        modifier = buttonModifier,
         colors = buttonColors
     ) {
         if (isLoading) {
@@ -88,14 +98,32 @@ fun LoadingDestructiveButton(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    LoadingButton(
-        text = text,
+    OutlinedButton(
         onClick = onClick,
-        isLoading = isLoading,
-        enabled = enabled,
+        enabled = enabled && !isLoading,
         modifier = modifier,
-        containerColor = MaterialTheme.colorScheme.errorContainer
-    )
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.error,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        ),
+        border = ButtonDefaults.outlinedButtonBorder.copy(
+            width = 1.dp,
+            brush = SolidColor(
+                if (enabled && !isLoading) MaterialTheme.colorScheme.error 
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+            )
+        )
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.error
+            )
+        } else {
+            Text(text)
+        }
+    }
 }
 
 /**
