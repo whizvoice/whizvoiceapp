@@ -181,7 +181,11 @@ fun SettingsScreen(
 
             // Subscription Section
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Subscription", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Subscription",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Subscription section header" }
+            )
             HorizontalDivider(thickness = Dp.Hairline)
             
             SubscriptionSection(
@@ -343,11 +347,18 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.width(8.dp))
                         val changeEnabled = !isBusy
                         Log.d("TokenInputSection", "[$title] Change button state - enabled: $changeEnabled, isBusy: $isBusy")
+                        // Use title-specific content description for Change button
+                        val changeButtonDescription = when(title) {
+                            "Claude API Key" -> "Change Claude token"
+                            "Asana Access Token" -> "Change Asana token"
+                            else -> "Change $title"
+                        }
                         LoadingButton(
                             text = "Change",
                             onClick = { onInputChange(""); editMode = true },
                             isLoading = false,
-                            enabled = changeEnabled
+                            enabled = changeEnabled,
+                            contentDescription = changeButtonDescription
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         // Clear should always be enabled when token exists - user should always be able to remove a token
@@ -652,7 +663,7 @@ fun SubscriptionSection(
     val isProcessingSubscription by viewModel.isProcessingSubscription.collectAsState()
     
     Column(
-        modifier = modifier,
+        modifier = modifier.semantics { contentDescription = "Subscription section" },
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         when {
@@ -698,7 +709,8 @@ fun SubscriptionSection(
                             Text(
                                 "Premium Subscription Active",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.semantics { contentDescription = "Premium subscription active status" }
                             )
                         }
                         
@@ -706,13 +718,15 @@ fun SubscriptionSection(
                             Text(
                                 "Subscription will end on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics { contentDescription = "Subscription end date" }
                             )
                         } else {
                             Text(
                                 "Renews on ${formatTimestamp(subscriptionStatus?.current_period_end ?: 0)}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.semantics { contentDescription = "Subscription renewal date" }
                             )
                         }
                         
@@ -722,7 +736,9 @@ fun SubscriptionSection(
                                 onClick = { viewModel.cancelSubscription() },
                                 enabled = !isProcessingSubscription,
                                 colors = ButtonDefaults.outlinedButtonColors(),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = "Cancel subscription button" }
                             ) {
                                 if (isProcessingSubscription) {
                                     CircularProgressIndicator(
@@ -757,12 +773,14 @@ fun SubscriptionSection(
                         Text(
                             "Premium Subscription",
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.semantics { contentDescription = "Premium subscription title" }
                         )
                         Text(
                             "Get unlimited access to all features for $10/month",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.semantics { contentDescription = "Subscription benefits description" }
                         )
                         
                         // Benefits list
@@ -778,7 +796,9 @@ fun SubscriptionSection(
                         Button(
                             onClick = { viewModel.startSubscription() },
                             enabled = !isProcessingSubscription,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentDescription = "Subscribe button" },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
                             )

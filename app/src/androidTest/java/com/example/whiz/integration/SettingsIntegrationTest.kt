@@ -22,6 +22,7 @@ import javax.inject.Inject
 import android.util.Log
 import kotlinx.coroutines.delay
 import com.example.whiz.TestCredentialsManager
+import com.example.whiz.di.TestInterceptor
 
 /**
  * Integration tests for the Settings screen functionality.
@@ -221,18 +222,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             // Now click Change to edit the token
             Log.d(TAG, "Clicking Change button to edit token")
             
-            // Note: Change button is the first one on the screen (for Claude)
             val changeButtonFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { 
-                    composeTestRule.onAllNodesWithText("Change").onFirst()
+                    composeTestRule.onNode(hasContentDescription("Change Claude token"))
                 },
                 timeoutMs = 3000,
                 description = "Change button for Claude API Key"
             )
             
             if (changeButtonFound) {
-                composeTestRule.onAllNodesWithText("Change").onFirst()
+                composeTestRule.onNode(hasContentDescription("Change Claude token"))
                     .performClick()
                 Log.d(TAG, "Clicked Change button, waiting for input field")
                 
@@ -370,7 +370,6 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "Clicked Clear button to remove invalid token")
                 
                 // Verify input field appears and is empty
-                Thread.sleep(1000)
                 val inputFieldAfterClear = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -401,8 +400,20 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     )
                     if (saveAgainButton) {
                         composeTestRule.onNode(hasContentDescription("Save Claude API Key button")).performClick()
-                        Thread.sleep(1500) // Wait for save to complete
-                        Log.d(TAG, "Re-saved invalid token for chat test")
+                        
+                        // Wait for save to complete by checking for "Token set" confirmation
+                        val tokenSaved = ComposeTestHelper.waitForElement(
+                            composeTestRule = composeTestRule,
+                            selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
+                            timeoutMs = 2000,
+                            description = "Claude token set confirmation after re-save"
+                        )
+                        
+                        if (tokenSaved) {
+                            Log.d(TAG, "Re-saved invalid token for chat test")
+                        } else {
+                            Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
+                        }
                     } else {
                         Log.e(TAG, "Could not find Save button after re-entering token")
                     }
@@ -423,9 +434,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "Testing invalid token behavior in chat")
         try {
             // Navigate back to chats list
-            composeTestRule.onNodeWithContentDescription("Back").performClick()
-            Thread.sleep(1000)
-            
+            composeTestRule.onNodeWithContentDescription("Back").performClick()            
             // Click New Chat
             Log.d(TAG, "Looking for New Chat button to test invalid token")
             val newChatFound = ComposeTestHelper.waitForElement(
@@ -451,9 +460,6 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 if (messageFieldFound) {
                     Log.d(TAG, "Message field found, typing test message")
                     composeTestRule.onNode(hasSetTextAction()).performTextInput("Hello Claude")
-                    
-                    // Wait a bit for UI to update after typing
-                    Thread.sleep(500)
                     
                     // Send the message - try multiple selectors
                     val sendButtonFound = ComposeTestHelper.waitForElement(
@@ -592,9 +598,9 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // First click Change button since token is already set
         val changeButton2Found = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onAllNodesWithText("Change").onFirst() },
+            selector = { composeTestRule.onNode(hasContentDescription("Change Claude token")) },
             timeoutMs = 3000,
-            description = "Change button"
+            description = "Change Claude token button"
         )
         
         // Restore the actual test account token
@@ -730,28 +736,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     Log.d(TAG, "✓ Clear button is correctly enabled when token is set")
                 } catch (e: AssertionError) {
                     Log.e(TAG, "FAILURE: Clear button is disabled when it should be clickable")
-                    failWithScreenshot("clear_button_disabled", "Clear button should be enabled when token is set, but it's disabled")
+                    failWithScreenshot("asana_clear_button_disabled", "Clear button should be enabled when Asana token is set, but it's disabled")
                 }
             } else {
                 Log.e(TAG, "FAILURE: Clear button not found when token is set")
-                failWithScreenshot("clear_button_not_found", "Clear button should be visible when token is set")
+                failWithScreenshot("asana_clear_button_not_found", "Clear button should be visible when Asana token is set")
             }
             
             // Now click Change to edit the token
             Log.d(TAG, "Clicking Change button to edit token")
             
-            // Note: Change button is the second one on the screen (for Asana)
             val changeButtonFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { 
-                    composeTestRule.onAllNodesWithText("Change")[1]
+                    composeTestRule.onNode(hasContentDescription("Change Asana token"))
                 },
                 timeoutMs = 3000,
                 description = "Change button for Asana Access Token"
             )
             
             if (changeButtonFound) {
-                composeTestRule.onAllNodesWithText("Change")[1]
+                composeTestRule.onNode(hasContentDescription("Change Asana token"))
                     .performClick()
                 Log.d(TAG, "Clicked Change button, waiting for input field")
                 
@@ -778,7 +783,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                         description = "Asana text input field (fallback)"
                     )
                     if (!alternativeField) {
-                        failWithScreenshot("change_failed_no_input", "Input field did not appear after clicking Change")
+                        failWithScreenshot("asana_change_failed_no_input", "Input field did not appear after clicking Change for Asana")
                     } else {
                         Log.d(TAG, "✓ Found input field using fallback selector")
                     }
@@ -787,7 +792,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 }
             } else {
                 Log.e(TAG, "FAILURE: Could not find Change button for Asana Access Token")
-                failWithScreenshot("change_button_not_found", "Could not find Change button for Asana Access Token")
+                failWithScreenshot("asana_change_button_not_found", "Could not find Change button for Asana Access Token")
             }
         } else {
             Log.d(TAG, "Asana access token already cleared, input field is visible")
@@ -841,15 +846,14 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         if (!saveButtonFound) {
             Log.e(TAG, "FAILURE: 'Save Asana Access Token' button not found on screen")
-            failWithScreenshot("save_button_not_found", "Save Asana Access Token button not found on screen")
+            failWithScreenshot("asana_save_button_not_found", "Save Asana Access Token button not found on screen")
         } else {
             Log.d(TAG, "Clicking 'Save Asana Access Token' button")
             composeTestRule.onNode(hasContentDescription("Save Asana Access Token button")).performClick()
         }
         
         // Wait for save operation to complete by checking for "Token is set." text
-        Log.d(TAG, "Waiting for 'Token is set.' confirmation after saving invalid token")
-        Thread.sleep(1500) // Allow time for optimistic update
+        Log.d(TAG, "Waiting for 'Asana token set' confirmation after saving invalid token")
         val invalidTokenSet = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { 
@@ -860,8 +864,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (!invalidTokenSet) {
-            Log.e(TAG, "FAILURE: 'Token is set.' text not found after saving invalid token - save operation may have failed")
-            failWithScreenshot("invalid_token_not_saved", "Invalid token was not saved")
+            Log.e(TAG, "FAILURE: 'Asana token set' icon not found after saving invalid token - save operation may have failed")
+            failWithScreenshot("asana_invalid_token_not_saved", "Invalid Asana token was not saved")
         } else {
             Log.d(TAG, "✓ Invalid token saved successfully")
         }
@@ -881,18 +885,24 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         if (clearAfterInvalidToken) {
             // Verify Clear button is enabled
+            var clearButtonEnabled = false
             try {
                 composeTestRule.onNode(hasContentDescription("Clear Asana token"))
                     .assertIsEnabled()
+                clearButtonEnabled = true
                 Log.d(TAG, "✓ Clear button is enabled after setting invalid token")
-                
+            } catch (e: AssertionError) {
+                Log.e(TAG, "FAILURE: Clear button is disabled after setting invalid token")
+                failWithScreenshot("asana_clear_disabled_after_invalid", "Clear button should be enabled after setting Asana token")
+            }
+            
+            if (clearButtonEnabled) {
                 // Click Clear to remove the token
                 composeTestRule.onNode(hasContentDescription("Clear Asana token"))
                     .performClick()
                 Log.d(TAG, "Clicked Clear button to remove invalid token")
                 
                 // Verify input field appears and is empty
-                Thread.sleep(1000)
                 val inputFieldAfterClear = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
@@ -923,18 +933,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     )
                     if (saveAgainButton) {
                         composeTestRule.onNode(hasContentDescription("Save Asana Access Token button")).performClick()
-                        Thread.sleep(1500) // Wait for save to complete
-                        Log.d(TAG, "Re-saved invalid token for further testing")
+                        
+                        // Wait for save to complete by checking for "Token set" confirmation
+                        val tokenSaved = ComposeTestHelper.waitForElement(
+                            composeTestRule = composeTestRule,
+                            selector = { composeTestRule.onNode(hasContentDescription("Asana token set")) },
+                            timeoutMs = 2000,
+                            description = "Asana token set confirmation after re-save"
+                        )
+                        
+                        if (tokenSaved) {
+                            Log.d(TAG, "Re-saved invalid token for further testing")
+                        } else {
+                            Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
+                        }
                     } else {
                         Log.e(TAG, "Could not find Save button after re-entering token")
                     }
                 } else {
                     Log.e(TAG, "FAILURE: Input field not visible after clicking Clear")
-                    failWithScreenshot("clear_did_not_work", "Clear button did not remove token - input field not visible")
+                    failWithScreenshot("asana_clear_did_not_work", "Clear button did not remove Asana token - input field not visible")
                 }
-            } catch (e: AssertionError) {
-                Log.e(TAG, "FAILURE: Clear button is disabled after setting invalid token")
-                failWithScreenshot("clear_disabled_after_invalid", "Clear button should be enabled after setting token")
             }
         } else {
             Log.e(TAG, "Clear button not found after setting invalid token")
@@ -950,18 +969,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val testCredentials = TestCredentialsManager.credentials
         val actualAsanaToken = testCredentials.testEnvironment.asanaToken
         
-        // First click Change button since token is already set
-        val changeButton2Found = ComposeTestHelper.waitForElement(
-            composeTestRule = composeTestRule,
-            selector = { composeTestRule.onAllNodesWithText("Change")[1] },
-            timeoutMs = 3000,
-            description = "Change button for restoration"
-        )
-        
-        if (changeButton2Found) {
-            composeTestRule.onAllNodesWithText("Change")[1].performClick()
-            Thread.sleep(1000) // Wait for UI to update
-        }
+
         
         // Wait for input field to be available after clicking Change
         val inputFieldFound = ComposeTestHelper.waitForElement(
@@ -1010,24 +1018,24 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         if (!saveButton2Found) {
             Log.e(TAG, "FAILURE: 'Save Asana Access Token' button not found when restoring token")
-            failWithScreenshot("save_button_not_found_restore", "Save Asana Access Token button not found when restoring token")
+            failWithScreenshot("asana_save_button_not_found_restore", "Save Asana Access Token button not found when restoring token")
         }
         
         composeTestRule.onNode(hasContentDescription("Save Asana Access Token button")).performClick()
         Log.d(TAG, "Clicked Save button to restore test account token")
         
-        // Wait for the optimistic UI update to show "Token set" icon
+        // Wait for the optimistic UI update to show "Token set" icon - use Asana-specific selector
         val tokenSetShown = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNode(hasContentDescription("Token set")) },
+            selector = { composeTestRule.onNode(hasContentDescription("Asana token set")) },
             timeoutMs = 5000,
-            description = "Token set icon after save"
+            description = "Asana token set icon after save"
         )
         
         if (tokenSetShown) {
-            Log.d(TAG, "✓ Token restoration completed - UI shows 'Token set' with optimistic update")
+            Log.d(TAG, "✓ Token restoration completed - UI shows 'Asana token set' with optimistic update")
         } else {
-            Log.d(TAG, "Warning: 'Token set' icon not shown after save")
+            Log.d(TAG, "Warning: 'Asana token set' icon not shown after save")
             Log.d(TAG, "This may indicate the save failed or the optimistic update was reverted")
             // Still continue with the test as the save operation might have succeeded
         }
@@ -1056,7 +1064,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val voiceSettingsFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Use System TTS Settings") },
-            timeoutMs = 5000,
+            timeoutMs = 1000,
             description = "Use System TTS Settings text"
         )
         if (!voiceSettingsFound) {
@@ -1079,7 +1087,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             val speechRateFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Speech Rate") },
-                timeoutMs = 5000,
+                timeoutMs = 1000,
                 description = "Speech Rate text"
             )
             if (!speechRateFound) {
@@ -1094,7 +1102,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val speechRateVisible = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Speech Rate") },
-            timeoutMs = 5000,
+            timeoutMs = 1000,
             description = "Speech Rate text"
         )
         if (!speechRateVisible) {
@@ -1104,7 +1112,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val defaultValueFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("100%") },
-            timeoutMs = 3000,
+            timeoutMs = 1000,
             description = "Default 100% value"
         )
         if (!defaultValueFound) {
@@ -1134,7 +1142,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             .performClick()
         
         // Verify custom settings are hidden
-        Thread.sleep(500)
+        Thread.sleep(100)
         try {
             composeTestRule.onNodeWithText("Speech Rate").assertDoesNotExist()
         } catch (e: AssertionError) {
@@ -1149,7 +1157,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Verify settings were saved
         runBlocking {
-            val settings = withTimeout(5000) {
+            val settings = withTimeout(1000) {
                 userPreferences.voiceSettings.first()
             }
             assertTrue("System defaults should be enabled", settings.useSystemDefaults)
@@ -1184,7 +1192,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             val speechRateFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Speech Rate") },
-                timeoutMs = 5000,
+                timeoutMs = 1000,
                 description = "Speech Rate text"
             )
             if (!speechRateFound) {
@@ -1216,81 +1224,201 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     }
     
     @Test
-    fun testSubscription_DisplayAndInteraction() {
+    fun testSubscription_NoSubscription() {
+        Log.d(TAG, "=== Testing NO SUBSCRIPTION scenario ===")
+        
+        // Set test mode to no subscription
+        TestInterceptor.subscriptionTestMode = TestInterceptor.Companion.SubscriptionTestMode.NO_SUBSCRIPTION
+        
         if (!navigateToSettings()) {
-            failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
+            failWithScreenshot("navigate_to_settings_failed_no_sub", "Failed to navigate to Settings screen")
         }
         
-        Log.d(TAG, "Testing subscription section display")
-        
-        // Scroll to Subscription section
+        // Scroll down to find Subscription section
+        Log.d(TAG, "Scrolling to find Subscription section")
         try {
-            composeTestRule.onRoot()
-                .performScrollToIndex(0)
+            composeTestRule.onNodeWithContentDescription("Subscription section header")
+                .performScrollTo()
         } catch (e: Exception) {
-            Log.w(TAG, "Could not scroll to subscription section")
+            Log.w(TAG, "Could not scroll to Subscription: ${e.message}")
         }
         
-        // Wait for subscription status to load
-        Thread.sleep(2000) // Give time for subscription status to load
-        
-        // Check if subscription section is visible
+        // Wait for subscription section to load
         val subscriptionFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNodeWithText("Subscription") },
-            timeoutMs = 5000,
-            description = "Subscription text"
+            selector = { composeTestRule.onNodeWithContentDescription("Subscription section") },
+            timeoutMs = 1000,
+            description = "Subscription section"
         )
         if (!subscriptionFound) {
-            failWithScreenshot("subscription_not_found", "Subscription section not found")
+            failWithScreenshot("subscription_not_found_no_sub", "Subscription section not found")
         }
         
-        // The subscription status could be either active or not
-        // We'll just verify the section exists and is interactive
-        try {
-            // Case 1: No subscription
-            if (composeTestRule.onAllNodesWithText("Premium Subscription").fetchSemanticsNodes().isNotEmpty()) {
-                Log.d(TAG, "User has no active subscription")
-                val unlimitedAccessFound = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { composeTestRule.onNodeWithText("Get unlimited access to all features") },
-                    timeoutMs = 3000,
-                    description = "Unlimited access text"
-                )
-                if (unlimitedAccessFound) {
-                    try {
-                        composeTestRule.onNodeWithText("Subscribe for $10/month")
-                            .assertIsEnabled()
-                    } catch (e: AssertionError) {
-                        failWithScreenshot("subscription_ui_issue", "Subscription UI elements not as expected")
-                    }
-                } else {
-                    Log.w(TAG, "Unlimited access text not found")
-                }
-                Log.d(TAG, "Screenshot would be taken here: subscription_not_active")
-            }
-        } catch (e: AssertionError) {
-            try {
-                // Case 2: Active subscription
-                if (composeTestRule.onAllNodesWithText("Premium Subscription Active").fetchSemanticsNodes().isNotEmpty()) {
-                    Log.d(TAG, "User has active subscription")
-                    val premiumActiveFound = ComposeTestHelper.waitForElement(
-                        composeTestRule = composeTestRule,
-                        selector = { composeTestRule.onNodeWithText("Premium Subscription Active") },
-                        timeoutMs = 3000,
-                        description = "Premium Subscription Active text"
-                    )
-                    if (!premiumActiveFound) {
-                        Log.w(TAG, "Premium Subscription Active text not found")
-                    }
-                    // May have Cancel Subscription button
-                    Log.d(TAG, "Screenshot would be taken here: subscription_active")
-                }
-            } catch (e2: AssertionError) {
-                Log.d(TAG, "Subscription section in loading state")
-                Log.d(TAG, "Screenshot would be taken here: subscription_loading")
-            }
+        // Verify no subscription UI elements
+        val premiumSubFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Premium subscription title") },
+            timeoutMs = 1000,
+            description = "Premium subscription title"
+        )
+        if (!premiumSubFound) {
+            failWithScreenshot("no_subscription_ui_missing", "No subscription UI not displayed")
         }
+        
+        // Check for subscription benefits text
+        val unlimitedAccessFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Subscription benefits description") },
+            timeoutMs = 1000,
+            description = "Subscription benefits description"
+        )
+        if (!unlimitedAccessFound) {
+            Log.w(TAG, "Unlimited access text not found - checking for alternative text")
+        }
+        
+        // Verify Subscribe button is present and enabled
+        try {
+            composeTestRule.onNodeWithContentDescription("Subscribe button")
+                .assertExists()
+                .assertIsEnabled()
+            Log.d(TAG, "✅ Subscribe button found and enabled for no subscription case")
+        } catch (e: AssertionError) {
+            failWithScreenshot("subscribe_button_issue", "Subscribe button not found or not enabled")
+        }
+        
+        Log.d(TAG, "✅ No subscription UI test completed successfully")
+    }
+    
+    @Test
+    fun testSubscription_ActiveWithRenewal() {
+        Log.d(TAG, "=== Testing ACTIVE SUBSCRIPTION WITH AUTO-RENEWAL scenario ===")
+        
+        // Set test mode to active with renewal
+        TestInterceptor.subscriptionTestMode = TestInterceptor.Companion.SubscriptionTestMode.ACTIVE_WITH_RENEWAL
+        
+        if (!navigateToSettings()) {
+            failWithScreenshot("navigate_to_settings_failed_renewal", "Failed to navigate to Settings screen")
+        }
+        
+        // Scroll down to find Subscription section
+        Log.d(TAG, "Scrolling to find Subscription section")
+        try {
+            composeTestRule.onNodeWithContentDescription("Subscription section header")
+                .performScrollTo()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not scroll to Subscription: ${e.message}")
+        }
+        
+        // Wait for subscription section to load
+        val subscriptionFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Subscription section") },
+            timeoutMs = 1000,
+            description = "Subscription section"
+        )
+        if (!subscriptionFound) {
+            failWithScreenshot("subscription_not_found_renewal", "Subscription section not found")
+        }
+        
+        // Verify active subscription UI
+        val premiumActiveFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Premium subscription active status") },
+            timeoutMs = 1000,
+            description = "Premium subscription active status"
+        )
+        if (!premiumActiveFound) {
+            failWithScreenshot("active_subscription_ui_missing", "Active subscription UI not displayed")
+        }
+        
+        // Check for renewal date text (should show "Renews on" or similar)
+        try {
+            // Look for renewal date content description
+            val renewsTextFound = composeTestRule.onNodeWithContentDescription("Subscription renewal date")
+                .fetchSemanticsNode()
+            Log.d(TAG, "✅ Renewal date information found")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not verify renewal text: ${e.message}")
+        }
+        
+        // Verify Cancel Subscription button is present
+        try {
+            composeTestRule.onNodeWithContentDescription("Cancel subscription button")
+                .assertExists()
+                .assertIsEnabled()
+            Log.d(TAG, "✅ Cancel Subscription button found and enabled")
+        } catch (e: AssertionError) {
+            failWithScreenshot("cancel_button_missing_renewal", "Cancel button not found for active subscription")
+        }
+        
+        Log.d(TAG, "✅ Active subscription with renewal UI test completed successfully")
+    }
+    
+    @Test
+    fun testSubscription_ActiveWithEndDate() {
+        Log.d(TAG, "=== Testing ACTIVE SUBSCRIPTION WITH END DATE (CANCELED) scenario ===")
+        
+        // Set test mode to active with end date
+        TestInterceptor.subscriptionTestMode = TestInterceptor.Companion.SubscriptionTestMode.ACTIVE_WITH_END_DATE
+        
+        if (!navigateToSettings()) {
+            failWithScreenshot("navigate_to_settings_failed_canceled", "Failed to navigate to Settings screen")
+        }
+        
+        // Scroll down to find Subscription section
+        Log.d(TAG, "Scrolling to find Subscription section")
+        try {
+            composeTestRule.onNodeWithContentDescription("Subscription section header")
+                .performScrollTo()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not scroll to Subscription: ${e.message}")
+        }
+        
+        // Wait for subscription section to load
+        val subscriptionFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Subscription section") },
+            timeoutMs = 1000,
+            description = "Subscription section"
+        )
+        if (!subscriptionFound) {
+            failWithScreenshot("subscription_not_found_canceled", "Subscription section not found")
+        }
+        
+        // Verify active subscription UI (still active but canceled)
+        val premiumActiveFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Premium Subscription Active") },
+            timeoutMs = 1000,
+            description = "Premium Subscription Active text"
+        )
+        if (!premiumActiveFound) {
+            failWithScreenshot("active_subscription_ui_missing_canceled", "Active subscription UI not displayed")
+        }
+        
+        // Check for end date text (should show "Ends on" or "Expires" or similar)
+        try {
+            // Look for end date content description
+            val endsTextFound = composeTestRule.onNodeWithContentDescription("Subscription end date")
+                .fetchSemanticsNode()
+            Log.d(TAG, "✅ Subscription end date information found")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not verify end date text: ${e.message}")
+        }
+        
+        // For canceled subscription, the cancel button should not exist
+        try {
+            composeTestRule.onNodeWithContentDescription("Cancel subscription button")
+                .assertDoesNotExist()
+            Log.d(TAG, "✅ Cancel button correctly not shown for already canceled subscription")
+        } catch (e: AssertionError) {
+            Log.w(TAG, "Cancel button still visible for canceled subscription")
+        }
+        
+        Log.d(TAG, "✅ Active subscription with end date (canceled) UI test completed successfully")
+        
+        // Reset test mode
+        TestInterceptor.subscriptionTestMode = TestInterceptor.Companion.SubscriptionTestMode.NONE
     }
     
     @Test
@@ -1303,48 +1431,84 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Set a Claude token
         val testToken = "sk-ant-persistence-test-${System.currentTimeMillis()}"
-        try {
-            // Use simple approach with unmerged tree
-            val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+        
+        // First check if we can see the input field directly (token not set or already in edit mode)
+        val inputFieldVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+            timeoutMs = 1000,
+            description = "Claude API Key input field"
+        )
+        
+        if (inputFieldVisible) {
+            // Input field is visible, we can directly enter the token
+            val inputField = composeTestRule.onNodeWithContentDescription("Claude API Key input field")
             inputField.performTextClearance()
             inputField.performTextInput(testToken)
-            Log.d(TAG, "Entered persistence test token: $testToken")
-        } catch (e: AssertionError) {
-            // If that fails, token might be set - clear it first
-            Log.w(TAG, "Could not directly enter token, attempting to clear first: ${e.message}")
-            try {
-                composeTestRule.onAllNodesWithText("Clear").onFirst().performClick()
-                Thread.sleep(1500)
-                val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
-                inputField.performTextInput(testToken)
-                Log.d(TAG, "Entered persistence test token after clearing")
-            } catch (e2: Exception) {
-                Log.e(TAG, "FAILURE: Could not enter token for persistence test")
-                failWithScreenshot("persistence_input_failed", "Could not enter token for persistence test: ${e2.message}")
+            Log.d(TAG, "Entered persistence test token directly: $testToken")
+        } else {
+            // Token is set and not in edit mode, need to click Change first
+            Log.d(TAG, "Token is set, clicking Change button to enter edit mode")
+            val changeButtonFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Change Claude token") },
+                timeoutMs = 1000,
+                description = "Change Claude token button"
+            )
+            
+            if (changeButtonFound) {
+                composeTestRule.onNodeWithContentDescription("Change Claude token")
+                    .performClick()
+                
+                // Wait for the input field to appear after clicking Change
+                val inputFieldAppeared = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+                    timeoutMs = 1000,
+                    description = "Claude API Key input field after Change"
+                )
+                
+                if (inputFieldAppeared) {
+                    // Now enter the new token
+                    val inputField = composeTestRule.onNodeWithContentDescription("Claude API Key input field")
+                    inputField.performTextClearance()
+                    inputField.performTextInput(testToken)
+                    Log.d(TAG, "Entered persistence test token after clicking Change: $testToken")
+                } else {
+                    failWithScreenshot("input_field_not_appeared", "Input field did not appear after clicking Change")
+                }
+            } else {
+                failWithScreenshot("change_button_not_found", "Could not find Change button to enter edit mode")
             }
         }
         
+        // Save the token using content description
         try {
-            composeTestRule.onNodeWithText("Save Claude API Key")
+            composeTestRule.onNodeWithContentDescription("Save Claude API Key button")
                 .performClick()
+            Log.d(TAG, "Clicked Save button")
         } catch (e: AssertionError) {
-            try {
-                composeTestRule.onNodeWithText("Save").performClick()
-            } catch (e2: AssertionError) {
-                failWithScreenshot("persistence_save_failed", "Could not save token for persistence test")
-            }
+            failWithScreenshot("persistence_save_failed", "Could not save token for persistence test")
         }
         
-        // Wait for save to complete
-        Thread.sleep(1000)
+        // Wait for the token to be saved - check for the checkmark icon content description
         val tokenSetAfterSave = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNodeWithText("Token is set.") },
-            timeoutMs = 5000,
-            description = "Token is set after save"
+            selector = { composeTestRule.onNodeWithContentDescription("Claude token set") },
+            timeoutMs = 2000,
+            description = "Token set indicator"
         )
         if (!tokenSetAfterSave) {
-            failWithScreenshot("token_not_set_after_save", "Token not set after save")
+            // Try alternate: look for the "Token is set." text since we can see it in the screenshot
+            val tokenTextFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onAllNodesWithText("Token is set.").onFirst() },
+                timeoutMs = 1000,
+                description = "Token is set text"
+            )
+            if (!tokenTextFound) {
+                failWithScreenshot("token_not_set_after_save", "Token not set after save")
+            }
         }
         
         // Navigate away from settings
@@ -1355,15 +1519,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("back_button_not_found", "Could not navigate back from settings")
         }
         
-        // Wait for home screen
-        val chatsListFound = ComposeTestHelper.waitForElement(
+        // Wait for home screen - check for settings button to confirm we're on main screen
+        val settingsButtonFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNode(hasContentDescription("Chats list")) },
-            timeoutMs = 5000,
-            description = "Chats list"
+            selector = { composeTestRule.onNodeWithContentDescription("Settings") },
+            timeoutMs = 1000,
+            description = "Settings button on main screen"
         )
-        if (!chatsListFound) {
-            failWithScreenshot("chats_list_not_found", "Could not navigate back to chats list")
+        if (!settingsButtonFound) {
+            failWithScreenshot("main_screen_not_found", "Could not navigate back to main screen")
         }
         
         // Navigate back to settings
@@ -1371,27 +1535,52 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("navigate_back_to_settings_failed", "Failed to navigate back to Settings screen")
         }
         
-        // Verify token is still set
+        // Verify token is still set using content description
         val tokenStillSetAfterNav = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNodeWithText("Token is set.") },
-            timeoutMs = 5000,
-            description = "Token is set after navigation"
+            selector = { composeTestRule.onNodeWithContentDescription("Claude token set") },
+            timeoutMs = 1000,
+            description = "Token still set after navigation"
         )
         if (!tokenStillSetAfterNav) {
-            failWithScreenshot("token_not_persisted", "Token not persisted after navigation")
+            // Try alternate: look for the "Token is set." text
+            val tokenTextFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onAllNodesWithText("Token is set.").onFirst() },
+                timeoutMs = 1000,
+                description = "Token is set text after navigation"
+            )
+            if (!tokenTextFound) {
+                failWithScreenshot("token_not_persisted", "Token not persisted after navigation")
+            }
         }
         
         Log.d(TAG, "Settings persisted successfully across navigation")
-        Log.d(TAG, "Screenshot would be taken here: settings_persisted")
         
-        // Clean up
+        // Clean up - clear the token
         try {
-            composeTestRule.onAllNodesWithText("Clear")
-                .onFirst()
-                .performClick()
+            // First check if Clear button is visible (token set and not in edit mode)
+            val clearButtonVisible = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Clear Claude token") },
+                timeoutMs = 1000,
+                description = "Clear Claude token button"
+            )
+            
+            if (clearButtonVisible) {
+                composeTestRule.onNodeWithContentDescription("Clear Claude token")
+                    .performClick()
+                Log.d(TAG, "Cleaned up test token using Clear button")
+            } else {
+                // Maybe we're in edit mode, try to clear the input field and save empty
+                val inputField = composeTestRule.onNodeWithContentDescription("Claude API Key input field")
+                inputField.performTextClearance()
+                composeTestRule.onNodeWithContentDescription("Save Claude API Key button")
+                    .performClick()
+                Log.d(TAG, "Cleaned up test token by saving empty value")
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not clean up test token")
+            Log.w(TAG, "Could not clean up test token: ${e.message}")
         }
     }
     
@@ -1405,9 +1594,42 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Enter a token
         val testToken = "sk-ant-visible-test-123"
+        
+        // First check if input field is already visible (token not set)
+        val inputFieldVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+            timeoutMs = 1000,
+            description = "Claude API Key input field for visibility test"
+        )
+        
+        if (!inputFieldVisible) {
+            // Token might be set, need to click Change first
+            Log.d(TAG, "Token appears to be set, clicking Change to enter edit mode")
+            val changeButtonFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Change Claude token") },
+                timeoutMs = 1000,
+                description = "Change Claude token button"
+            )
+            
+            if (changeButtonFound) {
+                composeTestRule.onNodeWithContentDescription("Change Claude token")
+                    .performClick()
+                
+                // Wait for input field to appear
+                ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+                    timeoutMs = 1000,
+                    description = "Claude API Key input field after Change"
+                )
+            }
+        }
+        
         try {
-            // Use simple approach with unmerged tree
-            val inputField = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+            // Now enter the token using content description
+            val inputField = composeTestRule.onNodeWithContentDescription("Claude API Key input field")
             inputField.performTextClearance()
             inputField.performTextInput(testToken)
             Log.d(TAG, "Entered visibility test token: $testToken")
