@@ -90,9 +90,13 @@ class UserPreferences @Inject constructor(
             val gsonWithNulls = GsonBuilder().serializeNulls().create()
             val json = gsonWithNulls.toJson(request)
             Log.d(TAG, "Request as JSON with nulls: $json")
-            apiService.setUserApiKey(request)
-            Log.i(TAG, "Successfully sent Claude token update to server. Refreshing local status...")
-            refreshApiTokenStatus()
+            val response = apiService.setUserApiKey(request)
+            Log.i(TAG, "Successfully sent Claude token update to server. Response: $response")
+            
+            // Update local state immediately from response
+            _hasClaudeToken.value = response.has_claude_token
+            _hasAsanaToken.value = response.has_asana_token
+            Log.d(TAG, "Updated token status from response: Claude=${response.has_claude_token}, Asana=${response.has_asana_token}")
         } catch (e: Exception) {
             Log.e(TAG, "Error updating Claude token on server via /user/api_key", e)
             throw e 
@@ -112,9 +116,13 @@ class UserPreferences @Inject constructor(
             val gsonWithNulls = GsonBuilder().serializeNulls().create()
             val json = gsonWithNulls.toJson(request)
             Log.d(TAG, "Asana Request as JSON with nulls: $json")
-            apiService.setUserApiKey(request)
-            Log.i(TAG, "Successfully sent Asana token update to server. Refreshing local status...")
-            refreshApiTokenStatus()
+            val response = apiService.setUserApiKey(request)
+            Log.i(TAG, "Successfully sent Asana token update to server. Response: $response")
+            
+            // Update local state immediately from response
+            _hasClaudeToken.value = response.has_claude_token
+            _hasAsanaToken.value = response.has_asana_token
+            Log.d(TAG, "Updated token status from response: Claude=${response.has_claude_token}, Asana=${response.has_asana_token}")
         } catch (e: Exception) {
             Log.e(TAG, "Error updating Asana token on server via /user/api_key", e)
             throw e

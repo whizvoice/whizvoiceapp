@@ -168,10 +168,15 @@ fun SettingsScreen(
 
             // Voice Settings Section
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Voice Settings", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Voice Settings",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Voice Settings header" }
+            )
             HorizontalDivider(thickness = Dp.Hairline)
             
             VoiceSettingsSection(
+                modifier = Modifier.semantics { contentDescription = "Voice Settings content" },
                 settings = localVoiceSettings,
                 onSettingsChange = { localVoiceSettings = it },
                 onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
@@ -195,12 +200,18 @@ fun SettingsScreen(
             
             // Data Management Section
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Data Management", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Data Management",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Data Management header" }
+            )
             HorizontalDivider(thickness = Dp.Hairline)
 
             // Hard Sync Section
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Data Management content" },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -478,6 +489,7 @@ fun TokenInputSection(
 
 @Composable
 fun VoiceSettingsSection(
+    modifier: Modifier = Modifier,
     settings: VoiceSettings,
     onSettingsChange: (VoiceSettings) -> Unit,
     onTestPlayback: () -> Unit,
@@ -485,7 +497,7 @@ fun VoiceSettingsSection(
     onSaveSettings: (VoiceSettings) -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Use System Defaults Switch
@@ -510,7 +522,10 @@ fun VoiceSettingsSection(
                 onCheckedChange = { useSystem ->
                     onSettingsChange(settings.copy(useSystemDefaults = useSystem))
                 },
-                enabled = !isSaving
+                enabled = !isSaving,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Use System TTS Settings switch"
+                }
             )
         }
 

@@ -718,11 +718,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "Asana token is currently set, verifying Clear button is enabled")
             
             // IMPORTANT TEST: Clear button should be clickable when token is set
-            // Note: Clear button is the second one on the screen (first is Claude, second is Asana)
+            // Use content description to specifically target Asana's Clear button
             val clearButtonBeforeChange = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { 
-                    composeTestRule.onAllNodesWithText("Clear")[1]
+                    composeTestRule.onNode(hasContentDescription("Clear Asana token"))
                 },
                 timeoutMs = 3000,
                 description = "Clear button for Asana Access Token (before Change)"
@@ -731,7 +731,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             if (clearButtonBeforeChange) {
                 // Check if Clear button is enabled
                 try {
-                    composeTestRule.onAllNodesWithText("Clear")[1]
+                    composeTestRule.onNode(hasContentDescription("Clear Asana token"))
                         .assertIsEnabled()
                     Log.d(TAG, "✓ Clear button is correctly enabled when token is set")
                 } catch (e: AssertionError) {
@@ -1096,10 +1096,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Scroll to Voice Settings section
         try {
-            composeTestRule.onRoot()
-                .performScrollToIndex(0)
+            // Use content description to find the specific Voice Settings content area
+            composeTestRule.onNodeWithContentDescription("Voice Settings content")
+                .performScrollTo()
         } catch (e: Exception) {
-            Log.w(TAG, "Could not scroll to voice settings")
+            try {
+                // If that fails, try scrolling to the header
+                composeTestRule.onNodeWithContentDescription("Voice Settings header")
+                    .performScrollTo()
+            } catch (e2: Exception) {
+                // Take screenshot and fail the test
+                Log.e(TAG, "Could not scroll to Voice Settings: ${e.message}")
+                val testName = "testVoiceSettings_CustomConfiguration"
+                takeFailureScreenshotAndWaitForCompletion(testName, "voice_settings_scroll_failed")
+                fail("Could not scroll to Voice Settings section: ${e2.message}")
+            }
         }
         
         // Verify initial state - system defaults may be on
@@ -1119,10 +1130,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "Custom settings already visible")
         } catch (e: AssertionError) {
             Log.d(TAG, "Turning off system defaults to show custom settings")
-            // Find and click the switch to turn off system defaults
-            val switches = composeTestRule.onAllNodes(hasClickAction())
-            switches.filter(hasAnyAncestor(hasText("Use System TTS Settings")))
-                .onFirst()
+            // Find and click the switch using its content description
+            composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
                 .performClick()
             
             // Wait for custom settings to appear
@@ -1135,6 +1144,16 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             if (!speechRateFound) {
                 failWithScreenshot("speech_rate_not_found", "Speech Rate not found after disabling system defaults")
             }
+            
+            // Wait for auto-save to complete after toggle change by waiting for any button to be enabled
+            Log.d(TAG, "Waiting for auto-save to complete after toggle change")
+            // The Test Playback button will be disabled during save, wait for it to be enabled
+            ComposeTestHelper.waitForElementEnabled(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Test Playback") },
+                timeoutMs = 2000,
+                description = "Test Playback button to be enabled after toggle"
+            )
         }
         
         // Test adjusting speech rate
@@ -1163,12 +1182,25 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Test the Test Playback button
         Log.d(TAG, "Testing voice playback")
+        
         try {
-            composeTestRule.onNodeWithText("Test Playback")
-                .assertIsEnabled()
-                .performClick()
+            // Wait for the button to be enabled (auto-save may still be in progress)
+            val testPlaybackEnabled = ComposeTestHelper.waitForElementEnabled(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText("Test Playback") },
+                timeoutMs = 2000,
+                description = "Test Playback button to be enabled"
+            )
+            
+            if (testPlaybackEnabled) {
+                composeTestRule.onNodeWithText("Test Playback")
+                    .performClick()
+                Log.d(TAG, "Successfully clicked Test Playback button")
+            } else {
+                failWithScreenshot("test_playback_disabled", "Test Playback button remained disabled")
+            }
         } catch (e: AssertionError) {
-            failWithScreenshot("test_playback_not_found", "Test Playback button not found or disabled")
+            failWithScreenshot("test_playback_not_found", "Test Playback button not found or disabled: ${e.message}")
         }
         
         // Take screenshot of voice settings
@@ -1177,23 +1209,40 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Test switching to system defaults
         Log.d(TAG, "Testing switch to system defaults")
         
-        // Find and click the switch to turn on system defaults
-        val switches = composeTestRule.onAllNodes(hasClickAction())
-        switches.filter(hasAnyAncestor(hasText("Use System TTS Settings")))
-            .onFirst()
+        // Find and click the switch to turn on system defaults using content description
+        composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
             .performClick()
         
+        // Wait for auto-save to complete after toggle change
+        val saveCompleted = ComposeTestHelper.waitForElementEnabled(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Test Playback") },
+            timeoutMs = 2000,
+            description = "Test Playback button to be enabled after system defaults toggle"
+        )
+        
+        if (!saveCompleted) {
+            Log.w(TAG, "Test Playback button still disabled after 2s, continuing anyway")
+        }
+        
         // Verify custom settings are hidden
-        Thread.sleep(100)
         try {
             composeTestRule.onNodeWithText("Speech Rate").assertDoesNotExist()
         } catch (e: AssertionError) {
             Log.w(TAG, "Speech Rate still visible after switching to system defaults")
         }
         
-        // Test Playback should still be available
-        composeTestRule.onNodeWithText("Test Playback")
-            .assertIsEnabled()
+        // Test Playback should still be available - verify it's enabled
+        val testPlaybackStillEnabled = ComposeTestHelper.waitForElementEnabled(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Test Playback") },
+            timeoutMs = 2000,
+            description = "Test Playback button still enabled after system defaults"
+        )
+        
+        if (!testPlaybackStillEnabled) {
+            failWithScreenshot("test_playback_disabled_after_system", "Test Playback button disabled after switching to system defaults")
+        }
         
         Log.d(TAG, "Screenshot would be taken here: voice_settings_system_defaults")
         
@@ -1216,20 +1265,29 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         // Scroll to Voice Settings
         try {
-            composeTestRule.onRoot()
-                .performScrollToIndex(0)
+            // Use content description to find the specific Voice Settings content area
+            composeTestRule.onNodeWithContentDescription("Voice Settings content")
+                .performScrollTo()
         } catch (e: Exception) {
-            Log.w(TAG, "Could not scroll to voice settings")
+            try {
+                // If that fails, try scrolling to the header
+                composeTestRule.onNodeWithContentDescription("Voice Settings header")
+                    .performScrollTo()
+            } catch (e2: Exception) {
+                // Take screenshot and fail the test
+                Log.e(TAG, "Could not scroll to Voice Settings: ${e.message}")
+                val testName = "testVoiceSettings_SliderInteraction"
+                takeFailureScreenshotAndWaitForCompletion(testName, "voice_slider_scroll_failed")
+                fail("Could not scroll to Voice Settings for slider interaction test: ${e2.message}")
+            }
         }
         
         // Ensure custom settings are visible
         try {
             composeTestRule.onNodeWithText("Speech Rate").assertExists()
         } catch (e: AssertionError) {
-            // Turn off system defaults if needed
-            val switches = composeTestRule.onAllNodes(hasClickAction())
-            switches.filter(hasAnyAncestor(hasText("Use System TTS Settings")))
-                .onFirst()
+            // Turn off system defaults if needed using content description
+            composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
                 .performClick()
             val speechRateFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
@@ -1716,8 +1774,23 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "Testing hard sync functionality")
         
         // Scroll to Data Management section
-        composeTestRule.onRoot()
-            .performScrollToIndex(0)
+        try {
+            // Use content description to find the specific Data Management content area
+            composeTestRule.onNodeWithContentDescription("Data Management content")
+                .performScrollTo()
+        } catch (e: Exception) {
+            try {
+                // If that fails, try scrolling to the header
+                composeTestRule.onNodeWithContentDescription("Data Management header")
+                    .performScrollTo()
+            } catch (e2: Exception) {
+                // Take screenshot and fail the test
+                Log.e(TAG, "Could not scroll to Data Management: ${e.message}")
+                val testName = "testDataManagement_HardSync"
+                takeFailureScreenshotAndWaitForCompletion(testName, "data_management_scroll_failed")
+                fail("Could not scroll to Data Management section: ${e2.message}")
+            }
+        }
         
         val forceSyncFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,

@@ -25,6 +25,13 @@ interface ApiService {
         val has_claude_token: Boolean,
         val has_asana_token: Boolean
     )
+    
+    data class ApiKeyUpdateResponse(
+        val message: String,
+        val has_claude_token: Boolean,
+        val has_asana_token: Boolean,
+        val cleared: Boolean? = null
+    )
 
     // ========== CONVERSATION API MODELS ==========
     data class ConversationCreate(
@@ -96,7 +103,7 @@ interface ApiService {
     suspend fun updateApiTokens(@Body request: TokenUpdateRequest): Map<String, String>
 
     @POST("/api/user/api_key")
-    suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): Map<String, String>
+    suspend fun setUserApiKey(@Body request: UserApiKeySetRequest): ApiKeyUpdateResponse
 
     // ========== CONVERSATION ENDPOINTS ==========
     @GET("/api/conversations")
