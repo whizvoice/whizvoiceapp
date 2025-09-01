@@ -969,9 +969,41 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val testCredentials = TestCredentialsManager.credentials
         val actualAsanaToken = testCredentials.testEnvironment.asanaToken
         
-
+        // Check current state - we might already have an input field visible or need to click Change
+        val inputFieldVisibleForRestore = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { 
+                composeTestRule.onNode(
+                    hasContentDescription("Asana Access Token input field"),
+                    useUnmergedTree = true
+                )
+            },
+            timeoutMs = 1000,
+            description = "Asana Access Token input field (checking if already visible)"
+        )
         
-        // Wait for input field to be available after clicking Change
+        if (!inputFieldVisibleForRestore) {
+            // Need to click Change button first
+            Log.d(TAG, "Input field not visible, looking for Change button")
+            val changeButton = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    composeTestRule.onNode(hasContentDescription("Change Asana token"))
+                },
+                timeoutMs = 2000,
+                description = "Change Asana token button"
+            )
+            
+            if (changeButton) {
+                composeTestRule.onNode(hasContentDescription("Change Asana token")).performClick()
+                Log.d(TAG, "Clicked Change button to access input field")
+                Thread.sleep(500) // Brief wait for UI transition
+            }
+        } else {
+            Log.d(TAG, "Input field already visible, no need to click Change")
+        }
+        
+        // Now wait for input field to be available
         val inputFieldFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { 
@@ -981,17 +1013,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 )
             },
             timeoutMs = 3000,
-            description = "Asana Access Token input field"
+            description = "Asana Access Token input field for restoration"
         )
         
         if (!inputFieldFound) {
-            Log.e(TAG, "Asana Access Token input field not found after clicking Change")
-            // Try fallback
+            Log.e(TAG, "Asana Access Token input field not found for restoration")
+            // Try fallback with safer approach
             try {
                 val allInputFields = composeTestRule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)
-                allInputFields[1].performTextClearance()
-                allInputFields[1].performTextInput(actualAsanaToken)
-                Log.d(TAG, "Entered test account's Asana access token using fallback")
+                val fieldCount = allInputFields.fetchSemanticsNodes().size
+                Log.d(TAG, "Found $fieldCount input fields total")
+                if (fieldCount > 1) {
+                    allInputFields[1].performTextClearance()
+                    allInputFields[1].performTextInput(actualAsanaToken)
+                    Log.d(TAG, "Entered test account's Asana access token using fallback (field 1)")
+                } else if (fieldCount == 1) {
+                    allInputFields[0].performTextClearance()
+                    allInputFields[0].performTextInput(actualAsanaToken)
+                    Log.d(TAG, "Entered test account's Asana access token using fallback (field 0)")
+                } else {
+                    Log.e(TAG, "No input fields found for restoration")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Could not enter test account token: ${e.message}")
             }

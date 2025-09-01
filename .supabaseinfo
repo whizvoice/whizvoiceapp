@@ -305,3 +305,98 @@ CREATE POLICY "Users can insert their own sync metadata" ON sync_metadata
 
 CREATE POLICY "Users can update their own sync metadata" ON sync_metadata
     FOR UPDATE USING (user_id = current_setting('app.current_user_id', true));
+
+-- RPC Function to atomically clear a token and verify it was cleared
+-- This version works with your existing encrypted preferences functions
+
+CREATE OR REPLACE FUNCTION clear_and_verify_encrypted_token(
+  p_user_id TEXT,
+  p_key_name TEXT,
+  p_encryption_key TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_result JSON;
+  v_old_value TEXT;
+  v_new_value TEXT;
+BEGIN
+  -- First, get the current value (if any) using your existing function
+  v_old_value := get_decrypted_preference_key(p_user_id, p_encryption_key, p_key_name);
+  
+  -- Clear the token by setting it to NULL using your existing function
+  -- Your set_encrypted_preference_key function handles NULL by converting to empty JSON
+  -- We need to actually remove the key from the JSON
+  DECLARE
+    current_encrypted_blob BYTEA;
+    decrypted_json_text TEXT;
+    updated_json_blob JSONB;
+    new_encrypted_blob BYTEA;
+  BEGIN
+    -- Get current encrypted blob
+    SELECT encrypted_preferences INTO current_encrypted_blob
+    FROM user_preferences WHERE user_id = p_user_id;
+    
+    IF current_encrypted_blob IS NOT NULL THEN
+      -- Decrypt current preferences
+      BEGIN
+        decrypted_json_text := pgp_sym_decrypt(current_encrypted_blob, p_encryption_key);
+      EXCEPTION WHEN OTHERS THEN
+        -- If decryption fails, start with empty object
+        decrypted_json_text := '{}';
+      END;
+      
+      -- Remove the key from the JSON object (this actually clears it)
+      updated_json_blob := (decrypted_json_text::jsonb) - p_key_name;
+      
+      -- Re-encrypt and save
+      new_encrypted_blob := pgp_sym_encrypt(updated_json_blob::TEXT, p_encryption_key);
+      
+      UPDATE user_preferences
+      SET encrypted_preferences = new_encrypted_blob,
+          last_updated = CURRENT_TIMESTAMP
+      WHERE user_id = p_user_id;
+    END IF;
+  END;
+  
+  -- Now verify it's actually cleared by reading it back
+  v_new_value := get_decrypted_preference_key(p_user_id, p_encryption_key, p_key_name);
+  
+  -- Build result JSON
+  RETURN json_build_object(
+    'success', true,
+    'token_cleared', (v_new_value IS NULL OR v_new_value = ''),
+    'message', CASE 
+      WHEN v_new_value IS NULL OR v_new_value = '' THEN 'Token successfully cleared'
+      ELSE 'Warning: Token may not have been cleared properly'
+    END,
+    'old_value_existed', (v_old_value IS NOT NULL AND v_old_value != ''),
+    'new_value_is_null', (v_new_value IS NULL),
+    'new_value_is_empty', (v_new_value = '')
+  );
+
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Log the error and return failure
+    RAISE WARNING 'Error in clear_and_verify_encrypted_token: %', SQLERRM;
+    RETURN json_build_object(
+      'success', false,
+      'token_cleared', false,
+      'message', 'Error: ' || SQLERRM,
+      'old_value_existed', false
+    );
+END;
+$$;
+
+-- Grant execute permission to authenticated users
+GRANT EXECUTE ON FUNCTION clear_and_verify_encrypted_token TO authenticated;
+
+-- Add a comment to document the function
+COMMENT ON FUNCTION clear_and_verify_encrypted_token IS 
+'Atomically clears an encrypted preference token by removing the key from the JSON object.
+Returns JSON with success status and confirmation that token was cleared.
+This ensures read-after-write consistency by performing both operations in a single transaction.
+Requires the encryption key used for the user preferences.';
