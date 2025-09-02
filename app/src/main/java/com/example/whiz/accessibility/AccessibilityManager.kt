@@ -12,7 +12,8 @@ import javax.inject.Singleton
 
 @Singleton
 class AccessibilityManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val accessibilityChecker: AccessibilityChecker
 ) {
     private val TAG = "AccessibilityManager"
     
@@ -24,15 +25,12 @@ class AccessibilityManager @Inject constructor(
     }
     
     fun updateAccessibilityStatus() {
-        _isAccessibilityEnabled.value = WhizAccessibilityService.isServiceEnabled()
+        _isAccessibilityEnabled.value = accessibilityChecker.isServiceEnabled()
         Log.d(TAG, "Accessibility service enabled: ${_isAccessibilityEnabled.value}")
     }
     
     fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
+        accessibilityChecker.openAccessibilitySettings()
     }
     
     fun openWhatsApp(): Boolean {

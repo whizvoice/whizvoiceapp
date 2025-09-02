@@ -4,7 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
-import com.example.whiz.accessibility.WhizAccessibilityService
+import com.example.whiz.accessibility.AccessibilityChecker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +16,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class PermissionManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val accessibilityChecker: AccessibilityChecker
 ) {
     enum class PermissionType {
         MICROPHONE,
@@ -66,7 +67,7 @@ class PermissionManager @Inject constructor(
      * Check if accessibility service is enabled
      */
     fun checkAccessibilityPermission() {
-        val isEnabled = WhizAccessibilityService.isServiceEnabled()
+        val isEnabled = accessibilityChecker.isServiceEnabled()
         _accessibilityPermissionGranted.value = isEnabled
         updateNextRequiredPermission()
     }

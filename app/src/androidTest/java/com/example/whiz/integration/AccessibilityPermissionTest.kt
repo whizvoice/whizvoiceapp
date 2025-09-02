@@ -11,10 +11,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import com.example.whiz.MainActivity
+import com.example.whiz.accessibility.AccessibilityChecker
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.test_helpers.ComposeTestHelper
+import com.example.whiz.test_helpers.TestAccessibilityChecker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -47,6 +49,9 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var permissionManager: PermissionManager
+    
+    @Inject
+    lateinit var accessibilityChecker: AccessibilityChecker
 
     @Before
     fun setup() {
@@ -60,8 +65,11 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     
     // Helper to mock accessibility and update permission manager
     private fun mockAccessibilityAndUpdate(enabled: Boolean) {
-        mockAccessibilityServiceEnabled(enabled)
-        // Update permission manager after mocking
+        // Cast to TestAccessibilityChecker to access test methods
+        val testChecker = accessibilityChecker as TestAccessibilityChecker
+        testChecker.setMockServiceEnabled(enabled)
+        
+        // Now PermissionManager will use our mocked state!
         runBlocking {
             permissionManager.checkAccessibilityPermission()
         }
@@ -204,6 +212,9 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         // Mock the accessibility service state
         mockAccessibilityAndUpdate(enabled)
         
+        // Navigate back to screen to see updated state
+        navigateToAccessibilityScreen()
+        
         // Navigate to Settings
         composeTestRule
             .onNodeWithContentDescription("Settings")
@@ -248,18 +259,25 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
 
     @Test
     fun testPermissionManagerTracksAccessibilityStatus() = runTest {
+        // Since we can't actually change the real service state,
+        // and PermissionManager checks the real service,
+        // we'll test that our mocking works for test purposes
+        
         // Test with mocked disabled state
         mockAccessibilityAndUpdate(false)
         
+        // Verify PermissionManager sees the mocked state
         var status = permissionManager.accessibilityPermissionGranted.first()
         assertEquals(false, status)
         
-        // Test with mocked enabled state
+        // Test with mocked enabled state  
         mockAccessibilityAndUpdate(true)
         
+        // Verify PermissionManager sees the updated mocked state
         status = permissionManager.accessibilityPermissionGranted.first()
         assertEquals(true, status)
         
+        // Now we can test this regardless of real service state!
         // Test that nextRequiredPermission correctly identifies accessibility
         // when microphone is granted but accessibility is not
         grantMicrophoneAndUpdate()
@@ -268,7 +286,7 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         
         val nextPermission = permissionManager.nextRequiredPermission.first()
         assertEquals(PermissionManager.PermissionType.ACCESSIBILITY, nextPermission)
-        println("✓ Permission manager correctly tracks accessibility status")
+        println("✓ Permission manager correctly tracks accessibility status using our test interceptor")
     }
 
     @Test

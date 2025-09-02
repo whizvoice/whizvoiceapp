@@ -28,7 +28,6 @@ import org.junit.Rule
 import org.junit.runner.RunWith
 import javax.inject.Inject
 import java.io.File
-import java.lang.reflect.Field
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,9 +65,6 @@ abstract class BaseIntegrationTest {
     
     // Permission management
     private var originalMicrophonePermission: Boolean = false
-    private var originalAccessibilityServiceInstance: WhizAccessibilityService? = null
-    private var mockedAccessibilityState: Boolean? = null
-    private lateinit var accessibilityInstanceField: Field
     
     /**
      * Override this to skip automatic authentication (e.g., for login UI tests)
@@ -129,20 +125,7 @@ abstract class BaseIntegrationTest {
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
         
-        // Set up reflection for accessibility service mocking
-        try {
-            val companionClass = WhizAccessibilityService::class.java.getDeclaredClasses()
-                .find { it.simpleName == "Companion" }
-            accessibilityInstanceField = companionClass!!.getDeclaredField("instance")
-            accessibilityInstanceField.isAccessible = true
-            
-            // Save original accessibility service instance
-            originalAccessibilityServiceInstance = WhizAccessibilityService.getInstance()
-        } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "Failed to set up accessibility service reflection", e)
-        }
-        
-        android.util.Log.d("BaseIntegrationTest", "Original permission states - Microphone: $originalMicrophonePermission, Accessibility: ${originalAccessibilityServiceInstance != null}")
+        android.util.Log.d("BaseIntegrationTest", "Original permission states - Microphone: $originalMicrophonePermission")
         
         // Grant microphone permission by default unless skipped
         if (!skipAutoMicrophoneGrant) {
@@ -166,22 +149,7 @@ abstract class BaseIntegrationTest {
             revokeMicrophonePermission()
         }
         
-        // Restore accessibility service mock state
-        if (mockedAccessibilityState != null) {
-            try {
-                val companionObject = WhizAccessibilityService::class.java.getDeclaredClasses()
-                    .find { it.simpleName == "Companion" }
-                    ?.getDeclaredField("Companion")
-                    ?.apply { isAccessible = true }
-                    ?.get(null)
-                
-                accessibilityInstanceField.set(companionObject, originalAccessibilityServiceInstance)
-                mockedAccessibilityState = null
-                android.util.Log.d("BaseIntegrationTest", "Restored original accessibility service state")
-            } catch (e: Exception) {
-                android.util.Log.e("BaseIntegrationTest", "Failed to restore accessibility service state", e)
-            }
-        }
+        // Note: Accessibility mocking is now handled by TestAccessibilityChecker
     }
     
     // =============================================================================
@@ -234,44 +202,9 @@ abstract class BaseIntegrationTest {
         ) == PackageManager.PERMISSION_GRANTED
     }
     
-    /**
-     * Mock the accessibility service as enabled or disabled
-     * This uses reflection to modify the singleton instance
-     */
-    protected fun mockAccessibilityServiceEnabled(enabled: Boolean) {
-        try {
-            val companionObject = WhizAccessibilityService::class.java.getDeclaredClasses()
-                .find { it.simpleName == "Companion" }
-                ?.getDeclaredField("Companion")
-                ?.apply { isAccessible = true }
-                ?.get(null)
-            
-            if (enabled) {
-                // Create a mock instance (we can't create a real service instance)
-                // Setting any non-null value will make isServiceEnabled() return true
-                val mockInstance = Any() // Simple object as placeholder
-                accessibilityInstanceField.set(companionObject, mockInstance)
-            } else {
-                // Set to null to simulate service not enabled
-                accessibilityInstanceField.set(companionObject, null)
-            }
-            
-            mockedAccessibilityState = enabled
-            android.util.Log.d("BaseIntegrationTest", "Mocked accessibility service as ${if (enabled) "enabled" else "disabled"}")
-            
-            // Note: Child classes may need to call permissionManager.checkAccessibilityPermission() after mocking
-        } catch (e: Exception) {
-            android.util.Log.e("BaseIntegrationTest", "Failed to mock accessibility service state", e)
-            throw AssertionError("Failed to mock accessibility service state: ${e.message}")
-        }
-    }
-    
-    /**
-     * Check if accessibility service is enabled (real or mocked)
-     */
-    protected fun isAccessibilityServiceEnabled(): Boolean {
-        return WhizAccessibilityService.isServiceEnabled()
-    }
+    // Note: Accessibility mocking is now handled by TestAccessibilityChecker
+    // Tests should inject AccessibilityChecker and cast to TestAccessibilityChecker
+    // to access setMockServiceEnabled() method
     
     /**
      * Set up screenshot directory - ensure it exists but preserve existing screenshots from other tests

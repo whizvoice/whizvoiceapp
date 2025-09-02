@@ -19,6 +19,8 @@ import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.di.AppModule
 import com.example.whiz.TestCredentialsManager
 import com.example.whiz.TestAuthRepository
+import com.example.whiz.accessibility.AccessibilityChecker
+import com.example.whiz.test_helpers.TestAccessibilityChecker
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -231,5 +233,14 @@ object TestAppModule {
     ): UserPreferences {
         Log.d(TAG, "🔧 Creating UserPreferences with REAL services...")
         return UserPreferences(apiService, authRepository)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideAccessibilityChecker(
+        @ApplicationContext context: Context
+    ): AccessibilityChecker {
+        Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
+        return TestAccessibilityChecker(context)
     }
 } 
