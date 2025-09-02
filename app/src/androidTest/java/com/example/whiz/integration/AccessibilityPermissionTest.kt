@@ -38,6 +38,9 @@ import javax.inject.Inject
 @RunWith(AndroidJUnit4::class)
 @UninstallModules(com.example.whiz.di.AppModule::class)
 class AccessibilityPermissionTest : BaseIntegrationTest() {
+    
+    // Override to control permissions per test
+    override val skipAutoMicrophoneGrant = true  // We'll control microphone permission per test
 
     @get:Rule(order = 1)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
@@ -45,102 +48,43 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     @Inject
     lateinit var permissionManager: PermissionManager
 
-    private var originalMicrophonePermission: Boolean = false
-    private var originalAccessibilityPermission: Boolean = false
-
     @Before
     fun setup() {
-        // Don't call hiltRule.inject() here as BaseIntegrationTest already does it
-        // device and context are already available from BaseIntegrationTest
-        
-        // Save original permission states
-        originalMicrophonePermission = ContextCompat.checkSelfPermission(
-            context, 
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-        
-        originalAccessibilityPermission = WhizAccessibilityService.isServiceEnabled()
-        
-        println("Original permission states - Microphone: $originalMicrophonePermission, Accessibility: $originalAccessibilityPermission")
-        
+        // BaseIntegrationTest already handles injection and basic setup
         // Ensure the app is ready (on chat list or chat screen)
         val appReady = ComposeTestHelper.isAppReady(composeTestRule)
         if (!appReady) {
             throw AssertionError("App is not ready for testing - UI elements not found")
         }
     }
-
-    @After
-    fun teardown() {
-        // Restore original permission states
-        println("Restoring original permission states - Microphone: $originalMicrophonePermission, Accessibility: $originalAccessibilityPermission")
-        
-        // For microphone permission, we can restore it
-        if (originalMicrophonePermission) {
-            grantMicrophonePermission()
-        } else {
-            revokeMicrophonePermission()
-        }
-        
-        // Note: We can't programmatically enable/disable accessibility service
-        // but we can log what the original state was
-        if (originalAccessibilityPermission != WhizAccessibilityService.isServiceEnabled()) {
-            println("WARNING: Accessibility service state changed during test and cannot be automatically restored")
-            println("Original: $originalAccessibilityPermission, Current: ${WhizAccessibilityService.isServiceEnabled()}")
+    
+    // Helper to mock accessibility and update permission manager
+    private fun mockAccessibilityAndUpdate(enabled: Boolean) {
+        mockAccessibilityServiceEnabled(enabled)
+        // Update permission manager after mocking
+        runBlocking {
+            permissionManager.checkAccessibilityPermission()
         }
     }
-
-    private fun grantMicrophonePermission() {
-        try {
-            val grantResult = device.executeShellCommand("pm grant ${context.packageName} ${Manifest.permission.RECORD_AUDIO}")
-            println("Microphone permission grant result: $grantResult")
-            Thread.sleep(300) // Give the system time to process
-            
-            // Verify the permission was granted
-            val currentState = ContextCompat.checkSelfPermission(
-                context, 
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-            println("Microphone permission after grant: $currentState")
-            
-            // Update permission manager
-            permissionManager.updateMicrophonePermission(currentState)
-        } catch (e: Exception) {
-            println("Failed to grant microphone permission: ${e.message}")
-        }
+    
+    // Helper to grant/revoke microphone and update permission manager
+    private fun grantMicrophoneAndUpdate() {
+        grantMicrophonePermission()
+        permissionManager.updateMicrophonePermission(true)
     }
-
-    private fun revokeMicrophonePermission() {
-        try {
-            val revokeResult = device.executeShellCommand("pm revoke ${context.packageName} ${Manifest.permission.RECORD_AUDIO}")
-            println("Microphone permission revoke result: $revokeResult")
-            Thread.sleep(300) // Give the system time to process
-            
-            // Verify the permission was revoked
-            val currentState = ContextCompat.checkSelfPermission(
-                context, 
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-            println("Microphone permission after revoke: $currentState")
-            
-            // Update permission manager
-            permissionManager.updateMicrophonePermission(currentState)
-        } catch (e: Exception) {
-            println("Failed to revoke microphone permission: ${e.message}")
-        }
+    
+    private fun revokeMicrophoneAndUpdate() {
+        revokeMicrophonePermission()
+        permissionManager.updateMicrophonePermission(false)
     }
 
     @Test
     fun testAccessibilityDialogAppearsAfterMicrophonePermissionGranted() = runTest {
-        // Setup: Ensure microphone permission is granted and accessibility is not enabled
-        grantMicrophonePermission()
+        // Setup: Ensure microphone permission is granted
+        grantMicrophoneAndUpdate()
         
-        // Note: We can't programmatically disable accessibility service,
-        // so we'll check if it's already disabled
-        if (WhizAccessibilityService.isServiceEnabled()) {
-            println("Skipping test - accessibility service is already enabled")
-            return@runTest
-        }
+        // Mock accessibility service as disabled
+        mockAccessibilityAndUpdate(false)
         
         // Given: The app checks permissions
         permissionManager.checkAllPermissions()
@@ -160,8 +104,9 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
 
     @Test
     fun testMicrophonePermissionDialogShowsWhenMicrophoneNotGranted() {
-        // Setup: Revoke microphone permission
-        revokeMicrophonePermission()
+        // Setup: Revoke microphone permission and mock accessibility as disabled
+        revokeMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(false)
         
         // Force permission manager to update its state
         runBlocking {
@@ -219,9 +164,9 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     
     @Test
     fun testMicrophonePermissionDialogHasPriority() = runTest {
-        // Setup: Try to set both permissions to not granted
-        // (We can only control microphone permission)
-        revokeMicrophonePermission()
+        // Setup: Revoke microphone and mock accessibility as disabled
+        revokeMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(false)
         
         // When: Check all permissions
         permissionManager.checkAllPermissions()
@@ -248,7 +193,16 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     @Test
     fun testAccessibilityScreenShowsCorrectStatus() {
         // Setup: Ensure we have microphone permission so we can navigate
-        grantMicrophonePermission()
+        grantMicrophoneAndUpdate()
+        
+        // Test both enabled and disabled states using mocking
+        testAccessibilityScreenWithState(true)  // Test enabled state
+        testAccessibilityScreenWithState(false) // Test disabled state
+    }
+    
+    private fun testAccessibilityScreenWithState(enabled: Boolean) {
+        // Mock the accessibility service state
+        mockAccessibilityAndUpdate(enabled)
         
         // Navigate to Settings
         composeTestRule
@@ -264,11 +218,10 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         
         composeTestRule.waitForIdle()
         
-        // Check if accessibility service is enabled
-        val isEnabled = WhizAccessibilityService.isServiceEnabled()
-        println("Accessibility service enabled: $isEnabled")
+        // Verify the UI matches the mocked state
+        println("Testing accessibility screen with service ${if (enabled) "enabled" else "disabled"}")
         
-        if (isEnabled) {
+        if (enabled) {
             // Verify enabled state UI
             composeTestRule
                 .onNodeWithContentDescription("Accessibility service status enabled")
@@ -295,26 +248,27 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
 
     @Test
     fun testPermissionManagerTracksAccessibilityStatus() = runTest {
-        // Check initial state
-        permissionManager.checkAccessibilityPermission()
+        // Test with mocked disabled state
+        mockAccessibilityAndUpdate(false)
         
-        val initialStatus = permissionManager.accessibilityPermissionGranted.first()
-        val actualStatus = WhizAccessibilityService.isServiceEnabled()
+        var status = permissionManager.accessibilityPermissionGranted.first()
+        assertEquals(false, status)
         
-        // Permission manager should accurately reflect service status
-        assertEquals(actualStatus, initialStatus)
+        // Test with mocked enabled state
+        mockAccessibilityAndUpdate(true)
         
-        // Check that nextRequiredPermission correctly identifies accessibility
+        status = permissionManager.accessibilityPermissionGranted.first()
+        assertEquals(true, status)
+        
+        // Test that nextRequiredPermission correctly identifies accessibility
+        // when microphone is granted but accessibility is not
+        grantMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(false)
+        permissionManager.checkAllPermissions()
+        
         val nextPermission = permissionManager.nextRequiredPermission.first()
-        
-        if (!actualStatus) {
-            // If accessibility is not enabled and mic is granted,
-            // next required should be accessibility
-            val micGranted = permissionManager.microphonePermissionGranted.first()
-            if (micGranted) {
-                assertEquals(PermissionManager.PermissionType.ACCESSIBILITY, nextPermission)
-            }
-        }
+        assertEquals(PermissionManager.PermissionType.ACCESSIBILITY, nextPermission)
+        println("✓ Permission manager correctly tracks accessibility status")
     }
 
     @Test
@@ -327,15 +281,26 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     @Test
     fun testWhatsAppLaunchButtonRequiresAccessibility() {
         // Setup: Ensure we have microphone permission
-        grantMicrophonePermission()
+        grantMicrophoneAndUpdate()
+        
+        // Test with accessibility disabled
+        mockAccessibilityAndUpdate(false)
         
         // Navigate to Accessibility screen
         navigateToAccessibilityScreen()
         
-        val isEnabled = WhizAccessibilityService.isServiceEnabled()
-        println("Testing WhatsApp button with accessibility service enabled: $isEnabled")
+        // WhatsApp button shouldn't be visible when service is disabled
+        composeTestRule
+            .onNodeWithContentDescription("Open WhatsApp button")
+            .assertDoesNotExist()
+        println("✓ WhatsApp button correctly hidden when accessibility is disabled")
         
-        if (isEnabled) {
+        // Now test with accessibility enabled
+        mockAccessibilityAndUpdate(true)
+        navigateToAccessibilityScreen()
+        
+        // With accessibility enabled, WhatsApp button should be visible
+        if (true) { // Always test the enabled path now
             // Try to click WhatsApp button
             composeTestRule
                 .onNodeWithContentDescription("Open WhatsApp button")
@@ -356,12 +321,6 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
                     .assertIsDisplayed()
                 println("✓ WhatsApp not installed message shown correctly")
             }
-        } else {
-            // WhatsApp button shouldn't be visible when service is disabled
-            composeTestRule
-                .onNodeWithContentDescription("Open WhatsApp button")
-                .assertDoesNotExist()
-            println("✓ WhatsApp button correctly hidden when accessibility is disabled")
         }
     }
 
