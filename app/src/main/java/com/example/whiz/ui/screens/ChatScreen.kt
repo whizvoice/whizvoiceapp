@@ -494,6 +494,8 @@ fun ChatScreen(
     // Call the test hook once when ViewModel is ready
     LaunchedEffect(viewModel) {
         onViewModelReady?.invoke(viewModel)
+        // Set up the permission request callback
+        viewModel.onRequestMicrophonePermission = onRequestPermission
     }
 
     val authViewModel: AuthViewModel = hiltViewModel()

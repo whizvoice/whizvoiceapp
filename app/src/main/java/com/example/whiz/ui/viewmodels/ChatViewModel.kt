@@ -247,6 +247,9 @@ class ChatViewModel @Inject constructor(
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
     val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
+    
+    // Callback for requesting microphone permission from UI layer
+    var onRequestMicrophonePermission: (() -> Unit)? = null
 
     private var isDisconnectingForAuthError = false
     
@@ -1379,8 +1382,9 @@ class ChatViewModel @Inject constructor(
     fun toggleSpeechRecognition() {
         Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
         if (!_micPermissionGranted.value) {
-            Log.w(TAG, "[LOG] Microphone permission not granted")
-            _errorState.value = "Microphone permission required" 
+            Log.w(TAG, "[LOG] Microphone permission not granted, requesting permission")
+            // Request permission instead of just showing an error
+            onRequestMicrophonePermission?.invoke()
             return
         }
         
@@ -1441,7 +1445,9 @@ class ChatViewModel @Inject constructor(
         }
         
         if (!_micPermissionGranted.value) {
-            Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission")
+            Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission, requesting permission")
+            // Request permission instead of just returning
+            onRequestMicrophonePermission?.invoke()
             return
         }
         

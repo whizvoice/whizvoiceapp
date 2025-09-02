@@ -108,8 +108,9 @@ class MainActivity : ComponentActivity() {
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
                     
-                    // Observe authentication state
-                    val isAuthenticated by authRepository.isAuthenticated.collectAsState()
+                    // Get AuthViewModel to observe authentication state
+                    val authViewModel: com.example.whiz.ui.viewmodels.AuthViewModel = hiltViewModel()
+                    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
                     
                     // Observe which permission is needed next
                     val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()

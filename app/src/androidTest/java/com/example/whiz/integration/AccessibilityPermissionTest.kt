@@ -19,12 +19,14 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.test_helpers.TestAccessibilityChecker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.delay
 import androidx.compose.ui.test.assertHasClickAction
 import org.junit.After
 import org.junit.Before
@@ -282,8 +284,8 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         )
         
         // Should NOT find any permission dialogs
-        assertEquals(false, micDialogAppeared, "Microphone dialog should not appear when permission is granted")
-        assertEquals(false, accessibilityDialogAppeared, "Accessibility dialog should not appear when permission is granted")
+        assertEquals("Microphone dialog should not appear when permission is granted", false, micDialogAppeared)
+        assertEquals("Accessibility dialog should not appear when permission is granted", false, accessibilityDialogAppeared)
         
         // Instead, should be on the main screen (chats list or chat)
         val onMainScreen = ComposeTestHelper.waitForElement(
@@ -298,9 +300,207 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
             description = "chat input field"
         )
         
-        assertEquals(true, onMainScreen, "Should be on main screen when all permissions are granted")
+        assertEquals("Should be on main screen when all permissions are granted", true, onMainScreen)
         println("✓ No permission dialogs shown when all permissions are granted")
         println("✓ App correctly proceeded to main screen")
+    }
+    
+    @Test
+    fun testMicrophonePermissionDialogWhenUsingMicButton() = runTest {
+        // 1. Setup: Revoke microphone permission and enable accessibility
+        revokeMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(true)
+        composeTestRule.waitForIdle()
+        
+        // 2. Navigate to new chat screen
+        // Wait for and click the new chat button
+        val newChatButtonFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Create New Chat") },
+            timeoutMs = 5000L,
+            description = "new chat button"
+        )
+        
+        if (newChatButtonFound) {
+            try {
+                composeTestRule.onNodeWithContentDescription("Create New Chat").performClick()
+                composeTestRule.waitForIdle()
+                delay(1000) // Wait for navigation
+            } catch (e: Exception) {
+                failWithScreenshot(
+                    "Failed to click new chat button: ${e.message}",
+                    "new_chat_button_error"
+                )
+            }
+        }
+        
+        // 3. Verify we're in a chat screen (either new or existing)
+        val inChatScreen = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+            timeoutMs = 5000L,
+            description = "chat input field"
+        )
+        
+        if (!inChatScreen) {
+            failWithScreenshot("Should be in chat screen", "not_in_chat_screen")
+        }
+        
+        // 4. Click microphone button without permission - should trigger dialog
+        val micButtonFound = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Start voice input") },
+            timeoutMs = 2000L,
+            description = "microphone button"
+        )
+        
+        if (micButtonFound) {
+            try {
+                composeTestRule.onNodeWithContentDescription("Start voice input").performClick()
+                composeTestRule.waitForIdle()
+            } catch (e: Exception) {
+                failWithScreenshot(
+                    "Failed to click microphone button: ${e.message}",
+                    "mic_button_click_error"
+                )
+            }
+        } else {
+            // If mic button not found, that might be expected if we're in text-only mode
+            // But we should still capture the state for debugging
+            println("Warning: Microphone button not found - may be in text-only mode")
+        }
+        
+        // 5. Verify microphone permission dialog appears
+        val dialogAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Microphone Permission Required") },
+            timeoutMs = 3000L,
+            description = "microphone permission dialog"
+        )
+        
+        if (!dialogAppeared) {
+            failWithScreenshot(
+                "Microphone permission dialog should appear when clicking mic without permission",
+                "no_mic_dialog_on_click"
+            )
+        }
+        
+        // 6. Grant permission through dialog
+        try {
+            composeTestRule.onNodeWithText("Grant Permission").performClick()
+            composeTestRule.waitForIdle()
+            delay(1000) // Wait for permission grant
+        } catch (e: Exception) {
+            failWithScreenshot(
+                "Failed to click Grant Permission button: ${e.message}",
+                "grant_permission_button_error"
+            )
+        }
+        
+        // Grant the actual permission
+        grantMicrophoneAndUpdate()
+        delay(500)
+        
+        // 7. Send two messages (simulating voice transcription)
+        // Since we can't actually speak, we'll type messages and send them
+        
+        // Type and send first message
+        try {
+            val inputField = composeTestRule.onNodeWithContentDescription("Message input field")
+            inputField.performTextInput("First voice message")
+            composeTestRule.waitForIdle()
+            
+            // Find and click send button
+            val sendButton = composeTestRule.onNodeWithContentDescription("Send message")
+            sendButton.performClick()
+            composeTestRule.waitForIdle()
+            delay(1000) // Wait for message to be sent
+            
+            // Type and send second message
+            inputField.performTextInput("Second voice message")
+            composeTestRule.waitForIdle()
+            sendButton.performClick()
+            composeTestRule.waitForIdle()
+            delay(1000) // Wait for message to be sent
+        } catch (e: Exception) {
+            failWithScreenshot(
+                "Failed to send test messages: ${e.message}",
+                "send_message_error"
+            )
+        }
+        
+        // Verify messages were sent
+        val firstMessageExists = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("First voice message", substring = true) },
+            timeoutMs = 3000L,
+            description = "first voice message"
+        )
+        if (!firstMessageExists) {
+            failWithScreenshot(
+                "First voice message should be visible",
+                "first_message_not_sent"
+            )
+        }
+        
+        val secondMessageExists = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Second voice message", substring = true) },
+            timeoutMs = 3000L,
+            description = "second voice message"
+        )
+        if (!secondMessageExists) {
+            failWithScreenshot(
+                "Second voice message should be visible",
+                "second_message_not_sent"
+            )
+        }
+        
+        // 8. Revoke permission again mid-chat
+        revokeMicrophoneAndUpdate()
+        delay(500)
+        
+        // 9. Try to use microphone again - should show dialog
+        val micButtonStillExists = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Start voice input") },
+            timeoutMs = 2000L,
+            description = "microphone button after revoke"
+        )
+        
+        if (micButtonStillExists) {
+            try {
+                composeTestRule.onNodeWithContentDescription("Start voice input").performClick()
+                composeTestRule.waitForIdle()
+            } catch (e: Exception) {
+                failWithScreenshot(
+                    "Failed to click microphone button after revoke: ${e.message}",
+                    "mic_button_after_revoke_error"
+                )
+            }
+        } else {
+            // Mic button might not be visible after permission revoke
+            println("Warning: Microphone button not found after permission revoke")
+        }
+        
+        // 10. Verify permission dialog appears again
+        val dialogReappeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Microphone Permission Required") },
+            timeoutMs = 3000L,
+            description = "microphone permission dialog after revoke"
+        )
+        
+        if (!dialogReappeared) {
+            failWithScreenshot(
+                "Microphone permission dialog should reappear after revoking permission",
+                "no_dialog_after_revoke"
+            )
+        }
+        
+        println("✓ Microphone permission dialog correctly appears when using mic button without permission")
+        println("✓ Voice messages can be sent after granting permission")
+        println("✓ Dialog reappears when permission is revoked mid-chat")
     }
     
     /* Removed - AccessibilityScreen no longer exists
