@@ -108,6 +108,9 @@ class MainActivity : ComponentActivity() {
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
                     
+                    // Observe authentication state
+                    val isAuthenticated by authRepository.isAuthenticated.collectAsState()
+                    
                     // Observe which permission is needed next
                     val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()
                     
@@ -125,22 +128,26 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                     
-                    // Show appropriate permission dialog based on what's needed
-                    when (nextRequiredPermission) {
-                        PermissionManager.PermissionType.MICROPHONE -> {
-                            com.example.whiz.ui.components.MicrophonePermissionDialog(
-                                onDismiss = { /* User dismissed the dialog */ },
-                                onRequestPermission = { requestMicrophonePermission() }
-                            )
-                        }
-                        PermissionManager.PermissionType.ACCESSIBILITY -> {
-                            com.example.whiz.ui.components.AccessibilityPermissionDialog(
-                                onDismiss = { /* User dismissed the dialog */ },
-                                onOpenSettings = { openAccessibilitySettings() }
-                            )
-                        }
-                        null -> {
-                            // All permissions granted, no dialog needed
+                    // Only show permission dialogs if user is authenticated
+                    // Login takes priority over all permissions
+                    if (isAuthenticated) {
+                        // Show appropriate permission dialog based on what's needed
+                        when (nextRequiredPermission) {
+                            PermissionManager.PermissionType.MICROPHONE -> {
+                                com.example.whiz.ui.components.MicrophonePermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onRequestPermission = { requestMicrophonePermission() }
+                                )
+                            }
+                            PermissionManager.PermissionType.ACCESSIBILITY -> {
+                                com.example.whiz.ui.components.AccessibilityPermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onOpenSettings = { openAccessibilitySettings() }
+                                )
+                            }
+                            null -> {
+                                // All permissions granted, no dialog needed
+                            }
                         }
                     }
                     

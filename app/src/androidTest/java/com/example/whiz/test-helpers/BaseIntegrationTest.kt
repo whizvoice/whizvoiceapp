@@ -95,17 +95,21 @@ abstract class BaseIntegrationTest {
         // Set up permissions
         setupPermissions()
         
-        // Set up test authentication
-        runBlocking {
-            try {
-                // Use the test authentication method from AuthRepository
-                authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
-                
-                android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
-            } catch (e: Exception) {
-                android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
-                throw e
+        // Set up test authentication (unless skipped for login tests)
+        if (!skipAutoAuthentication) {
+            runBlocking {
+                try {
+                    // Use the test authentication method from AuthRepository
+                    authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
+                    
+                    android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
+                    throw e
+                }
             }
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "⏭️ Skipping automatic authentication for this test")
         }
     }
     
