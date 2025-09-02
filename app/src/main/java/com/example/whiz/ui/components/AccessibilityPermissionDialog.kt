@@ -18,7 +18,10 @@ fun AccessibilityPermissionDialog(
                       "• Open apps like WhatsApp on your command\n" +
                       "• Navigate your phone with voice\n" +
                       "• Interact with other apps hands-free\n\n" +
-                      "You'll be taken to Settings where you can enable WhizVoice under Accessibility.",
+                      "In Settings:\n" +
+                      "1. Look for 'Downloaded apps' or 'Installed services'\n" +
+                      "2. Find 'WhizVoice' or 'Whiz' in the list\n" +
+                      "3. Toggle it ON and confirm",
                 textAlign = TextAlign.Start
             )
         },

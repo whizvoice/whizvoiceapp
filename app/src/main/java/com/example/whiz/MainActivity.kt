@@ -495,8 +495,27 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun openAccessibilitySettings() {
+        // Try to open the specific accessibility service settings for our app
         val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        
+        // On some devices, we can jump directly to our service settings
+        // by adding the component name as an extra
+        val componentName = android.content.ComponentName(
+            packageName,
+            "com.example.whiz.accessibility.WhizAccessibilityService"
+        )
+        
+        // Try to highlight our specific service (this may not work on all devices)
+        intent.putExtra(":settings:fragment_args_key", componentName.flattenToString())
+        intent.putExtra(":settings:show_fragment_args", Bundle().apply {
+            putString(":settings:fragment_args_key", componentName.flattenToString())
+        })
+        
         startActivity(intent)
+        
+        // Log instructions for the user
+        Log.d(TAG, "Opening Accessibility Settings. User should look for 'WhizVoice' or 'Whiz' under 'Downloaded apps' or 'Installed services'")
     }
     
     private fun requestMicrophonePermission() {
