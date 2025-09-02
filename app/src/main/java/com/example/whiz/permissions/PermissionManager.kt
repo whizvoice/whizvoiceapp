@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import com.example.whiz.accessibility.WhizAccessibilityService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,13 +18,35 @@ import javax.inject.Singleton
 class PermissionManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    enum class PermissionType {
+        MICROPHONE,
+        ACCESSIBILITY
+    }
+
     // StateFlow for microphone permission status
     private val _microphonePermissionGranted = MutableStateFlow(false)
     val microphonePermissionGranted: StateFlow<Boolean> = _microphonePermissionGranted
 
+    // StateFlow for accessibility permission status
+    private val _accessibilityPermissionGranted = MutableStateFlow(false)
+    val accessibilityPermissionGranted: StateFlow<Boolean> = _accessibilityPermissionGranted
+
+    // Combined state to track which permission is needed next
+    private val _nextRequiredPermission = MutableStateFlow<PermissionType?>(null)
+    val nextRequiredPermission: StateFlow<PermissionType?> = _nextRequiredPermission
+
     init {
-        // Check initial permission state
+        // Check initial permission states
+        checkAllPermissions()
+    }
+
+    /**
+     * Check all permissions
+     */
+    fun checkAllPermissions() {
         checkMicrophonePermission()
+        checkAccessibilityPermission()
+        updateNextRequiredPermission()
     }
 
     /**
@@ -36,6 +59,16 @@ class PermissionManager @Inject constructor(
         ) == PackageManager.PERMISSION_GRANTED
         
         _microphonePermissionGranted.value = hasPermission
+        updateNextRequiredPermission()
+    }
+
+    /**
+     * Check if accessibility service is enabled
+     */
+    fun checkAccessibilityPermission() {
+        val isEnabled = WhizAccessibilityService.isServiceEnabled()
+        _accessibilityPermissionGranted.value = isEnabled
+        updateNextRequiredPermission()
     }
 
     /**
@@ -43,5 +76,22 @@ class PermissionManager @Inject constructor(
      */
     fun updateMicrophonePermission(granted: Boolean) {
         _microphonePermissionGranted.value = granted
+        updateNextRequiredPermission()
+    }
+
+    /**
+     * Update the accessibility permission status
+     */
+    fun updateAccessibilityPermission(granted: Boolean) {
+        _accessibilityPermissionGranted.value = granted
+        updateNextRequiredPermission()
+    }
+
+    private fun updateNextRequiredPermission() {
+        _nextRequiredPermission.value = when {
+            !_microphonePermissionGranted.value -> PermissionType.MICROPHONE
+            !_accessibilityPermissionGranted.value -> PermissionType.ACCESSIBILITY
+            else -> null
+        }
     }
 } 
