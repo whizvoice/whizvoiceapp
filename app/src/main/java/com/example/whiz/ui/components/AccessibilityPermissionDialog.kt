@@ -2,6 +2,9 @@ package com.example.whiz.ui.components
 
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 
 @Composable
@@ -11,7 +14,17 @@ fun AccessibilityPermissionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Enable Accessibility Service") },
+        modifier = Modifier.semantics { 
+            contentDescription = "Accessibility permission dialog"
+        },
+        title = { 
+            Text(
+                "Enable Accessibility Service",
+                modifier = Modifier.semantics { 
+                    contentDescription = "Enable accessibility service title"
+                }
+            ) 
+        },
         text = {
             Text(
                 text = "WhizVoice needs accessibility access to:\n\n" +
@@ -22,19 +35,32 @@ fun AccessibilityPermissionDialog(
                       "1. Look for 'Downloaded apps' or 'Installed services'\n" +
                       "2. Find 'WhizVoice' in the list\n" +
                       "3. Toggle it ON and confirm",
-                textAlign = TextAlign.Start
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Accessibility permission explanation"
+                }
             )
         },
         confirmButton = {
-            TextButton(onClick = {
-                onOpenSettings()
-                onDismiss()
-            }) {
+            TextButton(
+                onClick = {
+                    onOpenSettings()
+                    onDismiss()
+                },
+                modifier = Modifier.semantics { 
+                    contentDescription = "Open accessibility settings button"
+                }
+            ) {
                 Text("Open Settings")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Dismiss accessibility permission dialog button"
+                }
+            ) {
                 Text("Not Now")
             }
         }
