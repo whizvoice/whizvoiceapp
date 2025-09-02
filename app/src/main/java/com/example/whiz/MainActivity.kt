@@ -94,8 +94,8 @@ class MainActivity : ComponentActivity() {
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
         
-        // Check for microphone permission at startup
-        checkMicrophonePermission()
+        // Check for all permissions at startup
+        checkAllPermissions()
         
         setContent {
             WhizTheme {
@@ -107,6 +107,9 @@ class MainActivity : ComponentActivity() {
                     
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
+                    
+                    // Observe which permission is needed next
+                    val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()
                     
                     WhizNavHost(
                         navController = navController,
@@ -121,6 +124,25 @@ class MainActivity : ComponentActivity() {
                             testViewModelCallback?.invoke(vm)
                         }
                     )
+                    
+                    // Show appropriate permission dialog based on what's needed
+                    when (nextRequiredPermission) {
+                        PermissionManager.PermissionType.MICROPHONE -> {
+                            com.example.whiz.ui.components.MicrophonePermissionDialog(
+                                onDismiss = { /* User dismissed the dialog */ },
+                                onRequestPermission = { requestMicrophonePermission() }
+                            )
+                        }
+                        PermissionManager.PermissionType.ACCESSIBILITY -> {
+                            com.example.whiz.ui.components.AccessibilityPermissionDialog(
+                                onDismiss = { /* User dismissed the dialog */ },
+                                onOpenSettings = { openAccessibilitySettings() }
+                            )
+                        }
+                        null -> {
+                            // All permissions granted, no dialog needed
+                        }
+                    }
                     
                     // Handle navigation after navController is initialized
                     LaunchedEffect(navController) {
@@ -468,6 +490,15 @@ class MainActivity : ComponentActivity() {
         permissionManager.checkMicrophonePermission()
     }
     
+    private fun checkAllPermissions() {
+        permissionManager.checkAllPermissions()
+    }
+    
+    private fun openAccessibilitySettings() {
+        val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        startActivity(intent)
+    }
+    
     private fun requestMicrophonePermission() {
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
@@ -500,8 +531,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // Re-check permission when activity resumes in case it was changed in settings
-        permissionManager.checkMicrophonePermission()
+        // Re-check permissions when activity resumes in case they were changed in settings
+        permissionManager.checkAllPermissions()
         // If NavController is initialized, handle current intent again in case it was delivered while paused
         // and MainActivity wasn't recreated but onNewIntent wasn't called (e.g. returning to app)
         // This is a bit of an edge case, but ensures the navigation occurs if pending.
