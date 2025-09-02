@@ -384,13 +384,4 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         composeTestRule.waitForIdle()
     }
     */
-    
-    private fun isAppInstalled(packageName: String): Boolean {
-        return try {
-            context.packageManager.getPackageInfo(packageName, 0)
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
 }
