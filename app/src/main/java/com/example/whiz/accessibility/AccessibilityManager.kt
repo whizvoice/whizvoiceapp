@@ -33,16 +33,6 @@ class AccessibilityManager @Inject constructor(
         accessibilityChecker.openAccessibilitySettings()
     }
     
-    fun openWhatsApp(): Boolean {
-        val service = WhizAccessibilityService.getInstance()
-        return if (service != null) {
-            service.openWhatsApp()
-        } else {
-            Log.w(TAG, "Accessibility service not available")
-            false
-        }
-    }
-    
     fun openApp(packageName: String): Boolean {
         val service = WhizAccessibilityService.getInstance()
         return if (service != null) {

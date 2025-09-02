@@ -83,33 +83,6 @@ class WhizAccessibilityService : AccessibilityService() {
     }
     
     /**
-     * Opens WhatsApp application
-     */
-    fun openWhatsApp(): Boolean {
-        return try {
-            val packageName = "com.whatsapp"
-            if (!isAppInstalled(packageName)) {
-                Log.w(TAG, "WhatsApp is not installed")
-                return false
-            }
-            
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
-                Log.d(TAG, "Successfully launched WhatsApp")
-                true
-            } else {
-                Log.e(TAG, "Could not get launch intent for WhatsApp")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error opening WhatsApp", e)
-            false
-        }
-    }
-    
-    /**
      * Opens any app by package name
      */
     fun openApp(packageName: String): Boolean {

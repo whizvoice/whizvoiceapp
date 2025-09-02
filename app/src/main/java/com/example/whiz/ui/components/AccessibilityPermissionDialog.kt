@@ -29,7 +29,7 @@ fun AccessibilityPermissionDialog(
             Text(
                 text = "WhizVoice requires accessibility access to function properly.\n\n" +
                       "This allows WhizVoice to:\n" +
-                      "• Open apps like WhatsApp on your command\n" +
+                      "• Open apps on your command\n" +
                       "• Navigate your phone with voice\n" +
                       "• Interact with other apps hands-free\n\n" +
                       "In Settings:\n" +

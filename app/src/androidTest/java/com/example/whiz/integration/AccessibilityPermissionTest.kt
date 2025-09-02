@@ -354,53 +354,6 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     }
     */
 
-    /* Removed - AccessibilityScreen no longer exists
-    @Test
-    fun testWhatsAppLaunchButtonRequiresAccessibility() {
-        // Setup: Ensure we have microphone permission
-        grantMicrophoneAndUpdate()
-        
-        // Test with accessibility disabled
-        mockAccessibilityAndUpdate(false)
-        
-        // Navigate to Accessibility screen
-        navigateToAccessibilityScreen()
-        
-        // WhatsApp button shouldn't be visible when service is disabled
-        composeTestRule
-            .onNodeWithContentDescription("Open WhatsApp button")
-            .assertDoesNotExist()
-        println("✓ WhatsApp button correctly hidden when accessibility is disabled")
-        
-        // Now test with accessibility enabled
-        mockAccessibilityAndUpdate(true)
-        navigateToAccessibilityScreen()
-        
-        // With accessibility enabled, WhatsApp button should be visible
-        if (true) { // Always test the enabled path now
-            // Try to click WhatsApp button
-            composeTestRule
-                .onNodeWithContentDescription("Open WhatsApp button")
-                .performClick()
-            
-            composeTestRule.waitForIdle()
-            
-            // Should show snackbar (success or app not installed)
-            val hasWhatsApp = isAppInstalled("com.whatsapp")
-            if (hasWhatsApp) {
-                composeTestRule
-                    .onNodeWithContentDescription("WhatsApp opening snackbar")
-                    .assertIsDisplayed()
-                println("✓ WhatsApp button works when accessibility is enabled")
-            } else {
-                composeTestRule
-                    .onNodeWithContentDescription("WhatsApp not installed snackbar")
-                    .assertIsDisplayed()
-                println("✓ WhatsApp not installed message shown correctly")
-            }
-        }
-    }
-    */
 
     // Helper functions
     
