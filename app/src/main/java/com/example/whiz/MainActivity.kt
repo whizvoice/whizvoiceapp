@@ -515,7 +515,7 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
         
         // Log instructions for the user
-        Log.d(TAG, "Opening Accessibility Settings. User should look for 'WhizVoice' or 'Whiz' under 'Downloaded apps' or 'Installed services'")
+        Log.d(TAG, "Opening Accessibility Settings. User should look for 'WhizVoice' under 'Downloaded apps' or 'Installed services'")
     }
     
     private fun requestMicrophonePermission() {
