@@ -15,9 +15,9 @@ import javax.inject.Singleton
  * Centralized permission manager to track app-wide permission states
  */
 @Singleton
-class PermissionManager @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val accessibilityChecker: AccessibilityChecker
+open class PermissionManager @Inject constructor(
+    @ApplicationContext protected val context: Context,
+    protected val accessibilityChecker: AccessibilityChecker
 ) {
     enum class PermissionType {
         MICROPHONE,
@@ -53,7 +53,7 @@ class PermissionManager @Inject constructor(
     /**
      * Check if the app has microphone permission
      */
-    fun checkMicrophonePermission() {
+    open fun checkMicrophonePermission() {
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO

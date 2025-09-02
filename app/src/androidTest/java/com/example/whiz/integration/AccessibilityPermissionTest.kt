@@ -17,6 +17,7 @@ import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.test_helpers.TestAccessibilityChecker
+import com.example.whiz.test_helpers.TestPermissionManager
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -79,13 +80,15 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     
     // Helper to grant/revoke microphone and update permission manager
     private fun grantMicrophoneAndUpdate() {
-        grantMicrophonePermission()
-        permissionManager.updateMicrophonePermission(true)
+        // Use TestPermissionManager to simulate granting without actually granting
+        val testPermissionManager = permissionManager as TestPermissionManager
+        testPermissionManager.simulateMicrophoneGrant()
     }
     
     private fun revokeMicrophoneAndUpdate() {
-        revokeMicrophonePermission()
-        permissionManager.updateMicrophonePermission(false)
+        // Use TestPermissionManager to simulate revoking without killing the app
+        val testPermissionManager = permissionManager as TestPermissionManager
+        testPermissionManager.simulateMicrophoneRevoke()
     }
 
     @Test
@@ -131,8 +134,7 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
             permissionManager.checkMicrophonePermission()
         }
         
-        // Restart the activity to trigger permission check
-        composeTestRule.activity.recreate()
+        // No need to restart activity with mocked permissions - dialog should appear immediately
         composeTestRule.waitForIdle()
         
         // Wait for the microphone permission dialog to appear
@@ -203,8 +205,7 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         // Force permission manager to update its state
         permissionManager.checkAllPermissions()
         
-        // Restart the activity to trigger permission check
-        composeTestRule.activity.recreate()
+        // No need to restart activity with mocked permissions - dialog should appear immediately
         
         // Step 1: Verify microphone permission dialog appears first
         val micDialogAppeared = ComposeTestHelper.waitForElement(
@@ -239,8 +240,7 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         // Step 2: Grant microphone permission (simulate user action)
         grantMicrophoneAndUpdate()
         
-        // Recreate activity to check if accessibility dialog appears next
-        composeTestRule.activity.recreate()
+        // No need to recreate activity - permission change takes effect immediately with mocking
         
         // Step 3: Verify accessibility dialog appears after microphone is granted
         val accessibilityDialogAppeared = ComposeTestHelper.waitForElement(
@@ -288,8 +288,7 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
             permissionManager.checkAllPermissions()
         }
         
-        // Restart the activity to trigger permission check
-        composeTestRule.activity.recreate()
+        // No need to restart activity with mocked permissions - dialog should appear immediately
         
         // Give UI just enough time to show dialogs if they were going to appear
         // Using a small sleep is more predictable than waitForIdle for negative checks

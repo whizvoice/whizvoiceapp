@@ -21,6 +21,8 @@ import com.example.whiz.TestCredentialsManager
 import com.example.whiz.TestAuthRepository
 import com.example.whiz.accessibility.AccessibilityChecker
 import com.example.whiz.test_helpers.TestAccessibilityChecker
+import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.test_helpers.TestPermissionManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -242,5 +244,15 @@ object TestAppModule {
     ): AccessibilityChecker {
         Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
         return TestAccessibilityChecker(context)
+    }
+    
+    @Provides
+    @Singleton
+    fun providePermissionManager(
+        @ApplicationContext context: Context,
+        accessibilityChecker: AccessibilityChecker
+    ): PermissionManager {
+        Log.d(TAG, "🔧 Creating TestPermissionManager for testing...")
+        return TestPermissionManager(context, accessibilityChecker)
     }
 } 
