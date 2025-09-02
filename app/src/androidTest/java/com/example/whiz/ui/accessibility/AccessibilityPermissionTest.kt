@@ -11,7 +11,7 @@ import com.example.whiz.MainActivity
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.BaseIntegrationTest
-import com.example.whiz.ComposeTestHelper
+import com.example.whiz.test_helpers.ComposeTestHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -40,15 +40,17 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
     @Inject
     lateinit var permissionManager: PermissionManager
 
-    private lateinit var testHelper: ComposeTestHelper
-
     @Before
     fun setup() {
-        hiltRule.inject()
-        testHelper = ComposeTestHelper(composeTestRule)
+        // Don't call hiltRule.inject() here as BaseIntegrationTest already does it
         
-        // Ensure we're on the chat screen initially
-        testHelper.waitForText("Whiz", timeout = 5000)
+        // Ensure we're on the chat screen initially using the existing helper
+        ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Whiz") },
+            timeoutMs = 5000,
+            description = "Whiz app title"
+        )
     }
 
     @Test
