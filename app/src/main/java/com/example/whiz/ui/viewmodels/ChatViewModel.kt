@@ -33,6 +33,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi // Import for OptIn
 import org.json.JSONObject // For basic JSON parsing
 import org.json.JSONException
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.tools.ToolExecutor
+import com.example.whiz.tools.ToolExecutionResult
 
 
 
@@ -49,6 +51,7 @@ class ChatViewModel @Inject constructor(
     private val ttsManager: TTSManager,
     private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
     private val voiceManager: VoiceManager,
+    private val toolExecutor: ToolExecutor,
 ) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -547,6 +550,12 @@ class ChatViewModel @Inject constructor(
                         }
                         _isResponding.value = false
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
+                    }
+                    is WebSocketEvent.ToolExecution -> {
+                        Log.d(TAG, "Received tool execution request: ${event.toolRequest}")
+                        
+                        // Execute the tool
+                        toolExecutor.executeToolFromJson(event.toolRequest)
                     }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
@@ -1058,6 +1067,59 @@ class ChatViewModel @Inject constructor(
                             Log.e(TAG, "Error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
                             updateRespondingStateForCurrentChat()
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Collect tool execution results and send them back to server
+        viewModelScope.launch {
+            toolExecutor.toolResults.collect { result ->
+                Log.d(TAG, "Tool execution result: $result")
+                
+                val currentChatId = _chatId.value
+                if (currentChatId == -1L || currentChatId == 0L) {
+                    Log.w(TAG, "Cannot send tool result - no active chat")
+                    return@collect
+                }
+                
+                when (result) {
+                    is ToolExecutionResult.Success -> {
+                        // Add status field to the result
+                        val resultWithStatus = org.json.JSONObject().apply {
+                            put("status", "success")
+                            // Copy all fields from the original result
+                            val keys = result.result.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                put(key, result.result.get(key))
+                            }
+                        }
+                        
+                        val success = whizServerRepository.sendToolResult(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            result = resultWithStatus,
+                            chatId = currentChatId
+                        )
+                        if (!success) {
+                            Log.e(TAG, "Failed to send tool result to server")
+                        }
+                    }
+                    is ToolExecutionResult.Error -> {
+                        val errorResult = org.json.JSONObject().apply {
+                            put("status", "error")
+                            put("error", result.error)
+                        }
+                        val success = whizServerRepository.sendToolResult(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            result = errorResult,
+                            chatId = currentChatId
+                        )
+                        if (!success) {
+                            Log.e(TAG, "Failed to send tool error result to server")
                         }
                     }
                 }

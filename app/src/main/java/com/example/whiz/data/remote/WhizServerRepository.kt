@@ -38,6 +38,11 @@ sealed class WebSocketEvent {
         val conversationId: Long? = null,
         val clientConversationId: Long? = null
     ) : WebSocketEvent()
+    data class ToolExecution(
+        val toolRequest: org.json.JSONObject,
+        val requestId: String? = null,
+        val conversationId: Long? = null
+    ) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
@@ -139,6 +144,7 @@ class WhizServerRepository @Inject constructor(
                 _connectionStateEvents.emit(event)
             }
             is WebSocketEvent.Message,
+            is WebSocketEvent.ToolExecution,
             is WebSocketEvent.Error,
             is WebSocketEvent.AuthError,
             is WebSocketEvent.Cancelled,
@@ -174,6 +180,7 @@ class WhizServerRepository @Inject constructor(
                 is WebSocketEvent.Error -> "ERROR: ${e.error.message}"
                 is WebSocketEvent.AuthError -> "AUTH_ERROR: ${e.message}"
                 is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
+                is WebSocketEvent.ToolExecution -> "TOOL_EXECUTION(requestId=${e.requestId}): ${e.toolRequest.optString("tool")}"
                 is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
                 is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
             }
@@ -434,8 +441,20 @@ class WhizServerRepository @Inject constructor(
                                 jsonObject.getString("request_id")
                             } else null
                             
+                            // Check if this is a tool execution request
+                            if (jsonObject.has("type") && jsonObject.getString("type") == "tool_execution") {
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                
+                                Log.d(TAG, "Received tool execution request: ${jsonObject.toString(2)}")
+                                scope.launch { 
+                                    emitEvent(WebSocketEvent.ToolExecution(jsonObject, requestId, conversationId))
+                                }
+                                messageHandled = true
+                            }
                             // Check if this is a cancellation confirmation
-                            if (jsonObject.has("type") && jsonObject.getString("type") == "cancelled") {
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "cancelled") {
                                 val cancelledRequestId = if (jsonObject.has("cancelled_request_id")) {
                                     jsonObject.getString("cancelled_request_id")
                                 } else null
@@ -692,6 +711,53 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
+    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long): Boolean {
+        Log.d(TAG, "📤 SENDING TOOL RESULT: requestId=$requestId, tool=$toolName, chatId=$chatId")
+        
+        return try {
+            val currentSocket = webSocket
+            if (currentSocket != null && !persistentDisconnectForTest) {
+                if (connectionState != ConnectionState.CONNECTED) {
+                    Log.w(TAG, "WebSocket exists but connection state is $connectionState - cannot send tool result")
+                    return false
+                }
+                
+                // Send tool result as JSON
+                val resultJson = org.json.JSONObject().apply {
+                    put("type", "tool_result")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("result", result)
+                    
+                    // Include conversation ID
+                    if (chatId > 0) {
+                        put("conversation_id", chatId)
+                    } else if (chatId < 0) {
+                        put("client_conversation_id", chatId)
+                    }
+                }
+                val jsonMessage = resultJson.toString()
+                
+                Log.d(TAG, "📤 WEBSOCKET SEND: Sending tool result with requestId=$requestId")
+                
+                val success = currentSocket.send(jsonMessage)
+                if (success) {
+                    Log.d(TAG, "✅ TOOL RESULT SENT: requestId=$requestId, tool=$toolName")
+                    true
+                } else {
+                    Log.w(TAG, "❌ TOOL RESULT SEND FAILED: requestId=$requestId")
+                    false
+                }
+            } else {
+                Log.w(TAG, "WebSocket not connected - cannot send tool result")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending tool result", e)
+            false
+        }
+    }
+    
     fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
         Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
