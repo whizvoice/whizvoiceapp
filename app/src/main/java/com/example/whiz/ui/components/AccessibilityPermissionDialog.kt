@@ -13,7 +13,7 @@ fun AccessibilityPermissionDialog(
     onOpenSettings: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {}, // Make dialog non-dismissible
         modifier = Modifier.semantics { 
             contentDescription = "Accessibility permission dialog"
         },
@@ -27,7 +27,8 @@ fun AccessibilityPermissionDialog(
         },
         text = {
             Text(
-                text = "WhizVoice needs accessibility access to:\n\n" +
+                text = "WhizVoice requires accessibility access to function properly.\n\n" +
+                      "This allows WhizVoice to:\n" +
                       "• Open apps like WhatsApp on your command\n" +
                       "• Navigate your phone with voice\n" +
                       "• Interact with other apps hands-free\n\n" +
@@ -54,15 +55,6 @@ fun AccessibilityPermissionDialog(
                 Text("Open Settings")
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.semantics { 
-                    contentDescription = "Dismiss accessibility permission dialog button"
-                }
-            ) {
-                Text("Not Now")
-            }
-        }
+        dismissButton = null // Remove the dismiss button entirely
     )
 }
