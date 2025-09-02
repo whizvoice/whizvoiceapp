@@ -81,11 +81,6 @@
                 android:resource="@xml/voice_interaction_session" />
         </service>
 
-        <activity
-            android:name=".ui.settings.SettingsActivity"
-            android:exported="false"
-            android:label="Settings" />
-
         <!-- Accessibility Service -->
         <service
             android:name=".accessibility.WhizAccessibilityService"
