@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Whiz Voice</string>
     <string name="title_activity_main">MainActivity</string>
+    <string name="accessibility_service_description">WhizVoice Accessibility Service allows you to control your phone with voice commands and interact with other apps like WhatsApp</string>
 </resources>
