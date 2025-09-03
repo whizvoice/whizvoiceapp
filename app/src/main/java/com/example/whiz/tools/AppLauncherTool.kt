@@ -27,6 +27,7 @@ class AppLauncherTool @Inject constructor(
         try {
             val packageManager = context.packageManager
             val normalizedAppName = appName.lowercase().trim()
+            Log.d(TAG, "Normalized app name: $normalizedAppName")
             
             // Get all installed apps
             val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
@@ -98,27 +99,45 @@ class AppLauncherTool @Inject constructor(
             )
             
             // Try common mappings
+            Log.d(TAG, "Checking common mappings for: $normalizedAppName")
             val mappedPackage = commonMappings[normalizedAppName]
+            Log.d(TAG, "Mapped package for '$normalizedAppName': $mappedPackage")
             if (mappedPackage != null) {
-                val launchIntent = packageManager.getLaunchIntentForPackage(mappedPackage)
+                var launchIntent = packageManager.getLaunchIntentForPackage(mappedPackage)
+                Log.d(TAG, "Launch intent for $mappedPackage: ${launchIntent != null}")
+                
+                // If getLaunchIntentForPackage returns null, try to manually create the intent
+                if (launchIntent == null && mappedPackage == "com.whatsapp") {
+                    Log.d(TAG, "Trying manual intent creation for WhatsApp")
+                    launchIntent = Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_LAUNCHER)
+                        setPackage(mappedPackage)
+                        component = android.content.ComponentName(mappedPackage, "com.whatsapp.Main")
+                    }
+                }
+                
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(launchIntent)
-                    
-                    val appLabel = try {
-                        packageManager.getApplicationLabel(
-                            packageManager.getApplicationInfo(mappedPackage, 0)
-                        ).toString()
+                    try {
+                        context.startActivity(launchIntent)
+                        
+                        val appLabel = try {
+                            packageManager.getApplicationLabel(
+                                packageManager.getApplicationInfo(mappedPackage, 0)
+                            ).toString()
+                        } catch (e: Exception) {
+                            appName
+                        }
+                        
+                        Log.i(TAG, "Successfully launched mapped app: $appLabel ($mappedPackage)")
+                        return LaunchResult(
+                            success = true,
+                            appName = appLabel,
+                            packageName = mappedPackage
+                        )
                     } catch (e: Exception) {
-                        appName
+                        Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
                     }
-                    
-                    Log.i(TAG, "Successfully launched mapped app: $appLabel ($mappedPackage)")
-                    return LaunchResult(
-                        success = true,
-                        appName = appLabel,
-                        packageName = mappedPackage
-                    )
                 }
             }
             
@@ -176,5 +195,36 @@ class AppLauncherTool @Inject constructor(
             .filter { packageManager.getLaunchIntentForPackage(it.packageName) != null }
             .map { packageManager.getApplicationLabel(it).toString() }
             .sorted()
+    }
+    
+    fun debugListAllApps(): List<String> {
+        val packageManager = context.packageManager
+        val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+        val result = mutableListOf<String>()
+        
+        for (appInfo in installedApps) {
+            val appLabel = packageManager.getApplicationLabel(appInfo).toString()
+            val packageName = appInfo.packageName
+            val hasLaunchIntent = packageManager.getLaunchIntentForPackage(packageName) != null
+            
+            // Check if it's WhatsApp or similar
+            if (appLabel.lowercase().contains("whats") || 
+                packageName.contains("whats") ||
+                packageName.contains("com.whatsapp")) {
+                
+                Log.d(TAG, "Found WhatsApp-like app:")
+                Log.d(TAG, "  Label: $appLabel")
+                Log.d(TAG, "  Package: $packageName")
+                Log.d(TAG, "  Has launch intent: $hasLaunchIntent")
+                
+                result.add("$appLabel | Package: $packageName | Launchable: $hasLaunchIntent")
+            }
+        }
+        
+        if (result.isEmpty()) {
+            Log.d(TAG, "No WhatsApp-like apps found")
+        }
+        
+        return result
     }
 }
