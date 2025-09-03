@@ -94,6 +94,13 @@ class TTSManager @Inject constructor(
             return
         }
         
+        // Send text to bubble overlay if it's running
+        try {
+            BubbleOverlayService.updateBotResponse(text)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+        }
+        
         try {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         } catch (e: Exception) {

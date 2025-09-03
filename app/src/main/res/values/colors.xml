@@ -7,4 +7,13 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- Theme colors -->
+    <color name="primary">@color/purple_500</color>
+    <color name="primary_variant">@color/purple_700</color>
+    <color name="accent">@color/teal_200</color>
+    <color name="surface">#FAFAFA</color>
+    <color name="on_surface">#212121</color>
+    <color name="divider">#BDBDBD</color>
+    <color name="error">#F44336</color>
 </resources>

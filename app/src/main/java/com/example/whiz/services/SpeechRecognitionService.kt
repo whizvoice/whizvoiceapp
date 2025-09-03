@@ -398,6 +398,13 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
                 
+                // Send to bubble overlay if active
+                try {
+                    BubbleOverlayService.updateUserTranscription(finalText)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                }
+                
                 if (recognitionCallback != null) {
                     if (finalText.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
@@ -423,6 +430,13 @@ class SpeechRecognitionService @Inject constructor(
                 val partialText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
                 _transcriptionState.value = partialText
+                
+                // Send to bubble overlay if active
+                try {
+                    BubbleOverlayService.updateUserTranscription(partialText)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                }
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {

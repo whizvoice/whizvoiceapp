@@ -3,7 +3,10 @@ package com.example.whiz.tools
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
+import com.example.whiz.services.BubbleOverlayService
 import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,10 +21,20 @@ class AppLauncherTool @Inject constructor(
         val success: Boolean,
         val appName: String,
         val packageName: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        val overlayStarted: Boolean = false,
+        val overlayPermissionRequired: Boolean = false
     )
     
-    fun launchApp(appName: String): LaunchResult {
+    private fun hasOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+    }
+    
+    fun launchApp(appName: String, enableOverlay: Boolean = true): LaunchResult {
         Log.d(TAG, "Attempting to launch app: $appName")
         
         try {
@@ -66,11 +79,25 @@ class AppLauncherTool @Inject constructor(
                         packageManager.getApplicationInfo(packageName, 0)
                     ).toString()
                     
+                    // Start bubble overlay if enabled and we have permission
+                    var overlayStarted = false
+                    var overlayPermissionRequired = false
+                    if (enableOverlay && !isWhizApp(packageName)) {
+                        if (hasOverlayPermission()) {
+                            overlayStarted = startBubbleOverlay()
+                        } else {
+                            overlayPermissionRequired = true
+                            Log.w(TAG, "Overlay permission required to show bubble")
+                        }
+                    }
+                    
                     Log.i(TAG, "Successfully launched app: $appLabel ($packageName)")
                     return LaunchResult(
                         success = true,
                         appName = appLabel,
-                        packageName = packageName
+                        packageName = packageName,
+                        overlayStarted = overlayStarted,
+                        overlayPermissionRequired = overlayPermissionRequired
                     )
                 }
             }
@@ -129,11 +156,25 @@ class AppLauncherTool @Inject constructor(
                             appName
                         }
                         
+                        // Start bubble overlay if enabled and we have permission
+                        var overlayStarted = false
+                        var overlayPermissionRequired = false
+                        if (enableOverlay && !isWhizApp(mappedPackage)) {
+                            if (hasOverlayPermission()) {
+                                overlayStarted = startBubbleOverlay()
+                            } else {
+                                overlayPermissionRequired = true
+                                Log.w(TAG, "Overlay permission required to show bubble")
+                            }
+                        }
+                        
                         Log.i(TAG, "Successfully launched mapped app: $appLabel ($mappedPackage)")
                         return LaunchResult(
                             success = true,
                             appName = appLabel,
-                            packageName = mappedPackage
+                            packageName = mappedPackage,
+                            overlayStarted = overlayStarted,
+                            overlayPermissionRequired = overlayPermissionRequired
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
@@ -155,6 +196,26 @@ class AppLauncherTool @Inject constructor(
                 appName = appName,
                 error = "Error launching app: ${e.message}"
             )
+        }
+    }
+    
+    private fun isWhizApp(packageName: String): Boolean {
+        return packageName.contains("com.example.whiz")
+    }
+    
+    private fun startBubbleOverlay(): Boolean {
+        return if (hasOverlayPermission()) {
+            try {
+                BubbleOverlayService.start(context)
+                Log.d(TAG, "Started bubble overlay service")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start bubble overlay", e)
+                false
+            }
+        } else {
+            Log.w(TAG, "No overlay permission, cannot start bubble")
+            false
         }
     }
     
