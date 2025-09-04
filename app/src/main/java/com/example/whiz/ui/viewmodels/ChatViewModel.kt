@@ -956,6 +956,13 @@ class ChatViewModel @Inject constructor(
                                 } else {
                                     // For remote agent, we need to manually refresh to show the server-saved message
                                     
+                                    // Update bubble overlay if active
+                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}")
+                                    if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                                        Log.d(TAG, "[BUBBLE_DEBUG] Updating bubble with bot response: '$messageContentForChat'")
+                                        com.example.whiz.services.BubbleOverlayService.updateBotResponse(messageContentForChat)
+                                    }
+                                    
                                     try {
                                         viewModelScope.launch {
                                             // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
@@ -1075,12 +1082,13 @@ class ChatViewModel @Inject constructor(
         
         // Collect tool execution results and send them back to server
         viewModelScope.launch {
+            Log.i(TAG, "[TOOL_COLLECTOR] Starting tool result collector")
             toolExecutor.toolResults.collect { result ->
-                Log.d(TAG, "Tool execution result: $result")
+                Log.i(TAG, "[TOOL_COLLECTOR] Received tool execution result: $result")
                 
                 val currentChatId = _chatId.value
                 if (currentChatId == -1L || currentChatId == 0L) {
-                    Log.w(TAG, "Cannot send tool result - no active chat")
+                    Log.w(TAG, "[TOOL_COLLECTOR] Cannot send tool result - no active chat (chatId=$currentChatId)")
                     return@collect
                 }
                 
@@ -1097,6 +1105,7 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         
+                        Log.i(TAG, "[TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
                         val success = whizServerRepository.sendToolResult(
                             toolName = result.toolName,
                             requestId = result.requestId,
@@ -1104,7 +1113,9 @@ class ChatViewModel @Inject constructor(
                             chatId = currentChatId
                         )
                         if (!success) {
-                            Log.e(TAG, "Failed to send tool result to server")
+                            Log.e(TAG, "[TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
+                        } else {
+                            Log.i(TAG, "[TOOL_COLLECTOR] Successfully sent tool result to server for requestId=${result.requestId}")
                         }
                     }
                     is ToolExecutionResult.Error -> {
@@ -1705,6 +1716,11 @@ class ChatViewModel @Inject constructor(
                 _isInputFromVoice.value = false
             } else {
                 Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text has changed ('${_inputText.value}' != '$trimmedText'), NOT clearing to avoid race condition")
+            }
+            
+            // Update bubble overlay if active
+            if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                com.example.whiz.services.BubbleOverlayService.updateUserTranscription(trimmedText)
             }
 
             // Send to agent (local or remote)

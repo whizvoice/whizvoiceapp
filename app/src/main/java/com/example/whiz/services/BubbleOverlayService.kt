@@ -46,6 +46,11 @@ class BubbleOverlayService : Service() {
         private const val CLICK_THRESHOLD = 10
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
         
+        // Track if the bubble overlay is active
+        @Volatile
+        var isActive: Boolean = false
+            private set
+        
         // Flows for displaying text in bubble
         private val _botResponseFlow = MutableSharedFlow<String>(replay = 1)
         val botResponseFlow: SharedFlow<String> = _botResponseFlow
@@ -64,7 +69,9 @@ class BubbleOverlayService : Service() {
         }
         
         fun updateBotResponse(text: String) {
+            Log.d(TAG, "[BUBBLE_UPDATE] updateBotResponse called with text: '$text'")
             GlobalScope.launch {
+                Log.d(TAG, "[BUBBLE_UPDATE] Emitting bot response to flow")
                 _botResponseFlow.emit(text)
             }
         }
@@ -80,6 +87,8 @@ class BubbleOverlayService : Service() {
     
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
+        isActive = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createChatHead()
         startVoiceTranscriptionListener()
@@ -183,14 +192,19 @@ class BubbleOverlayService : Service() {
     }
     
     private fun startBotResponseListener() {
+        Log.d(TAG, "[BUBBLE_LISTENER] Starting bot response listener")
         botResponseJob = serviceScope.launch {
             botResponseFlow
                 .filterNotNull()
                 .distinctUntilChanged()
                 .collect { response ->
+                    Log.d(TAG, "[BUBBLE_LISTENER] Received bot response: '$response'")
                     // Filter out JSON responses (tool calls)
                     if (!response.startsWith("{") && !response.startsWith("[")) {
+                        Log.d(TAG, "[BUBBLE_LISTENER] Showing bot message in bubble")
                         showMessage(response, isUserMessage = false)
+                    } else {
+                        Log.d(TAG, "[BUBBLE_LISTENER] Skipping JSON response")
                     }
                 }
         }
@@ -204,8 +218,13 @@ class BubbleOverlayService : Service() {
             // Cancel any pending hide
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
             
-            // Set message text and color
+            // Set message text and styling
             messageText?.text = text
+            messageText?.setTypeface(
+                messageText.typeface, 
+                if (isUserMessage) android.graphics.Typeface.NORMAL else android.graphics.Typeface.ITALIC
+            )
+            
             messageBubble?.setCardBackgroundColor(
                 resources.getColor(
                     if (isUserMessage) R.color.user_bubble else R.color.assistant_bubble,
@@ -226,6 +245,8 @@ class BubbleOverlayService : Service() {
     
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
+        isActive = false
         recognitionJob?.cancel()
         botResponseJob?.cancel()
         hideMessageRunnable?.let { handler.removeCallbacks(it) }

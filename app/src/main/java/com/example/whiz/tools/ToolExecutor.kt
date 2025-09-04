@@ -106,6 +106,9 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             
+            Log.i(TAG, "[TOOL_RESULT] About to emit tool result for requestId=$requestId")
+            Log.i(TAG, "[TOOL_RESULT] Result JSON: ${resultJson.toString(2)}")
+            
             _toolResults.emit(
                 ToolExecutionResult.Success(
                     toolName = "launch_app",
@@ -114,7 +117,7 @@ class ToolExecutor @Inject constructor(
                 )
             )
             
-            Log.i(TAG, "App launch result: ${resultJson.toString(2)}")
+            Log.i(TAG, "[TOOL_RESULT] Successfully emitted tool result for requestId=$requestId")
             
         } catch (e: Exception) {
             Log.e(TAG, "Error executing app launcher", e)

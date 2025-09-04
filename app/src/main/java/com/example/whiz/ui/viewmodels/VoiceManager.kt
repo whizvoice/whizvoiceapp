@@ -1,6 +1,5 @@
 package com.example.whiz.ui.viewmodels
 
-import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
@@ -86,13 +85,15 @@ class VoiceManager @Inject constructor(
      */
     private fun shouldBeListening(): Boolean {
         val isInForeground = appLifecycleService.isInForeground()
+        val isBubbleActive = com.example.whiz.services.BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
         
-        val should = continuousListeningEnabled && isInForeground && hasPermission && notSpeaking
+        // Keep listening if either in foreground OR bubble is active
+        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) && hasPermission && notSpeaking
         
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
-                "foreground=$isInForeground, permission=$hasPermission, notSpeaking=$notSpeaking, " +
+                "foreground=$isInForeground, bubble=$isBubbleActive, permission=$hasPermission, notSpeaking=$notSpeaking, " +
                 "result=$should")
         
         return should
@@ -238,8 +239,9 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
         
         // Check if bubble overlay is running - if so, don't stop listening
-        if (isBubbleOverlayRunning()) {
-            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running")
+        if (com.example.whiz.services.BubbleOverlayService.isActive) {
+            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
+            // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
         
@@ -254,17 +256,6 @@ class VoiceManager @Inject constructor(
                 Log.e(TAG, "Error stopping speech recognition on background", e)
             }
         }
-    }
-    
-    private fun isBubbleOverlayRunning(): Boolean {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        activityManager?.let { manager ->
-            val runningServices = manager.getRunningServices(Integer.MAX_VALUE)
-            return runningServices.any { 
-                it.service.className == "com.example.whiz.services.BubbleOverlayService"
-            }
-        }
-        return false
     }
     
     private fun onAppForegrounded() {
