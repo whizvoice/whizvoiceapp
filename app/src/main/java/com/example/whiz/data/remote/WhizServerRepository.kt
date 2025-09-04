@@ -718,7 +718,20 @@ class WhizServerRepository @Inject constructor(
             val currentSocket = webSocket
             if (currentSocket != null && !persistentDisconnectForTest) {
                 if (connectionState != ConnectionState.CONNECTED) {
-                    Log.w(TAG, "WebSocket exists but connection state is $connectionState - cannot send tool result")
+                    Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing tool result for retry")
+                    // Queue the tool result JSON for retry using existing mechanism
+                    val resultJson = org.json.JSONObject().apply {
+                        put("type", "tool_result")
+                        put("tool", toolName)
+                        put("request_id", requestId)
+                        put("result", result)
+                        if (chatId > 0) {
+                            put("conversation_id", chatId)
+                        } else if (chatId < 0) {
+                            put("client_conversation_id", chatId)
+                        }
+                    }
+                    queueMessageForRetry(resultJson.toString(), requestId, chatId)
                     return false
                 }
                 
@@ -745,15 +758,42 @@ class WhizServerRepository @Inject constructor(
                     Log.d(TAG, "✅ TOOL RESULT SENT: requestId=$requestId, tool=$toolName")
                     true
                 } else {
-                    Log.w(TAG, "❌ TOOL RESULT SEND FAILED: requestId=$requestId")
+                    Log.w(TAG, "❌ TOOL RESULT SEND FAILED: requestId=$requestId - queueing for retry")
+                    queueMessageForRetry(jsonMessage, requestId, chatId)
                     false
                 }
             } else {
-                Log.w(TAG, "WebSocket not connected - cannot send tool result")
+                Log.w(TAG, "WebSocket not connected - queueing tool result for retry")
+                // Queue the tool result JSON for retry
+                val resultJson = org.json.JSONObject().apply {
+                    put("type", "tool_result")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("result", result)
+                    if (chatId > 0) {
+                        put("conversation_id", chatId)
+                    } else if (chatId < 0) {
+                        put("client_conversation_id", chatId)
+                    }
+                }
+                queueMessageForRetry(resultJson.toString(), requestId, chatId)
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending tool result", e)
+            Log.e(TAG, "Error sending tool result - queueing for retry", e)
+            // Queue on exception too
+            val resultJson = org.json.JSONObject().apply {
+                put("type", "tool_result")
+                put("tool", toolName)
+                put("request_id", requestId)
+                put("result", result)
+                if (chatId > 0) {
+                    put("conversation_id", chatId)
+                } else if (chatId < 0) {
+                    put("client_conversation_id", chatId)
+                }
+            }
+            queueMessageForRetry(resultJson.toString(), requestId, chatId)
             false
         }
     }
@@ -900,28 +940,36 @@ class WhizServerRepository @Inject constructor(
         
         messagesToRetry.forEach { pendingMessage ->
             try {
-                val messageJson = org.json.JSONObject().apply {
-                    put("message", pendingMessage.message)
-                    put("request_id", pendingMessage.requestId)
-                    put("type", "message")
-                    
-                    // Send as conversation_id if positive, client_conversation_id if negative
-                    if (pendingMessage.chatId > 0) {
-                        put("conversation_id", pendingMessage.chatId)
-                    } else if (pendingMessage.chatId < 0) {
-                        put("client_conversation_id", pendingMessage.chatId)
+                // Check if this is already a complete JSON message (e.g., tool result)
+                val jsonMessage = if (pendingMessage.message.startsWith("{") && pendingMessage.message.contains("\"type\"")) {
+                    // This is already a complete JSON message (like a tool result)
+                    // Just use it as-is
+                    pendingMessage.message
+                } else {
+                    // This is a regular text message, wrap it in JSON structure
+                    val messageJson = org.json.JSONObject().apply {
+                        put("message", pendingMessage.message)
+                        put("request_id", pendingMessage.requestId)
+                        put("type", "message")
+                        
+                        // Send as conversation_id if positive, client_conversation_id if negative
+                        if (pendingMessage.chatId > 0) {
+                            put("conversation_id", pendingMessage.chatId)
+                        } else if (pendingMessage.chatId < 0) {
+                            put("client_conversation_id", pendingMessage.chatId)
+                        }
+                        
+                        pendingMessage.clientMessageId?.let { put("client_message_id", it) }
+                        
+                        // Include timestamp if provided
+                        pendingMessage.timestamp?.let { 
+                            // Convert milliseconds to ISO format string for server
+                            val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                            put("timestamp", isoTimestamp)
+                        }
                     }
-                    
-                    pendingMessage.clientMessageId?.let { put("client_message_id", it) }
-                    
-                    // Include timestamp if provided
-                    pendingMessage.timestamp?.let { 
-                        // Convert milliseconds to ISO format string for server
-                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
-                        put("timestamp", isoTimestamp)
-                    }
+                    messageJson.toString()
                 }
-                val jsonMessage = messageJson.toString()
                 
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
