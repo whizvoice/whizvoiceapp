@@ -1058,27 +1058,20 @@ fun MessageItem(
     val isUserMessage = message.type == MessageType.USER
     
     val backgroundColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
+        MessageType.USER -> MaterialTheme.colorScheme.surface  // White background for user messages
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer  // Light yellow from theme
     }
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.onPrimary
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer
+        MessageType.USER -> MaterialTheme.colorScheme.onSurface  // Black text for user messages
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer  // Black text from theme
     }
     val alignment = if (isUserMessage) Alignment.CenterEnd else Alignment.CenterStart
     
     // Custom selection colors for user messages to ensure visibility
-    val customSelectionColors = if (isUserMessage) {
-        TextSelectionColors(
-            handleColor = MaterialTheme.colorScheme.onPrimary,
-            backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.4f)
-        )
-    } else {
-        TextSelectionColors(
-            handleColor = MaterialTheme.colorScheme.primary,
-            backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-        )
-    }
+    val customSelectionColors = TextSelectionColors(
+        handleColor = MaterialTheme.colorScheme.primary,  // Yellow handle
+        backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)  // Semi-transparent yellow
+    )
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Card(

@@ -28,7 +28,8 @@ sealed class ToolExecutionResult {
 
 @Singleton
 class ToolExecutor @Inject constructor(
-    private val appLauncherTool: AppLauncherTool
+    private val appLauncherTool: AppLauncherTool,
+    private val whatsAppTool: WhatsAppTool
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -52,6 +53,12 @@ class ToolExecutor @Inject constructor(
                 when (toolName) {
                     "launch_app" -> {
                         executeAppLauncher(requestId, params)
+                    }
+                    "whatsapp_select_chat" -> {
+                        executeWhatsAppSelectChat(requestId, params)
+                    }
+                    "whatsapp_send_message" -> {
+                        executeWhatsAppSendMessage(requestId, params)
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -131,9 +138,80 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    private suspend fun executeWhatsAppSelectChat(requestId: String, params: JSONObject) {
+        try {
+            val chatName = params.getString("chat_name")
+            Log.d(TAG, "Selecting WhatsApp chat: $chatName")
+            
+            val result = whatsAppTool.selectChat(chatName)
+            
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.chatName?.let { put("chat_name", it) }
+                result.error?.let { put("error", it) }
+            }
+            
+            Log.i(TAG, "[TOOL_RESULT] WhatsApp select chat result for requestId=$requestId: ${resultJson.toString(2)}")
+            
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "whatsapp_select_chat",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing WhatsApp select chat", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "whatsapp_select_chat",
+                    requestId = requestId,
+                    error = "Failed to select WhatsApp chat: ${e.message}"
+                )
+            )
+        }
+    }
+    
+    private suspend fun executeWhatsAppSendMessage(requestId: String, params: JSONObject) {
+        try {
+            val message = params.getString("message")
+            Log.d(TAG, "Sending WhatsApp message: $message")
+            
+            val result = whatsAppTool.sendMessage(message)
+            
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.error?.let { put("error", it) }
+            }
+            
+            Log.i(TAG, "[TOOL_RESULT] WhatsApp send message result for requestId=$requestId: ${resultJson.toString(2)}")
+            
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "whatsapp_send_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing WhatsApp send message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "whatsapp_send_message",
+                    requestId = requestId,
+                    error = "Failed to send WhatsApp message: ${e.message}"
+                )
+            )
+        }
+    }
+    
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_send_message")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
@@ -147,6 +225,32 @@ class ToolExecutor @Inject constructor(
                         put("app_name", JSONObject().apply {
                             put("type", "string")
                             put("description", "The name of the app to launch")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "whatsapp_select_chat" -> {
+                JSONObject().apply {
+                    put("name", "whatsapp_select_chat")
+                    put("description", "Select a specific chat in WhatsApp")
+                    put("parameters", JSONObject().apply {
+                        put("chat_name", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The name of the chat/contact to select")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "whatsapp_send_message" -> {
+                JSONObject().apply {
+                    put("name", "whatsapp_send_message")
+                    put("description", "Send a message in the current WhatsApp chat")
+                    put("parameters", JSONObject().apply {
+                        put("message", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The message text to send")
                             put("required", true)
                         })
                     })
