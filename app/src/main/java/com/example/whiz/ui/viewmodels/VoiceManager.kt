@@ -1,5 +1,6 @@
 package com.example.whiz.ui.viewmodels
 
+import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
@@ -236,6 +237,12 @@ class VoiceManager @Inject constructor(
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
         
+        // Check if bubble overlay is running - if so, don't stop listening
+        if (isBubbleOverlayRunning()) {
+            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running")
+            return
+        }
+        
         // Stop listening but preserve the setting
         if (isListening.value) {
             Log.d(TAG, "Stopping speech recognition due to app backgrounded (preserving continuous listening setting)")
@@ -247,6 +254,17 @@ class VoiceManager @Inject constructor(
                 Log.e(TAG, "Error stopping speech recognition on background", e)
             }
         }
+    }
+    
+    private fun isBubbleOverlayRunning(): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        activityManager?.let { manager ->
+            val runningServices = manager.getRunningServices(Integer.MAX_VALUE)
+            return runningServices.any { 
+                it.service.className == "com.example.whiz.services.BubbleOverlayService"
+            }
+        }
+        return false
     }
     
     private fun onAppForegrounded() {

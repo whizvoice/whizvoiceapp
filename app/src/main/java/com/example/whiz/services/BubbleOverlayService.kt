@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -32,15 +34,17 @@ import kotlin.math.abs
 
 class BubbleOverlayService : Service() {
     private lateinit var windowManager: WindowManager
-    private var bubbleView: View? = null
-    private var expandedView: View? = null
+    private var chatHeadView: View? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var recognitionJob: Job? = null
     private var botResponseJob: Job? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var hideMessageRunnable: Runnable? = null
     
     companion object {
         private const val TAG = "BubbleOverlayService"
         private const val CLICK_THRESHOLD = 10
+        private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
         
         // Flows for displaying text in bubble
         private val _botResponseFlow = MutableSharedFlow<String>(replay = 1)
@@ -77,15 +81,14 @@ class BubbleOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        createBubbleView()
-        createExpandedView()
+        createChatHead()
         startVoiceTranscriptionListener()
         startBotResponseListener()
     }
     
     @SuppressLint("InflateParams")
-    private fun createBubbleView() {
-        bubbleView = LayoutInflater.from(this).inflate(R.layout.bubble_overlay, null)
+    private fun createChatHead() {
+        chatHeadView = LayoutInflater.from(this).inflate(R.layout.bubble_chat_head, null)
         
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -104,64 +107,26 @@ class BubbleOverlayService : Service() {
             y = 200
         }
         
-        setupBubbleTouchListener(params)
+        setupChatHeadTouchListener(params)
         
         try {
-            windowManager.addView(bubbleView, params)
+            windowManager.addView(chatHeadView, params)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to add bubble view", e)
-        }
-    }
-    
-    @SuppressLint("InflateParams")
-    private fun createExpandedView() {
-        expandedView = LayoutInflater.from(this).inflate(R.layout.bubble_expanded, null)
-        expandedView?.visibility = View.GONE
-        
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            },
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 100
-        }
-        
-        expandedView?.findViewById<ImageView>(R.id.collapse_button)?.setOnClickListener {
-            collapseView()
-        }
-        
-        expandedView?.findViewById<View>(R.id.return_to_app_button)?.setOnClickListener {
-            returnToApp()
-        }
-        
-        expandedView?.findViewById<View>(R.id.stop_button)?.setOnClickListener {
-            stopSelf()
-        }
-        
-        try {
-            windowManager.addView(expandedView, params)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add expanded view", e)
+            Log.e(TAG, "Failed to add chat head view", e)
         }
     }
     
     @SuppressLint("ClickableViewAccessibility")
-    private fun setupBubbleTouchListener(params: WindowManager.LayoutParams) {
+    private fun setupChatHeadTouchListener(params: WindowManager.LayoutParams) {
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var touchStartTime = 0L
         
-        bubbleView?.setOnTouchListener { _, event ->
+        val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
+        
+        chatHead?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -174,7 +139,7 @@ class BubbleOverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     params.x = initialX - (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
-                    windowManager.updateViewLayout(bubbleView, params)
+                    windowManager.updateViewLayout(chatHeadView, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
@@ -183,7 +148,7 @@ class BubbleOverlayService : Service() {
                     val yDiff = abs(event.rawY - initialTouchY)
                     
                     if (clickDuration < 200 && xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
-                        onBubbleClick()
+                        onChatHeadClick()
                     }
                     true
                 }
@@ -192,23 +157,9 @@ class BubbleOverlayService : Service() {
         }
     }
     
-    private fun onBubbleClick() {
-        val isExpanded = expandedView?.visibility == View.VISIBLE
-        if (isExpanded) {
-            collapseView()
-        } else {
-            expandView()
-        }
-    }
-    
-    private fun expandView() {
-        bubbleView?.visibility = View.GONE
-        expandedView?.visibility = View.VISIBLE
-    }
-    
-    private fun collapseView() {
-        expandedView?.visibility = View.GONE
-        bubbleView?.visibility = View.VISIBLE
+    private fun onChatHeadClick() {
+        // Return to the main app when chat head is clicked
+        returnToApp()
     }
     
     private fun returnToApp() {
@@ -224,7 +175,9 @@ class BubbleOverlayService : Service() {
             userTranscriptionFlow
                 .distinctUntilChanged()
                 .collect { transcription ->
-                    updateDisplayText(transcription, isUserInput = true)
+                    if (transcription.isNotEmpty()) {
+                        showMessage(transcription, isUserMessage = true)
+                    }
                 }
         }
     }
@@ -237,41 +190,37 @@ class BubbleOverlayService : Service() {
                 .collect { response ->
                     // Filter out JSON responses (tool calls)
                     if (!response.startsWith("{") && !response.startsWith("[")) {
-                        updateDisplayText(response, isUserInput = false)
-                        
-                        // Clear bot response after 5 seconds
-                        delay(5000)
-                        if (expandedView?.findViewById<TextView>(R.id.expanded_transcription_text)?.text == response) {
-                            updateDisplayText("", isUserInput = false)
-                        }
+                        showMessage(response, isUserMessage = false)
                     }
                 }
         }
     }
     
-    private fun updateDisplayText(text: String, isUserInput: Boolean) {
-        val displayText = if (text.isNotEmpty()) {
-            if (isUserInput) "🎤 $text" else "🤖 $text"
-        } else {
-            ""
-        }
-        
-        bubbleView?.findViewById<TextView>(R.id.transcription_text)?.apply {
-            this.text = displayText
-            visibility = if (text.isNotEmpty()) View.VISIBLE else View.GONE
-        }
-        
-        expandedView?.findViewById<TextView>(R.id.expanded_transcription_text)?.apply {
-            this.text = displayText
-        }
-        
-        bubbleView?.findViewById<CardView>(R.id.bubble_card)?.apply {
-            val backgroundRes = if (text.isNotEmpty()) {
-                R.drawable.bubble_background_active
-            } else {
-                R.drawable.bubble_background
+    private fun showMessage(text: String, isUserMessage: Boolean) {
+        handler.post {
+            val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
+            val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
+            
+            // Cancel any pending hide
+            hideMessageRunnable?.let { handler.removeCallbacks(it) }
+            
+            // Set message text and color
+            messageText?.text = text
+            messageBubble?.setCardBackgroundColor(
+                resources.getColor(
+                    if (isUserMessage) R.color.user_bubble else R.color.assistant_bubble,
+                    null
+                )
+            )
+            
+            // Show message bubble
+            messageBubble?.visibility = View.VISIBLE
+            
+            // Auto-hide message after delay
+            hideMessageRunnable = Runnable {
+                messageBubble?.visibility = View.GONE
             }
-            setBackgroundResource(backgroundRes)
+            handler.postDelayed(hideMessageRunnable!!, MESSAGE_DISPLAY_DURATION)
         }
     }
     
@@ -279,9 +228,9 @@ class BubbleOverlayService : Service() {
         super.onDestroy()
         recognitionJob?.cancel()
         botResponseJob?.cancel()
+        hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
-            bubbleView?.let { windowManager.removeView(it) }
-            expandedView?.let { windowManager.removeView(it) }
+            chatHeadView?.let { windowManager.removeView(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error removing views", e)
         }

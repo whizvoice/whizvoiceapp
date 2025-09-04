@@ -37,7 +37,7 @@
                 android:layout_alignParentEnd="true"
                 android:layout_centerVertical="true"
                 android:contentDescription="Collapse"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:background="@android:color/transparent"
                 android:padding="4dp" />
 
         </RelativeLayout>
@@ -82,21 +82,30 @@
             android:layout_marginTop="8dp"
             android:gravity="center">
 
-            <Button
+            <TextView
                 android:id="@+id/return_to_app_button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:text="Return to WhizVoice"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="8dp"
+                android:gravity="center"
+                android:background="@color/primary"
+                android:textColor="@android:color/white"
+                android:clickable="true"
+                android:focusable="true" />
 
-            <Button
+            <TextView
                 android:id="@+id/stop_button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:text="Stop Assistant"
-                android:backgroundTint="@color/error" />
+                android:gravity="center"
+                android:background="@color/error"
+                android:textColor="@android:color/white"
+                android:clickable="true"
+                android:focusable="true" />
 
         </LinearLayout>
 

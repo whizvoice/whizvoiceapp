@@ -82,13 +82,18 @@ class AppLauncherTool @Inject constructor(
                     // Start bubble overlay if enabled and we have permission
                     var overlayStarted = false
                     var overlayPermissionRequired = false
+                    Log.d(TAG, "Checking overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}, hasPermission=${hasOverlayPermission()}")
                     if (enableOverlay && !isWhizApp(packageName)) {
                         if (hasOverlayPermission()) {
+                            Log.d(TAG, "Starting bubble overlay service (fuzzy)")
                             overlayStarted = startBubbleOverlay()
+                            Log.d(TAG, "Bubble overlay started (fuzzy): $overlayStarted")
                         } else {
                             overlayPermissionRequired = true
                             Log.w(TAG, "Overlay permission required to show bubble")
                         }
+                    } else {
+                        Log.d(TAG, "Not starting overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}")
                     }
                     
                     Log.i(TAG, "Successfully launched app: $appLabel ($packageName)")
@@ -122,7 +127,9 @@ class AppLauncherTool @Inject constructor(
                 "x" to "com.twitter.android",
                 "spotify" to "com.spotify.music",
                 "netflix" to "com.netflix.mediaclient",
-                "settings" to "com.android.settings"
+                "settings" to "com.android.settings",
+                "asana" to "com.asana.app",
+                "a sauna" to "com.asana.app"
             )
             
             // Try common mappings
@@ -159,13 +166,18 @@ class AppLauncherTool @Inject constructor(
                         // Start bubble overlay if enabled and we have permission
                         var overlayStarted = false
                         var overlayPermissionRequired = false
+                        Log.d(TAG, "Checking overlay: enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                         if (enableOverlay && !isWhizApp(mappedPackage)) {
                             if (hasOverlayPermission()) {
+                                Log.d(TAG, "Starting bubble overlay service")
                                 overlayStarted = startBubbleOverlay()
+                                Log.d(TAG, "Bubble overlay started: $overlayStarted")
                             } else {
                                 overlayPermissionRequired = true
                                 Log.w(TAG, "Overlay permission required to show bubble")
                             }
+                        } else {
+                            Log.d(TAG, "Not starting overlay: enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(mappedPackage)}")
                         }
                         
                         Log.i(TAG, "Successfully launched mapped app: $appLabel ($mappedPackage)")
