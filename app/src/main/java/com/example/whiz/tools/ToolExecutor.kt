@@ -60,6 +60,9 @@ class ToolExecutor @Inject constructor(
                     "whatsapp_send_message" -> {
                         executeWhatsAppSendMessage(requestId, params)
                     }
+                    "whatsapp_draft_message" -> {
+                        executeWhatsAppDraftMessage(requestId, params)
+                    }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
                         _toolResults.emit(
@@ -175,6 +178,42 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    private suspend fun executeWhatsAppDraftMessage(requestId: String, params: JSONObject) {
+        try {
+            val message = params.getString("message")
+            Log.d(TAG, "Drafting WhatsApp message: $message")
+            
+            val result = screenAgentTools.draftWhatsAppMessage(message)
+            
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.message?.let { put("message", it) }
+                result.error?.let { put("error", it) }
+                put("overlay_shown", result.overlayShown)
+            }
+            
+            Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
+            
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "whatsapp_draft_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing WhatsApp draft message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "whatsapp_draft_message",
+                    requestId = requestId,
+                    error = "Failed to draft WhatsApp message: ${e.message}"
+                )
+            )
+        }
+    }
+    
     private suspend fun executeWhatsAppSendMessage(requestId: String, params: JSONObject) {
         try {
             val message = params.getString("message")
@@ -212,7 +251,7 @@ class ToolExecutor @Inject constructor(
     
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_send_message")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_send_message", "whatsapp_draft_message")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
@@ -252,6 +291,19 @@ class ToolExecutor @Inject constructor(
                         put("message", JSONObject().apply {
                             put("type", "string")
                             put("description", "The message text to send")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "whatsapp_draft_message" -> {
+                JSONObject().apply {
+                    put("name", "whatsapp_draft_message")
+                    put("description", "Draft a message in WhatsApp chat with an overlay showing the message")
+                    put("parameters", JSONObject().apply {
+                        put("message", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The message text to draft")
                             put("required", true)
                         })
                     })

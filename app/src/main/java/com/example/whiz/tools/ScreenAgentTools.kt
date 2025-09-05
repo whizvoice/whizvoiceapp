@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.MessageDraftOverlayService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import javax.inject.Inject
@@ -40,6 +41,13 @@ class ScreenAgentTools @Inject constructor(
         val action: String,
         val chatName: String? = null,
         val error: String? = null
+    )
+    
+    data class DraftResult(
+        val success: Boolean,
+        val message: String? = null,
+        val error: String? = null,
+        val overlayShown: Boolean = false
     )
     
     // ========== App Launch Functions ==========
@@ -398,6 +406,83 @@ class ScreenAgentTools @Inject constructor(
                 action = "select_chat",
                 chatName = chatName,
                 error = "Error selecting chat: ${e.message}"
+            )
+        }
+    }
+    
+    suspend fun draftWhatsAppMessage(message: String): DraftResult {
+        Log.d(TAG, "Attempting to draft message in WhatsApp: $message")
+        
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Accessibility service not enabled"
+                )
+            }
+            
+            // Wait a bit to ensure we're in a chat
+            delay(500)
+            
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Could not get root node"
+                )
+            }
+            
+            // Find the message input field
+            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, inputNodes)
+            
+            if (inputNodes.isNotEmpty()) {
+                val inputNode = inputNodes[0]
+                
+                // Get the bounds of the input field
+                val rect = android.graphics.Rect()
+                inputNode.getBoundsInScreen(rect)
+                
+                Log.d(TAG, "Found input field at bounds: $rect")
+                
+                // Start the draft overlay service with the bounds and message
+                val overlayStarted = MessageDraftOverlayService.show(
+                    context,
+                    rect,
+                    message
+                )
+                
+                // Clean up
+                inputNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                
+                return DraftResult(
+                    success = overlayStarted,
+                    message = message,
+                    overlayShown = overlayStarted,
+                    error = if (!overlayStarted) "Failed to show draft overlay" else null
+                )
+            }
+            
+            // Clean up
+            inputNodes.forEach { it.recycle() }
+            rootNode.recycle()
+            
+            return DraftResult(
+                success = false,
+                message = message,
+                error = "Could not find message input field"
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error drafting WhatsApp message", e)
+            return DraftResult(
+                success = false,
+                message = message,
+                error = "Error drafting message: ${e.message}"
             )
         }
     }

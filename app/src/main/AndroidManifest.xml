@@ -104,6 +104,11 @@
             android:name=".services.BubbleOverlayService"
             android:exported="false" />
 
+        <!-- Message Draft Overlay Service -->
+        <service
+            android:name=".services.MessageDraftOverlayService"
+            android:exported="false" />
+
     </application>
 
 </manifest>

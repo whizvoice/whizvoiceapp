@@ -18,6 +18,7 @@
     <color name="on_surface">#212121</color>
     <color name="divider">#BDBDBD</color>
     <color name="error">#F44336</color>
+    <color name="text_secondary">#757575</color>
     
     <!-- Chat bubble colors -->
     <color name="assistant_bubble">#FFF9C4</color>
