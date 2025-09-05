@@ -42,6 +42,10 @@ class MessageDraftOverlayService : Service() {
         var isActive: Boolean = false
             private set
         
+        @Volatile
+        var currentDraftMessage: String? = null
+            private set
+        
         fun show(context: Context, bounds: Rect, message: String): Boolean {
             return try {
                 // Stop any existing instance
@@ -100,6 +104,9 @@ class MessageDraftOverlayService : Service() {
     @SuppressLint("InflateParams", "ClickableViewAccessibility")
     private fun createDraftOverlay(bounds: Rect, message: String) {
         Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message")
+        
+        // Store the draft message for later use by confirm_send
+        currentDraftMessage = message
         
         // Remove any existing overlay
         overlayView?.let {
@@ -177,6 +184,7 @@ class MessageDraftOverlayService : Service() {
         super.onDestroy()
         Log.d(TAG, "MessageDraftOverlayService onDestroy")
         isActive = false
+        // Don't clear the draft message on destroy - keep it for confirm_send
         
         // Cancel auto-dismiss
         autoDismissRunnable?.let { handler.removeCallbacks(it) }

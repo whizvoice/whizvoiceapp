@@ -214,6 +214,7 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    
     private suspend fun executeWhatsAppSendMessage(requestId: String, params: JSONObject) {
         try {
             val message = params.getString("message")
@@ -251,7 +252,7 @@ class ToolExecutor @Inject constructor(
     
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_send_message", "whatsapp_draft_message")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
@@ -286,7 +287,7 @@ class ToolExecutor @Inject constructor(
             "whatsapp_send_message" -> {
                 JSONObject().apply {
                     put("name", "whatsapp_send_message")
-                    put("description", "Send a message in the current WhatsApp chat")
+                    put("description", "Send a message in WhatsApp. MUST have already drafted the message and received user confirmation.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {
                             put("type", "string")
@@ -299,11 +300,11 @@ class ToolExecutor @Inject constructor(
             "whatsapp_draft_message" -> {
                 JSONObject().apply {
                     put("name", "whatsapp_draft_message")
-                    put("description", "Draft a message in WhatsApp chat with an overlay showing the message")
+                    put("description", "Draft a message in WhatsApp. Shows overlay for user review. ALWAYS use this before sending to let user confirm the message text.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {
                             put("type", "string")
-                            put("description", "The message text to draft")
+                            put("description", "The message text to draft for user review")
                             put("required", true)
                         })
                     })

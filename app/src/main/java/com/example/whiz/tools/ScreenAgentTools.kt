@@ -292,19 +292,11 @@ class ScreenAgentTools @Inject constructor(
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
         
         try {
-            // First, launch WhatsApp if it's not already open
-            val launchResult = launchApp("WhatsApp", enableOverlay = false)
-            if (!launchResult.success) {
-                return WhatsAppResult(
-                    success = false,
-                    action = "select_chat",
-                    chatName = chatName,
-                    error = "Failed to launch WhatsApp: ${launchResult.error}"
-                )
-            }
+            // Note: This assumes WhatsApp is already open. 
+            // The server should use launch_app tool first if needed.
             
-            // Wait for WhatsApp to open
-            delay(2000)
+            // Give a moment for any transitions to settle
+            delay(500)
             
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -410,6 +402,47 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    private fun findWhatsAppMessageInput(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
+        // Log node info for debugging
+        if (depth == 0) {
+            Log.d(TAG, "Starting search for WhatsApp input field...")
+        }
+        
+        // Look for EditText nodes
+        if (node.className == "android.widget.EditText") {
+            val hintText = node.hintText?.toString() ?: ""
+            val text = node.text?.toString() ?: ""
+            val contentDesc = node.contentDescription?.toString() ?: ""
+            
+            // Get bounds to check position
+            val rect = android.graphics.Rect()
+            node.getBoundsInScreen(rect)
+            val screenHeight = context.resources.displayMetrics.heightPixels
+            
+            Log.d(TAG, "Found EditText: hint='$hintText', text='$text', desc='$contentDesc', " +
+                    "bounds=$rect (${rect.left},${rect.top},${rect.right},${rect.bottom})")
+            
+            // Just add any EditText we find for now to debug
+            // We're only using this to get the position for the overlay
+            if (rect.bottom > 0 && rect.right > 0) {  // Make sure it has valid bounds
+                Log.d(TAG, "Adding EditText as potential input field for overlay positioning")
+                results.add(node)
+            }
+        }
+        
+        // Recursively search children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                findWhatsAppMessageInput(child, results, depth + 1)
+            }
+        }
+        
+        if (depth == 0) {
+            Log.d(TAG, "Finished search. Found ${results.size} EditText nodes")
+        }
+    }
+    
     suspend fun draftWhatsAppMessage(message: String): DraftResult {
         Log.d(TAG, "Attempting to draft message in WhatsApp: $message")
         
@@ -435,18 +468,22 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
-            // Find the message input field
+            // Find the WhatsApp message input field specifically
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-            findEditTextNodes(rootNode, inputNodes)
+            findWhatsAppMessageInput(rootNode, inputNodes, 0)
             
             if (inputNodes.isNotEmpty()) {
+                Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
+                
+                // Use the first one (should be the main message input due to our filtering)
                 val inputNode = inputNodes[0]
                 
                 // Get the bounds of the input field
                 val rect = android.graphics.Rect()
                 inputNode.getBoundsInScreen(rect)
                 
-                Log.d(TAG, "Found input field at bounds: $rect")
+                Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
+                Log.d(TAG, "Screen dimensions: ${context.resources.displayMetrics.widthPixels} x ${context.resources.displayMetrics.heightPixels}")
                 
                 // Start the draft overlay service with the bounds and message
                 val overlayStarted = MessageDraftOverlayService.show(
@@ -486,6 +523,7 @@ class ScreenAgentTools @Inject constructor(
             )
         }
     }
+    
     
     suspend fun sendWhatsAppMessage(message: String): WhatsAppResult {
         Log.d(TAG, "Attempting to send message in WhatsApp: $message")
