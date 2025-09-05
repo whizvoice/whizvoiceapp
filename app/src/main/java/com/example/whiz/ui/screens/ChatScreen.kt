@@ -318,7 +318,7 @@ fun ChatInputBar(
                                 Icons.Filled.Send,
                                 "Send typed message",
                                 onSendClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         shouldShowMuteButton -> {
@@ -335,7 +335,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Start listening during response",
                                 onMicClickDuringTTS,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         isResponding && shouldShowMuteButton -> {
@@ -351,7 +351,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Turn on continuous listening",
                                 onMicClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         hasVoiceText && !isContinuousListeningEnabled -> {
@@ -360,7 +360,7 @@ fun ChatInputBar(
                                 Icons.Filled.Send,
                                 "Send voice message",
                                 onSendClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         shouldShowMuteButton && !hasInputText -> {
@@ -377,7 +377,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Start listening",
                                 onMicClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
