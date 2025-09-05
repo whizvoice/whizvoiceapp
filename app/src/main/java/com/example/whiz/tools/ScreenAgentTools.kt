@@ -475,20 +475,45 @@ class ScreenAgentTools @Inject constructor(
             if (inputNodes.isNotEmpty()) {
                 Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
                 
-                // Use the first one (should be the main message input due to our filtering)
-                val inputNode = inputNodes[0]
+                // Look for the best candidate - prefer one closer to bottom but not at very bottom (keyboard area)
+                val screenHeight = context.resources.displayMetrics.heightPixels
+                val inputNode = if (inputNodes.size > 1) {
+                    // If multiple, pick the one that's likely the message input (not search bar)
+                    inputNodes.minByOrNull { node ->
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        // Prefer nodes around 60-80% of screen height (above keyboard)
+                        Math.abs(rect.top - (screenHeight * 0.7)).toInt()
+                    } ?: inputNodes[0]
+                } else {
+                    inputNodes[0]
+                }
                 
                 // Get the bounds of the input field
                 val rect = android.graphics.Rect()
                 inputNode.getBoundsInScreen(rect)
                 
+                // Get the app window bounds (WhatsApp's actual width on screen)
+                val appBounds = android.graphics.Rect()
+                rootNode.getBoundsInScreen(appBounds)
+                
                 Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
+                Log.d(TAG, "WhatsApp window bounds: $appBounds (width=${appBounds.width()})")
                 Log.d(TAG, "Screen dimensions: ${context.resources.displayMetrics.widthPixels} x ${context.resources.displayMetrics.heightPixels}")
+                Log.d(TAG, "Input field is at ${(rect.top.toFloat() / context.resources.displayMetrics.heightPixels * 100).toInt()}% of screen height")
+                
+                // Create bounds for overlay that uses app width but input field's vertical position
+                val overlayBounds = android.graphics.Rect(
+                    appBounds.left,  // Use app's left edge
+                    rect.top,        // Use input field's vertical position
+                    appBounds.right, // Use app's right edge
+                    rect.bottom      // Use input field's bottom
+                )
                 
                 // Start the draft overlay service with the bounds and message
                 val overlayStarted = MessageDraftOverlayService.show(
                     context,
-                    rect,
+                    overlayBounds,
                     message
                 )
                 

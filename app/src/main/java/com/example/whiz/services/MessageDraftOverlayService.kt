@@ -120,13 +120,23 @@ class MessageDraftOverlayService : Service() {
         // Inflate the overlay layout
         overlayView = LayoutInflater.from(this).inflate(R.layout.message_draft_overlay, null)
         
+        // Ensure the overlay is fully opaque (Note: Android 12+ enforces max 80% opacity for security)
+        overlayView?.alpha = 1.0f
+        overlayView?.findViewById<CardView>(R.id.draft_card)?.apply {
+            alpha = 1.0f
+            cardElevation = 8f
+        }
+        
         // Set the message text
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
         messageText?.text = message
         
-        // Create layout parameters to position the overlay over the input field
+        // Use the width from bounds (which now contains the app's width)
+        val overlayWidth = bounds.width()
+        
+        // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
-            bounds.width(),
+            overlayWidth,  // Use app width from bounds
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -139,9 +149,12 @@ class MessageDraftOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = bounds.left
-            y = bounds.top
+            x = bounds.left  // Start from app's left edge
+            // Position the overlay below the input field (keep it where it currently appears)
+            y = bounds.top - 10  // Positioned relative to input field
         }
+        
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - 10}, width=$overlayWidth (app width)")
         
         // Make the overlay clickable to dismiss
         overlayView?.findViewById<CardView>(R.id.draft_card)?.setOnTouchListener { _, event ->
