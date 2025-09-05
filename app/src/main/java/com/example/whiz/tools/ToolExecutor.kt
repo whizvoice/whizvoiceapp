@@ -28,8 +28,7 @@ sealed class ToolExecutionResult {
 
 @Singleton
 class ToolExecutor @Inject constructor(
-    private val appLauncherTool: AppLauncherTool,
-    private val whatsAppTool: WhatsAppTool
+    private val screenAgentTools: ScreenAgentTools
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -48,7 +47,8 @@ class ToolExecutor @Inject constructor(
                     JSONObject()
                 }
                 
-                Log.d(TAG, "Executing tool: $toolName with requestId: $requestId")
+                Log.i(TAG, "Executing tool: $toolName with requestId: $requestId")
+                Log.i(TAG, "Tool params: ${params.toString(2)}")
                 
                 when (toolName) {
                     "launch_app" -> {
@@ -104,7 +104,7 @@ class ToolExecutor @Inject constructor(
             val appName = params.getString("app_name")
             Log.d(TAG, "Launching app: $appName")
             
-            val result = appLauncherTool.launchApp(appName)
+            val result = screenAgentTools.launchApp(appName)
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)
@@ -141,9 +141,10 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeWhatsAppSelectChat(requestId: String, params: JSONObject) {
         try {
             val chatName = params.getString("chat_name")
-            Log.d(TAG, "Selecting WhatsApp chat: $chatName")
+            Log.i(TAG, "Selecting WhatsApp chat: $chatName")
             
-            val result = whatsAppTool.selectChat(chatName)
+            val result = screenAgentTools.selectWhatsAppChat(chatName)
+            Log.i(TAG, "WhatsApp select chat result: success=${result.success}, error=${result.error}")
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)
@@ -179,7 +180,7 @@ class ToolExecutor @Inject constructor(
             val message = params.getString("message")
             Log.d(TAG, "Sending WhatsApp message: $message")
             
-            val result = whatsAppTool.sendMessage(message)
+            val result = screenAgentTools.sendWhatsAppMessage(message)
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)

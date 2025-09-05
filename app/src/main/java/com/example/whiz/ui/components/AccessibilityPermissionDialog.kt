@@ -3,6 +3,7 @@ package com.example.whiz.ui.components
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +49,9 @@ fun AccessibilityPermissionDialog(
                     onOpenSettings()
                     onDismiss()
                 },
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.Black
+                ),
                 modifier = Modifier.semantics { 
                     contentDescription = "Open accessibility settings button"
                 }
