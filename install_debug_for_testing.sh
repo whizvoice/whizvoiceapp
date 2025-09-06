@@ -70,6 +70,17 @@ enable_accessibility_service() {
     fi
 }
 
+# Function to check for connected devices
+check_for_devices() {
+    log_with_time "🔍 Checking for connected ADB devices..."
+    if ! adb devices | grep -q "device$"; then
+        log_with_time "❌ No ADB devices or emulators found. Please connect a device or start an emulator."
+        log_with_time "💡 Ensure USB debugging is enabled on your device and it's properly connected."
+        exit 1
+    fi
+    log_with_time "✅ ADB device found."
+}
+
 # Function to get APK checksum
 get_apk_checksum() {
     local apk_path="$1"
@@ -114,6 +125,7 @@ APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
 CHECKSUM_FILE=".debug_apk_checksum"
 
 log_with_time "📱 Installing WhizVoice Debug App..."
+check_for_devices
 
 # Build if needed
 if [[ "$SKIP_BUILD" == "false" ]]; then

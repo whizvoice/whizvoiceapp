@@ -139,7 +139,8 @@ class MessageDraftOverlayService : Service() {
         // Set the message text with track changes if previous text is provided
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
         if (previousText != null && previousText != message) {
-            messageText?.text = createTrackedChangesText(previousText, message)
+            // Use setText with SPANNABLE buffer type to preserve formatting
+            messageText?.setText(createTrackedChangesText(previousText, message), TextView.BufferType.SPANNABLE)
         } else {
             messageText?.text = message
         }
@@ -197,6 +198,8 @@ class MessageDraftOverlayService : Service() {
     private fun createTrackedChangesText(oldText: String, newText: String): SpannableStringBuilder {
         val result = SpannableStringBuilder()
         
+        Log.d(TAG, "Creating tracked changes - Old: '$oldText', New: '$newText'")
+        
         // Use Google's diff-match-patch library for efficient diffing
         val dmp = DiffMatchPatch()
         // Set a reasonable timeout (1 second) for diff computation
@@ -208,8 +211,11 @@ class MessageDraftOverlayService : Service() {
         // Optional: Cleanup the diff for better readability (combines small changes)
         dmp.diffCleanupSemantic(diffs)
         
+        Log.d(TAG, "Diff result: ${diffs.size} parts")
+        
         // Build the spannable string from the diffs
         for (diff in diffs) {
+            Log.d(TAG, "Diff part: operation=${diff.operation}, text='${diff.text}'")
             val start = result.length
             result.append(diff.text)
             val end = result.length
@@ -217,15 +223,18 @@ class MessageDraftOverlayService : Service() {
             when (diff.operation) {
                 DiffMatchPatch.Operation.DELETE -> {
                     // Deleted text - red with strikethrough
+                    Log.d(TAG, "Applying DELETE spans to text: '${diff.text}' (positions $start-$end)")
                     result.setSpan(StrikethroughSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     result.setSpan(ForegroundColorSpan(Color.RED), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 DiffMatchPatch.Operation.INSERT -> {
                     // Inserted text - blue
+                    Log.d(TAG, "Applying INSERT span to text: '${diff.text}' (positions $start-$end)")
                     result.setSpan(ForegroundColorSpan(Color.BLUE), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 DiffMatchPatch.Operation.EQUAL -> {
                     // Unchanged text - black (no styling needed)
+                    Log.d(TAG, "No spans for EQUAL text: '${diff.text}'")
                 }
                 else -> {
                     // Should not happen, but handle gracefully
@@ -234,6 +243,7 @@ class MessageDraftOverlayService : Service() {
             }
         }
         
+        Log.d(TAG, "Final tracked changes text: '${result}' with ${result.getSpans(0, result.length, Any::class.java).size} spans")
         return result
     }
     
