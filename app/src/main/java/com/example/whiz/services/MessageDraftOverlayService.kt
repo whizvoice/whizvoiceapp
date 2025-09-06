@@ -19,6 +19,12 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
 import com.example.whiz.R
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.StrikethroughSpan
+import android.graphics.Color
+import org.bitbucket.cowwoc.diffmatchpatch.DiffMatchPatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +43,7 @@ class MessageDraftOverlayService : Service() {
         private const val AUTO_DISMISS_DELAY = 10000L // 10 seconds
         private const val EXTRA_BOUNDS = "bounds"
         private const val EXTRA_MESSAGE = "message"
+        private const val EXTRA_PREVIOUS_TEXT = "previous_text"
         
         @Volatile
         var isActive: Boolean = false
@@ -46,7 +53,7 @@ class MessageDraftOverlayService : Service() {
         var currentDraftMessage: String? = null
             private set
         
-        fun show(context: Context, bounds: Rect, message: String): Boolean {
+        fun show(context: Context, bounds: Rect, message: String, previousText: String? = null): Boolean {
             return try {
                 // Stop any existing instance
                 if (isActive) {
@@ -56,6 +63,7 @@ class MessageDraftOverlayService : Service() {
                 val intent = Intent(context, MessageDraftOverlayService::class.java).apply {
                     putExtra(EXTRA_BOUNDS, bounds)
                     putExtra(EXTRA_MESSAGE, message)
+                    previousText?.let { putExtra(EXTRA_PREVIOUS_TEXT, it) }
                 }
                 context.startService(intent)
                 true
@@ -86,9 +94,10 @@ class MessageDraftOverlayService : Service() {
         intent?.let {
             val bounds = it.getParcelableExtra<Rect>(EXTRA_BOUNDS)
             val message = it.getStringExtra(EXTRA_MESSAGE)
+            val previousText = it.getStringExtra(EXTRA_PREVIOUS_TEXT)
             
             if (bounds != null && message != null) {
-                createDraftOverlay(bounds, message)
+                createDraftOverlay(bounds, message, previousText)
             } else {
                 Log.e(TAG, "Missing required extras: bounds=$bounds, message=$message")
                 stopSelf()
@@ -102,8 +111,8 @@ class MessageDraftOverlayService : Service() {
     }
     
     @SuppressLint("InflateParams", "ClickableViewAccessibility")
-    private fun createDraftOverlay(bounds: Rect, message: String) {
-        Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message")
+    private fun createDraftOverlay(bounds: Rect, message: String, previousText: String?) {
+        Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message, previousText: $previousText")
         
         // Store the draft message for later use by confirm_send
         currentDraftMessage = message
@@ -127,9 +136,13 @@ class MessageDraftOverlayService : Service() {
             cardElevation = 8f
         }
         
-        // Set the message text
+        // Set the message text with track changes if previous text is provided
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
-        messageText?.text = message
+        if (previousText != null && previousText != message) {
+            messageText?.text = createTrackedChangesText(previousText, message)
+        } else {
+            messageText?.text = message
+        }
         
         // Use the width from bounds (which now contains the app's width)
         val overlayWidth = bounds.width()
@@ -179,6 +192,49 @@ class MessageDraftOverlayService : Service() {
             Log.e(TAG, "Failed to add draft overlay", e)
             stopSelf()
         }
+    }
+    
+    private fun createTrackedChangesText(oldText: String, newText: String): SpannableStringBuilder {
+        val result = SpannableStringBuilder()
+        
+        // Use Google's diff-match-patch library for efficient diffing
+        val dmp = DiffMatchPatch()
+        // Set a reasonable timeout (1 second) for diff computation
+        dmp.diffTimeout = 1.0f
+        
+        // Compute the diff at character level for accuracy
+        val diffs = dmp.diffMain(oldText, newText)
+        
+        // Optional: Cleanup the diff for better readability (combines small changes)
+        dmp.diffCleanupSemantic(diffs)
+        
+        // Build the spannable string from the diffs
+        for (diff in diffs) {
+            val start = result.length
+            result.append(diff.text)
+            val end = result.length
+            
+            when (diff.operation) {
+                DiffMatchPatch.Operation.DELETE -> {
+                    // Deleted text - red with strikethrough
+                    result.setSpan(StrikethroughSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    result.setSpan(ForegroundColorSpan(Color.RED), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                DiffMatchPatch.Operation.INSERT -> {
+                    // Inserted text - blue
+                    result.setSpan(ForegroundColorSpan(Color.BLUE), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                DiffMatchPatch.Operation.EQUAL -> {
+                    // Unchanged text - black (no styling needed)
+                }
+                else -> {
+                    // Should not happen, but handle gracefully
+                    Log.w(TAG, "Unexpected diff operation: ${diff.operation}")
+                }
+            }
+        }
+        
+        return result
     }
     
     private fun scheduleAutoDismiss() {

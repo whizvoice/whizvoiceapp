@@ -443,8 +443,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
-    suspend fun draftWhatsAppMessage(message: String): DraftResult {
-        Log.d(TAG, "Attempting to draft message in WhatsApp: $message")
+    suspend fun draftWhatsAppMessage(message: String, previousText: String? = null): DraftResult {
+        Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText")
         
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -510,11 +510,12 @@ class ScreenAgentTools @Inject constructor(
                     rect.bottom      // Use input field's bottom
                 )
                 
-                // Start the draft overlay service with the bounds and message
+                // Start the draft overlay service with the bounds, message, and previousText
                 val overlayStarted = MessageDraftOverlayService.show(
                     context,
                     overlayBounds,
-                    message
+                    message,
+                    previousText
                 )
                 
                 // Clean up

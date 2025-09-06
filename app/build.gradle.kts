@@ -166,6 +166,9 @@ dependencies {
 
     // Data & Storage
     implementation("androidx.datastore:datastore-preferences:1.1.5")
+    
+    // Text diffing library (Google's diff-match-patch)
+    implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

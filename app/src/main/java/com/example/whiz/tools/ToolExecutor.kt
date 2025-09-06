@@ -181,9 +181,10 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeWhatsAppDraftMessage(requestId: String, params: JSONObject) {
         try {
             val message = params.getString("message")
-            Log.d(TAG, "Drafting WhatsApp message: $message")
+            val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+            Log.d(TAG, "Drafting WhatsApp message: $message, previousText: $previousText")
             
-            val result = screenAgentTools.draftWhatsAppMessage(message)
+            val result = screenAgentTools.draftWhatsAppMessage(message, previousText)
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)
