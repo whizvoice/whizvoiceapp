@@ -98,6 +98,10 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.res.painterResource
 import com.example.whiz.R
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import com.example.whiz.ui.components.OverlayPermissionDialog
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 
@@ -531,6 +535,7 @@ fun ChatScreen(
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
+    val showOverlayPermissionDialog by viewModel.showOverlayPermissionDialog.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
     val isRefreshing by viewModel.isRefreshing.collectAsState() // For pull-to-refresh
@@ -896,6 +901,24 @@ fun ChatScreen(
         SnackbarHost(snackbarHostState)
     }
 
+    // Dialog for overlay permission
+    if (showOverlayPermissionDialog) {
+        OverlayPermissionDialog(
+            onDismiss = { viewModel.dismissOverlayPermissionDialog() },
+            onRequestPermission = {
+                // Open system settings for overlay permission
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                viewModel.requestOverlayPermission()
+            }
+        )
+    }
+    
     // Dialog for missing Asana Token
     if (showAsanaSetupDialog) {
         AlertDialog(

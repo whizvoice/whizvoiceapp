@@ -3,6 +3,8 @@ package com.example.whiz.permissions
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.example.whiz.accessibility.AccessibilityChecker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -21,7 +23,8 @@ open class PermissionManager @Inject constructor(
 ) {
     enum class PermissionType {
         MICROPHONE,
-        ACCESSIBILITY
+        ACCESSIBILITY,
+        OVERLAY
     }
 
     // StateFlow for microphone permission status
@@ -31,6 +34,10 @@ open class PermissionManager @Inject constructor(
     // StateFlow for accessibility permission status
     private val _accessibilityPermissionGranted = MutableStateFlow(false)
     val accessibilityPermissionGranted: StateFlow<Boolean> = _accessibilityPermissionGranted
+    
+    // StateFlow for overlay permission status
+    private val _overlayPermissionGranted = MutableStateFlow(false)
+    val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted
 
     // Combined state to track which permission is needed next
     private val _nextRequiredPermission = MutableStateFlow<PermissionType?>(null)
@@ -47,6 +54,7 @@ open class PermissionManager @Inject constructor(
     fun checkAllPermissions() {
         checkMicrophonePermission()
         checkAccessibilityPermission()
+        checkOverlayPermission()
         updateNextRequiredPermission()
     }
 
@@ -87,11 +95,34 @@ open class PermissionManager @Inject constructor(
         _accessibilityPermissionGranted.value = granted
         updateNextRequiredPermission()
     }
+    
+    /**
+     * Check if the app has overlay permission
+     */
+    fun checkOverlayPermission() {
+        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true // Always true for older Android versions
+        }
+        _overlayPermissionGranted.value = hasPermission
+        updateNextRequiredPermission()
+    }
+    
+    /**
+     * Update the overlay permission status
+     */
+    fun updateOverlayPermission(granted: Boolean) {
+        _overlayPermissionGranted.value = granted
+        updateNextRequiredPermission()
+    }
 
     private fun updateNextRequiredPermission() {
         _nextRequiredPermission.value = when {
             !_microphonePermissionGranted.value -> PermissionType.MICROPHONE
             !_accessibilityPermissionGranted.value -> PermissionType.ACCESSIBILITY
+            // Don't automatically request overlay permission - only when needed
+            // !_overlayPermissionGranted.value -> PermissionType.OVERLAY
             else -> null
         }
     }

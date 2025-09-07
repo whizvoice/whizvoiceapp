@@ -428,6 +428,7 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
+                        Log.d(TAG, "📥 WebSocket message received: ${text.take(200)}...") // Log first 200 chars
                         
                         var messageHandled = false
                         var requestId: String? = null
@@ -435,6 +436,7 @@ class WhizServerRepository @Inject constructor(
                         // Attempt to parse as JSON first to extract request_id and handle structured responses
                         try {
                             val jsonObject = org.json.JSONObject(text)
+                            Log.d(TAG, "📥 Parsed JSON message type: ${jsonObject.optString("type", "unknown")}")
                             
                             // Extract request_id if present (could be in regular response or error)
                             requestId = if (jsonObject.has("request_id")) {
@@ -447,8 +449,13 @@ class WhizServerRepository @Inject constructor(
                                     jsonObject.getLong("conversation_id")
                                 } else null
                                 
-                                Log.d(TAG, "Received tool execution request: ${jsonObject.toString(2)}")
+                                Log.i(TAG, "🔧 TOOL EXECUTION REQUEST RECEIVED!")
+                                Log.i(TAG, "🔧 Tool: ${jsonObject.optString("tool", "unknown")}")
+                                Log.i(TAG, "🔧 Request ID: ${jsonObject.optString("request_id", "none")}")
+                                Log.i(TAG, "🔧 Full request: ${jsonObject.toString(2)}")
+                                
                                 scope.launch { 
+                                    Log.d(TAG, "🔧 Emitting ToolExecution event")
                                     emitEvent(WebSocketEvent.ToolExecution(jsonObject, requestId, conversationId))
                                 }
                                 messageHandled = true
@@ -712,13 +719,20 @@ class WhizServerRepository @Inject constructor(
     }
 
     fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long): Boolean {
-        Log.d(TAG, "📤 SENDING TOOL RESULT: requestId=$requestId, tool=$toolName, chatId=$chatId")
+        Log.i(TAG, "📤📤📤 SENDING TOOL RESULT TO SERVER")
+        Log.i(TAG, "📤 Tool: $toolName")
+        Log.i(TAG, "📤 Request ID: $requestId")
+        Log.i(TAG, "📤 Chat ID: $chatId")
+        Log.i(TAG, "📤 Result: ${result.toString(2)}")
         
         return try {
             val currentSocket = webSocket
+            Log.i(TAG, "📤 WebSocket status: ${if (currentSocket != null) "EXISTS" else "NULL"}")
+            Log.i(TAG, "📤 Connection state: $connectionState")
+            
             if (currentSocket != null && !persistentDisconnectForTest) {
                 if (connectionState != ConnectionState.CONNECTED) {
-                    Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing tool result for retry")
+                    Log.w(TAG, "❌ WebSocket exists but connection state is $connectionState - queueing tool result for retry")
                     // Queue the tool result JSON for retry using existing mechanism
                     val resultJson = org.json.JSONObject().apply {
                         put("type", "tool_result")
@@ -751,14 +765,15 @@ class WhizServerRepository @Inject constructor(
                 }
                 val jsonMessage = resultJson.toString()
                 
-                Log.d(TAG, "📤 WEBSOCKET SEND: Sending tool result with requestId=$requestId")
+                Log.i(TAG, "📤 WEBSOCKET SEND: Sending tool result with requestId=$requestId")
+                Log.i(TAG, "📤 JSON being sent: $jsonMessage")
                 
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
-                    Log.d(TAG, "✅ TOOL RESULT SENT: requestId=$requestId, tool=$toolName")
+                    Log.i(TAG, "✅✅✅ TOOL RESULT SENT SUCCESSFULLY: requestId=$requestId, tool=$toolName")
                     true
                 } else {
-                    Log.w(TAG, "❌ TOOL RESULT SEND FAILED: requestId=$requestId - queueing for retry")
+                    Log.e(TAG, "❌❌❌ TOOL RESULT SEND FAILED: requestId=$requestId - queueing for retry")
                     queueMessageForRetry(jsonMessage, requestId, chatId)
                     false
                 }

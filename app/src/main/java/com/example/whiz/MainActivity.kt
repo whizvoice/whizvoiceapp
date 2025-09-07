@@ -146,6 +146,10 @@ class MainActivity : ComponentActivity() {
                                     onOpenSettings = { openAccessibilitySettings() }
                                 )
                             }
+                            PermissionManager.PermissionType.OVERLAY -> {
+                                // Don't show overlay permission dialog here
+                                // It will be shown when needed (when launching apps)
+                            }
                             null -> {
                                 // All permissions granted, no dialog needed
                             }

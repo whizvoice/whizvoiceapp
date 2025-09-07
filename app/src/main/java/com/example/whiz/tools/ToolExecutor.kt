@@ -39,6 +39,9 @@ class ToolExecutor @Inject constructor(
     fun executeToolFromJson(toolRequest: JSONObject) {
         scope.launch {
             try {
+                Log.i(TAG, "🎯 TOOL EXECUTOR: Starting execution")
+                Log.i(TAG, "🎯 Full request: ${toolRequest.toString(2)}")
+                
                 val toolName = toolRequest.getString("tool")
                 val requestId = toolRequest.getString("request_id")
                 val params = if (toolRequest.has("params")) {
@@ -47,11 +50,12 @@ class ToolExecutor @Inject constructor(
                     JSONObject()
                 }
                 
-                Log.i(TAG, "Executing tool: $toolName with requestId: $requestId")
-                Log.i(TAG, "Tool params: ${params.toString(2)}")
+                Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
+                Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
                 
                 when (toolName) {
                     "launch_app" -> {
+                        Log.i(TAG, "🎯 Matched launch_app tool, calling executeAppLauncher")
                         executeAppLauncher(requestId, params)
                     }
                     "whatsapp_select_chat" -> {
@@ -104,20 +108,24 @@ class ToolExecutor @Inject constructor(
     
     private suspend fun executeAppLauncher(requestId: String, params: JSONObject) {
         try {
+            Log.i(TAG, "🚀 EXECUTE APP LAUNCHER STARTED")
             val appName = params.getString("app_name")
-            Log.d(TAG, "Launching app: $appName")
+            Log.i(TAG, "🚀 Launching app: $appName")
             
             val result = screenAgentTools.launchApp(appName)
+            Log.i(TAG, "🚀 Launch result: success=${result.success}, error=${result.error}")
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("app_name", result.appName)
                 result.packageName?.let { put("package_name", it) }
                 result.error?.let { put("error", it) }
+                put("overlay_started", result.overlayStarted)
+                put("overlayPermissionRequired", result.overlayPermissionRequired)
             }
             
-            Log.i(TAG, "[TOOL_RESULT] About to emit tool result for requestId=$requestId")
-            Log.i(TAG, "[TOOL_RESULT] Result JSON: ${resultJson.toString(2)}")
+            Log.i(TAG, "📤 [TOOL_RESULT] About to emit tool result for requestId=$requestId")
+            Log.i(TAG, "📤 [TOOL_RESULT] Result JSON: ${resultJson.toString(2)}")
             
             _toolResults.emit(
                 ToolExecutionResult.Success(
@@ -127,7 +135,7 @@ class ToolExecutor @Inject constructor(
                 )
             )
             
-            Log.i(TAG, "[TOOL_RESULT] Successfully emitted tool result for requestId=$requestId")
+            Log.i(TAG, "📤 [TOOL_RESULT] Successfully emitted tool result for requestId=$requestId")
             
         } catch (e: Exception) {
             Log.e(TAG, "Error executing app launcher", e)

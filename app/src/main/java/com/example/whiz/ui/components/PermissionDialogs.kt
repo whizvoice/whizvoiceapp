@@ -63,3 +63,59 @@ fun MicrophonePermissionDialog(
         }
     )
 }
+
+@Composable
+fun OverlayPermissionDialog(
+    onDismiss: () -> Unit,
+    onRequestPermission: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics { 
+            contentDescription = "Overlay permission dialog"
+        },
+        title = { 
+            Text(
+                "Display Over Other Apps Permission Required",
+                modifier = Modifier.semantics { 
+                    contentDescription = "Overlay permission required title"
+                }
+            ) 
+        },
+        text = { 
+            Text(
+                "To show the floating notification bubble when you switch to other apps, Whiz needs permission to display over other apps. This allows you to continue using voice commands while multitasking.",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Overlay permission explanation"
+                }
+            ) 
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onRequestPermission()
+                    onDismiss()
+                },
+                modifier = Modifier.semantics { 
+                    contentDescription = "Grant overlay permission button"
+                }
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.Black
+                ),
+                modifier = Modifier.semantics { 
+                    contentDescription = "Dismiss overlay permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}

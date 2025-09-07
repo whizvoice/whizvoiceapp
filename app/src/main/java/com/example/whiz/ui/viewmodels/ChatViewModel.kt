@@ -8,6 +8,8 @@ import androidx.lifecycle.SavedStateHandle
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.ConnectionStateManager
 // SpeechRecognitionService is now accessed via VoiceManager
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.TTSManager
 
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -246,6 +248,10 @@ class ChatViewModel @Inject constructor(
     // New state for Asana specific setup dialog
     private val _showAsanaSetupDialog = MutableStateFlow(false)
     val showAsanaSetupDialog = _showAsanaSetupDialog.asStateFlow()
+    
+    // New state for overlay permission dialog
+    private val _showOverlayPermissionDialog = MutableStateFlow(false)
+    val showOverlayPermissionDialog = _showOverlayPermissionDialog.asStateFlow()
 
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
@@ -552,9 +558,13 @@ class ChatViewModel @Inject constructor(
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
                     is WebSocketEvent.ToolExecution -> {
-                        Log.d(TAG, "Received tool execution request: ${event.toolRequest}")
+                        Log.i(TAG, "🔧 TOOL EXECUTION EVENT RECEIVED IN CHATVIEWMODEL")
+                        Log.i(TAG, "🔧 Tool request: ${event.toolRequest}")
+                        Log.i(TAG, "🔧 Tool name: ${event.toolRequest.optString("tool", "unknown")}")
+                        Log.i(TAG, "🔧 Request ID: ${event.toolRequest.optString("request_id", "none")}")
                         
                         // Execute the tool
+                        Log.i(TAG, "🔧 Calling toolExecutor.executeToolFromJson")
                         toolExecutor.executeToolFromJson(event.toolRequest)
                     }
                     is WebSocketEvent.Cancelled -> {
@@ -1025,7 +1035,10 @@ class ChatViewModel @Inject constructor(
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
-                                val shouldSpeak = _isVoiceResponseEnabled.value && 
+                                // Also check bubble mode for TTS
+                                val shouldSpeak = (_isVoiceResponseEnabled.value || 
+                                                  (BubbleOverlayService.isActive && 
+                                                   BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING)) && 
                                                 _isTTSInitialized.value && 
                                                 speakThisMessage && 
                                                 messageContentForChat.isNotBlank() &&
@@ -1094,6 +1107,14 @@ class ChatViewModel @Inject constructor(
                 
                 when (result) {
                     is ToolExecutionResult.Success -> {
+                        // Check if overlay permission is required
+                        if (result.toolName == "launch_app" && 
+                            result.result.has("overlayPermissionRequired") && 
+                            result.result.getBoolean("overlayPermissionRequired")) {
+                            // Show overlay permission dialog
+                            _showOverlayPermissionDialog.value = true
+                        }
+                        
                         // Add status field to the result
                         val resultWithStatus = org.json.JSONObject().apply {
                             put("status", "success")
@@ -1105,7 +1126,10 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         
-                        Log.i(TAG, "[TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Tool name: ${result.toolName}")
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Result: ${resultWithStatus.toString(2)}")
+                        
                         val success = whizServerRepository.sendToolResult(
                             toolName = result.toolName,
                             requestId = result.requestId,
@@ -1113,9 +1137,9 @@ class ChatViewModel @Inject constructor(
                             chatId = currentChatId
                         )
                         if (!success) {
-                            Log.e(TAG, "[TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
+                            Log.e(TAG, "❌ [TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
                         } else {
-                            Log.i(TAG, "[TOOL_COLLECTOR] Successfully sent tool result to server for requestId=${result.requestId}")
+                            Log.i(TAG, "✅ [TOOL_COLLECTOR] Successfully sent tool result to server for requestId=${result.requestId}")
                         }
                     }
                     is ToolExecutionResult.Error -> {
@@ -1796,6 +1820,16 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun dismissOverlayPermissionDialog() {
+        _showOverlayPermissionDialog.value = false
+    }
+    
+    fun requestOverlayPermission() {
+        // This will be called from the UI to open the system settings
+        // The actual intent launching will be handled in the UI layer
+        _showOverlayPermissionDialog.value = false
+    }
+    
     fun toggleVoiceResponse() {
         _isVoiceResponseEnabled.update { !it }
         if (!_isVoiceResponseEnabled.value) {

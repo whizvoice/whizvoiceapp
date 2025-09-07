@@ -15,11 +15,14 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.AlphaAnimation
+import android.view.animation.Animation
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.cardview.widget.CardView
 import com.example.whiz.MainActivity
 import com.example.whiz.R
+import com.example.whiz.ui.viewmodels.VoiceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -32,6 +35,13 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+// Listening modes enum outside the class for global access
+enum class ListeningMode {
+    CONTINUOUS_LISTENING,  // Default - mic on, no TTS
+    MIC_OFF,              // Mic off
+    TTS_WITH_LISTENING    // TTS enabled + continuous listening
+}
+
 class BubbleOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
@@ -41,15 +51,22 @@ class BubbleOverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
     
+    private var currentMode = ListeningMode.CONTINUOUS_LISTENING
+    
     companion object {
         private const val TAG = "BubbleOverlayService"
         private const val CLICK_THRESHOLD = 10
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
+        private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         
         // Track if the bubble overlay is active
         @Volatile
         var isActive: Boolean = false
             private set
+        
+        // Track the current listening mode
+        @Volatile
+        var bubbleListeningMode: ListeningMode = ListeningMode.CONTINUOUS_LISTENING
         
         // Flows for displaying text in bubble
         private val _botResponseFlow = MutableSharedFlow<String>(replay = 1)
@@ -91,6 +108,7 @@ class BubbleOverlayService : Service() {
         isActive = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createChatHead()
+        updateModeVisual() // Set initial visual state
         startVoiceTranscriptionListener()
         startBotResponseListener()
     }
@@ -132,8 +150,11 @@ class BubbleOverlayService : Service() {
         var initialTouchX = 0f
         var initialTouchY = 0f
         var touchStartTime = 0L
+        var isLongPressHandled = false
         
         val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
+        val longPressHandler = Handler(Looper.getMainLooper())
+        var longPressRunnable: Runnable? = null
         
         chatHead?.setOnTouchListener { _, event ->
             when (event.action) {
@@ -143,20 +164,43 @@ class BubbleOverlayService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     touchStartTime = System.currentTimeMillis()
+                    isLongPressHandled = false
+                    
+                    // Set up long press detection
+                    longPressRunnable = Runnable {
+                        val xDiff = abs(event.rawX - initialTouchX)
+                        val yDiff = abs(event.rawY - initialTouchY)
+                        if (xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
+                            isLongPressHandled = true
+                            onChatHeadLongPress()
+                        }
+                    }
+                    longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_THRESHOLD)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val xDiff = abs(event.rawX - initialTouchX)
+                    val yDiff = abs(event.rawY - initialTouchY)
+                    
+                    // Cancel long press if user moves too much
+                    if ((xDiff > CLICK_THRESHOLD || yDiff > CLICK_THRESHOLD) && !isLongPressHandled) {
+                        longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+                    }
+                    
                     params.x = initialX - (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
                     windowManager.updateViewLayout(chatHeadView, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+                    
                     val clickDuration = System.currentTimeMillis() - touchStartTime
                     val xDiff = abs(event.rawX - initialTouchX)
                     val yDiff = abs(event.rawY - initialTouchY)
                     
-                    if (clickDuration < 200 && xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
+                    // Only handle click if it wasn't a long press
+                    if (!isLongPressHandled && clickDuration < 200 && xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
                         onChatHeadClick()
                     }
                     true
@@ -169,6 +213,103 @@ class BubbleOverlayService : Service() {
     private fun onChatHeadClick() {
         // Return to the main app when chat head is clicked
         returnToApp()
+    }
+    
+    private fun onChatHeadLongPress() {
+        Log.d(TAG, "Long press detected on chat head")
+        
+        // Cycle through modes
+        currentMode = when (currentMode) {
+            ListeningMode.CONTINUOUS_LISTENING -> ListeningMode.MIC_OFF
+            ListeningMode.MIC_OFF -> ListeningMode.TTS_WITH_LISTENING
+            ListeningMode.TTS_WITH_LISTENING -> ListeningMode.CONTINUOUS_LISTENING
+        }
+        
+        Log.d(TAG, "Mode switched to: $currentMode")
+        updateModeVisual()
+        applyCurrentMode()
+    }
+    
+    private fun updateModeVisual() {
+        handler.post {
+            val profileImage = chatHeadView?.findViewById<ImageView>(R.id.profile_image)
+            val modeIndicator = chatHeadView?.findViewById<ImageView>(R.id.mode_indicator)
+            
+            // Clear any existing animations
+            modeIndicator?.clearAnimation()
+            
+            when (currentMode) {
+                ListeningMode.CONTINUOUS_LISTENING -> {
+                    // Robot face with microphone icon
+                    profileImage?.setImageResource(R.drawable.robot_no_face)
+                    profileImage?.alpha = 1.0f
+                    
+                    // Show mic icon overlay with pulsing animation
+                    modeIndicator?.visibility = View.VISIBLE
+                    modeIndicator?.setImageResource(R.drawable.ic_mic)
+                    modeIndicator?.setColorFilter(
+                        android.graphics.Color.BLACK,
+                        android.graphics.PorterDuff.Mode.SRC_IN
+                    )
+                    startPulsingAnimation(modeIndicator)
+                }
+                ListeningMode.MIC_OFF -> {
+                    // Robot face only (no icon)
+                    profileImage?.setImageResource(R.drawable.robot_no_face)
+                    profileImage?.alpha = 1.0f
+                    
+                    // Hide mode indicator
+                    modeIndicator?.visibility = View.GONE
+                    modeIndicator?.clearAnimation()
+                }
+                ListeningMode.TTS_WITH_LISTENING -> {
+                    // Robot face with speaker icon
+                    profileImage?.setImageResource(R.drawable.robot_no_face)
+                    profileImage?.alpha = 1.0f
+                    
+                    // Show speaker icon overlay with pulsing animation
+                    modeIndicator?.visibility = View.VISIBLE
+                    modeIndicator?.setImageResource(R.drawable.ic_volume_up)
+                    modeIndicator?.setColorFilter(
+                        android.graphics.Color.BLACK,
+                        android.graphics.PorterDuff.Mode.SRC_IN
+                    )
+                    startPulsingAnimation(modeIndicator)
+                }
+            }
+            
+            // Show a temporary message indicating the mode change
+            showModeChangeMessage()
+        }
+    }
+    
+    private fun startPulsingAnimation(view: ImageView?) {
+        view?.let {
+            val pulseAnimation = AlphaAnimation(0.4f, 1.0f).apply {
+                duration = 800 // 0.8 seconds for smoother pulse
+                repeatMode = Animation.REVERSE
+                repeatCount = Animation.INFINITE
+            }
+            it.startAnimation(pulseAnimation)
+        }
+    }
+    
+    private fun showModeChangeMessage() {
+        val modeText = when (currentMode) {
+            ListeningMode.CONTINUOUS_LISTENING -> "Listening Mode"
+            ListeningMode.MIC_OFF -> "Mic Off"
+            ListeningMode.TTS_WITH_LISTENING -> "Speaking Mode"
+        }
+        
+        showMessage(modeText, isUserMessage = false)
+    }
+    
+    private fun applyCurrentMode() {
+        // Store the current mode in companion object for access from VoiceManager
+        bubbleListeningMode = currentMode
+        
+        Log.d(TAG, "Applying mode: $currentMode")
+        // The VoiceManager will check this mode and adjust behavior accordingly
     }
     
     private fun returnToApp() {

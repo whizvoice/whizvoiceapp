@@ -44,12 +44,29 @@
             app:cardCornerRadius="30dp"
             app:cardElevation="6dp">
 
-            <ImageView
-                android:id="@+id/profile_image"
+            <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:src="@mipmap/ic_launcher_round"
-                android:scaleType="centerCrop" />
+                android:layout_height="match_parent">
+                
+                <ImageView
+                    android:id="@+id/profile_image"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:src="@mipmap/ic_launcher_round"
+                    android:scaleType="centerCrop" />
+                
+                <!-- Overlay for mode indicator icon -->
+                <ImageView
+                    android:id="@+id/mode_indicator"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center"
+                    android:layout_marginTop="4dp"
+                    android:visibility="gone"
+                    android:padding="4dp"
+                    android:scaleType="fitCenter" />
+                    
+            </FrameLayout>
 
         </androidx.cardview.widget.CardView>
 

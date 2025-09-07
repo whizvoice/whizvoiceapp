@@ -5,6 +5,8 @@ import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.AppLifecycleService
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -85,16 +87,22 @@ class VoiceManager @Inject constructor(
      */
     private fun shouldBeListening(): Boolean {
         val isInForeground = appLifecycleService.isInForeground()
-        val isBubbleActive = com.example.whiz.services.BubbleOverlayService.isActive
+        val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
         
-        // Keep listening if either in foreground OR bubble is active
-        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) && hasPermission && notSpeaking
+        // Check bubble mode - if bubble is active and mic is off, don't listen
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val bubbleAllowsListening = !isBubbleActive || 
+            (bubbleMode == ListeningMode.CONTINUOUS_LISTENING || bubbleMode == ListeningMode.TTS_WITH_LISTENING)
+        
+        // Keep listening if either in foreground OR bubble is active (with mic enabled)
+        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) && 
+                    hasPermission && notSpeaking && bubbleAllowsListening
         
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
-                "foreground=$isInForeground, bubble=$isBubbleActive, permission=$hasPermission, notSpeaking=$notSpeaking, " +
-                "result=$should")
+                "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
+                "permission=$hasPermission, notSpeaking=$notSpeaking, result=$should")
         
         return should
     }
@@ -294,6 +302,19 @@ class VoiceManager @Inject constructor(
     fun setVoiceResponseEnabled(enabled: Boolean) {
         _isVoiceResponseEnabled.value = enabled
         Log.d(TAG, "Voice response enabled: $enabled")
+    }
+    
+    /**
+     * Check if TTS should be enabled based on bubble mode
+     */
+    fun shouldEnableTTS(): Boolean {
+        // If bubble is active and in TTS mode, enable TTS
+        if (BubbleOverlayService.isActive && 
+            BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING) {
+            return true
+        }
+        // Otherwise use the normal voice response setting
+        return _isVoiceResponseEnabled.value
     }
 
     fun startListening(callback: (String) -> Unit) {
