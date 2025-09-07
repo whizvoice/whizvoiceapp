@@ -616,7 +616,9 @@ class ChatViewModel @Inject constructor(
                         try {
                             var isErrorHandled = false
                             var messageContentForChat = event.text
-                            var speakThisMessage = _isVoiceResponseEnabled.value
+                            // Check both voice response setting AND bubble TTS mode
+                            var speakThisMessage = _isVoiceResponseEnabled.value || 
+                                (BubbleOverlayService.isActive && BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING)
                             var effectiveConversationId: Long? = null // Declare outside try block
 
                             // 🔧 FIXED: Use conversation_id from WebSocketEvent (already parsed by WhizServerRepo)
@@ -1991,10 +1993,17 @@ class ChatViewModel @Inject constructor(
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
         
-        // Stop TTS when app goes to background
-        if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "[LOG] Stopping TTS as app is going to background")
+        // Check if bubble overlay is active and in TTS mode before stopping TTS
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
+        
+        // Stop TTS when app goes to background, UNLESS bubble is in Speaking Mode
+        if (ttsManager.isSpeaking.value && !shouldKeepTTS) {
+            Log.d(TAG, "[LOG] Stopping TTS as app is going to background (bubble not in TTS mode)")
             ttsManager.stop()
+        } else if (shouldKeepTTS) {
+            Log.d(TAG, "[LOG] Keeping TTS active - bubble overlay is in Speaking Mode")
         }
         
         // VoiceManager now handles stopping continuous listening on background

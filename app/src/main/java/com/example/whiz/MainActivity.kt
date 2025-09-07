@@ -35,6 +35,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -587,12 +589,22 @@ class MainActivity : ComponentActivity() {
         // Notify that app is going to background
         appLifecycleService.notifyAppBackgrounded()
         Log.d("MainActivity", "Notified app backgrounded")
-        // Stop TTS when app is backgrounded to prevent speech continuing off-screen
-        try {
-            ttsManager.stop()
-            Log.d("MainActivity", "TTS stopped due to app backgrounding")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error stopping TTS on pause", e)
+        
+        // Check if bubble overlay is active and in TTS mode before stopping TTS
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
+        
+        // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
+        if (!shouldKeepTTS) {
+            try {
+                ttsManager.stop()
+                Log.d("MainActivity", "TTS stopped due to app backgrounding (bubble not in TTS mode)")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error stopping TTS on pause", e)
+            }
+        } else {
+            Log.d("MainActivity", "Keeping TTS active - bubble overlay is in Speaking Mode")
         }
     }
 
