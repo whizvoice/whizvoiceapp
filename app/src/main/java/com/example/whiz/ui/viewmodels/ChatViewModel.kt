@@ -1035,10 +1035,9 @@ class ChatViewModel @Inject constructor(
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
-                                // Also check bubble mode for TTS
-                                val shouldSpeak = (_isVoiceResponseEnabled.value || 
-                                                  (BubbleOverlayService.isActive && 
-                                                   BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING)) && 
+                                // Use VoiceManager's shouldEnableTTS which checks bubble mode properly
+                                val ttsEnabled = voiceManager.shouldEnableTTS()
+                                val shouldSpeak = ttsEnabled && 
                                                 _isTTSInitialized.value && 
                                                 speakThisMessage && 
                                                 messageContentForChat.isNotBlank() &&
@@ -1047,6 +1046,8 @@ class ChatViewModel @Inject constructor(
                                                 targetChatId == _chatId.value && // Double-check current chat
                                                 isMessageFresh // Only speak fresh messages
                                 
+                                Log.d(TAG, "TTS Decision: ttsEnabled=$ttsEnabled, ttsInit=${_isTTSInitialized.value}, " +
+                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
                                     if (isListening.value) {

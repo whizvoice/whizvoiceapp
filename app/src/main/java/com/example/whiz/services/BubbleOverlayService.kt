@@ -75,6 +75,10 @@ class BubbleOverlayService : Service() {
         private val _userTranscriptionFlow = MutableSharedFlow<String>(replay = 1)
         val userTranscriptionFlow: SharedFlow<String> = _userTranscriptionFlow
         
+        // Flow for mode change notifications
+        private val _modeChangeFlow = MutableSharedFlow<ListeningMode>(replay = 1)
+        val modeChangeFlow: SharedFlow<ListeningMode> = _modeChangeFlow
+        
         fun start(context: Context) {
             val intent = Intent(context, BubbleOverlayService::class.java)
             context.startService(intent)
@@ -254,8 +258,8 @@ class BubbleOverlayService : Service() {
                     startPulsingAnimation(modeIndicator)
                 }
                 ListeningMode.MIC_OFF -> {
-                    // Robot face only (no icon)
-                    profileImage?.setImageResource(R.drawable.robot_no_face)
+                    // Show original robot face with face (not no_face version)
+                    profileImage?.setImageResource(R.mipmap.ic_launcher_round)
                     profileImage?.alpha = 1.0f
                     
                     // Hide mode indicator
@@ -309,7 +313,12 @@ class BubbleOverlayService : Service() {
         bubbleListeningMode = currentMode
         
         Log.d(TAG, "Applying mode: $currentMode")
-        // The VoiceManager will check this mode and adjust behavior accordingly
+        
+        // Always emit mode changes so VoiceManager can stop/start listening appropriately
+        serviceScope.launch {
+            Log.d(TAG, "Emitting mode change: $currentMode")
+            _modeChangeFlow.emit(currentMode)
+        }
     }
     
     private fun returnToApp() {

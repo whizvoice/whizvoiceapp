@@ -75,6 +75,7 @@ class VoiceManager @Inject constructor(
         observeVoiceSettings()
         observePermissionChanges()
         observeAppLifecycle()
+        observeBubbleModeChanges()
         
         // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
@@ -243,6 +244,38 @@ class VoiceManager @Inject constructor(
         }
     }
     
+    private fun observeBubbleModeChanges() {
+        // Listen for bubble mode changes
+        coroutineScope.launch {
+            BubbleOverlayService.modeChangeFlow.collect { mode ->
+                Log.d(TAG, "Bubble mode changed to: $mode")
+                
+                when (mode) {
+                    ListeningMode.MIC_OFF -> {
+                        // Stop listening immediately when mic is turned off
+                        Log.d(TAG, "MIC_OFF mode - stopping speech recognition")
+                        stopListening()
+                    }
+                    ListeningMode.TTS_WITH_LISTENING, ListeningMode.CONTINUOUS_LISTENING -> {
+                        // Re-evaluate if we should be listening
+                        Log.d(TAG, "Mode allows listening, checking if should restart")
+                        if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
+                            Log.d(TAG, "Restarting speech recognition for mode: $mode")
+                            // Force restart the continuous listening
+                            coroutineScope.launch {
+                                delay(100) // Small delay to ensure state is settled
+                                if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                                    Log.d(TAG, "Force restarting continuous listening after mode change")
+                                    startContinuousListening()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
         
@@ -309,12 +342,19 @@ class VoiceManager @Inject constructor(
      */
     fun shouldEnableTTS(): Boolean {
         // If bubble is active and in TTS mode, enable TTS
-        if (BubbleOverlayService.isActive && 
-            BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING) {
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val voiceEnabled = _isVoiceResponseEnabled.value
+        
+        Log.d(TAG, "shouldEnableTTS: bubbleActive=$bubbleActive, bubbleMode=$bubbleMode, voiceEnabled=$voiceEnabled")
+        
+        if (bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING) {
+            Log.d(TAG, "shouldEnableTTS: Returning true due to bubble TTS mode")
             return true
         }
         // Otherwise use the normal voice response setting
-        return _isVoiceResponseEnabled.value
+        Log.d(TAG, "shouldEnableTTS: Returning $voiceEnabled from voice response setting")
+        return voiceEnabled
     }
 
     fun startListening(callback: (String) -> Unit) {
