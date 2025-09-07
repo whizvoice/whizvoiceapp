@@ -1,5 +1,6 @@
 package com.example.whiz.tools
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -310,10 +311,78 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
+            // First detect what screen we're on and navigate accordingly
+            val initialRootNode = accessibilityService.getCurrentRootNode()
+            if (initialRootNode != null) {
+                val currentScreen = detectWhatsAppScreen(initialRootNode)
+                Log.i(TAG, "Current WhatsApp screen: $currentScreen")
+                
+                when (currentScreen) {
+                    WhatsAppScreen.INSIDE_CHAT -> {
+                        // Check if we're already in the correct chat
+                        val chatHeader = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
+                        var isCorrectChat = false
+                        
+                        if (chatHeader != null && chatHeader.isNotEmpty()) {
+                            val currentChatName = chatHeader[0].text?.toString()
+                            if (currentChatName != null && currentChatName.lowercase().trim() == chatName.lowercase().trim()) {
+                                Log.i(TAG, "Already in the correct chat: $currentChatName")
+                                isCorrectChat = true
+                            } else {
+                                Log.i(TAG, "Currently in different chat: $currentChatName, need to navigate to: $chatName")
+                            }
+                            chatHeader.forEach { it.recycle() }
+                        }
+                        
+                        if (isCorrectChat) {
+                            // We're already in the right chat, no need to search
+                            initialRootNode.recycle()
+                            return WhatsAppResult(
+                                success = true,
+                                action = "select_chat",
+                                chatName = chatName
+                            )
+                        } else {
+                            // Navigate back to find the correct chat
+                            Log.i(TAG, "Navigating back to chat list to find correct contact")
+                            initialRootNode.recycle()
+                            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                            delay(1000) // Wait for navigation
+                        }
+                    }
+                    WhatsAppScreen.SETTINGS -> {
+                        Log.i(TAG, "In settings, navigating back to main screen")
+                        initialRootNode.recycle()
+                        accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                        delay(1000) // Wait for navigation
+                    }
+                    WhatsAppScreen.STATUS, WhatsAppScreen.CALLS -> {
+                        Log.i(TAG, "On $currentScreen tab, need to switch to Chats tab")
+                        // Try to click on the Chats tab
+                        val chatsTab = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
+                        if (chatsTab != null && chatsTab.isNotEmpty()) {
+                            accessibilityService.clickNode(chatsTab[0])
+                            chatsTab.forEach { it.recycle() }
+                            delay(500)
+                        }
+                        initialRootNode.recycle()
+                    }
+                    WhatsAppScreen.SEARCH_ACTIVE -> {
+                        Log.i(TAG, "Search is already active, will use existing search")
+                        initialRootNode.recycle()
+                        // We'll handle this in the search logic below
+                    }
+                    else -> {
+                        initialRootNode.recycle()
+                    }
+                }
+            }
+            
             // Try to find and click on the chat
             var success = false
             var attempts = 0
             val maxAttempts = 3
+            var searchAttempted = false
             
             while (!success && attempts < maxAttempts) {
                 attempts++
@@ -374,6 +443,27 @@ class ScreenAgentTools @Inject constructor(
                     
                     // Recycle nodes
                     chatNodes.forEach { it.recycle() }
+                } else if (!searchAttempted && attempts == 1) {
+                    // If we couldn't find the chat on the first attempt, try searching
+                    Log.i(TAG, "Chat not visible, attempting to search for: $chatName")
+                    
+                    // Check if search is already active
+                    val currentScreen = detectWhatsAppScreen(rootNode)
+                    val searchSuccess = if (currentScreen == WhatsAppScreen.SEARCH_ACTIVE) {
+                        Log.d(TAG, "Search already active, updating search text")
+                        // Clear and enter new search text
+                        updateSearchText(rootNode, chatName)
+                    } else {
+                        // Open search and enter text
+                        performWhatsAppSearch(rootNode, chatName, accessibilityService)
+                    }
+                    
+                    searchAttempted = true
+                    
+                    if (searchSuccess) {
+                        Log.d(TAG, "Search performed, waiting for results...")
+                        delay(1500) // Give time for search results to appear
+                    }
                 }
                 
                 // Recycle root node
@@ -388,7 +478,7 @@ class ScreenAgentTools @Inject constructor(
                 success = false,
                 action = "select_chat",
                 chatName = chatName,
-                error = "Could not find chat named '$chatName' in WhatsApp"
+                error = "Could not find contact or chat named '$chatName' in WhatsApp. Please verify the contact name and ask the user to confirm the exact spelling if needed."
             )
             
         } catch (e: Exception) {
@@ -639,6 +729,337 @@ class ScreenAgentTools @Inject constructor(
     
     // ========== Helper Functions ==========
     
+    private enum class WhatsAppScreen {
+        CHAT_LIST,
+        INSIDE_CHAT,
+        SEARCH_ACTIVE,
+        SETTINGS,
+        STATUS,
+        CALLS,
+        UNKNOWN
+    }
+    
+    private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
+        try {
+            // Check for search field first (highest priority as it could be active over other screens)
+            val searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
+            if (searchField != null && searchField.isNotEmpty()) {
+                searchField.forEach { it.recycle() }
+                Log.d(TAG, "Search field is active")
+                return WhatsAppScreen.SEARCH_ACTIVE
+            }
+            
+            // Check if we're in settings
+            val settingsTitle = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/settings")
+            if (settingsTitle != null && settingsTitle.isNotEmpty()) {
+                settingsTitle.forEach { it.recycle() }
+                Log.d(TAG, "In WhatsApp Settings")
+                return WhatsAppScreen.SETTINGS
+            }
+            
+            // Check for settings indicators by text
+            val settingsText = rootNode.findAccessibilityNodeInfosByText("Settings")
+            if (settingsText != null && settingsText.isNotEmpty()) {
+                // Verify it's actually the settings screen header
+                for (node in settingsText) {
+                    if (node.className == "android.widget.TextView") {
+                        settingsText.forEach { it.recycle() }
+                        Log.d(TAG, "In WhatsApp Settings (detected by text)")
+                        return WhatsAppScreen.SETTINGS
+                    }
+                }
+                settingsText.forEach { it.recycle() }
+            }
+            
+            // Check if we're inside a specific chat
+            val chatHeader = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
+            if (chatHeader != null && chatHeader.isNotEmpty()) {
+                chatHeader.forEach { it.recycle() }
+                Log.d(TAG, "Inside a WhatsApp chat")
+                return WhatsAppScreen.INSIDE_CHAT
+            }
+            
+            // Check for message input field (also indicates chat view)
+            val messageInput = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
+            if (messageInput != null && messageInput.isNotEmpty()) {
+                messageInput.forEach { it.recycle() }
+                Log.d(TAG, "Inside a WhatsApp chat (found message input)")
+                return WhatsAppScreen.INSIDE_CHAT
+            }
+            
+            // Check if we're on the Status tab
+            val statusTab = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_status")
+            if (statusTab != null && statusTab.isNotEmpty()) {
+                // Check if it's selected
+                for (node in statusTab) {
+                    if (node.isSelected) {
+                        statusTab.forEach { it.recycle() }
+                        Log.d(TAG, "On WhatsApp Status tab")
+                        return WhatsAppScreen.STATUS
+                    }
+                }
+                statusTab.forEach { it.recycle() }
+            }
+            
+            // Check if we're on the Calls tab
+            val callsTab = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_calls")
+            if (callsTab != null && callsTab.isNotEmpty()) {
+                // Check if it's selected
+                for (node in callsTab) {
+                    if (node.isSelected) {
+                        callsTab.forEach { it.recycle() }
+                        Log.d(TAG, "On WhatsApp Calls tab")
+                        return WhatsAppScreen.CALLS
+                    }
+                }
+                callsTab.forEach { it.recycle() }
+            }
+            
+            // Check for chat list elements
+            val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+            if (chatList != null && chatList.isNotEmpty()) {
+                chatList.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp chat list")
+                return WhatsAppScreen.CHAT_LIST
+            }
+            
+            // Default assumption - if we see any tab layout, we're probably on the main screen
+            val tabLayout = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_layout")
+            if (tabLayout != null && tabLayout.isNotEmpty()) {
+                tabLayout.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp main screen (likely chat list)")
+                return WhatsAppScreen.CHAT_LIST
+            }
+            
+            Log.d(TAG, "Could not determine WhatsApp screen")
+            return WhatsAppScreen.UNKNOWN
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting WhatsApp screen", e)
+            return WhatsAppScreen.UNKNOWN
+        }
+    }
+    
+    private fun isInsideWhatsAppChat(rootNode: AccessibilityNodeInfo): Boolean {
+        return detectWhatsAppScreen(rootNode) == WhatsAppScreen.INSIDE_CHAT
+    }
+    
+    private suspend fun performWhatsAppSearch(rootNode: AccessibilityNodeInfo, searchQuery: String, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // Look for the search button/icon in WhatsApp
+            val searchButtons = listOf(
+                "com.whatsapp:id/menuitem_search",
+                "com.whatsapp:id/search_button",
+                "com.whatsapp:id/action_search"
+            )
+            
+            // Try to find search button by ID
+            for (searchId in searchButtons) {
+                val searchNodes = rootNode.findAccessibilityNodeInfosByViewId(searchId)
+                if (searchNodes != null && searchNodes.isNotEmpty()) {
+                    Log.d(TAG, "Found search button with ID: $searchId")
+                    val clicked = accessibilityService.clickNode(searchNodes[0])
+                    searchNodes.forEach { it.recycle() }
+                    
+                    if (clicked) {
+                        delay(1000) // Wait for search field to appear
+                        
+                        // Now find the search input field and enter text
+                        val searchRootNode = accessibilityService.getCurrentRootNode()
+                        if (searchRootNode != null) {
+                            val searchFieldEntered = enterSearchText(searchRootNode, searchQuery)
+                            searchRootNode.recycle()
+                            return searchFieldEntered
+                        }
+                    }
+                }
+            }
+            
+            // Alternative: Look for search by content description
+            val searchByDesc = rootNode.findAccessibilityNodeInfosByText("Search")
+            if (searchByDesc != null && searchByDesc.isNotEmpty()) {
+                for (node in searchByDesc) {
+                    val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                    if (clickableNode != null) {
+                        Log.d(TAG, "Found search button by text/description")
+                        val clicked = accessibilityService.clickNode(clickableNode)
+                        
+                        if (clickableNode != node) {
+                            clickableNode.recycle()
+                        }
+                        
+                        if (clicked) {
+                            searchByDesc.forEach { it.recycle() }
+                            delay(1000) // Wait for search field
+                            
+                            // Enter search text
+                            val searchRootNode = accessibilityService.getCurrentRootNode()
+                            if (searchRootNode != null) {
+                                val searchFieldEntered = enterSearchText(searchRootNode, searchQuery)
+                                searchRootNode.recycle()
+                                return searchFieldEntered
+                            }
+                        }
+                    }
+                }
+                searchByDesc.forEach { it.recycle() }
+            }
+            
+            Log.w(TAG, "Could not find search button in WhatsApp")
+            return false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error performing WhatsApp search", e)
+            return false
+        }
+    }
+    
+    private suspend fun updateSearchText(rootNode: AccessibilityNodeInfo, searchQuery: String): Boolean {
+        try {
+            // Find the search input field that's already active
+            val searchFields = listOf(
+                "com.whatsapp:id/search_src_text",
+                "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_edit_text"
+            )
+            
+            for (searchFieldId in searchFields) {
+                val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(searchFieldId)
+                if (searchFieldNodes != null && searchFieldNodes.isNotEmpty()) {
+                    val searchField = searchFieldNodes[0]
+                    
+                    // Clear existing text first
+                    val clearBundle = Bundle()
+                    clearBundle.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        ""
+                    )
+                    searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+                    
+                    delay(200) // Small delay after clearing
+                    
+                    // Set the new search text
+                    val setBundle = Bundle()
+                    setBundle.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        searchQuery
+                    )
+                    val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setBundle)
+                    
+                    searchFieldNodes.forEach { it.recycle() }
+                    
+                    if (textSet) {
+                        Log.d(TAG, "Successfully updated search text to: $searchQuery")
+                        return true
+                    }
+                }
+            }
+            
+            // If we couldn't find by ID, try any EditText
+            val editTextNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, editTextNodes)
+            
+            if (editTextNodes.isNotEmpty()) {
+                val searchField = editTextNodes[0]
+                
+                // Clear and set new text
+                val clearBundle = Bundle()
+                clearBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    ""
+                )
+                searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+                
+                delay(200)
+                
+                val setBundle = Bundle()
+                setBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    searchQuery
+                )
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setBundle)
+                
+                editTextNodes.forEach { it.recycle() }
+                
+                if (textSet) {
+                    Log.d(TAG, "Successfully updated search text in EditText: $searchQuery")
+                    return true
+                }
+            }
+            
+            Log.w(TAG, "Could not update search text - no search field found")
+            return false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating search text", e)
+            return false
+        }
+    }
+    
+    private suspend fun enterSearchText(rootNode: AccessibilityNodeInfo, searchQuery: String): Boolean {
+        try {
+            // Find the search input field
+            val searchFields = listOf(
+                "com.whatsapp:id/search_src_text",
+                "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_edit_text"
+            )
+            
+            // Try to find search field by ID
+            for (searchFieldId in searchFields) {
+                val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(searchFieldId)
+                if (searchFieldNodes != null && searchFieldNodes.isNotEmpty()) {
+                    val searchField = searchFieldNodes[0]
+                    
+                    // Set the search text
+                    val bundle = Bundle()
+                    bundle.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        searchQuery
+                    )
+                    val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+                    
+                    searchFieldNodes.forEach { it.recycle() }
+                    
+                    if (textSet) {
+                        Log.d(TAG, "Successfully entered search text: $searchQuery")
+                        return true
+                    }
+                }
+            }
+            
+            // Alternative: Find any EditText that might be the search field
+            val editTextNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, editTextNodes)
+            
+            if (editTextNodes.isNotEmpty()) {
+                // Use the first EditText we find (likely the search field if search was just opened)
+                val searchField = editTextNodes[0]
+                
+                val bundle = Bundle()
+                bundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    searchQuery
+                )
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+                
+                editTextNodes.forEach { it.recycle() }
+                
+                if (textSet) {
+                    Log.d(TAG, "Successfully entered search text in EditText: $searchQuery")
+                    return true
+                }
+            }
+            
+            Log.w(TAG, "Could not find search input field")
+            return false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error entering search text", e)
+            return false
+        }
+    }
+    
     private fun logCurrentScreen(rootNode: AccessibilityNodeInfo) {
         try {
             // Log the package name to understand which app/screen we're on
@@ -764,8 +1185,23 @@ class ScreenAgentTools @Inject constructor(
         // Search by text - exact match first
         val nodesByText = node.findAccessibilityNodeInfosByText(chatName)
         if (nodesByText != null && nodesByText.isNotEmpty()) {
-            Log.d(TAG, "Found ${nodesByText.size} nodes with exact text match")
-            results.addAll(nodesByText)
+            Log.d(TAG, "Found ${nodesByText.size} nodes with text matching '$chatName'")
+            // Filter to ensure we're getting exact or very close matches
+            for (node in nodesByText) {
+                val nodeText = node.text?.toString()?.lowercase()?.trim()
+                val nodeDesc = node.contentDescription?.toString()?.lowercase()?.trim()
+                
+                // Check if this is actually a match for the chat name
+                if ((nodeText != null && (nodeText == normalizedChatName || nodeText.startsWith(normalizedChatName))) ||
+                    (nodeDesc != null && (nodeDesc == normalizedChatName || nodeDesc.startsWith(normalizedChatName)))) {
+                    Log.d(TAG, "Confirmed match: text='${node.text}', desc='${node.contentDescription}'")
+                    results.add(node)
+                } else {
+                    // Not a real match, recycle it
+                    Log.d(TAG, "False match filtered out: text='${node.text}', desc='${node.contentDescription}'")
+                    node.recycle()
+                }
+            }
         }
         
         // Also search for nodes in the chat list specifically (by ViewId)
@@ -774,9 +1210,15 @@ class ScreenAgentTools @Inject constructor(
             Log.d(TAG, "Found ${chatListItems.size} chat list items")
             for (item in chatListItems) {
                 val itemText = item.text?.toString()
-                if (itemText != null && itemText.lowercase().contains(normalizedChatName)) {
-                    Log.d(TAG, "Found chat list match: $itemText")
-                    results.add(AccessibilityNodeInfo.obtain(item))
+                if (itemText != null) {
+                    val normalizedItemText = itemText.lowercase().trim()
+                    // Be more strict: require exact match or that the chat name starts with our search
+                    if (normalizedItemText == normalizedChatName || 
+                        normalizedItemText.startsWith(normalizedChatName) ||
+                        (normalizedChatName.length >= 3 && normalizedItemText.contains(normalizedChatName))) {
+                        Log.d(TAG, "Found chat list match: $itemText")
+                        results.add(AccessibilityNodeInfo.obtain(item))
+                    }
                 }
             }
             chatListItems.forEach { 
@@ -787,7 +1229,7 @@ class ScreenAgentTools @Inject constructor(
         // If no results yet, do a recursive search for partial matches
         if (results.isEmpty()) {
             Log.d(TAG, "No exact matches found, searching recursively...")
-            searchNodeRecursively(node, normalizedChatName, results)
+            searchNodeRecursively(node, normalizedChatName, results, strictMatch = false)
         }
         
         Log.d(TAG, "Total chat nodes found: ${results.size}")
@@ -798,15 +1240,25 @@ class ScreenAgentTools @Inject constructor(
         node: AccessibilityNodeInfo, 
         searchText: String, 
         results: MutableList<AccessibilityNodeInfo>,
-        depth: Int = 0
+        depth: Int = 0,
+        strictMatch: Boolean = true
     ) {
         try {
             // Check current node's text
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
             
-            if ((nodeText != null && nodeText.lowercase().contains(searchText)) ||
-                (contentDesc != null && contentDesc.lowercase().contains(searchText))) {
+            val matches = if (strictMatch) {
+                // For strict matching, require exact match or starts with
+                ((nodeText != null && (nodeText.lowercase().trim() == searchText || nodeText.lowercase().startsWith(searchText))) ||
+                 (contentDesc != null && (contentDesc.lowercase().trim() == searchText || contentDesc.lowercase().startsWith(searchText))))
+            } else {
+                // For non-strict, allow contains
+                ((nodeText != null && nodeText.lowercase().contains(searchText)) ||
+                 (contentDesc != null && contentDesc.lowercase().contains(searchText)))
+            }
+            
+            if (matches) {
                 val info = "Found match at depth $depth: text='$nodeText', desc='$contentDesc', class=${node.className}, clickable=${node.isClickable}"
                 Log.d(TAG, info)
                 results.add(AccessibilityNodeInfo.obtain(node))
@@ -817,7 +1269,7 @@ class ScreenAgentTools @Inject constructor(
                 for (i in 0 until node.childCount) {
                     val child = node.getChild(i)
                     if (child != null) {
-                        searchNodeRecursively(child, searchText, results, depth + 1)
+                        searchNodeRecursively(child, searchText, results, depth + 1, strictMatch)
                         child.recycle()
                     }
                 }
