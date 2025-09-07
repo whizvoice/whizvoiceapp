@@ -252,15 +252,38 @@ class VoiceManager @Inject constructor(
                 
                 when (mode) {
                     ListeningMode.MIC_OFF -> {
-                        // Stop listening immediately when mic is turned off
-                        Log.d(TAG, "MIC_OFF mode - stopping speech recognition")
+                        // Stop both listening and TTS when mic is turned off
+                        Log.d(TAG, "MIC_OFF mode - stopping speech recognition and TTS")
                         stopListening()
+                        ttsManager.stop()
                     }
-                    ListeningMode.TTS_WITH_LISTENING, ListeningMode.CONTINUOUS_LISTENING -> {
+                    ListeningMode.CONTINUOUS_LISTENING -> {
+                        // Stop TTS when switching to listening-only mode
+                        Log.d(TAG, "CONTINUOUS_LISTENING mode - stopping TTS if active")
+                        if (ttsManager.isSpeaking.value) {
+                            Log.d(TAG, "Stopping TTS as bubble switched to listening-only mode")
+                            ttsManager.stop()
+                        }
+                        
                         // Re-evaluate if we should be listening
                         Log.d(TAG, "Mode allows listening, checking if should restart")
                         if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
-                            Log.d(TAG, "Restarting speech recognition for mode: $mode")
+                            Log.d(TAG, "Restarting speech recognition for mode: CONTINUOUS_LISTENING")
+                            // Force restart the continuous listening
+                            coroutineScope.launch {
+                                delay(100) // Small delay to ensure state is settled
+                                if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                                    Log.d(TAG, "Force restarting continuous listening after mode change")
+                                    startContinuousListening()
+                                }
+                            }
+                        }
+                    }
+                    ListeningMode.TTS_WITH_LISTENING -> {
+                        // Re-evaluate if we should be listening
+                        Log.d(TAG, "TTS_WITH_LISTENING mode - keeping TTS enabled")
+                        if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
+                            Log.d(TAG, "Restarting speech recognition for mode: TTS_WITH_LISTENING")
                             // Force restart the continuous listening
                             coroutineScope.launch {
                                 delay(100) // Small delay to ensure state is settled
