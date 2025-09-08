@@ -2,7 +2,9 @@ package com.example.whiz
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -149,8 +151,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             PermissionManager.PermissionType.OVERLAY -> {
-                                // Don't show overlay permission dialog here
-                                // It will be shown when needed (when launching apps)
+                                com.example.whiz.ui.components.OverlayPermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onRequestPermission = {
+                                        // Open system settings for overlay permission
+                                        val intent = Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:$packageName")
+                                        )
+                                        startActivity(intent)
+                                    }
+                                )
                             }
                             null -> {
                                 // All permissions granted, no dialog needed

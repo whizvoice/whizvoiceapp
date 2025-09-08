@@ -33,12 +33,12 @@ import org.junit.runner.RunWith
 import javax.inject.Inject
 
 /**
- * Tests for accessibility permission dialog and settings flow
+ * Tests for permission dialogs and settings flow
  */
 @HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 @UninstallModules(com.example.whiz.di.AppModule::class)
-class AccessibilityPermissionTest : BaseIntegrationTest() {
+class PermissionTest : BaseIntegrationTest() {
     
     // Override to control permissions per test
     override val skipAutoMicrophoneGrant = true  // We'll control microphone permission per test
@@ -88,6 +88,17 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         // Use TestPermissionManager to simulate revoking without killing the app
         val testPermissionManager = permissionManager as TestPermissionManager
         testPermissionManager.simulateMicrophoneRevoke()
+    }
+    
+    // Helper to mock overlay permission and update permission manager
+    private fun mockOverlayAndUpdate(enabled: Boolean) {
+        // Use TestPermissionManager to simulate overlay permission state
+        val testPermissionManager = permissionManager as TestPermissionManager
+        if (enabled) {
+            testPermissionManager.simulateOverlayGrant()
+        } else {
+            testPermissionManager.simulateOverlayRevoke()
+        }
     }
 
     @Test
@@ -244,25 +255,155 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
             }
         }
     }
-
+    
     @Test
-    fun testNoPermissionDialogsWhenAllPermissionsGranted() {
-        // Setup: Grant all permissions
+    fun testOverlayPermissionDialogAppearsAfterAccessibilityGranted() = runTest {
+        // Setup: Grant microphone and accessibility, but not overlay
         grantMicrophoneAndUpdate()
         mockAccessibilityAndUpdate(true)
+        mockOverlayAndUpdate(false)
+        
+        // Given: The app checks permissions
+        permissionManager.checkAllPermissions()
+        
+        // Then: Check what permission is needed next
+        val nextPermission = permissionManager.nextRequiredPermission.first()
+        
+        // Since microphone and accessibility are granted but overlay is not, next should be overlay
+        if (nextPermission != PermissionManager.PermissionType.OVERLAY) {
+            failWithScreenshot(
+                "Expected OVERLAY to be next required permission but got $nextPermission",
+                "wrong_next_permission_for_overlay"
+            )
+        }
+        
+        // Verify the permission manager is tracking correctly
+        val overlayGranted = permissionManager.overlayPermissionGranted.first()
+        if (overlayGranted) {
+            failWithScreenshot(
+                "Overlay permission should not be granted after mocking it as disabled",
+                "overlay_incorrectly_granted"
+            )
+        }
+        
+        println("✓ Overlay permission correctly identified as next required permission")
+    }
+    
+    @Test
+    fun testOverlayPermissionDialogShows() {
+        // Setup: Grant microphone and accessibility, revoke overlay
+        grantMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(true)
+        mockOverlayAndUpdate(false)
         
         // Force permission manager to update its state
         runBlocking {
             permissionManager.checkAllPermissions()
         }
         
-        // No need to restart activity with mocked permissions - dialog should appear immediately
+        // Wait for the overlay permission dialog to appear
+        val dialogAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Overlay permission dialog") },
+            timeoutMs = 1000L,
+            description = "overlay permission dialog"
+        )
+        
+        if (!dialogAppeared) {
+            failWithScreenshot(
+                "Overlay permission dialog should appear when overlay permission is not granted",
+                "no_overlay_dialog_when_permission_revoked"
+            )
+        }
+        
+        println("✓ Overlay permission dialog correctly shown when permission not granted")
+    }
+    
+    @Test
+    fun testPermissionPriorityOrder() = runTest {
+        // Setup: Revoke all permissions
+        revokeMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(false)
+        mockOverlayAndUpdate(false)
+        
+        // Force permission manager to update its state
+        permissionManager.checkAllPermissions()
+        
+        // Step 1: Verify microphone permission dialog appears first
+        val micDialogAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Microphone permission dialog") },
+            timeoutMs = 1000L,
+            description = "microphone permission dialog"
+        )
+        
+        if (!micDialogAppeared) {
+            failWithScreenshot(
+                "Microphone permission dialog should appear first in priority order",
+                "no_mic_dialog_priority_order_test"
+            )
+        }
+        
+        println("✓ Microphone permission dialog appeared first")
+        
+        // Step 2: Grant microphone permission
+        grantMicrophoneAndUpdate()
+        
+        // Step 3: Verify accessibility dialog appears next
+        val accessibilityDialogAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Accessibility permission dialog") },
+            timeoutMs = 1000L,
+            description = "accessibility permission dialog"
+        )
+        
+        if (!accessibilityDialogAppeared) {
+            failWithScreenshot(
+                "Accessibility permission dialog should appear after microphone is granted",
+                "no_accessibility_dialog_priority_order"
+            )
+        }
+        
+        println("✓ Accessibility permission dialog appeared second")
+        
+        // Step 4: Grant accessibility permission
+        mockAccessibilityAndUpdate(true)
+        
+        // Step 5: Verify overlay dialog appears last
+        val overlayDialogAppeared = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Overlay permission dialog") },
+            timeoutMs = 1000L,
+            description = "overlay permission dialog"
+        )
+        
+        if (!overlayDialogAppeared) {
+            failWithScreenshot(
+                "Overlay permission dialog should appear after accessibility is granted",
+                "no_overlay_dialog_priority_order"
+            )
+        }
+        
+        println("✓ Overlay permission dialog appeared third")
+        println("✓ Dialog priority verified: Microphone → Accessibility → Overlay")
+    }
+    
+    @Test
+    fun testNoPermissionDialogsWhenAllPermissionsGrantedIncludingOverlay() {
+        // Setup: Grant all permissions including overlay
+        grantMicrophoneAndUpdate()
+        mockAccessibilityAndUpdate(true)
+        mockOverlayAndUpdate(true)
+        
+        // Force permission manager to update its state
+        runBlocking {
+            permissionManager.checkAllPermissions()
+        }
         
         // Give UI just enough time to show dialogs if they were going to appear
-        // Using a small sleep is more predictable than waitForIdle for negative checks
-        Thread.sleep(100) // 100ms is enough for dialogs to start appearing if triggered
+        Thread.sleep(100)
         
-        // Verify NO permission dialogs appear - check immediately without waiting
+        // Verify NO permission dialogs appear
         val micDialogExists = try {
             composeTestRule.onNodeWithContentDescription("Microphone permission dialog").assertExists()
             true
@@ -277,22 +418,36 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
             false
         }
         
+        val overlayDialogExists = try {
+            composeTestRule.onNodeWithContentDescription("Overlay permission dialog").assertExists()
+            true
+        } catch (e: AssertionError) {
+            false
+        }
+        
         // Should NOT find any permission dialogs
         if (micDialogExists) {
             failWithScreenshot(
                 "Microphone dialog should not appear when permission is granted",
-                "unexpected_mic_dialog"
+                "unexpected_mic_dialog_with_overlay"
             )
         }
         
         if (accessibilityDialogExists) {
             failWithScreenshot(
                 "Accessibility dialog should not appear when permission is granted",
-                "unexpected_accessibility_dialog"
+                "unexpected_accessibility_dialog_with_overlay"
             )
         }
         
-        // Instead, should be on the main screen (chats list or chat)
+        if (overlayDialogExists) {
+            failWithScreenshot(
+                "Overlay dialog should not appear when permission is granted",
+                "unexpected_overlay_dialog"
+            )
+        }
+        
+        // Should be on the main screen
         val onMainScreen = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("My Chats") },
@@ -307,12 +462,12 @@ class AccessibilityPermissionTest : BaseIntegrationTest() {
         
         if (!onMainScreen) {
             failWithScreenshot(
-                "Should be on main screen when all permissions are granted",
-                "not_on_main_screen_after_permissions"
+                "Should be on main screen when all permissions including overlay are granted",
+                "not_on_main_screen_after_all_permissions"
             )
         }
         
-        println("✓ No permission dialogs shown when all permissions are granted")
+        println("✓ No permission dialogs shown when all permissions including overlay are granted")
         println("✓ App correctly proceeded to main screen")
     }
 }

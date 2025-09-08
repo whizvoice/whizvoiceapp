@@ -99,7 +99,7 @@ open class PermissionManager @Inject constructor(
     /**
      * Check if the app has overlay permission
      */
-    fun checkOverlayPermission() {
+    open fun checkOverlayPermission() {
         val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
@@ -121,8 +121,7 @@ open class PermissionManager @Inject constructor(
         _nextRequiredPermission.value = when {
             !_microphonePermissionGranted.value -> PermissionType.MICROPHONE
             !_accessibilityPermissionGranted.value -> PermissionType.ACCESSIBILITY
-            // Don't automatically request overlay permission - only when needed
-            // !_overlayPermissionGranted.value -> PermissionType.OVERLAY
+            !_overlayPermissionGranted.value -> PermissionType.OVERLAY
             else -> null
         }
     }

@@ -3,6 +3,8 @@ package com.example.whiz.test_helpers
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.whiz.accessibility.AccessibilityChecker
@@ -30,6 +32,12 @@ class TestPermissionManager @Inject constructor(
      * When null, falls back to checking the real permission.
      */
     var mockMicrophonePermission: Boolean? = null
+    
+    /**
+     * Mock state for overlay permission. When set, this overrides the real permission check.
+     * When null, falls back to checking the real permission.
+     */
+    var mockOverlayPermission: Boolean? = null
     
     /**
      * Override checkMicrophonePermission to use mock state when available
@@ -88,5 +96,65 @@ class TestPermissionManager @Inject constructor(
     fun simulateMicrophoneGrant() {
         Log.d(TAG, "Simulating microphone permission grant")
         setMockMicrophonePermission(true)
+    }
+    
+    /**
+     * Override checkOverlayPermission to use mock state when available
+     */
+    override fun checkOverlayPermission() {
+        // Check mock state first
+        val hasPermission = mockOverlayPermission?.let { mockedState ->
+            Log.d(TAG, "Using mocked overlay permission state: $mockedState")
+            mockedState
+        } ?: run {
+            // Fall back to real permission check
+            val realPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true // Always true for older Android versions
+            }
+            Log.d(TAG, "Using real overlay permission state: $realPermission")
+            realPermission
+        }
+        
+        // Update the permission state
+        updateOverlayPermission(hasPermission)
+    }
+    
+    /**
+     * Set the mock overlay permission state for testing
+     */
+    fun setMockOverlayPermission(granted: Boolean) {
+        Log.d(TAG, "Setting mock overlay permission to: $granted")
+        mockOverlayPermission = granted
+        // Immediately update the state
+        checkOverlayPermission()
+    }
+    
+    /**
+     * Reset the mock state to use real permission checking
+     */
+    fun resetMockOverlayPermission() {
+        Log.d(TAG, "Resetting mock overlay permission state")
+        mockOverlayPermission = null
+        // Re-check with real permission
+        checkOverlayPermission()
+    }
+    
+    /**
+     * Helper method to simulate revoking overlay permission without actually
+     * revoking it (which would require manual interaction)
+     */
+    fun simulateOverlayRevoke() {
+        Log.d(TAG, "Simulating overlay permission revocation")
+        setMockOverlayPermission(false)
+    }
+    
+    /**
+     * Helper method to simulate granting overlay permission
+     */
+    fun simulateOverlayGrant() {
+        Log.d(TAG, "Simulating overlay permission grant")
+        setMockOverlayPermission(true)
     }
 }
