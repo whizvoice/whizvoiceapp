@@ -313,12 +313,12 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         
         // Verify the mode indicator is still visible (showing mic-off icon in MIC_OFF mode)
         Log.d(TAG, "🔇 Verifying mode indicator is visible on bubble...")
-        val modeIndicatorVisible = device.wait(
+        val micOffModeIndicatorVisible = device.wait(
             Until.hasObject(By.res("com.example.whiz.debug", "mode_indicator")),
             1000
         )
         
-        if (!modeIndicatorVisible) {
+        if (!micOffModeIndicatorVisible) {
             failWithScreenshot("Mode indicator should be visible on bubble in MIC_OFF mode but was not found")
         }
         
@@ -368,12 +368,12 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         
         // Verify the mode indicator is visible (showing speaker icon in TTS_WITH_LISTENING mode)
         Log.d(TAG, "🔊 Verifying mode indicator is visible on bubble...")
-        val modeIndicatorVisible = device.wait(
+        val ttsModeIndicatorVisible = device.wait(
             Until.hasObject(By.res("com.example.whiz.debug", "mode_indicator")),
             1000
         )
         
-        if (!modeIndicatorVisible) {
+        if (!ttsModeIndicatorVisible) {
             failWithScreenshot("Mode indicator should be visible on bubble in TTS_WITH_LISTENING mode but was not found")
         }
         

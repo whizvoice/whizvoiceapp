@@ -113,6 +113,7 @@ class BubbleOverlayService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createChatHead()
         updateModeVisual() // Set initial visual state
+        applyCurrentMode() // Apply initial mode to VoiceManager
         startVoiceTranscriptionListener()
         startBotResponseListener()
     }
@@ -313,6 +314,35 @@ class BubbleOverlayService : Service() {
         bubbleListeningMode = currentMode
         
         Log.d(TAG, "Applying mode: $currentMode")
+        
+        // Get VoiceManager instance if available
+        val voiceManager = VoiceManager.instance
+        if (voiceManager != null) {
+            Log.d(TAG, "Directly controlling VoiceManager for mode: $currentMode")
+            
+            when (currentMode) {
+                ListeningMode.CONTINUOUS_LISTENING -> {
+                    // Enable continuous listening, disable TTS
+                    Log.d(TAG, "Enabling continuous listening (mic on, TTS off)")
+                    voiceManager.updateContinuousListeningEnabled(true)
+                    // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
+                }
+                ListeningMode.MIC_OFF -> {
+                    // Disable continuous listening, disable TTS
+                    Log.d(TAG, "Disabling continuous listening (mic off, TTS off)")
+                    voiceManager.updateContinuousListeningEnabled(false)
+                    // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
+                }
+                ListeningMode.TTS_WITH_LISTENING -> {
+                    // Enable continuous listening, enable TTS
+                    Log.d(TAG, "Enabling continuous listening with TTS (mic on, TTS on)")
+                    voiceManager.updateContinuousListeningEnabled(true)
+                    // TTS will be enabled through shouldEnableTTS() check
+                }
+            }
+        } else {
+            Log.w(TAG, "VoiceManager instance not available, cannot directly control listening")
+        }
         
         // Always emit mode changes so VoiceManager can stop/start listening appropriately
         serviceScope.launch {

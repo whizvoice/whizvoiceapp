@@ -28,12 +28,22 @@ class VoiceManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val permissionManager: PermissionManager,
     private val speechRecognitionService: SpeechRecognitionService,
-    private val ttsManager: TTSManager,
+    val ttsManager: TTSManager,  // Make public for bubble access
     private val userPreferences: UserPreferences,
     private val appLifecycleService: AppLifecycleService
 ) {
 
     private val TAG = "VoiceManager"
+    
+    companion object {
+        @Volatile
+        var instance: VoiceManager? = null
+            private set
+    }
+    
+    init {
+        instance = this
+    }
     
     // Create a coroutine scope for this singleton service
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
