@@ -97,6 +97,12 @@ class WhizAccessibilityService : AccessibilityService() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
                 Log.d(TAG, "Successfully launched $packageName")
+                
+                // Start bubble overlay when launching non-WhizVoice apps
+                if (!packageName.contains("com.example.whiz")) {
+                    startBubbleOverlay()
+                }
+                
                 true
             } else {
                 Log.e(TAG, "Could not get launch intent for $packageName")
@@ -105,6 +111,28 @@ class WhizAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Error opening app $packageName", e)
             false
+        }
+    }
+    
+    /**
+     * Starts the bubble overlay service if overlay permission is granted
+     */
+    private fun startBubbleOverlay() {
+        try {
+            // Check if bubble is already active
+            if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                Log.d(TAG, "Bubble overlay already active, skipping start")
+                return
+            }
+            
+            if (android.provider.Settings.canDrawOverlays(this)) {
+                com.example.whiz.services.BubbleOverlayService.start(this)
+                Log.d(TAG, "Started bubble overlay service after launching app")
+            } else {
+                Log.w(TAG, "Cannot start bubble overlay - permission not granted")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start bubble overlay", e)
         }
     }
     

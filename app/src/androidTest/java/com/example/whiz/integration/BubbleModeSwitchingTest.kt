@@ -15,6 +15,7 @@ import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
+import com.example.whiz.tools.ToolExecutor
 import com.example.whiz.ui.viewmodels.VoiceManager
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -23,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.json.JSONObject
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -68,6 +70,9 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     @Inject
     lateinit var speechRecognitionService: SpeechRecognitionService
     
+    @Inject
+    lateinit var toolExecutor: ToolExecutor
+    
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     
     // Track chats created during tests for cleanup
@@ -81,9 +86,9 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         Log.d(TAG, "🎙️ Granting microphone permission for bubble mode test")
         device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
         
-        // Grant overlay permission for bubble
+        // Grant overlay permission for bubble using appops (SYSTEM_ALERT_WINDOW can't be granted via pm grant)
         Log.d(TAG, "🔵 Granting overlay permission for bubble")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.SYSTEM_ALERT_WINDOW")
+        device.executeShellCommand("appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow")
         
         // Update permission manager state
         permissionManager.updateMicrophonePermission(true)
@@ -108,7 +113,20 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
                 // Stop bubble service if active
                 if (BubbleOverlayService.isActive) {
                     BubbleOverlayService.stop(instrumentation.targetContext)
-                    delay(500) // Wait for service to stop
+                    // Wait for service to actually stop
+                    val cleanupStartTime = System.currentTimeMillis()
+                    val cleanupTimeoutMs = 1000L
+                    var stopped = false
+                    while (System.currentTimeMillis() - cleanupStartTime < cleanupTimeoutMs) {
+                        if (!BubbleOverlayService.isActive) {
+                            stopped = true
+                            break
+                        }
+                        delay(100)
+                    }
+                    if (!stopped) {
+                        Log.w(TAG, "⚠️ Bubble service did not stop within timeout")
+                    }
                 }
                 
                 // Clean up test chats
@@ -142,34 +160,24 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
             failWithScreenshot("Failed to launch WhizVoice app")
         }
         
-        // Handle accessibility dialog if present by clicking outside it
-        Log.d(TAG, "🔍 Checking for accessibility dialog...")
-        val accessibilityDialog = device.wait(Until.hasObject(By.text("Enable Accessibility Service")), 2000)
-        if (accessibilityDialog) {
-            Log.d(TAG, "📋 Accessibility dialog found, clicking outside to dismiss...")
-            // Click outside the dialog (in a safe area that won't trigger other actions)
-            device.click(50, 100)
-            Thread.sleep(500)
-        }
-        
         // For this test, we don't need to navigate to a new chat first
         // We'll just test the bubble mode switching functionality
         Log.d(TAG, "📝 Skipping new chat creation for bubble mode test...")
         
-        // Step 2: Open Calculator app
-        Log.d(TAG, "🧮 Step 2: Opening Calculator app...")
-        val openCalculatorIntent = Intent().apply {
-            setClassName("com.google.android.calculator", "com.android.calculator2.Calculator")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Step 2: Open Calculator app using ToolExecutor
+        // This simulates what happens when the server sends a launch_app tool request
+        Log.d(TAG, "🧮 Step 2: Opening Calculator app using ToolExecutor...")
+        
+        val toolRequest = JSONObject().apply {
+            put("tool", "launch_app")
+            put("request_id", "test_request_${System.currentTimeMillis()}")
+            put("params", JSONObject().apply {
+                put("app_name", "Calculator")
+            })
         }
         
-        try {
-            instrumentation.targetContext.startActivity(openCalculatorIntent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open Calculator app: ${e.message}")
-            // Try alternative method
-            device.executeShellCommand("am start -n com.google.android.calculator/com.android.calculator2.Calculator")
-        }
+        Log.d(TAG, "Executing tool request: ${toolRequest.toString(2)}")
+        toolExecutor.executeToolFromJson(toolRequest)
         
         // Wait for Calculator to open
         val calculatorOpened = device.wait(Until.hasObject(
@@ -182,114 +190,264 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         
         Log.d(TAG, "✅ Calculator app opened successfully")
         
-        // Step 3: Start bubble overlay service
-        Log.d(TAG, "🔵 Step 3: Starting bubble overlay service...")
-        BubbleOverlayService.start(instrumentation.targetContext)
+        // Step 3: Check if bubble started automatically
+        Log.d(TAG, "🔵 Step 3: Checking if bubble started automatically...")
         
-        // Wait for bubble to appear
+        // Wait to see if bubble service becomes active
+        var bubbleStarted = false
         runBlocking {
-            var attempts = 0
-            while (!BubbleOverlayService.isActive && attempts < 20) {
+            val startTime = System.currentTimeMillis()
+            val timeoutMs = 3000L
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                if (BubbleOverlayService.isActive) {
+                    bubbleStarted = true
+                    val elapsedMs = System.currentTimeMillis() - startTime
+                    Log.d(TAG, "✅ Bubble service became active automatically after ${elapsedMs}ms")
+                    break
+                }
                 delay(100)
-                attempts++
             }
         }
         
-        if (!BubbleOverlayService.isActive) {
-            failWithScreenshot("Bubble overlay service did not start")
+        if (!bubbleStarted) {
+            Log.e(TAG, "❌ Bubble did NOT start automatically when switching to Calculator")
+            Log.e(TAG, "Let's investigate why the bubble didn't start...")
+            failWithScreenshot("Bubble did not start automatically when switching to Calculator app - need to investigate production code")
         }
         
-        Log.d(TAG, "✅ Bubble overlay service started")
+        // Step 4: Verify bubble UI element is visible on Calculator screen
+        Log.d(TAG, "🔵 Step 4: Verifying bubble UI element is visible...")
         
-        // Step 4: Verify initial mode (CONTINUOUS_LISTENING)
-        Log.d(TAG, "🎤 Step 4: Verifying initial mode (CONTINUOUS_LISTENING)...")
-        assertEquals("Initial mode should be CONTINUOUS_LISTENING", 
-            ListeningMode.CONTINUOUS_LISTENING, BubbleOverlayService.bubbleListeningMode)
+        val bubbleVisible = device.wait(
+            Until.hasObject(By.res("com.example.whiz.debug", "chat_head")),
+            1000
+        )
         
-        // Wait for VoiceManager to detect bubble is active and start listening
-        // When bubble is in CONTINUOUS_LISTENING mode, mic should be on
+        if (!bubbleVisible) {
+            failWithScreenshot("Bubble UI element should be visible on Calculator screen but was not found")
+        }
+        
+        Log.d(TAG, "✅ Bubble UI element is visible on screen")
+        
+        // Step 5: Verify initial mode (CONTINUOUS_LISTENING)
+        Log.d(TAG, "🎤 Step 5: Verifying initial mode (CONTINUOUS_LISTENING)...")
+        if (BubbleOverlayService.bubbleListeningMode != ListeningMode.CONTINUOUS_LISTENING) {
+            failWithScreenshot("Initial mode should be CONTINUOUS_LISTENING but is ${BubbleOverlayService.bubbleListeningMode}")
+        }
+        
+        // Verify the mode indicator is visible (it shows the current mode icon)
+        Log.d(TAG, "🎤 Verifying mode indicator is visible on bubble...")
+        val modeIndicatorVisible = device.wait(
+            Until.hasObject(By.res("com.example.whiz.debug", "mode_indicator")),
+            1000
+        )
+        
+        if (!modeIndicatorVisible) {
+            failWithScreenshot("Mode indicator should be visible on bubble in CONTINUOUS_LISTENING mode but was not found")
+        }
+        
+        Log.d(TAG, "✅ Mode indicator is visible on bubble (showing microphone icon for CONTINUOUS_LISTENING)")
+        
+        // Wait for VoiceManager to detect bubble is active and potentially start listening
+        // Note: VoiceManager might not automatically start listening when bubble opens
+        // as it depends on various conditions (app state, permissions, etc.)
         runBlocking {
-            // Give VoiceManager more time to detect bubble and update listening state
-            delay(2000)
+            // Give VoiceManager time to detect bubble state change
+            val vmStartTime = System.currentTimeMillis()
+            val vmTimeoutMs = 1000L
+            while (System.currentTimeMillis() - vmStartTime < vmTimeoutMs) {
+                if (voiceManager.isListening.value) {
+                    val elapsedMs = System.currentTimeMillis() - vmStartTime
+                    Log.d(TAG, "VoiceManager started listening after ${elapsedMs}ms")
+                    break
+                }
+                delay(100)
+            }
         }
         
         val initialListeningState = voiceManager.isListening.value
-        val initialTTSState = shouldTTSBeActive()
+        val initialTTSEnabled = voiceManager.shouldEnableTTS()
+        val initialTTSSpeaking = ttsManager.isSpeaking.value
         
-        Log.d(TAG, "Initial state - Listening: $initialListeningState, TTS: $initialTTSState")
+        Log.d(TAG, "Initial state - Listening: $initialListeningState, TTS enabled: $initialTTSEnabled, TTS speaking: $initialTTSSpeaking")
         
-        // Note: VoiceManager might not automatically start listening when bubble opens
-        // This could be expected behavior - the app needs to be in foreground or have
-        // specific conditions met for listening to start
+        // Verify that VoiceManager is actually listening in CONTINUOUS_LISTENING mode
         if (!initialListeningState) {
-            Log.w(TAG, "⚠️ VoiceManager not listening despite bubble being active. This might be expected behavior.")
-            Log.w(TAG, "Skipping listening state verification for initial mode.")
+            failWithScreenshot("VoiceManager should be actively listening in CONTINUOUS_LISTENING mode but isListening=$initialListeningState")
+        }
+        Log.d(TAG, "✅ VoiceManager is actively listening")
+        
+        // Verify TTS is not enabled in CONTINUOUS_LISTENING mode
+        if (initialTTSEnabled) {
+            failWithScreenshot("TTS should not be enabled in CONTINUOUS_LISTENING mode but shouldEnableTTS=$initialTTSEnabled")
+        }
+        if (initialTTSSpeaking) {
+            failWithScreenshot("TTS should not be speaking in CONTINUOUS_LISTENING mode but isSpeaking=$initialTTSSpeaking")
         }
         
-        // We can still verify TTS is off
-        assertFalse("TTS should be OFF in CONTINUOUS_LISTENING mode", initialTTSState)
+        // Step 6: Perform long press to switch to MIC_OFF mode
+        Log.d(TAG, "🔇 Step 6: Switching to MIC_OFF mode...")
+        val initialMode = BubbleOverlayService.bubbleListeningMode
+        performBubbleLongPress()
         
-        // Step 5: Simulate long press to switch to MIC_OFF mode
-        Log.d(TAG, "🔇 Step 5: Switching to MIC_OFF mode...")
-        simulateBubbleModeCycle()
-        
+        // Wait for mode to actually change
         runBlocking {
-            delay(1000) // Wait for mode change to propagate
+            val modeStartTime = System.currentTimeMillis()
+            val modeTimeoutMs = 2000L
+            var modeChanged = false
+            while (System.currentTimeMillis() - modeStartTime < modeTimeoutMs) {
+                if (BubbleOverlayService.bubbleListeningMode != initialMode) {
+                    modeChanged = true
+                    break
+                }
+                delay(100)
+            }
+            if (!modeChanged) {
+                failWithScreenshot("Mode should change after long press but remained at $initialMode")
+            }
         }
         
-        assertEquals("Mode should be MIC_OFF after first cycle", 
-            ListeningMode.MIC_OFF, BubbleOverlayService.bubbleListeningMode)
+        if (BubbleOverlayService.bubbleListeningMode != ListeningMode.MIC_OFF) {
+            failWithScreenshot("Mode should be MIC_OFF after first cycle but is ${BubbleOverlayService.bubbleListeningMode}")
+        }
         
-        // Verify microphone is off
+        // Verify the mode indicator is still visible (showing mic-off icon in MIC_OFF mode)
+        Log.d(TAG, "🔇 Verifying mode indicator is visible on bubble...")
+        val modeIndicatorVisible = device.wait(
+            Until.hasObject(By.res("com.example.whiz.debug", "mode_indicator")),
+            1000
+        )
+        
+        if (!modeIndicatorVisible) {
+            failWithScreenshot("Mode indicator should be visible on bubble in MIC_OFF mode but was not found")
+        }
+        
+        Log.d(TAG, "✅ Mode indicator is visible on bubble (showing mic-off icon for MIC_OFF)")
+        
+        // Verify microphone is off and TTS is off
         val micOffListeningState = voiceManager.isListening.value
-        val micOffTTSState = shouldTTSBeActive()
+        val micOffTTSEnabled = voiceManager.shouldEnableTTS()
+        val micOffTTSSpeaking = ttsManager.isSpeaking.value
         
-        Log.d(TAG, "MIC_OFF state - Listening: $micOffListeningState, TTS: $micOffTTSState")
-        assertFalse("Microphone should be OFF in MIC_OFF mode", micOffListeningState)
-        assertFalse("TTS should be OFF in MIC_OFF mode", micOffTTSState)
-        
-        // Step 6: Simulate long press to switch to TTS_WITH_LISTENING mode
-        Log.d(TAG, "🔊 Step 6: Switching to TTS_WITH_LISTENING mode...")
-        simulateBubbleModeCycle()
-        
-        runBlocking {
-            delay(1000) // Wait for mode change to propagate
+        Log.d(TAG, "MIC_OFF state - Listening: $micOffListeningState, TTS enabled: $micOffTTSEnabled, TTS speaking: $micOffTTSSpeaking")
+        if (micOffListeningState) {
+            failWithScreenshot("Microphone should be OFF in MIC_OFF mode but isListening=$micOffListeningState")
+        }
+        if (micOffTTSEnabled) {
+            failWithScreenshot("TTS should not be enabled in MIC_OFF mode but shouldEnableTTS=$micOffTTSEnabled")
+        }
+        if (micOffTTSSpeaking) {
+            failWithScreenshot("TTS should not be speaking in MIC_OFF mode but isSpeaking=$micOffTTSSpeaking")
         }
         
-        assertEquals("Mode should be TTS_WITH_LISTENING after second cycle", 
-            ListeningMode.TTS_WITH_LISTENING, BubbleOverlayService.bubbleListeningMode)
+        // Step 7: Perform long press to switch to TTS_WITH_LISTENING mode
+        Log.d(TAG, "🔊 Step 7: Switching to TTS_WITH_LISTENING mode...")
+        val micOffMode = BubbleOverlayService.bubbleListeningMode
+        performBubbleLongPress()
         
-        // Verify TTS is enabled (listening state might vary based on VoiceManager initialization)
+        // Wait for mode to change from MIC_OFF
+        runBlocking {
+            val modeStartTime = System.currentTimeMillis()
+            val modeTimeoutMs = 2000L
+            var modeChanged = false
+            while (System.currentTimeMillis() - modeStartTime < modeTimeoutMs) {
+                if (BubbleOverlayService.bubbleListeningMode != micOffMode) {
+                    modeChanged = true
+                    break
+                }
+                delay(100)
+            }
+            if (!modeChanged) {
+                failWithScreenshot("Mode should change after long press but remained at $micOffMode")
+            }
+        }
+        
+        if (BubbleOverlayService.bubbleListeningMode != ListeningMode.TTS_WITH_LISTENING) {
+            failWithScreenshot("Mode should be TTS_WITH_LISTENING after second cycle but is ${BubbleOverlayService.bubbleListeningMode}")
+        }
+        
+        // Verify the mode indicator is visible (showing speaker icon in TTS_WITH_LISTENING mode)
+        Log.d(TAG, "🔊 Verifying mode indicator is visible on bubble...")
+        val modeIndicatorVisible = device.wait(
+            Until.hasObject(By.res("com.example.whiz.debug", "mode_indicator")),
+            1000
+        )
+        
+        if (!modeIndicatorVisible) {
+            failWithScreenshot("Mode indicator should be visible on bubble in TTS_WITH_LISTENING mode but was not found")
+        }
+        
+        Log.d(TAG, "✅ Mode indicator is visible on bubble (showing speaker icon for TTS_WITH_LISTENING)")
+        
+        // Verify TTS is enabled in TTS_WITH_LISTENING mode
         val ttsListeningState = voiceManager.isListening.value
-        val ttsModeState = shouldTTSBeActive()
+        val ttsModeEnabled = voiceManager.shouldEnableTTS()
+        val ttsModeSpeaking = ttsManager.isSpeaking.value
         
-        Log.d(TAG, "TTS_WITH_LISTENING state - Listening: $ttsListeningState, TTS: $ttsModeState")
+        Log.d(TAG, "TTS_WITH_LISTENING state - Listening: $ttsListeningState, TTS enabled: $ttsModeEnabled, TTS speaking: $ttsModeSpeaking")
         
-        // Focus on verifying that the mode is correctly set and TTS flag is on
-        assertTrue("TTS should be ON in TTS_WITH_LISTENING mode", ttsModeState)
-        Log.d(TAG, "✅ TTS mode correctly enabled")
+        // Microphone should be listening in TTS_WITH_LISTENING mode
+        if (!ttsListeningState) {
+            failWithScreenshot("VoiceManager should be actively listening in TTS_WITH_LISTENING mode but isListening=$ttsListeningState")
+        }
+        Log.d(TAG, "✅ VoiceManager is actively listening in TTS_WITH_LISTENING mode")
         
-        // Step 7: Cycle back to CONTINUOUS_LISTENING mode
-        Log.d(TAG, "🎤 Step 7: Cycling back to CONTINUOUS_LISTENING mode...")
-        simulateBubbleModeCycle()
+        // TTS should be enabled in this mode (actual speaking depends on whether there's active speech)
+        if (!ttsModeEnabled) {
+            failWithScreenshot("TTS should be enabled in TTS_WITH_LISTENING mode but shouldEnableTTS=$ttsModeEnabled")
+        }
+        Log.d(TAG, "✅ TTS correctly enabled in TTS_WITH_LISTENING mode")
         
+        // Step 8: Perform long press to cycle back to CONTINUOUS_LISTENING mode
+        Log.d(TAG, "🎤 Step 8: Cycling back to CONTINUOUS_LISTENING mode...")
+        val ttsMode = BubbleOverlayService.bubbleListeningMode
+        performBubbleLongPress()
+        
+        // Wait for mode to change from TTS_WITH_LISTENING
         runBlocking {
-            delay(1000) // Wait for mode change to propagate
+            val modeStartTime = System.currentTimeMillis()
+            val modeTimeoutMs = 2000L
+            var modeChanged = false
+            while (System.currentTimeMillis() - modeStartTime < modeTimeoutMs) {
+                if (BubbleOverlayService.bubbleListeningMode != ttsMode) {
+                    modeChanged = true
+                    break
+                }
+                delay(100)
+            }
+            if (!modeChanged) {
+                failWithScreenshot("Mode should change after long press but remained at $ttsMode")
+            }
         }
         
-        assertEquals("Mode should be back to CONTINUOUS_LISTENING after third cycle", 
-            ListeningMode.CONTINUOUS_LISTENING, BubbleOverlayService.bubbleListeningMode)
+        if (BubbleOverlayService.bubbleListeningMode != ListeningMode.CONTINUOUS_LISTENING) {
+            failWithScreenshot("Mode should be back to CONTINUOUS_LISTENING after third cycle but is ${BubbleOverlayService.bubbleListeningMode}")
+        }
         
-        // Verify TTS is off (listening state might vary)
+        // Verify listening is active and TTS is off after cycling back to CONTINUOUS_LISTENING
         val finalListeningState = voiceManager.isListening.value
-        val finalTTSState = shouldTTSBeActive()
+        val finalTTSEnabled = voiceManager.shouldEnableTTS()
+        val finalTTSSpeaking = ttsManager.isSpeaking.value
         
-        Log.d(TAG, "Final state - Listening: $finalListeningState, TTS: $finalTTSState")
-        assertFalse("TTS should be OFF after cycling back to CONTINUOUS_LISTENING", finalTTSState)
+        Log.d(TAG, "Final state - Listening: $finalListeningState, TTS enabled: $finalTTSEnabled, TTS speaking: $finalTTSSpeaking")
+        
+        // Verify microphone is listening again
+        if (!finalListeningState) {
+            failWithScreenshot("VoiceManager should be actively listening after cycling back to CONTINUOUS_LISTENING but isListening=$finalListeningState")
+        }
+        Log.d(TAG, "✅ VoiceManager resumed listening in CONTINUOUS_LISTENING mode")
+        
+        // Verify TTS is off
+        if (finalTTSEnabled) {
+            failWithScreenshot("TTS should not be enabled after cycling back to CONTINUOUS_LISTENING but shouldEnableTTS=$finalTTSEnabled")
+        }
+        if (finalTTSSpeaking) {
+            failWithScreenshot("TTS should not be speaking after cycling back to CONTINUOUS_LISTENING but isSpeaking=$finalTTSSpeaking")
+        }
         Log.d(TAG, "✅ Successfully cycled through all bubble modes")
         
-        // Step 8: Click bubble to return to app
-        Log.d(TAG, "🔄 Step 8: Clicking bubble to return to app...")
+        // Step 9: Click bubble to return to app
+        Log.d(TAG, "🔄 Step 9: Clicking bubble to return to app...")
         clickBubbleToReturnToApp()
         
         // Wait for app to come to foreground
@@ -301,11 +459,25 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
             failWithScreenshot("App did not return to foreground after clicking bubble")
         }
         
-        // Verify bubble is no longer active
+        // Wait for bubble service to become inactive
         runBlocking {
-            delay(500)
+            val stopStartTime = System.currentTimeMillis()
+            val stopTimeoutMs = 1000L
+            var bubbleStopped = false
+            while (System.currentTimeMillis() - stopStartTime < stopTimeoutMs) {
+                if (!BubbleOverlayService.isActive) {
+                    bubbleStopped = true
+                    break
+                }
+                delay(100)
+            }
+            if (!bubbleStopped) {
+                failWithScreenshot("Bubble should stop after returning to app but BubbleOverlayService.isActive=${BubbleOverlayService.isActive}")
+            }
         }
-        assertFalse("Bubble should not be active after returning to app", BubbleOverlayService.isActive)
+        if (BubbleOverlayService.isActive) {
+            failWithScreenshot("Bubble should not be active after returning to app but isActive=${BubbleOverlayService.isActive}")
+        }
         
         // Clean up
         MainActivity.testViewModelCallback = null
@@ -315,56 +487,52 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     }
     
     /**
-     * Helper function to simulate bubble mode cycling.
-     * Since we can't actually long-press the bubble in integration tests,
-     * we'll use reflection or a test-specific method to trigger the mode change.
-     * For now, we'll just update the mode directly and let VoiceManager detect it.
+     * Helper function to perform actual long press on the bubble using UI Automator.
+     * This finds the bubble overlay and performs a long press gesture to cycle modes.
+     * The caller is responsible for waiting for the mode change to complete.
      */
-    private fun simulateBubbleModeCycle() {
-        // Get current mode
-        val currentMode = BubbleOverlayService.bubbleListeningMode
+    private fun performBubbleLongPress() {
+        // The bubble uses a CardView with id "chat_head" 
+        // Since it's an overlay, we need to find it by its content or appearance
         
-        // Calculate next mode in cycle
-        val nextMode = when (currentMode) {
-            ListeningMode.CONTINUOUS_LISTENING -> ListeningMode.MIC_OFF
-            ListeningMode.MIC_OFF -> ListeningMode.TTS_WITH_LISTENING
-            ListeningMode.TTS_WITH_LISTENING -> ListeningMode.CONTINUOUS_LISTENING
+        // Try to find the bubble by looking for the overlay window
+        // The bubble should be visible as a small circular element on screen
+        val bubbleElement = device.findObject(By.res("com.example.whiz.debug", "chat_head"))
+        
+        if (bubbleElement == null) {
+            failWithScreenshot("Bubble element should be found on screen but was null")
         }
         
-        Log.d(TAG, "Simulating mode cycle: $currentMode -> $nextMode")
+        Log.d(TAG, "Found bubble element, performing long press")
+        // Perform actual long press
+        bubbleElement.longClick()
         
-        // Update the mode directly (simulating what happens on long press)
-        BubbleOverlayService.bubbleListeningMode = nextMode
-        
-        // VoiceManager listens to this mode change via polling in its coroutine
-        // Give it time to detect the change
-        runBlocking {
-            delay(200)
-        }
+        // Mode change detection is handled by the caller
     }
     
     /**
-     * Helper function to simulate clicking the bubble to return to app.
-     * In a real UI test, this would be a tap on the bubble.
+     * Helper function to click the bubble overlay to return to app using UI Automator.
+     * This performs an actual tap on the bubble element, which should bring the app
+     * back to foreground and stop the bubble service.
      */
     private fun clickBubbleToReturnToApp() {
-        Log.d(TAG, "Simulating bubble click to return to app")
+        Log.d(TAG, "Clicking bubble to return to app")
         
-        // Stop the bubble service (which happens when bubble is clicked)
-        BubbleOverlayService.stop(instrumentation.targetContext)
+        // Find the bubble element using UI Automator
+        val bubbleElement = device.findObject(By.res("com.example.whiz.debug", "chat_head"))
         
-        // Bring app back to foreground
-        bringAppToForeground()
+        if (bubbleElement == null) {
+            failWithScreenshot("Bubble element should be found on screen before clicking but was null")
+        }
+        
+        Log.d(TAG, "Found bubble element, performing click")
+        // Perform actual click on the bubble
+        bubbleElement.click()
+        
+        // The click should automatically:
+        // 1. Stop the bubble service
+        // 2. Bring the app back to foreground
+        // No need to manually call BubbleOverlayService.stop() or bringAppToForeground()
     }
     
-    /**
-     * Helper to check if TTS should be active based on current mode and state.
-     */
-    private fun shouldTTSBeActive(): Boolean {
-        val bubbleActive = BubbleOverlayService.isActive
-        val bubbleMode = BubbleOverlayService.bubbleListeningMode
-        
-        // TTS is only active in TTS_WITH_LISTENING mode when bubble is active
-        return bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
-    }
 }
