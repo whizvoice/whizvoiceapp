@@ -143,11 +143,21 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             }
             
             // Trigger refresh to show snackbar
-            composeTestRule.onRoot().performTouchInput {
-                swipeDown(
-                    startY = centerY - (height * 0.2f),
-                    endY = centerY + (height * 0.2f)
-                )
+            try {
+                composeTestRule.onRoot().performTouchInput {
+                    swipeDown(
+                        startY = centerY - (height * 0.2f),
+                        endY = centerY + (height * 0.2f)
+                    )
+                }
+            } catch (e: AssertionError) {
+                Log.e(TAG, "Failed to perform swipe: ${e.message}")
+                failWithScreenshot("Failed to perform swipe - ${e.message}", "swipe_failed_multiple_roots")
+                return@runBlocking
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error during swipe: ${e.message}")
+                failWithScreenshot("Unexpected error during swipe: ${e.message}", "swipe_error")
+                return@runBlocking
             }
             
             // Wait for snackbar

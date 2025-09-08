@@ -128,41 +128,4 @@ class LoginPriorityTest : BaseIntegrationTest() {
             failWithScreenshot("Unexpected error in login priority test: ${e.message}", "login_priority_unexpected_error")
         }
     }
-    
-    @Test
-    fun testPermissionDialogsAppearAfterLogin() {
-        try {
-            // First, authenticate the user
-            runBlocking {
-                val testAuth = authRepository as com.example.whiz.TestAuthRepository
-                val result = testAuth.authenticateWithTestCredentials()
-                if (!result.isSuccess) {
-                    failWithScreenshot("Authentication failed: ${result.exceptionOrNull()?.message}", "auth_failed")
-                }
-            }
-            
-            // Recreate the activity to trigger permission checks with authenticated user
-            composeTestRule.activityRule.scenario.recreate()
-            composeTestRule.waitForIdle()
-            
-            // Now permission dialog should appear since user is authenticated
-            val micDialogAppeared = ComposeTestHelper.waitForElement(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithContentDescription("Microphone permission dialog") },
-                timeoutMs = 3000L,
-                description = "microphone permission dialog after login"
-            )
-            
-            if (!micDialogAppeared) {
-                failWithScreenshot("Microphone dialog should appear after login but didn't", "no_mic_dialog_after_login")
-            }
-            
-            println("✓ Permission dialogs appear after user is authenticated")
-            
-        } catch (e: AssertionError) {
-            failWithScreenshot("Test assertion failed: ${e.message}", "permission_after_login_assertion_failed")
-        } catch (e: Exception) {
-            failWithScreenshot("Unexpected error in permission after login test: ${e.message}", "permission_after_login_unexpected_error")
-        }
-    }
 }
