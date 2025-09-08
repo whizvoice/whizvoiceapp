@@ -122,6 +122,9 @@ class BubbleOverlayService : Service() {
     private fun createChatHead() {
         chatHeadView = LayoutInflater.from(this).inflate(R.layout.bubble_chat_head, null)
         
+        // Set content description for accessibility and testing
+        chatHeadView?.findViewById<CardView>(R.id.chat_head)?.contentDescription = "WhizVoice Chat Bubble"
+        
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -221,24 +224,30 @@ class BubbleOverlayService : Service() {
     }
     
     private fun onChatHeadLongPress() {
-        Log.d(TAG, "Long press detected on chat head")
+        Log.d(TAG, "[MODE_SWITCH] Long press detected on chat head")
+        Log.d(TAG, "[MODE_SWITCH] Current mode before switch: $currentMode")
         
         // Cycle through modes
+        val previousMode = currentMode
         currentMode = when (currentMode) {
             ListeningMode.CONTINUOUS_LISTENING -> ListeningMode.MIC_OFF
             ListeningMode.MIC_OFF -> ListeningMode.TTS_WITH_LISTENING
             ListeningMode.TTS_WITH_LISTENING -> ListeningMode.CONTINUOUS_LISTENING
         }
         
-        Log.d(TAG, "Mode switched to: $currentMode")
+        Log.d(TAG, "[MODE_SWITCH] Mode switched from $previousMode to $currentMode")
+        Log.d(TAG, "[MODE_SWITCH] Calling updateModeVisual...")
         updateModeVisual()
+        Log.d(TAG, "[MODE_SWITCH] updateModeVisual completed, calling applyCurrentMode...")
         applyCurrentMode()
+        Log.d(TAG, "[MODE_SWITCH] applyCurrentMode completed")
     }
     
     private fun updateModeVisual() {
         handler.post {
             val profileImage = chatHeadView?.findViewById<ImageView>(R.id.profile_image)
             val modeIndicator = chatHeadView?.findViewById<ImageView>(R.id.mode_indicator)
+            val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
             
             // Clear any existing animations
             modeIndicator?.clearAnimation()
@@ -256,6 +265,8 @@ class BubbleOverlayService : Service() {
                         android.graphics.Color.BLACK,
                         android.graphics.PorterDuff.Mode.SRC_IN
                     )
+                    modeIndicator?.contentDescription = "Microphone Active"
+                    chatHead?.contentDescription = "WhizVoice Chat Bubble - Listening Mode"
                     startPulsingAnimation(modeIndicator)
                 }
                 ListeningMode.MIC_OFF -> {
@@ -266,6 +277,7 @@ class BubbleOverlayService : Service() {
                     // Hide mode indicator
                     modeIndicator?.visibility = View.GONE
                     modeIndicator?.clearAnimation()
+                    chatHead?.contentDescription = "WhizVoice Chat Bubble - Mic Off"
                 }
                 ListeningMode.TTS_WITH_LISTENING -> {
                     // Robot face with speaker icon
@@ -279,6 +291,8 @@ class BubbleOverlayService : Service() {
                         android.graphics.Color.BLACK,
                         android.graphics.PorterDuff.Mode.SRC_IN
                     )
+                    modeIndicator?.contentDescription = "Speaker Active"
+                    chatHead?.contentDescription = "WhizVoice Chat Bubble - Speaking Mode"
                     startPulsingAnimation(modeIndicator)
                 }
             }
@@ -310,45 +324,54 @@ class BubbleOverlayService : Service() {
     }
     
     private fun applyCurrentMode() {
+        Log.d(TAG, "[APPLY_MODE] Starting applyCurrentMode for mode: $currentMode")
+        
         // Store the current mode in companion object for access from VoiceManager
         bubbleListeningMode = currentMode
-        
-        Log.d(TAG, "Applying mode: $currentMode")
+        Log.d(TAG, "[APPLY_MODE] Set bubbleListeningMode to: $currentMode")
         
         // Get VoiceManager instance if available
         val voiceManager = VoiceManager.instance
+        Log.d(TAG, "[APPLY_MODE] VoiceManager.instance is ${if (voiceManager != null) "available" else "NULL"}")
+        
         if (voiceManager != null) {
-            Log.d(TAG, "Directly controlling VoiceManager for mode: $currentMode")
+            Log.d(TAG, "[APPLY_MODE] Directly controlling VoiceManager for mode: $currentMode")
             
             when (currentMode) {
                 ListeningMode.CONTINUOUS_LISTENING -> {
                     // Enable continuous listening, disable TTS
-                    Log.d(TAG, "Enabling continuous listening (mic on, TTS off)")
+                    Log.d(TAG, "[APPLY_MODE] Enabling continuous listening (mic on, TTS off)")
                     voiceManager.updateContinuousListeningEnabled(true)
+                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true)")
                     // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
                 }
                 ListeningMode.MIC_OFF -> {
                     // Disable continuous listening, disable TTS
-                    Log.d(TAG, "Disabling continuous listening (mic off, TTS off)")
+                    Log.d(TAG, "[APPLY_MODE] Disabling continuous listening (mic off, TTS off)")
                     voiceManager.updateContinuousListeningEnabled(false)
+                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(false)")
                     // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
                 }
                 ListeningMode.TTS_WITH_LISTENING -> {
                     // Enable continuous listening, enable TTS
-                    Log.d(TAG, "Enabling continuous listening with TTS (mic on, TTS on)")
+                    Log.d(TAG, "[APPLY_MODE] Enabling continuous listening with TTS (mic on, TTS on)")
                     voiceManager.updateContinuousListeningEnabled(true)
+                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true) for TTS mode")
                     // TTS will be enabled through shouldEnableTTS() check
                 }
             }
         } else {
-            Log.w(TAG, "VoiceManager instance not available, cannot directly control listening")
+            Log.w(TAG, "[APPLY_MODE] VoiceManager instance not available, cannot directly control listening")
         }
         
         // Always emit mode changes so VoiceManager can stop/start listening appropriately
+        Log.d(TAG, "[APPLY_MODE] Launching coroutine to emit mode change")
         serviceScope.launch {
-            Log.d(TAG, "Emitting mode change: $currentMode")
+            Log.d(TAG, "[APPLY_MODE] Emitting mode change: $currentMode")
             _modeChangeFlow.emit(currentMode)
+            Log.d(TAG, "[APPLY_MODE] Mode change emitted successfully")
         }
+        Log.d(TAG, "[APPLY_MODE] Completed applyCurrentMode")
     }
     
     private fun returnToApp() {
