@@ -47,8 +47,15 @@ class LoginPriorityTest : BaseIntegrationTest() {
             authRepository.signOut()
         }
         
-        // Revoke permissions to ensure they would normally trigger dialogs
-        revokeMicrophonePermission()
+        // Use TestPermissionManager to mock permissions instead of revoking them
+        // (revoking causes the app to be killed by Android)
+        if (permissionManager is com.example.whiz.test_helpers.TestPermissionManager) {
+            val testPermissionManager = permissionManager as com.example.whiz.test_helpers.TestPermissionManager
+            // Simulate microphone permission not granted
+            testPermissionManager.simulateMicrophoneRevoke()
+            // Simulate overlay permission not granted
+            testPermissionManager.simulateOverlayRevoke()
+        }
         
         // Verify permissions are not granted
         runBlocking {

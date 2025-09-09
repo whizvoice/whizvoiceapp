@@ -44,8 +44,9 @@ open class PermissionManager @Inject constructor(
     val nextRequiredPermission: StateFlow<PermissionType?> = _nextRequiredPermission
 
     init {
-        // Check initial permission states
-        checkAllPermissions()
+        // Don't check permissions here - MainActivity will call checkAllPermissions()
+        // after determining authentication status. This prevents the app from being
+        // killed when permissions are revoked at runtime before login.
     }
 
     /**
