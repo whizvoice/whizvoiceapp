@@ -1714,16 +1714,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             
             if (changeButtonFound) {
-                composeTestRule.onNodeWithContentDescription("Change Claude token")
-                    .performClick()
-                
-                // Wait for input field to appear
-                ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
-                    timeoutMs = 1000,
-                    description = "Claude API Key input field after Change"
-                )
+                try {
+                    composeTestRule.onNodeWithContentDescription("Change Claude token")
+                        .performClick()
+                    
+                    // Wait for input field to appear
+                    ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+                        timeoutMs = 1000,
+                        description = "Claude API Key input field after Change"
+                    )
+                } catch (e: AssertionError) {
+                    Log.e(TAG, "Failed to click Change button: ${e.message}")
+                    failWithScreenshot("change_button_click_failed", "Found Change button but could not click it")
+                }
             }
         }
         
@@ -1738,7 +1743,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("visibility_input_failed", "Could not enter token for visibility test")
         }
         
-        // Find the visibility toggle icon
+        // Check if visibility toggle exists without throwing assertion
+        val visibilityToggleExists = try {
+            composeTestRule.onNode(
+                hasContentDescription("Show password")
+                    .or(hasContentDescription("Show token"))
+                    .or(hasContentDescription("Hide password"))
+                    .or(hasContentDescription("Hide token"))
+            ).assertExists()
+            true
+        } catch (e: AssertionError) {
+            Log.d(TAG, "Visibility toggle not found - taking screenshot to document current UI")
+            false
+        }
+        
+        if (!visibilityToggleExists) {
+            // Take screenshot to show what the UI actually looks like
+            failWithScreenshot("visibility_toggle_not_found", "Could not find visibility toggle icon - UI may not have this feature implemented")
+            return // Exit test since we can't proceed without the toggle
+        }
+        
+        // If we get here, the visibility toggle exists
         try {
             val visibilityIcon = composeTestRule.onNode(
                 hasContentDescription("Show password")
@@ -1746,8 +1771,10 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             // Click to show the token
             visibilityIcon.performClick()
+            Log.d(TAG, "Successfully clicked visibility toggle to show token")
         } catch (e: AssertionError) {
-            failWithScreenshot("visibility_toggle_not_found", "Could not find visibility toggle icon")
+            Log.e(TAG, "Could not click visibility toggle: ${e.message}")
+            failWithScreenshot("visibility_toggle_click_failed", "Found toggle but could not click it")
         }
         
         Log.d(TAG, "Screenshot would be taken here: token_visible")
@@ -1758,6 +1785,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 hasContentDescription("Hide password")
                     .or(hasContentDescription("Hide token"))
             ).performClick()
+            Log.d(TAG, "Successfully clicked visibility toggle to hide token")
         } catch (e: AssertionError) {
             Log.w(TAG, "Could not hide token again")
         }
