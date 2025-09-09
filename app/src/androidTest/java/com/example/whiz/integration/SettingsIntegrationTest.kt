@@ -1125,12 +1125,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         // Check current state and ensure custom settings are enabled
-        try {
-            composeTestRule.onNodeWithText("Speech Rate").assertExists()
-            Log.d(TAG, "Custom settings already visible")
-        } catch (e: AssertionError) {
+        val customSettingsVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Speech Rate") },
+            timeoutMs = 500,
+            description = "Speech Rate text (checking if custom settings visible)"
+        )
+        
+        if (!customSettingsVisible) {
             Log.d(TAG, "Turning off system defaults to show custom settings")
             // Find and click the switch using its content description
+            val switchFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch") },
+                timeoutMs = 1000,
+                description = "Use System TTS Settings switch"
+            )
+            
+            if (!switchFound) {
+                failWithScreenshot("system_tts_switch_not_found", "Use System TTS Settings switch not found")
+            }
+            
             composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
                 .performClick()
             
@@ -1139,7 +1154,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Speech Rate") },
                 timeoutMs = 1000,
-                description = "Speech Rate text"
+                description = "Speech Rate text after toggle"
             )
             if (!speechRateFound) {
                 failWithScreenshot("speech_rate_not_found", "Speech Rate not found after disabling system defaults")
@@ -1154,6 +1169,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 timeoutMs = 2000,
                 description = "Test Playback button to be enabled after toggle"
             )
+        } else {
+            Log.d(TAG, "Custom settings already visible")
         }
         
         // Test adjusting speech rate
@@ -1183,25 +1200,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Test the Test Playback button
         Log.d(TAG, "Testing voice playback")
         
-        try {
-            // Wait for the button to be enabled (auto-save may still be in progress)
-            val testPlaybackEnabled = ComposeTestHelper.waitForElementEnabled(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithText("Test Playback") },
-                timeoutMs = 2000,
-                description = "Test Playback button to be enabled"
-            )
-            
-            if (testPlaybackEnabled) {
-                composeTestRule.onNodeWithText("Test Playback")
-                    .performClick()
-                Log.d(TAG, "Successfully clicked Test Playback button")
-            } else {
-                failWithScreenshot("test_playback_disabled", "Test Playback button remained disabled")
-            }
-        } catch (e: AssertionError) {
-            failWithScreenshot("test_playback_not_found", "Test Playback button not found or disabled: ${e.message}")
+        // Wait for the button to be enabled (auto-save may still be in progress)
+        val testPlaybackEnabled = ComposeTestHelper.waitForElementEnabled(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Test Playback") },
+            timeoutMs = 2000,
+            description = "Test Playback button to be enabled"
+        )
+        
+        if (!testPlaybackEnabled) {
+            failWithScreenshot("test_playback_disabled", "Test Playback button remained disabled")
         }
+        
+        composeTestRule.onNodeWithText("Test Playback")
+            .performClick()
+        Log.d(TAG, "Successfully clicked Test Playback button")
         
         // Take screenshot of voice settings
         Log.d(TAG, "Screenshot would be taken here: voice_settings_custom")
@@ -1210,6 +1223,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "Testing switch to system defaults")
         
         // Find and click the switch to turn on system defaults using content description
+        val switchForSystemDefaults = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch") },
+            timeoutMs = 1000,
+            description = "Use System TTS Settings switch for enabling"
+        )
+        
+        if (!switchForSystemDefaults) {
+            failWithScreenshot("switch_not_found_for_system", "Switch not found for enabling system defaults")
+        }
+        
         composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
             .performClick()
         
@@ -1225,10 +1249,15 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.w(TAG, "Test Playback button still disabled after 2s, continuing anyway")
         }
         
-        // Verify custom settings are hidden
-        try {
-            composeTestRule.onNodeWithText("Speech Rate").assertDoesNotExist()
-        } catch (e: AssertionError) {
+        // Verify custom settings are hidden by checking Speech Rate doesn't exist
+        val speechRateHidden = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Speech Rate") },
+            timeoutMs = 500,
+            description = "Speech Rate should be hidden"
+        )
+        
+        if (speechRateHidden) {
             Log.w(TAG, "Speech Rate still visible after switching to system defaults")
         }
         
@@ -1246,12 +1275,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         Log.d(TAG, "Screenshot would be taken here: voice_settings_system_defaults")
         
-        // Verify settings were saved
+        // Verify settings were saved - replace assertion with check and screenshot on failure
         runBlocking {
             val settings = withTimeout(1000) {
                 userPreferences.voiceSettings.first()
             }
-            assertTrue("System defaults should be enabled", settings.useSystemDefaults)
+            if (!settings.useSystemDefaults) {
+                Log.e(TAG, "FAILURE: System defaults should be enabled but it's not")
+                failWithScreenshot("system_defaults_not_enabled", "System defaults should be enabled but settings show: useSystemDefaults=${settings.useSystemDefaults}")
+            } else {
+                Log.d(TAG, "✓ System defaults correctly enabled in saved settings")
+            }
         }
     }
     
