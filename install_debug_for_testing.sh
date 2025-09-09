@@ -217,7 +217,7 @@ fi
 
 # Install or update the app
 log_with_time "⏳ Installing debug APK..."
-if adb install -r "$APK_PATH"; then
+if adb install -r -g "$APK_PATH"; then
     log_with_time "✅ Debug app installed successfully"
     
     # Save current checksum for next run

@@ -243,7 +243,12 @@ object TestAppModule {
         @ApplicationContext context: Context
     ): AccessibilityChecker {
         Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
-        return TestAccessibilityChecker(context)
+        return TestAccessibilityChecker(context).apply {
+            // Default to mocking accessibility as enabled for all tests
+            // This prevents the accessibility dialog from appearing
+            setMockServiceEnabled(true)
+            Log.d(TAG, "📱 Defaulting accessibility to ENABLED for tests")
+        }
     }
     
     @Provides

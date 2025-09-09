@@ -363,67 +363,67 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 composeTestRule.onNode(hasContentDescription("Clear Claude token"))
                     .assertIsEnabled()
                 Log.d(TAG, "✓ Clear button is enabled after setting invalid token")
-                
-                // Click Clear to remove the token
-                composeTestRule.onNode(hasContentDescription("Clear Claude token"))
-                    .performClick()
-                Log.d(TAG, "Clicked Clear button to remove invalid token")
-                
-                // Verify input field appears and is empty
-                val inputFieldAfterClear = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { 
-                        composeTestRule.onNodeWithText("Enter Claude API Key")
-                    },
-                    timeoutMs = 3000,
-                    description = "Input field after clearing"
-                )
-                
-                if (inputFieldAfterClear) {
-                    Log.d(TAG, "✓ Clear button successfully removed token - input field is now visible")
-                    
-                    // Set the invalid token again for the next test
-                    val inputField = composeTestRule.onNode(
-                        hasContentDescription("Claude API Key input field"),
-                        useUnmergedTree = true
-                    )
-                    inputField.performTextInput(invalidToken)
-                    
-                    // Save it again - use content description
-                    val saveAgainButton = ComposeTestHelper.waitForElement(
-                        composeTestRule = composeTestRule,
-                        selector = { 
-                            composeTestRule.onNode(hasContentDescription("Save Claude API Key button"))
-                        },
-                        timeoutMs = 3000,
-                        description = "Save Claude API Key button after re-entering token"
-                    )
-                    if (saveAgainButton) {
-                        composeTestRule.onNode(hasContentDescription("Save Claude API Key button")).performClick()
-                        
-                        // Wait for save to complete by checking for "Token set" confirmation
-                        val tokenSaved = ComposeTestHelper.waitForElement(
-                            composeTestRule = composeTestRule,
-                            selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
-                            timeoutMs = 2000,
-                            description = "Claude token set confirmation after re-save"
-                        )
-                        
-                        if (tokenSaved) {
-                            Log.d(TAG, "Re-saved invalid token for chat test")
-                        } else {
-                            Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
-                        }
-                    } else {
-                        Log.e(TAG, "Could not find Save button after re-entering token")
-                    }
-                } else {
-                    Log.e(TAG, "FAILURE: Input field not visible after clicking Clear")
-                    failWithScreenshot("clear_did_not_work", "Clear button did not remove token - input field not visible")
-                }
             } catch (e: AssertionError) {
                 Log.e(TAG, "FAILURE: Clear button is disabled after setting invalid token")
                 failWithScreenshot("clear_disabled_after_invalid", "Clear button should be enabled after setting token")
+            }
+            
+            // Click Clear to remove the token
+            composeTestRule.onNode(hasContentDescription("Clear Claude token"))
+                .performClick()
+            Log.d(TAG, "Clicked Clear button to remove invalid token")
+            
+            // Verify input field appears and is empty
+            val inputFieldAfterClear = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    composeTestRule.onNodeWithText("Enter Claude API Key")
+                },
+                timeoutMs = 3000,
+                description = "Input field after clearing"
+            )
+            
+            if (inputFieldAfterClear) {
+                Log.d(TAG, "✓ Clear button successfully removed token - input field is now visible")
+                
+                // Set the invalid token again for the next test
+                val inputField = composeTestRule.onNode(
+                    hasContentDescription("Claude API Key input field"),
+                    useUnmergedTree = true
+                )
+                inputField.performTextInput(invalidToken)
+                
+                // Save it again - use content description
+                val saveAgainButton = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNode(hasContentDescription("Save Claude API Key button"))
+                    },
+                    timeoutMs = 3000,
+                    description = "Save Claude API Key button after re-entering token"
+                )
+                if (saveAgainButton) {
+                    composeTestRule.onNode(hasContentDescription("Save Claude API Key button")).performClick()
+                    
+                    // Wait for save to complete by checking for "Token set" confirmation
+                    val tokenSaved = ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
+                        timeoutMs = 2000,
+                        description = "Claude token set confirmation after re-save"
+                    )
+                    
+                    if (tokenSaved) {
+                        Log.d(TAG, "Re-saved invalid token for chat test")
+                    } else {
+                        Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
+                    }
+                } else {
+                    Log.e(TAG, "Could not find Save button after re-entering token")
+                }
+            } else {
+                Log.e(TAG, "FAILURE: Input field not visible after clicking Clear")
+                failWithScreenshot("clear_did_not_work", "Clear button did not remove token - input field not visible")
             }
         } else {
             Log.e(TAG, "Clear button not found after setting invalid token")
