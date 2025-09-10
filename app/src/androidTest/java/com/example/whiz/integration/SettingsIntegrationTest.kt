@@ -664,6 +664,28 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             // Still continue with the test as the save operation might have succeeded
         }
         
+        // CRITICAL: Ensure Claude API key is restored programmatically as a safety measure
+        // The UI-based restoration above might fail or be incomplete
+        runBlocking {
+            try {
+                userPreferences.setClaudeToken(actualClaudeKey)
+                Log.d(TAG, "✓ Programmatically restored Claude API key as safety measure")
+                
+                // Wait a moment for the server update to complete
+                delay(500)
+                
+                // Verify the token is actually set
+                val tokenSet = userPreferences.hasClaudeToken.first()
+                if (tokenSet != true) {
+                    Log.e(TAG, "WARNING: Claude token restoration may have failed!")
+                } else {
+                    Log.d(TAG, "✓ Verified Claude token is set after restoration")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "ERROR: Failed to programmatically restore Claude token: ${e.message}")
+            }
+        }
+        
         Log.d(TAG, "✓ TEST COMPLETE: Successfully tested Claude API key management and restored test account token")
         Log.d(TAG, "========== testClaudeApiKey_SetAndUnset completed successfully ==========")
     }
