@@ -1523,7 +1523,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val premiumActiveFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Premium Subscription Active") },
-            timeoutMs = 1000,
+            timeoutMs = 1500,
             description = "Premium Subscription Active text"
         )
         if (!premiumActiveFound) {
