@@ -918,7 +918,14 @@ adb shell input keyevent KEYCODE_MENU
 sleep 1
 adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1 || true
 sleep 3
+# Grant runtime permissions
 adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev/null || true
+# Grant overlay permission (Display over other apps)
+adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
+# Enable accessibility service
+adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService 2>/dev/null || true
+adb shell settings put secure accessibility_enabled 1 2>/dev/null || true
+log_with_time "✅ Granted: microphone, overlay, and accessibility permissions"
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 sleep 1
 log_with_time "✅ Permissions granted and device prepared"
