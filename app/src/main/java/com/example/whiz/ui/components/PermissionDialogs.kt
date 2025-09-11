@@ -84,7 +84,7 @@ fun OverlayPermissionDialog(
         },
         text = { 
             Text(
-                "To show the floating notification bubble when you switch to other apps, Whiz needs permission to display over other apps. This allows you to continue using voice commands while multitasking.",
+                "Whiz needs permission to display over other apps, so you can use voice commands on other apps.",
                 textAlign = TextAlign.Start,
                 modifier = Modifier.semantics { 
                     contentDescription = "Overlay permission explanation"
