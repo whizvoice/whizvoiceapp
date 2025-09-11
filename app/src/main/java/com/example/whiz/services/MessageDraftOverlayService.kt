@@ -148,10 +148,16 @@ class MessageDraftOverlayService : Service() {
         // Use the width from bounds (which now contains the app's width)
         val overlayWidth = bounds.width()
         
+        // Get screen height to calculate how much space we have from input field to bottom
+        val screenHeight = resources.displayMetrics.heightPixels
+        
+        // Calculate height from the input field position to bottom of screen
+        val overlayHeight = screenHeight - (bounds.top - 10)
+        
         // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
             overlayWidth,  // Use app width from bounds
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayHeight,  // Extend from input field to bottom of screen
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -168,7 +174,7 @@ class MessageDraftOverlayService : Service() {
             y = bounds.top - 10  // Positioned relative to input field
         }
         
-        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - 10}, width=$overlayWidth (app width)")
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - 10}, width=$overlayWidth (app width), height=$overlayHeight")
         
         // Make the overlay clickable to dismiss
         overlayView?.findViewById<CardView>(R.id.draft_card)?.setOnTouchListener { _, event ->
