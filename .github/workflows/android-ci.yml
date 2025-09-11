@@ -203,6 +203,16 @@ jobs:
             adb shell getprop sys.boot_completed
             sleep 10
             echo "Emulator should be ready!"
+            
+            # Grant necessary permissions to avoid UI blocking dialogs
+            echo "🔐 Granting permissions to prevent dialog popups during tests..."
+            # Grant overlay permission (Display over other apps)
+            adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow 2>/dev/null || echo "⚠️ Failed to grant overlay permission"
+            # Enable accessibility service
+            adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService 2>/dev/null || echo "⚠️ Failed to set accessibility service"
+            adb shell settings put secure accessibility_enabled 1 2>/dev/null || echo "⚠️ Failed to enable accessibility"
+            echo "✅ Permissions granted: overlay and accessibility"
+            sleep 2
 
             # Device info logging
             echo "📱 Device Info:" | tee -a test-logs/test-summary.log
