@@ -98,7 +98,7 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = emptyList(),
-                additionalPatterns = listOf("bubble test", "calculator test", "mode switch"),
+                additionalPatterns = listOf("bubble test", "clock test", "mode switch"),
                 enablePatternFallback = false
             )
         }
@@ -133,7 +133,7 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = listOf("bubble test", "calculator test", "mode switch"),
+                    additionalPatterns = listOf("bubble test", "clock test", "mode switch"),
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
@@ -185,31 +185,33 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         // We'll just test the bubble mode switching functionality
         Log.d(TAG, "📝 Skipping new chat creation for bubble mode test...")
         
-        // Step 2: Open Calculator app using ToolExecutor
+        // Step 2: Open Clock app using ToolExecutor
         // This simulates what happens when the server sends a launch_app tool request
-        Log.d(TAG, "🧮 Step 2: Opening Calculator app using ToolExecutor...")
+        Log.d(TAG, "⏰ Step 2: Opening Clock app using ToolExecutor...")
         
         val toolRequest = JSONObject().apply {
             put("tool", "launch_app")
             put("request_id", "test_request_${System.currentTimeMillis()}")
             put("params", JSONObject().apply {
-                put("app_name", "Calculator")
+                put("app_name", "Clock")
             })
         }
         
         Log.d(TAG, "Executing tool request: ${toolRequest.toString(2)}")
         toolExecutor.executeToolFromJson(toolRequest)
         
-        // Wait for Calculator to open
-        val calculatorOpened = device.wait(Until.hasObject(
-            By.pkg("com.google.android.calculator")
-        ), 5000)
+        // Wait for Clock to open (try both possible package names)
+        val clockOpened = device.wait(Until.hasObject(
+            By.pkg("com.google.android.deskclock")
+        ), 5000) || device.wait(Until.hasObject(
+            By.pkg("com.android.deskclock")
+        ), 1000)
         
-        if (!calculatorOpened) {
-            failWithScreenshot("Calculator app did not open")
+        if (!clockOpened) {
+            failWithScreenshot("Clock app did not open")
         }
         
-        Log.d(TAG, "✅ Calculator app opened successfully")
+        Log.d(TAG, "✅ Clock app opened successfully")
         
         // Step 3: Check if bubble started automatically
         Log.d(TAG, "🔵 Step 3: Checking if bubble started automatically...")
@@ -231,12 +233,12 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         }
         
         if (!bubbleStarted) {
-            Log.e(TAG, "❌ Bubble did NOT start automatically when switching to Calculator")
+            Log.e(TAG, "❌ Bubble did NOT start automatically when switching to Clock")
             Log.e(TAG, "Let's investigate why the bubble didn't start...")
-            failWithScreenshot("Bubble did not start automatically when switching to Calculator app - need to investigate production code")
+            failWithScreenshot("Bubble did not start automatically when switching to Clock app - need to investigate production code")
         }
         
-        // Step 4: Verify bubble UI element is visible on Calculator screen
+        // Step 4: Verify bubble UI element is visible on Clock screen
         Log.d(TAG, "🔵 Step 4: Verifying bubble UI element is visible...")
         
         val bubbleVisible = device.wait(
@@ -245,7 +247,7 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         )
         
         if (!bubbleVisible) {
-            failWithScreenshot("Bubble UI element should be visible on Calculator screen but was not found")
+            failWithScreenshot("Bubble UI element should be visible on Clock screen but was not found")
         }
         
         Log.d(TAG, "✅ Bubble UI element is visible on screen")
