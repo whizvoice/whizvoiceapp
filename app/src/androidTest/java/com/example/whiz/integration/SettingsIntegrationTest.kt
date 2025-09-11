@@ -1110,6 +1110,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testVoiceSettings_CustomConfiguration() {
+        // Save the initial voice settings to restore at the end
+        var initialVoiceSettings: VoiceSettings? = null
+        runBlocking {
+            initialVoiceSettings = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Initial voice settings: $initialVoiceSettings")
+        }
+        
         if (!navigateToSettings()) {
             failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
@@ -1146,7 +1153,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("voice_settings_not_found", "Voice Settings section not found")
         }
         
-        // Check current state and ensure custom settings are enabled
+        // STEP 1: First ensure we're in custom settings mode (system defaults OFF)
+        // This gives us a known starting state for testing
         val customSettingsVisible = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Speech Rate") },
@@ -1155,7 +1163,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         )
         
         if (!customSettingsVisible) {
-            Log.d(TAG, "Turning off system defaults to show custom settings")
+            Log.d(TAG, "System defaults are currently ON - turning them OFF to show custom settings")
             // Find and click the switch using its content description
             val switchFound = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
@@ -1192,7 +1200,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 description = "Test Playback button to be enabled after toggle"
             )
         } else {
-            Log.d(TAG, "Custom settings already visible")
+            Log.d(TAG, "Custom settings already visible (system defaults already OFF)")
         }
         
         // Test adjusting speech rate
@@ -1238,13 +1246,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             .performClick()
         Log.d(TAG, "Successfully clicked Test Playback button")
         
+        // Wait for TTS playback to complete and UI to be ready
+        Thread.sleep(2000) // Give time for TTS playback and any UI updates
+        
         // Take screenshot of voice settings
         Log.d(TAG, "Screenshot would be taken here: voice_settings_custom")
         
-        // Test switching to system defaults
-        Log.d(TAG, "Testing switch to system defaults")
+        // STEP 2: Now test switching to system defaults (turning them ON)
+        Log.d(TAG, "Testing switch to system defaults - turning system defaults ON")
         
-        // Find and click the switch to turn on system defaults using content description
+        // At this point, custom settings are visible (system defaults are OFF)
+        // We will now click the switch to turn system defaults ON
         val switchForSystemDefaults = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch") },
@@ -1256,8 +1268,24 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("switch_not_found_for_system", "Switch not found for enabling system defaults")
         }
         
+        // First verify the current state of the toggle before clicking
+        runBlocking {
+            val currentSettings = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Current settings before toggle click: useSystemDefaults=${currentSettings.useSystemDefaults}")
+        }
+        
+        Log.d(TAG, "Clicking switch to enable system defaults (hide custom settings)")
         composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
             .performClick()
+        
+        // Wait a moment for the click to register
+        Thread.sleep(500)
+        
+        // Verify the toggle actually changed
+        runBlocking {
+            val settingsAfterClick = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Settings after toggle click: useSystemDefaults=${settingsAfterClick.useSystemDefaults}")
+        }
         
         // Wait for auto-save to complete after toggle change
         val saveCompleted = ComposeTestHelper.waitForElementEnabled(
@@ -1271,16 +1299,20 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.w(TAG, "Test Playback button still disabled after 2s, continuing anyway")
         }
         
-        // Verify custom settings are hidden by checking Speech Rate doesn't exist
-        val speechRateHidden = ComposeTestHelper.waitForElement(
+        // Verify custom settings are now hidden (Speech Rate should NOT be visible)
+        // We use a short timeout expecting it NOT to be found
+        val speechRateStillVisible = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Speech Rate") },
             timeoutMs = 500,
             description = "Speech Rate should be hidden"
         )
         
-        if (speechRateHidden) {
-            Log.w(TAG, "Speech Rate still visible after switching to system defaults")
+        if (speechRateStillVisible) {
+            Log.e(TAG, "ERROR: Speech Rate is still visible after switching to system defaults - custom settings should be hidden!")
+            failWithScreenshot("custom_settings_still_visible", "Custom settings still visible when system defaults should be ON")
+        } else {
+            Log.d(TAG, "✓ Custom settings correctly hidden after enabling system defaults")
         }
         
         // Test Playback should still be available - verify it's enabled
@@ -1307,6 +1339,17 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 failWithScreenshot("system_defaults_not_enabled", "System defaults should be enabled but settings show: useSystemDefaults=${settings.useSystemDefaults}")
             } else {
                 Log.d(TAG, "✓ System defaults correctly enabled in saved settings")
+            }
+            
+            // Restore the initial voice settings
+            if (initialVoiceSettings != null) {
+                Log.d(TAG, "Restoring initial voice settings: $initialVoiceSettings")
+                try {
+                    userPreferences.saveVoiceSettings(initialVoiceSettings!!)
+                    Log.d(TAG, "✓ Successfully restored initial voice settings")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restore initial voice settings: ${e.message}")
+                }
             }
         }
     }
