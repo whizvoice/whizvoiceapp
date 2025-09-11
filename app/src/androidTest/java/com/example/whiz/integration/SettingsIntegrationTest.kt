@@ -344,6 +344,23 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "✓ Invalid token saved successfully")
         }
         
+        // Wait for the Snackbar message to confirm server has responded
+        Log.d(TAG, "Waiting for server confirmation via Snackbar message")
+        val serverConfirmed = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { 
+                composeTestRule.onNodeWithText("Claude API Key saved successfully!")
+            },
+            timeoutMs = 3000,
+            description = "Server confirmation Snackbar"
+        )
+        
+        if (serverConfirmed) {
+            Log.d(TAG, "✓ Server confirmed token was saved")
+        } else {
+            Log.d(TAG, "Warning: Snackbar confirmation not found, but continuing with test")
+        }
+        
         // Test Clear button functionality - it should remove token without requiring new input
         Log.d(TAG, "Testing Clear button removes token without requiring new input")
         
