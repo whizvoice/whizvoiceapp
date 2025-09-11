@@ -800,7 +800,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     selector = { 
                         composeTestRule.onNodeWithText("Enter new Asana Access Token")
                     },
-                    timeoutMs = 5000,
+                    timeoutMs = 1000,
                     description = "Asana Access Token input field after clicking Change"
                 )
                 
@@ -1030,7 +1030,23 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             if (changeButton) {
                 composeTestRule.onNode(hasContentDescription("Change Asana token")).performClick()
                 Log.d(TAG, "Clicked Change button to access input field")
-                Thread.sleep(500) // Brief wait for UI transition
+                
+                // Wait for the input field to appear after clicking Change
+                val inputFieldAppeared = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNode(
+                            hasContentDescription("Asana Access Token input field"),
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 2000,
+                    description = "Asana Access Token input field after clicking Change"
+                )
+                
+                if (!inputFieldAppeared) {
+                    Log.w(TAG, "Input field did not appear immediately after clicking Change, continuing anyway")
+                }
             }
         } else {
             Log.d(TAG, "Input field already visible, no need to click Change")
@@ -1257,12 +1273,6 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             .performClick()
         Log.d(TAG, "Successfully clicked Test Playback button")
         
-        // Wait for TTS playback to complete and UI to be ready
-        Thread.sleep(2000) // Give time for TTS playback and any UI updates
-        
-        // Take screenshot of voice settings
-        Log.d(TAG, "Screenshot would be taken here: voice_settings_custom")
-        
         // STEP 2: Now test switching to system defaults (turning them ON)
         Log.d(TAG, "Testing switch to system defaults - turning system defaults ON")
         
@@ -1289,10 +1299,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
             .performClick()
         
-        // Wait a moment for the click to register
-        Thread.sleep(500)
-        
-        // Verify the toggle actually changed
+        // Verify the toggle actually changed by checking preferences
+        // This also ensures the click has been processed
         runBlocking {
             val settingsAfterClick = userPreferences.voiceSettings.first()
             Log.d(TAG, "Settings after toggle click: useSystemDefaults=${settingsAfterClick.useSystemDefaults}")
