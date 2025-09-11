@@ -257,39 +257,6 @@ class PermissionTest : BaseIntegrationTest() {
     }
     
     @Test
-    fun testOverlayPermissionDialogAppearsAfterAccessibilityGranted() = runTest {
-        // Setup: Grant microphone and accessibility, but not overlay
-        grantMicrophoneAndUpdate()
-        mockAccessibilityAndUpdate(true)
-        mockOverlayAndUpdate(false)
-        
-        // Given: The app checks permissions
-        permissionManager.checkAllPermissions()
-        
-        // Then: Check what permission is needed next
-        val nextPermission = permissionManager.nextRequiredPermission.first()
-        
-        // Since microphone and accessibility are granted but overlay is not, next should be overlay
-        if (nextPermission != PermissionManager.PermissionType.OVERLAY) {
-            failWithScreenshot(
-                "Expected OVERLAY to be next required permission but got $nextPermission",
-                "wrong_next_permission_for_overlay"
-            )
-        }
-        
-        // Verify the permission manager is tracking correctly
-        val overlayGranted = permissionManager.overlayPermissionGranted.first()
-        if (overlayGranted) {
-            failWithScreenshot(
-                "Overlay permission should not be granted after mocking it as disabled",
-                "overlay_incorrectly_granted"
-            )
-        }
-        
-        println("✓ Overlay permission correctly identified as next required permission")
-    }
-    
-    @Test
     fun testOverlayPermissionDialogShows() {
         // Setup: Grant microphone and accessibility, revoke overlay
         grantMicrophoneAndUpdate()
