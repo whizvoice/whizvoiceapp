@@ -296,11 +296,6 @@ class ScreenAgentTools @Inject constructor(
             // Note: This assumes WhatsApp is already open. 
             // The server should use launch_app tool first if needed.
             
-            // Wait for WhatsApp UI to be ready
-            if (!waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)) {
-                Log.w(TAG, "WhatsApp UI not ready after waiting")
-            }
-            
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -311,6 +306,11 @@ class ScreenAgentTools @Inject constructor(
                     chatName = chatName,
                     error = "Accessibility service not enabled. Please enable it in settings."
                 )
+            }
+            
+            // Wait for WhatsApp UI to be ready
+            if (!waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)) {
+                Log.w(TAG, "WhatsApp UI not ready after waiting")
             }
             
             // First detect what screen we're on and navigate accordingly
