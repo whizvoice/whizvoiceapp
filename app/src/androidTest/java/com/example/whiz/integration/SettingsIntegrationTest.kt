@@ -379,7 +379,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 selector = { 
                     composeTestRule.onNodeWithText("Enter Claude API Key")
                 },
-                timeoutMs = 3000,
+                timeoutMs = 1000,
                 description = "Input field after clearing"
             )
             
@@ -670,19 +670,30 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             try {
                 userPreferences.setClaudeToken(actualClaudeKey)
                 Log.d(TAG, "✓ Programmatically restored Claude API key as safety measure")
-                
-                // Wait a moment for the server update to complete
-                delay(500)
-                
-                // Verify the token is actually set
+            } catch (e: Exception) {
+                Log.e(TAG, "ERROR: Failed to programmatically restore Claude token: ${e.message}")
+            }
+        }
+        
+        // Wait for the UI to reflect the programmatically restored token
+        val tokenRestoredInUI = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
+            timeoutMs = 1500,
+            description = "Token set confirmation after programmatic restore"
+        )
+        
+        if (tokenRestoredInUI) {
+            Log.d(TAG, "✓ UI confirmed Claude token is set after programmatic restoration")
+        } else {
+            // Still verify via preferences as a fallback
+            runBlocking {
                 val tokenSet = userPreferences.hasClaudeToken.first()
                 if (tokenSet != true) {
                     Log.e(TAG, "WARNING: Claude token restoration may have failed!")
                 } else {
-                    Log.d(TAG, "✓ Verified Claude token is set after restoration")
+                    Log.d(TAG, "✓ Verified Claude token is set via preferences (UI confirmation timed out)")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "ERROR: Failed to programmatically restore Claude token: ${e.message}")
             }
         }
         
@@ -930,7 +941,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     selector = { 
                         composeTestRule.onNodeWithText("Enter Asana Access Token")
                     },
-                    timeoutMs = 3000,
+                    timeoutMs = 1000,
                     description = "Input field after clearing"
                 )
                 
