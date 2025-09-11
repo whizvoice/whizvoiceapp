@@ -25,6 +25,7 @@ import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
 import android.util.Log
+import com.example.whiz.test_helpers.SkipOnCIOrEmulatorRule
 
 /**
  * Integration test for WhatsApp functionality using voice commands:
@@ -54,6 +55,9 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
 
     @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+    
+    @get:Rule(order = 3)
+    val skipOnCIOrEmulatorRule = SkipOnCIOrEmulatorRule()
 
     @Inject
     lateinit var repository: WhizRepository
