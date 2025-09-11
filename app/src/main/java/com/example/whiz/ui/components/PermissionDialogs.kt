@@ -119,3 +119,58 @@ fun OverlayPermissionDialog(
         }
     )
 }
+
+@Composable
+fun AccessibilityPermissionDialog(
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {}, // Make dialog non-dismissible
+        modifier = Modifier.semantics { 
+            contentDescription = "Accessibility permission dialog"
+        },
+        title = { 
+            Text(
+                "Enable Accessibility Service",
+                modifier = Modifier.semantics { 
+                    contentDescription = "Enable accessibility service title"
+                }
+            ) 
+        },
+        text = {
+            Text(
+                text = "WhizVoice requires accessibility access to function properly.\n\n" +
+                      "This allows WhizVoice to:\n" +
+                      "• Open apps on your command\n" +
+                      "• Navigate your phone with voice\n" +
+                      "• Interact with other apps hands-free\n\n" +
+                      "In Settings:\n" +
+                      "1. Look for 'Downloaded apps' or 'Installed services'\n" +
+                      "2. Find 'WhizVoice' in the list\n" +
+                      "3. Toggle it ON and confirm",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics { 
+                    contentDescription = "Accessibility permission explanation"
+                }
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onOpenSettings()
+                    onDismiss()
+                },
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.Black
+                ),
+                modifier = Modifier.semantics { 
+                    contentDescription = "Open accessibility settings button"
+                }
+            ) {
+                Text("Open Settings")
+            }
+        },
+        dismissButton = null // Remove the dismiss button entirely
+    )
+}
