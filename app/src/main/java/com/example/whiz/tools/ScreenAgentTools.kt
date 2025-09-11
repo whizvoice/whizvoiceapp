@@ -296,8 +296,10 @@ class ScreenAgentTools @Inject constructor(
             // Note: This assumes WhatsApp is already open. 
             // The server should use launch_app tool first if needed.
             
-            // Give a moment for any transitions to settle
-            delay(500)
+            // Wait for WhatsApp UI to be ready
+            if (!waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)) {
+                Log.w(TAG, "WhatsApp UI not ready after waiting")
+            }
             
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -347,14 +349,16 @@ class ScreenAgentTools @Inject constructor(
                             Log.i(TAG, "Navigating back to chat list to find correct contact")
                             initialRootNode.recycle()
                             accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                            delay(1000) // Wait for navigation
+                            // Wait for navigation to complete and return to chat list
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
                         }
                     }
                     WhatsAppScreen.SETTINGS -> {
                         Log.i(TAG, "In settings, navigating back to main screen")
                         initialRootNode.recycle()
                         accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                        delay(1000) // Wait for navigation
+                        // Wait for navigation to complete
+                        waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
                     }
                     WhatsAppScreen.STATUS, WhatsAppScreen.CALLS -> {
                         Log.i(TAG, "On $currentScreen tab, need to switch to Chats tab")
@@ -363,7 +367,8 @@ class ScreenAgentTools @Inject constructor(
                         if (chatsTab != null && chatsTab.isNotEmpty()) {
                             accessibilityService.clickNode(chatsTab[0])
                             chatsTab.forEach { it.recycle() }
-                            delay(500)
+                            // Wait for tab switch to complete
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1000)
                         }
                         initialRootNode.recycle()
                     }
@@ -392,7 +397,8 @@ class ScreenAgentTools @Inject constructor(
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode == null) {
                     Log.w(TAG, "Could not get root node")
-                    delay(1000)
+                    // Wait a bit before retrying to get root node
+                    delay(200)
                     continue
                 }
                 
@@ -414,7 +420,23 @@ class ScreenAgentTools @Inject constructor(
                             
                             if (success) {
                                 // Wait to see if we're in a chat or profile view
-                                delay(1500)
+                                waitForCondition(maxWaitMs = 2000) {
+                                    val rootNode = accessibilityService.getCurrentRootNode()
+                                    if (rootNode != null) {
+                                        val screen = detectWhatsAppScreen(rootNode)
+                                        val isReady = screen == WhatsAppScreen.INSIDE_CHAT || 
+                                                     // Check for profile view (has Message button)
+                                                     rootNode.findAccessibilityNodeInfosByText("Message").let { nodes ->
+                                                         val hasMessageButton = nodes != null && nodes.isNotEmpty()
+                                                         nodes?.forEach { it.recycle() }
+                                                         hasMessageButton
+                                                     }
+                                        rootNode.recycle()
+                                        isReady
+                                    } else {
+                                        false
+                                    }
+                                }
                                 
                                 // Check if we need to click a "Message" button (profile view)
                                 val newRootNode = accessibilityService.getCurrentRootNode()
@@ -462,15 +484,17 @@ class ScreenAgentTools @Inject constructor(
                     
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
-                        delay(1500) // Give time for search results to appear
+                        // Wait for search results to appear
+                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 2000)
                     }
                 }
                 
                 // Recycle root node
                 rootNode.recycle()
                 
-                // Wait before retrying
-                delay(1000)
+                // Wait before retrying with exponential backoff
+                val retryDelay = minOf(200L * (1L shl attempts), 1000L)
+                delay(retryDelay)
             }
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
@@ -546,8 +570,17 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
-            // Wait a bit to ensure we're in a chat
-            delay(500)
+            // Wait to ensure we're in a chat
+            waitForCondition(maxWaitMs = 1000) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    val isInChat = detectWhatsAppScreen(rootNode) == WhatsAppScreen.INSIDE_CHAT
+                    rootNode.recycle()
+                    isInChat
+                } else {
+                    false
+                }
+            }
             
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -654,8 +687,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
-            // Wait a bit to ensure we're in a chat
-            delay(1000)
+            // Wait to ensure we're in a chat and UI is ready
+            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT, maxWaitMs = 1500)) {
+                Log.w(TAG, "Not in a WhatsApp chat after waiting")
+            }
             
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -684,9 +719,33 @@ class ScreenAgentTools @Inject constructor(
                 if (textSet) {
                     Log.d(TAG, "Message text set successfully")
                     
-                    // Find and click send button
-                    delay(500)
-                    val sendSuccess = clickSendButton(rootNode)
+                    // Wait for text to be set and then find send button
+                    val sendButtonFound = waitForCondition(maxWaitMs = 1000) {
+                        val currentRoot = accessibilityService.getCurrentRootNode()
+                        if (currentRoot != null) {
+                            // Check if send button is now enabled/visible
+                            val sendButton = currentRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
+                            val hasButton = sendButton != null && sendButton.isNotEmpty()
+                            sendButton?.forEach { it.recycle() }
+                            currentRoot.recycle()
+                            hasButton
+                        } else {
+                            false
+                        }
+                    }
+                    
+                    val sendSuccess = if (sendButtonFound) {
+                        val currentRoot = accessibilityService.getCurrentRootNode()
+                        val success = if (currentRoot != null) {
+                            clickSendButton(currentRoot)
+                        } else {
+                            false
+                        }
+                        currentRoot?.recycle()
+                        success
+                    } else {
+                        false
+                    }
                     
                     // Clean up
                     inputNodes.forEach { it.recycle() }
@@ -728,6 +787,137 @@ class ScreenAgentTools @Inject constructor(
     }
     
     // ========== Helper Functions ==========
+    
+    /**
+     * Poll for a specific condition with exponential backoff
+     * @param condition The condition to check
+     * @param maxWaitMs Maximum time to wait in milliseconds
+     * @param initialDelayMs Initial delay between checks
+     * @param maxIntervalMs Maximum interval between checks
+     * @return true if condition was met within timeout
+     */
+    private suspend fun waitForCondition(
+        maxWaitMs: Long = 2000,
+        initialDelayMs: Long = 50,
+        maxIntervalMs: Long = 500,
+        condition: suspend () -> Boolean
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        var currentDelay = initialDelayMs
+        
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            if (condition()) {
+                Log.d(TAG, "Condition met after ${System.currentTimeMillis() - startTime}ms")
+                return true
+            }
+            
+            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
+            if (remainingTime > 0) {
+                delay(minOf(currentDelay, remainingTime))
+                currentDelay = minOf(currentDelay * 2, maxIntervalMs)
+            }
+        }
+        
+        Log.d(TAG, "Condition not met after ${maxWaitMs}ms timeout")
+        return false
+    }
+    
+    /**
+     * Wait for WhatsApp UI to be ready after an action
+     */
+    private suspend fun waitForWhatsAppReady(
+        accessibilityService: WhizAccessibilityService,
+        expectedScreen: WhatsAppScreen? = null,
+        maxWaitMs: Long = 2000
+    ): Boolean {
+        return waitForCondition(maxWaitMs = maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val currentScreen = detectWhatsAppScreen(rootNode)
+                rootNode.recycle()
+                
+                // If we expect a specific screen, wait for it
+                if (expectedScreen != null) {
+                    currentScreen == expectedScreen
+                } else {
+                    // Otherwise just ensure we're on a known WhatsApp screen
+                    currentScreen != WhatsAppScreen.UNKNOWN
+                }
+            } else {
+                false
+            }
+        }
+    }
+    
+    /**
+     * Wait for search results to appear
+     */
+    private suspend fun waitForSearchResults(
+        accessibilityService: WhizAccessibilityService,
+        searchQuery: String,
+        maxWaitMs: Long = 2000
+    ): Boolean {
+        return waitForCondition(maxWaitMs = maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                // Check if search results are visible by looking for chat items
+                val chatNodes = findChatNodes(rootNode, searchQuery)
+                val hasResults = chatNodes.isNotEmpty()
+                chatNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                hasResults
+            } else {
+                false
+            }
+        }
+    }
+    
+    /**
+     * Wait for a specific UI element to appear
+     */
+    private suspend fun waitForElement(
+        accessibilityService: WhizAccessibilityService,
+        viewId: String? = null,
+        text: String? = null,
+        maxWaitMs: Long = 2000
+    ): AccessibilityNodeInfo? {
+        val startTime = System.currentTimeMillis()
+        var currentDelay = 50L
+        
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val nodes = when {
+                    viewId != null -> rootNode.findAccessibilityNodeInfosByViewId(viewId)
+                    text != null -> rootNode.findAccessibilityNodeInfosByText(text)
+                    else -> null
+                }
+                
+                if (nodes != null && nodes.isNotEmpty()) {
+                    val result = nodes[0]
+                    // Recycle the rest
+                    for (i in 1 until nodes.size) {
+                        nodes[i].recycle()
+                    }
+                    rootNode.recycle()
+                    Log.d(TAG, "Element found after ${System.currentTimeMillis() - startTime}ms")
+                    return result
+                }
+                
+                nodes?.forEach { it.recycle() }
+                rootNode.recycle()
+            }
+            
+            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
+            if (remainingTime > 0) {
+                delay(minOf(currentDelay, remainingTime))
+                currentDelay = minOf(currentDelay * 2, 500)
+            }
+        }
+        
+        Log.d(TAG, "Element not found after ${maxWaitMs}ms timeout")
+        return null
+    }
     
     private enum class WhatsAppScreen {
         CHAT_LIST,
@@ -862,7 +1052,13 @@ class ScreenAgentTools @Inject constructor(
                     searchNodes.forEach { it.recycle() }
                     
                     if (clicked) {
-                        delay(1000) // Wait for search field to appear
+                        // Wait for search field to appear
+                        val searchFieldAppeared = waitForElement(
+                            accessibilityService,
+                            viewId = "com.whatsapp:id/search_src_text",
+                            maxWaitMs = 1500
+                        )
+                        searchFieldAppeared?.recycle()
                         
                         // Now find the search input field and enter text
                         val searchRootNode = accessibilityService.getCurrentRootNode()
@@ -890,7 +1086,13 @@ class ScreenAgentTools @Inject constructor(
                         
                         if (clicked) {
                             searchByDesc.forEach { it.recycle() }
-                            delay(1000) // Wait for search field
+                            // Wait for search field to appear
+                            val searchFieldAppeared = waitForElement(
+                                accessibilityService,
+                                viewId = "com.whatsapp:id/search_src_text",
+                                maxWaitMs = 1500
+                            )
+                            searchFieldAppeared?.recycle()
                             
                             // Enter search text
                             val searchRootNode = accessibilityService.getCurrentRootNode()
@@ -936,7 +1138,8 @@ class ScreenAgentTools @Inject constructor(
                     )
                     searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
                     
-                    delay(200) // Small delay after clearing
+                    // Small delay after clearing to ensure UI updates
+                    delay(100)
                     
                     // Set the new search text
                     val setBundle = Bundle()
@@ -970,7 +1173,8 @@ class ScreenAgentTools @Inject constructor(
                 )
                 searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
                 
-                delay(200)
+                // Small delay after clearing to ensure UI updates
+                delay(100)
                 
                 val setBundle = Bundle()
                 setBundle.putCharSequence(
