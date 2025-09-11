@@ -26,6 +26,7 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
 import android.util.Log
 import com.example.whiz.test_helpers.SkipOnCIOrEmulatorRule
+import com.example.whiz.data.auth.AuthRepository
 
 /**
  * Integration test for WhatsApp functionality using voice commands:
@@ -51,6 +52,12 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         // Capture ViewModel from navigation scope (same pattern as MessageFlowVoiceComposeTest)
         @Volatile
         var capturedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+        
+        init {
+            // Tell TestAppModule to use real accessibility for this test
+            System.setProperty("test.real.accessibility", "true")
+            Log.d(TAG, "📱 Configured test to use REAL accessibility services")
+        }
     }
 
     @get:Rule(order = 2)
@@ -75,12 +82,6 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
-        // Set up the ViewModel capture callback
-        MainActivity.testViewModelCallback = { viewModel ->
-            capturedViewModel = viewModel
-            Log.d(TAG, "✅ ChatViewModel captured from MainActivity")
-        }
         
         Log.d(TAG, "🎬 WhatsApp voice integration test setup complete")
         Log.d(TAG, "📱 Test ID: $uniqueTestId")
@@ -143,11 +144,18 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 putExtra("tracing_intent_id", System.currentTimeMillis())
             }
             
-            // Activity is already launched by createAndroidComposeRule, but we need to wait for it to be ready
-            Log.d(TAG, "⏳ Waiting for app to be ready...")
-            delay(2000)
+            // Set up the ViewModel capture callback before launching
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { viewModel ->
+                capturedViewModel = viewModel
+                Log.d(TAG, "✅ ChatViewModel captured from MainActivity")
+            }
+            
+            // Launch through real Android system like MessageFlowVoiceComposeTest does
+            val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
             
             // Wait for ViewModel to be captured
+            Log.d(TAG, "⏳ Waiting for ViewModel to be captured...")
             var attempts = 0
             while (capturedViewModel == null && attempts < 20) {
                 Log.d(TAG, "⏳ Waiting for ViewModel capture... (attempt ${attempts + 1})")

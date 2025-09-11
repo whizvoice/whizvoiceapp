@@ -242,12 +242,25 @@ object TestAppModule {
     fun provideAccessibilityChecker(
         @ApplicationContext context: Context
     ): AccessibilityChecker {
-        Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
-        return TestAccessibilityChecker(context).apply {
-            // Default to mocking accessibility as enabled for all tests
-            // This prevents the accessibility dialog from appearing
-            setMockServiceEnabled(true)
-            Log.d(TAG, "📱 Defaulting accessibility to ENABLED for tests")
+        // Check if we're running WhatsApp test which needs real accessibility
+        val testClass = System.getProperty("test.class", "")
+        val useRealAccessibility = testClass.contains("WhatsAppIntegrationTest") ||
+                                  System.getProperty("test.real.accessibility", "false") == "true"
+        
+        return if (useRealAccessibility) {
+            Log.d(TAG, "🔧 Creating REAL AccessibilityChecker for WhatsApp integration...")
+            com.example.whiz.accessibility.AccessibilityCheckerImpl(context).also {
+                Log.d(TAG, "📱 Using REAL accessibility service - will check actual Android settings")
+                Log.d(TAG, "📱 Accessibility enabled: ${it.isServiceEnabled()}")
+            }
+        } else {
+            Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
+            TestAccessibilityChecker(context).apply {
+                // Default to mocking accessibility as enabled for all tests
+                // This prevents the accessibility dialog from appearing
+                setMockServiceEnabled(true)
+                Log.d(TAG, "📱 Defaulting accessibility to ENABLED for tests")
+            }
         }
     }
     
