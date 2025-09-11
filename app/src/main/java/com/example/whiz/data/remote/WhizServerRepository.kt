@@ -230,6 +230,26 @@ class WhizServerRepository @Inject constructor(
     }
     
     /**
+     * Filter out function call XML blocks from message content.
+     * These XML blocks are internal tool call structures that should not be displayed to users.
+     * They typically look like: <function_calls>...</function_calls> or <function_result>...</function_result>
+     */
+    private fun filterToolCallXML(content: String): String {
+        var filtered = content
+        
+        // Remove function_calls blocks
+        filtered = filtered.replace(Regex("<function_calls>.*?</function_calls>", RegexOption.DOT_MATCHES_ALL), "")
+        
+        // Remove function_result blocks  
+        filtered = filtered.replace(Regex("<function_result>.*?</function_result>", RegexOption.DOT_MATCHES_ALL), "")
+        
+        // Clean up any extra whitespace left behind
+        filtered = filtered.replace(Regex("\n{3,}"), "\n\n").trim()
+        
+        return filtered
+    }
+    
+    /**
      * Extract the conversation ID from the current WebSocket connection's URL
      * Checks for both conversation_id (positive) and client_conversation_id (negative) parameters
      */
@@ -483,6 +503,33 @@ class WhizServerRepository @Inject constructor(
                                 scope.launch { emitEvent(WebSocketEvent.Interrupted(interruptedMessage, requestId)) }
                                 messageHandled = true
                             }
+                            // Handle streaming chunk messages
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "stream_chunk") {
+                                // Extract the content from the streaming chunk
+                                var content = if (jsonObject.has("content")) {
+                                    jsonObject.getString("content")
+                                } else ""
+                                
+                                // Filter out function call XML blocks that shouldn't be displayed
+                                // These are internal tool call structures that should be hidden from users
+                                content = filterToolCallXML(content)
+                                
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                
+                                val clientConversationId = if (jsonObject.has("client_conversation_id") && !jsonObject.isNull("client_conversation_id")) {
+                                    jsonObject.getLong("client_conversation_id")
+                                } else null
+                                
+                                Log.d(TAG, "📥 Processing stream_chunk with content: ${content.take(50)}...")
+                                
+                                // Emit the content as a regular message, not the raw JSON
+                                scope.launch { 
+                                    emitEvent(WebSocketEvent.Message(content, requestId, conversationId, clientConversationId))
+                                }
+                                messageHandled = true
+                            }
                             // Handle structured errors with request_id
                             else if (jsonObject.has("error")) {
                                 val errorMessage = jsonObject.getString("error")
@@ -494,7 +541,10 @@ class WhizServerRepository @Inject constructor(
                             // Handle normal structured response with request_id and conversation_id
                             // This handles both "response" type and "broadcast" type messages
                             else if (jsonObject.has("response")) {
-                                val responseText = jsonObject.getString("response")
+                                var responseText = jsonObject.getString("response")
+                                
+                                // Filter out function call XML blocks that shouldn't be displayed
+                                responseText = filterToolCallXML(responseText)
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
