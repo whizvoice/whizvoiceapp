@@ -58,7 +58,6 @@ fun LoginScreen(
     val userProfile by authViewModel.userProfile.collectAsState()
     val isLoading by authViewModel.isLoading.collectAsState()
     val navigateToHome by authViewModel.navigateToHome.collectAsState()
-    var debugInfo by remember { mutableStateOf("") }
     val errorState by authViewModel.errorState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -194,42 +193,6 @@ fun LoginScreen(
                     .height(50.dp)
             ) {
                 Text(text = "Sign in with Google", fontSize = 16.sp)
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Debug section
-            OutlinedButton(
-                onClick = {
-                    val account = GoogleSignIn.getLastSignedInAccount(context)
-                    val availability = GoogleApiAvailability.getInstance()
-                    val servicesResult = availability.isGooglePlayServicesAvailable(context)
-                    val servicesAvailable = servicesResult == com.google.android.gms.common.ConnectionResult.SUCCESS
-                    val servicesMessage = if (servicesAvailable) "Available" else "Not available (code: $servicesResult)"
-                    
-                    debugInfo = """
-                        Last account: ${account?.email ?: "None"}
-                        Google Play Services: $servicesMessage
-                        Has ID token: ${account?.idToken != null}
-                        Package name: com.example.whiz
-                    """.trimIndent()
-                    
-                    Log.d("LoginScreen", "Debug info: $debugInfo")
-                },
-                modifier = Modifier
-                    .fillMaxWidth(0.8f)
-                    .height(50.dp)
-            ) {
-                Text(text = "Check Google Sign-In Status", fontSize = 14.sp)
-            }
-            
-            if (debugInfo.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = debugInfo,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp)
-                )
             }
         }
     }
