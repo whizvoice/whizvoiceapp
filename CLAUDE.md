@@ -2,7 +2,9 @@
 
 This project has two folders: whizvoice which has the webapp code, and whizvoiceapp which has the Android app code.
 
-On my phone, which is what I use for testing as well as running the production app, there are two apps installed: the production app and the debug app. You can update them with these scripts: whizvoiceapp/install_production_app.sh and whizvoiceapp/install_debug_for_testing.sh
+On my phone, which is what I use for testing as well as running the production app, there are two apps installed: the production app and the debug app. You can update them with these scripts:
+- Production app: `./install.sh --production` (add `--force` to force restart the app so that it's ready)
+- Debug app: `whizvoiceapp/install_debug_for_testing.sh`
 
 ## Guidelines
 

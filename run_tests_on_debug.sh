@@ -50,7 +50,7 @@ cleanup_and_ensure_debug_installed() {
             log_with_time "📱 Debug app not found - running installation script..."
             
             # Call the dedicated install script
-            if ./install_debug_for_testing.sh 2>/dev/null; then
+            if ./install.sh 2>/dev/null; then
                 log_with_time "✅ Debug app installed successfully via install script"
             else
                 log_with_time "❌ Install script failed - debug app may not be available"
@@ -923,9 +923,32 @@ adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev
 # Grant overlay permission (Display over other apps)
 adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
 # Enable accessibility service
-adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService 2>/dev/null || true
+# First, get any existing enabled services
+existing_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+if [[ "$existing_services" == "null" || -z "$existing_services" ]]; then
+    # No existing services, just set ours
+    adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService 2>/dev/null || true
+else
+    # Append our service to existing ones if not already present
+    if [[ ! "$existing_services" == *"com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"* ]]; then
+        adb shell settings put secure enabled_accessibility_services "${existing_services}:com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService" 2>/dev/null || true
+    fi
+fi
 adb shell settings put secure accessibility_enabled 1 2>/dev/null || true
-log_with_time "✅ Granted: microphone, overlay, and accessibility permissions"
+# Force the settings to take effect
+adb shell content insert --uri content://settings/secure --bind name:s:accessibility_enabled --bind value:s:1 2>/dev/null || true
+
+# Verify accessibility is enabled
+enabled_check=$(adb shell settings get secure accessibility_enabled 2>/dev/null | tr -d '\r\n')
+services_check=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+if [[ "$enabled_check" == "1" ]] && [[ "$services_check" == *"WhizAccessibilityService"* ]]; then
+    log_with_time "✅ Granted: microphone, overlay, and accessibility permissions (verified)"
+else
+    log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
+fi
+
+# Give accessibility service time to start
+sleep 2
 adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
 sleep 1
 log_with_time "✅ Permissions granted and device prepared"
@@ -1030,7 +1053,7 @@ else
     # Ensure debug app is installed for manual testing
     if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
         log_summary_only "📱 Debug app not found - installing for manual testing..."
-        if ./install_debug_for_testing.sh 2>/dev/null; then
+        if ./install.sh 2>/dev/null; then
             log_summary_only "✅ Debug app installed successfully for manual testing"
         else
             log_summary_only "❌ Failed to install debug app for manual testing"

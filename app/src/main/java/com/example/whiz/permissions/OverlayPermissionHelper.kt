@@ -23,12 +23,12 @@ object OverlayPermissionHelper {
     fun requestOverlayPermission(activity: Activity, requestCode: Int = 1001) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!Settings.canDrawOverlays(activity)) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${activity.packageName}")
-                )
+                val appPackageName = activity.packageName
+                Log.d(TAG, "Requesting overlay permission for package: $appPackageName")
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                intent.data = Uri.parse("package:$appPackageName")
+                Log.d(TAG, "Starting activity with URI: ${intent.data}")
                 activity.startActivityForResult(intent, requestCode)
-                Log.d(TAG, "Requesting overlay permission")
             }
         }
     }
@@ -39,12 +39,12 @@ object OverlayPermissionHelper {
     ) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!Settings.canDrawOverlays(activity)) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${activity.packageName}")
-                )
+                val appPackageName = activity.packageName
+                Log.d(TAG, "Requesting overlay permission with launcher for package: $appPackageName")
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                intent.data = Uri.parse("package:$appPackageName")
+                Log.d(TAG, "Starting activity with URI: ${intent.data}")
                 launcher.launch(intent)
-                Log.d(TAG, "Requesting overlay permission with launcher")
             }
         }
     }

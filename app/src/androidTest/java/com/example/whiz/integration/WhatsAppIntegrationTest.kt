@@ -5,9 +5,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -123,6 +125,207 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     }
 
     @Test
+    fun testWhatsAppNavigationFromMainChatList() {
+        runBlocking {
+        Log.d(TAG, "🚀 Starting WhatsApp navigation test from main chat list")
+        
+        try {
+            // Step 1: Launch WhatsApp and ensure it's on the main chat list
+            Log.d(TAG, "📱 Step 1: Launching WhatsApp and navigating to main chat list...")
+            launchWhatsApp()
+            
+            // Navigate to main chat list if not already there
+            navigateToMainChatList()
+            
+            // Verify we're on the main chat list
+            val isOnChatList = verifyOnMainChatList()
+            if (!isOnChatList) {
+                Log.e(TAG, "❌ Failed to navigate to WhatsApp main chat list")
+                failWithScreenshot("Not on main chat list", "$SCREENSHOT_PREFIX-not_on_chat_list")
+                return@runBlocking
+            }
+            Log.d(TAG, "✅ WhatsApp is on main chat list")
+            
+            // Step 2: Launch Whiz via voice
+            Log.d(TAG, "🎤 Step 2: Voice launching Whiz app...")
+            val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
+                putExtra("tracing_intent_id", System.currentTimeMillis())
+            }
+            
+            // Set up the ViewModel capture callback before launching
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { viewModel ->
+                capturedViewModel = viewModel
+                Log.d(TAG, "✅ ChatViewModel captured from MainActivity")
+            }
+            
+            // Launch through real Android system
+            val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
+            
+            // Wait for ViewModel to be captured
+            Log.d(TAG, "⏳ Waiting for ViewModel to be captured...")
+            var attempts = 0
+            while (capturedViewModel == null && attempts < 20) {
+                Log.d(TAG, "⏳ Waiting for ViewModel capture... (attempt ${attempts + 1})")
+                delay(500)
+                attempts++
+            }
+            
+            if (capturedViewModel == null) {
+                Log.e(TAG, "❌ Failed to capture ChatViewModel after ${attempts} attempts")
+                failWithScreenshot("Failed to capture ViewModel", "$SCREENSHOT_PREFIX-nav_viewmodel_not_captured")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "✅ ChatViewModel captured successfully")
+            
+            // Track any new chat created
+            try {
+                val currentChatId = capturedViewModel?.chatId?.value
+                if (currentChatId != null && currentChatId != -1L) {
+                    if (!createdChatIds.contains(currentChatId)) {
+                        createdChatIds.add(currentChatId)
+                        Log.d(TAG, "📝 Tracked chat for cleanup: $currentChatId")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track chat ID: ${e.message}")
+            }
+            
+            // Step 3: Send voice command to open WhatsApp chat
+            Log.d(TAG, "🎤 Step 3: Sending voice command to open WhatsApp chat...")
+            val openChatRequest = "Open WhatsApp chat with $WHATSAPP_CONTACT_NAME"
+            
+            // Simulate voice transcription using the captured ViewModel
+            instrumentation.runOnMainSync {
+                capturedViewModel?.let { vm ->
+                    Log.d(TAG, "🎤 Simulating voice command: '$openChatRequest'")
+                    vm.updateInputText(openChatRequest, fromVoice = true)
+                    vm.sendUserInput(openChatRequest)
+                    Log.d(TAG, "✅ Voice command sent")
+                }
+            }
+            
+            // Wait for the request to appear in UI
+            Log.d(TAG, "🔍 Waiting for voice command to appear in UI...")
+            val requestAppeared = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(openChatRequest, substring = true) },
+                timeoutMs = 5000L,
+                description = "open chat voice command"
+            )
+            
+            if (!requestAppeared) {
+                Log.e(TAG, "❌ Voice command not found in UI")
+                failWithScreenshot("Voice command not displayed", "$SCREENSHOT_PREFIX-nav_command_not_displayed")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "✅ Voice command visible in chat")
+            
+            // Wait a moment for any dialogs to appear
+            delay(1000)
+            
+            // Check if any permission dialog appears - this means setup failed
+            Log.d(TAG, "🔍 Checking for permission dialogs...")
+            val permissionDialogs = listOf(
+                "Accessibility permission dialog" to "accessibility",
+                "Microphone permission dialog" to "microphone", 
+                "Overlay permission dialog" to "overlay"
+            )
+            
+            for ((dialogDescription, permissionType) in permissionDialogs) {
+                Log.d(TAG, "Checking for $dialogDescription...")
+                val dialogShowing = try {
+                    composeTestRule.onNodeWithContentDescription(dialogDescription).assertExists()
+                    true
+                } catch (e: Exception) {
+                    Log.d(TAG, "Dialog not found: ${e.message}")
+                    false
+                }
+                
+                if (dialogShowing) {
+                    Log.e(TAG, "❌ PERMISSION NOT PROPERLY GRANTED! $permissionType permission dialog is showing")
+                    // Stop listening to prevent hanging
+                    try {
+                        voiceManager.stopListening()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not stop listening: ${e.message}")
+                    }
+                    failWithScreenshot("Permission not granted - $permissionType dialog appeared", "$SCREENSHOT_PREFIX-${permissionType}_not_enabled")
+                }
+            }
+            Log.d(TAG, "✅ No permission dialogs detected")
+            
+            // Step 4: Wait for assistant to process and navigate to WhatsApp
+            Log.d(TAG, "⏳ Step 4: Waiting for assistant to process and navigate...")
+            delay(5000) // Give assistant time to process and switch to WhatsApp
+            
+            // Step 5: Verify we're now in the correct WhatsApp chat
+            Log.d(TAG, "🔍 Step 5: Verifying navigation to correct WhatsApp chat...")
+            val isInCorrectChat = verifyInWhatsAppChat(WHATSAPP_CONTACT_NAME)
+            
+            if (isInCorrectChat) {
+                Log.d(TAG, "🎉 Successfully navigated to WhatsApp chat with $WHATSAPP_CONTACT_NAME")
+            } else {
+                Log.w(TAG, "⚠️ Navigation may not have completed successfully")
+                
+                // Check if we're still in Whiz app (navigation didn't happen)
+                val stillInWhiz = device.currentPackageName == packageName
+                if (stillInWhiz) {
+                    Log.e(TAG, "❌ Still in Whiz app, navigation to WhatsApp didn't occur")
+                    
+                    // Look for error messages in Whiz UI
+                    val errorPatterns = listOf(
+                        "couldn't open",
+                        "unable to",
+                        "error",
+                        "failed",
+                        "not found"
+                    )
+                    
+                    for (pattern in errorPatterns) {
+                        try {
+                            val nodes = composeTestRule.onAllNodesWithText(pattern, substring = true, ignoreCase = true).fetchSemanticsNodes()
+                            if (nodes.isNotEmpty()) {
+                                Log.e(TAG, "❌ Found error message with pattern: '$pattern'")
+                                break
+                            }
+                        } catch (e: Exception) {
+                            // Continue checking other patterns
+                        }
+                    }
+                    failWithScreenshot("Navigation to WhatsApp failed", "$SCREENSHOT_PREFIX-nav_failed")
+                } else {
+                    Log.w(TAG, "⚠️ In WhatsApp but possibly not in the correct chat")
+                }
+            }
+            
+            // Track updated chat ID if it changed
+            try {
+                val updatedChatId = capturedViewModel?.chatId?.value
+                if (updatedChatId != null && updatedChatId > 0 && !createdChatIds.contains(updatedChatId)) {
+                    createdChatIds.add(updatedChatId)
+                    Log.d(TAG, "📝 Tracked server chat ID for cleanup: $updatedChatId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track updated chat ID: ${e.message}")
+            }
+            
+            Log.d(TAG, "✅ WhatsApp navigation test from main chat list completed")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ WhatsApp navigation test FAILED", e)
+            failWithScreenshot("Test failed with exception: ${e.message}", "$SCREENSHOT_PREFIX-nav_exception")
+            throw e
+        }
+        }
+    }
+    
+    @Test
     fun testWhatsAppMessageFlow_withVoiceCommands() = runBlocking {
         Log.d(TAG, "🚀 Starting WhatsApp voice integration test")
         
@@ -214,6 +417,33 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             }
             
             Log.d(TAG, "✅ WhatsApp request visible in chat")
+            
+            // Check if any permission dialog appears - this means setup failed
+            val permissionDialogs = listOf(
+                "Accessibility permission dialog" to "accessibility",
+                "Microphone permission dialog" to "microphone",
+                "Overlay permission dialog" to "overlay"
+            )
+            
+            for ((dialogDescription, permissionType) in permissionDialogs) {
+                val dialogShowing = try {
+                    composeTestRule.onNodeWithContentDescription(dialogDescription).fetchSemanticsNode()
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+                
+                if (dialogShowing) {
+                    Log.e(TAG, "❌ PERMISSION NOT PROPERLY GRANTED! $permissionType permission dialog is showing")
+                    // Stop listening to prevent hanging
+                    try {
+                        voiceManager.stopListening()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not stop listening: ${e.message}")
+                    }
+                    failWithScreenshot("Permission not granted - $permissionType dialog appeared", "$SCREENSHOT_PREFIX-${permissionType}_not_enabled")
+                }
+            }
             
             // Step 3: Wait for assistant to process and show draft
             Log.d(TAG, "⏳ Step 3: Waiting for assistant to process and show draft...")
@@ -372,5 +602,164 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("Test failed with exception: ${e.message}", "$SCREENSHOT_PREFIX-exception")
             throw e
         }
+    }
+    
+    // ========== Helper Methods for WhatsApp Navigation Test ==========
+    
+    /**
+     * Launch WhatsApp using UiDevice
+     */
+    private fun launchWhatsApp() {
+        Log.d(TAG, "Launching WhatsApp...")
+        try {
+            val packageManager = instrumentation.context.packageManager
+            val launchIntent = packageManager.getLaunchIntentForPackage("com.whatsapp")
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                instrumentation.context.startActivity(launchIntent)
+                device.waitForIdle()
+                Thread.sleep(2000) // Wait for WhatsApp to fully launch
+            } else {
+                Log.w(TAG, "WhatsApp may not be installed, trying alternative launch method")
+                // Try launching via shell command as fallback
+                device.executeShellCommand("am start -n com.whatsapp/.Main")
+                Thread.sleep(2000)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch WhatsApp: ${e.message}")
+            throw e
+        }
+    }
+    
+    /**
+     * Navigate to WhatsApp main chat list from any screen
+     */
+    private fun navigateToMainChatList() {
+        Log.d(TAG, "Navigating to WhatsApp main chat list...")
+        
+        // First, try to go back multiple times to ensure we're not deep in navigation
+        repeat(5) {
+            // Check if we're already on the main chat list
+            if (device.hasObject(By.res("com.whatsapp:id/conversations_row_tip")) ||
+                device.hasObject(By.res("com.whatsapp:id/fab")) ||
+                device.hasObject(By.res("com.whatsapp:id/menuitem_search"))) {
+                Log.d(TAG, "Already on main chat list")
+                return
+            }
+            
+            // Check if we see the tab layout (means we're on main screen, just maybe different tab)
+            if (device.hasObject(By.res("com.whatsapp:id/tab_layout"))) {
+                // Click on Chats tab if available
+                val chatsTab = device.findObject(By.text("Chats"))
+                    ?: device.findObject(By.textContains("CHATS"))
+                
+                if (chatsTab != null) {
+                    chatsTab.click()
+                    device.waitForIdle()
+                    Thread.sleep(500)
+                    Log.d(TAG, "Clicked on Chats tab")
+                    return
+                }
+            }
+            
+            // Otherwise, go back
+            device.pressBack()
+            device.waitForIdle()
+            Thread.sleep(500)
+        }
+        
+        // Final attempt: click on Chats tab if we can find it
+        val chatsTab = device.findObject(By.text("Chats"))
+            ?: device.findObject(By.textContains("CHATS"))
+        chatsTab?.click()
+        device.waitForIdle()
+    }
+    
+    /**
+     * Verify that WhatsApp is on the main chat list
+     */
+    private fun verifyOnMainChatList(): Boolean {
+        Log.d(TAG, "Verifying WhatsApp is on main chat list...")
+        device.waitForIdle()
+        
+        // Check for various indicators of the main chat list
+        val indicators = listOf(
+            By.res("com.whatsapp:id/conversations_row_tip"),  // Chat list indicator
+            By.res("com.whatsapp:id/fab"),  // Floating action button (new chat)
+            By.res("com.whatsapp:id/menuitem_search"),  // Search button
+            By.text("Chats"),  // Chats tab text
+            By.res("com.whatsapp:id/contact_row_container")  // Contact rows
+        )
+        
+        for (indicator in indicators) {
+            if (device.hasObject(indicator)) {
+                Log.d(TAG, "Found chat list indicator: $indicator")
+                return true
+            }
+        }
+        
+        // Also check that we're in WhatsApp package
+        val currentPackage = device.currentPackageName
+        if (currentPackage != "com.whatsapp") {
+            Log.w(TAG, "Not in WhatsApp app, current package: $currentPackage")
+            return false
+        }
+        
+        Log.w(TAG, "Could not verify main chat list with certainty")
+        return false
+    }
+    
+    /**
+     * Verify that we're in a specific WhatsApp chat
+     */
+    private fun verifyInWhatsAppChat(contactName: String): Boolean {
+        Log.d(TAG, "Verifying we're in WhatsApp chat with: $contactName")
+        device.waitForIdle()
+        
+        // First check we're in WhatsApp
+        val currentPackage = device.currentPackageName
+        if (currentPackage != "com.whatsapp") {
+            Log.w(TAG, "Not in WhatsApp app, current package: $currentPackage")
+            return false
+        }
+        
+        // Check for chat header with contact name
+        val chatHeader = device.findObject(By.res("com.whatsapp:id/conversation_contact_name"))
+            ?: device.findObject(By.res("com.whatsapp:id/conversation_contact"))
+        
+        if (chatHeader != null) {
+            val headerText = chatHeader.text
+            Log.d(TAG, "Found chat header: $headerText")
+            
+            // Check if it matches our contact (case-insensitive, trimmed)
+            if (headerText != null && 
+                headerText.trim().equals(contactName.trim(), ignoreCase = true)) {
+                Log.d(TAG, "✅ Confirmed: In chat with $contactName")
+                return true
+            } else {
+                Log.w(TAG, "In a chat but with different contact: $headerText (expected: $contactName)")
+                return false
+            }
+        }
+        
+        // Alternative: Check for the contact name in the action bar or title
+        val titleElement = device.findObject(By.text(contactName))
+            ?: device.findObject(By.textContains(contactName))
+        
+        if (titleElement != null) {
+            Log.d(TAG, "Found contact name in UI: $contactName")
+            
+            // Also verify we have chat UI elements
+            val hasMessageInput = device.hasObject(By.res("com.whatsapp:id/entry"))
+                || device.hasObject(By.res("com.whatsapp:id/conversation_entry"))
+            
+            if (hasMessageInput) {
+                Log.d(TAG, "✅ Confirmed: In chat with $contactName (has message input)")
+                return true
+            }
+        }
+        
+        Log.w(TAG, "Could not verify we're in chat with: $contactName")
+        return false
     }
 }

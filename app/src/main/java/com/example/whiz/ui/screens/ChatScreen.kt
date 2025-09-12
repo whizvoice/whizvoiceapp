@@ -907,12 +907,12 @@ fun ChatScreen(
             onDismiss = { viewModel.dismissOverlayPermissionDialog() },
             onRequestPermission = {
                 // Open system settings for overlay permission
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}")
-                ).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
+                val appPackageName = context.packageName
+                Log.d("ChatScreen", "Requesting overlay permission for package: $appPackageName")
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                intent.data = Uri.parse("package:$appPackageName")
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Log.d("ChatScreen", "Starting activity with URI: ${intent.data}")
                 context.startActivity(intent)
                 viewModel.requestOverlayPermission()
             }

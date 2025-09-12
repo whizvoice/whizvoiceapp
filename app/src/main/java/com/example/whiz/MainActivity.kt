@@ -155,11 +155,15 @@ class MainActivity : ComponentActivity() {
                                     onDismiss = { /* User dismissed the dialog */ },
                                     onRequestPermission = {
                                         // Open system settings for overlay permission
-                                        val intent = Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:$packageName")
-                                        )
-                                        startActivity(intent)
+                                        // Note: Android 16+ strips package name from URI due to security restrictions
+                                        // Users will need to manually find the app in the list
+                                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                        
+                                        try {
+                                            startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Log.e("MainActivity", "Failed to open overlay settings", e)
+                                        }
                                     }
                                 )
                             }
