@@ -898,12 +898,23 @@ echo "# GRADLE BUILD AND TEST EXECUTION OUTPUT" > test_gradle_output.log
 echo "# HUMAN-READABLE SUMMARIES WITH RELEVANT EXCERPTS" > test_summary.log
 # test_logcat_output.log will be initialized when tests start
 
+# Build the debug APK first (before calling install.sh)
+if [[ "$SKIP_APP_INSTALL" != "true" ]]; then
+    run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
+fi
+
 # Build and install (no gradle output redirection here - these are not tests)
 if [[ "$SKIP_APP_INSTALL" == "true" ]]; then
     log_with_time "⏭️ Skipping app rebuild and installation (using existing app)"
 else
-run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
-run_with_log "Installing/updating latest debug APK" "adb install -r -g app/build/outputs/apk/debug/app-debug.apk"
+    # Use the smart install script which preserves permissions when APK is unchanged
+    log_with_time "🔧 Using smart install to preserve accessibility permissions when possible..."
+    if ./install.sh --skip-build >> test_gradle_output.log 2>&1; then
+        log_with_time "✅ App installed/verified successfully"
+    else
+        log_with_time "❌ App installation failed"
+        exit 1
+    fi
 fi
 
 # Build and install test APK

@@ -28,6 +28,7 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
 import android.util.Log
 import com.example.whiz.test_helpers.SkipOnCIOrEmulatorRule
+import com.example.whiz.test_helpers.PermissionAutomator
 import com.example.whiz.data.auth.AuthRepository
 
 /**
@@ -80,10 +81,68 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val uniqueTestId = System.currentTimeMillis()
     private val createdChatIds = mutableListOf<Long>()
+    private val permissionAutomator = PermissionAutomator()
     
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
+        
+        // Check current permission status
+        Log.d(TAG, "🔐 Checking initial permission status...")
+        val initialStatus = permissionAutomator.verifyPermissions()
+        Log.d(TAG, "📊 Initial permission status: $initialStatus")
+        
+        if (!initialStatus.allGranted()) {
+            Log.d(TAG, "⚠️ Not all permissions are pre-granted")
+            Log.d(TAG, "   Missing: " +
+                "${if (!initialStatus.overlayEnabled) "overlay " else ""}" +
+                "${if (!initialStatus.accessibilityEnabled) "accessibility " else ""}" +
+                "${if (!initialStatus.microphoneEnabled) "microphone" else ""}")
+            
+            // Proactively trigger and handle permission dialogs during setup
+            Log.d(TAG, "🔧 Attempting to grant permissions during test setup...")
+            runBlocking {
+                if (!initialStatus.accessibilityEnabled) {
+                    Log.d(TAG, "📱 Triggering accessibility permission dialog...")
+                    // Launch the app to trigger permission dialogs
+                    val intent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    instrumentation.startActivitySync(intent)
+                    delay(2000) // Wait for app to load
+                    
+                    // Check and handle accessibility permission
+                    val accessibilityHandled = permissionAutomator.handlePermissionDialogs()
+                    if (accessibilityHandled) {
+                        Log.d(TAG, "✅ Accessibility permission granted during setup")
+                    }
+                }
+                
+                if (!initialStatus.overlayEnabled) {
+                    Log.d(TAG, "📱 Triggering overlay permission dialog...")
+                    // May need to navigate in the app to trigger overlay permission
+                    // This depends on when your app requests overlay permission
+                    delay(1000)
+                    
+                    // Check and handle overlay permission
+                    val overlayHandled = permissionAutomator.handlePermissionDialogs()
+                    if (overlayHandled) {
+                        Log.d(TAG, "✅ Overlay permission granted during setup")
+                    }
+                }
+                
+                // Verify final permission status
+                val finalStatus = permissionAutomator.verifyPermissions()
+                Log.d(TAG, "📊 Final permission status after setup: $finalStatus")
+                
+                if (!finalStatus.allGranted()) {
+                    Log.w(TAG, "⚠️ Some permissions still not granted after setup attempts")
+                    Log.w(TAG, "   Test may encounter permission dialogs during execution")
+                }
+            }
+        } else {
+            Log.d(TAG, "✅ All permissions already granted")
+        }
         
         Log.d(TAG, "🎬 WhatsApp voice integration test setup complete")
         Log.d(TAG, "📱 Test ID: $uniqueTestId")
@@ -229,36 +288,34 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             // Wait a moment for any dialogs to appear
             delay(1000)
             
-            // Check if any permission dialog appears - this means setup failed
+            // Check and handle permission dialogs automatically
             Log.d(TAG, "🔍 Checking for permission dialogs...")
-            val permissionDialogs = listOf(
-                "Accessibility permission dialog" to "accessibility",
-                "Microphone permission dialog" to "microphone", 
-                "Overlay permission dialog" to "overlay"
-            )
+            val permissionsHandled = permissionAutomator.handlePermissionDialogs()
             
-            for ((dialogDescription, permissionType) in permissionDialogs) {
-                Log.d(TAG, "Checking for $dialogDescription...")
-                val dialogShowing = try {
-                    composeTestRule.onNodeWithContentDescription(dialogDescription).assertExists()
-                    true
-                } catch (e: Exception) {
-                    Log.d(TAG, "Dialog not found: ${e.message}")
-                    false
+            if (permissionsHandled) {
+                Log.d(TAG, "✅ Permissions were granted automatically via UI navigation")
+                // Wait for app to recover after permission granting
+                delay(2000)
+                
+                // Re-send the voice command since we may have left the app
+                instrumentation.runOnMainSync {
+                    capturedViewModel?.let { vm ->
+                        Log.d(TAG, "🎤 Re-sending voice command after permission grant: '$openChatRequest'")
+                        vm.updateInputText(openChatRequest, fromVoice = true)
+                        vm.sendUserInput(openChatRequest)
+                    }
                 }
                 
-                if (dialogShowing) {
-                    Log.e(TAG, "❌ PERMISSION NOT PROPERLY GRANTED! $permissionType permission dialog is showing")
-                    // Stop listening to prevent hanging
-                    try {
-                        voiceManager.stopListening()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not stop listening: ${e.message}")
-                    }
-                    failWithScreenshot("Permission not granted - $permissionType dialog appeared", "$SCREENSHOT_PREFIX-${permissionType}_not_enabled")
-                }
+                // Wait for the request to appear again
+                ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText(openChatRequest, substring = true) },
+                    timeoutMs = 5000L,
+                    description = "re-sent open chat voice command"
+                )
+            } else {
+                Log.d(TAG, "✅ No permission dialogs detected")
             }
-            Log.d(TAG, "✅ No permission dialogs detected")
             
             // Step 4: Wait for assistant to process and navigate to WhatsApp
             Log.d(TAG, "⏳ Step 4: Waiting for assistant to process and navigate...")
@@ -316,6 +373,21 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             }
             
             Log.d(TAG, "✅ WhatsApp navigation test from main chat list completed")
+            
+            // Click on notification bubble to return to the app and properly end the test
+            Log.d(TAG, "🔔 Clicking notification bubble to return to app...")
+            try {
+                val notificationBubble = device.findObject(By.res("com.example.whiz.debug:id/overlay_bubble"))
+                if (notificationBubble != null) {
+                    notificationBubble.click()
+                    Log.d(TAG, "✅ Clicked notification bubble")
+                    delay(1000) // Give time for app to come to foreground
+                } else {
+                    Log.w(TAG, "⚠️ Notification bubble not found, test may not end properly")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not click notification bubble: ${e.message}")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ WhatsApp navigation test FAILED", e)
@@ -418,31 +490,33 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ WhatsApp request visible in chat")
             
-            // Check if any permission dialog appears - this means setup failed
-            val permissionDialogs = listOf(
-                "Accessibility permission dialog" to "accessibility",
-                "Microphone permission dialog" to "microphone",
-                "Overlay permission dialog" to "overlay"
-            )
+            // Check and handle permission dialogs automatically
+            Log.d(TAG, "🔍 Checking for permission dialogs...")
+            val permissionsHandled = permissionAutomator.handlePermissionDialogs()
             
-            for ((dialogDescription, permissionType) in permissionDialogs) {
-                val dialogShowing = try {
-                    composeTestRule.onNodeWithContentDescription(dialogDescription).fetchSemanticsNode()
-                    true
-                } catch (e: Exception) {
-                    false
+            if (permissionsHandled) {
+                Log.d(TAG, "✅ Permissions were granted automatically via UI navigation")
+                // Wait for app to recover after permission granting
+                delay(2000)
+                
+                // Re-send the WhatsApp request since we may have left the app
+                instrumentation.runOnMainSync {
+                    capturedViewModel?.let { vm ->
+                        Log.d(TAG, "🎤 Re-sending WhatsApp request after permission grant: '$whatsappRequest'")
+                        vm.updateInputText(whatsappRequest, fromVoice = true)
+                        vm.sendUserInput(whatsappRequest)
+                    }
                 }
                 
-                if (dialogShowing) {
-                    Log.e(TAG, "❌ PERMISSION NOT PROPERLY GRANTED! $permissionType permission dialog is showing")
-                    // Stop listening to prevent hanging
-                    try {
-                        voiceManager.stopListening()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not stop listening: ${e.message}")
-                    }
-                    failWithScreenshot("Permission not granted - $permissionType dialog appeared", "$SCREENSHOT_PREFIX-${permissionType}_not_enabled")
-                }
+                // Wait for the request to appear again
+                ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText(whatsappRequest, substring = true) },
+                    timeoutMs = 5000L,
+                    description = "re-sent WhatsApp message request"
+                )
+            } else {
+                Log.d(TAG, "✅ No permission dialogs detected")
             }
             
             // Step 3: Wait for assistant to process and show draft
@@ -596,6 +670,21 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "   - Draft display by assistant")
             Log.d(TAG, "   - Correction via voice")
             Log.d(TAG, "   - Updated draft display")
+            
+            // Click on notification bubble to return to the app and properly end the test
+            Log.d(TAG, "🔔 Clicking notification bubble to return to app...")
+            try {
+                val notificationBubble = device.findObject(By.res("com.example.whiz.debug:id/overlay_bubble"))
+                if (notificationBubble != null) {
+                    notificationBubble.click()
+                    Log.d(TAG, "✅ Clicked notification bubble")
+                    delay(1000) // Give time for app to come to foreground
+                } else {
+                    Log.w(TAG, "⚠️ Notification bubble not found, test may not end properly")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not click notification bubble: ${e.message}")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ WhatsApp voice integration test FAILED", e)
