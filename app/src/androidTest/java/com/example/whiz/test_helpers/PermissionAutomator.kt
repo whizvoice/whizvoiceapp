@@ -39,11 +39,18 @@ class PermissionAutomator {
         // Check for accessibility permission dialog
         if (handleAccessibilityPermissionDialog()) {
             permissionsHandled = true
+            // Return to app after granting accessibility permission
+            // so that overlay permission dialog can appear
+            returnToApp()
         }
         
-        // Check for overlay permission dialog  
+        // Check for overlay permission dialog
+        // This must be checked AFTER returning from accessibility settings
+        // since the dialog appears in the app, not in settings
         if (handleOverlayPermissionDialog()) {
             permissionsHandled = true
+            // Return to app after granting overlay permission
+            returnToApp()
         }
         
         // Check for microphone permission dialog
@@ -53,7 +60,6 @@ class PermissionAutomator {
         
         if (permissionsHandled) {
             Log.d(TAG, "✅ Permissions granted successfully")
-            returnToApp()
         } else {
             Log.d(TAG, "ℹ️ No permission dialogs found")
         }
@@ -107,14 +113,14 @@ class PermissionAutomator {
     private suspend fun handleOverlayPermissionDialog(): Boolean {
         Log.d(TAG, "Checking for overlay permission dialog...")
         
-        // First check for the app's own permission dialog by content description
+        // Check for the app's overlay permission dialog by exact content description
+        // This is much faster than pattern matching - just one quick check
         val overlayDialog = device.findObject(By.desc("Overlay permission dialog"))
         if (overlayDialog != null) {
-            Log.d(TAG, "📍 Found overlay permission dialog by content description")
+            Log.d(TAG, "📍 Found overlay permission dialog")
             
-            // Click the "Grant Permission" button
+            // Click the "Grant overlay permission button" by exact content description
             val grantButton = device.findObject(By.desc("Grant overlay permission button"))
-                ?: device.findObject(By.text("Grant Permission"))
             
             if (grantButton != null) {
                 Log.d(TAG, "Clicking Grant Permission button...")
@@ -124,65 +130,14 @@ class PermissionAutomator {
                 
                 // Now we should be in Settings
                 return handleOverlaySettingsPage()
-            }
-        }
-        
-        // Also check for text patterns in case content description isn't set
-        val dialogPatterns = listOf(
-            "Display Over Other Apps Permission Required",
-            "Display over other apps",
-            "overlay permission",
-            "appear on top",
-            "draw over",
-            "system alert window"
-        )
-        
-        var dialogFound = false
-        for (pattern in dialogPatterns) {
-            if (device.wait(Until.hasObject(By.textContains(pattern)), SHORT_TIMEOUT_MS)) {
-                Log.d(TAG, "📍 Found overlay dialog with pattern: $pattern")
-                dialogFound = true
-                break
-            }
-        }
-        
-        if (!dialogFound) {
-            return false
-        }
-        
-        Log.d(TAG, "🔧 Handling overlay permission...")
-        
-        // Click on Settings or OK button to go to overlay settings
-        val actionButton = device.findObject(By.text("Settings"))
-            ?: device.findObject(By.text("Open Settings"))
-            ?: device.findObject(By.text("Go to Settings"))
-            ?: device.findObject(By.text("OK"))
-        
-        if (actionButton != null) {
-            actionButton.click()
-            device.waitForIdle()
-            delay(1000)
-        }
-        
-        // Wait for settings to load
-        device.wait(Until.hasObject(By.pkg(SETTINGS_PACKAGE)), TIMEOUT_MS)
-        
-        // Now we should be in Android Settings - but we might be on a list of apps
-        // or directly on the WhizVoice overlay permission page
-        if (device.currentPackageName == SETTINGS_PACKAGE) {
-            // Check if we're already on the WhizVoice overlay page
-            val whizPageIndicator = device.findObject(By.text("WhizVoice"))
-                ?: device.findObject(By.text(APP_NAME))
-            
-            if (whizPageIndicator != null) {
-                // We're already on the WhizVoice page, just enable the toggle
-                return enableOverlayToggle()
             } else {
-                // We're on the app list, need to find and click WhizVoice
-                return enableOverlayPermission()
+                Log.w(TAG, "Found overlay dialog but couldn't find grant button")
+                return false
             }
         }
         
+        // If exact content description not found, dialog doesn't exist
+        Log.d(TAG, "No overlay permission dialog found")
         return false
     }
     
@@ -623,60 +578,12 @@ class PermissionAutomator {
         Log.d(TAG, "Attempting to return via back button...")
         repeat(3) {
             device.pressBack()
-            device.waitForIdle()
-            Thread.sleep(500)
-            
+            device.waitForIdle()            
             if (device.currentPackageName == APP_PACKAGE) {
                 Log.d(TAG, "✅ Returned to app via back button")
                 return
             }
-        }
-        
-        // Method 2: Try pressing home then clicking on recent app
-        Log.d(TAG, "Attempting to return via recents...")
-        device.pressHome()
-        device.waitForIdle()
-        Thread.sleep(500)
-        
-        device.pressRecentApps()
-        device.waitForIdle()
-        Thread.sleep(1000)
-        
-        // Look for our app in recents
-        val recentApp = device.findObject(By.descContains("WhizVoice"))
-            ?: device.findObject(By.textContains("WhizVoice"))
-        
-        if (recentApp != null) {
-            recentApp.click()
-            device.waitForIdle()
-            Thread.sleep(1000)
-            
-            if (device.currentPackageName == APP_PACKAGE) {
-                Log.d(TAG, "✅ Returned to app via recents")
-                return
-            }
-        }
-        
-        // Method 3: Force relaunch the app with FLAG_ACTIVITY_REORDER_TO_FRONT
-        Log.d(TAG, "Attempting to relaunch app...")
-        if (device.currentPackageName != APP_PACKAGE) {
-            val intent = InstrumentationRegistry.getInstrumentation().context.packageManager
-                .getLaunchIntentForPackage(APP_PACKAGE)
-            if (intent != null) {
-                // Use REORDER_TO_FRONT to bring existing activity to front instead of creating new one
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or 
-                               android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                InstrumentationRegistry.getInstrumentation().context.startActivity(intent)
-                device.waitForIdle()
-                Thread.sleep(1000)
-                
-                if (device.currentPackageName == APP_PACKAGE) {
-                    Log.d(TAG, "✅ Returned to app via relaunch")
-                } else {
-                    Log.w(TAG, "⚠️ Failed to return to app, current package: ${device.currentPackageName}")
-                }
-            }
-        }
+        }        
     }
     
     /**
