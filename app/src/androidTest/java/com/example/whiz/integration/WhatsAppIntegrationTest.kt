@@ -112,6 +112,27 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     fun cleanup() {
         Log.d(TAG, "🧹 Cleaning up WhatsApp test")
         
+        // First, try to click the notification bubble to return to app
+        try {
+            Log.d(TAG, "🔔 Checking for notification bubble...")
+            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            // Try different content descriptions based on bubble state
+            val notificationBubble = device.findObject(By.desc("WhizVoice Chat Bubble"))
+                ?: device.findObject(By.desc("WhizVoice Chat Bubble - Listening Mode"))
+                ?: device.findObject(By.desc("WhizVoice Chat Bubble - Mic Off"))
+                ?: device.findObject(By.desc("WhizVoice Chat Bubble - Speaking Mode"))
+                ?: device.findObject(By.res("com.example.whiz.debug:id/chat_head"))
+            if (notificationBubble != null) {
+                notificationBubble.click()
+                Log.d(TAG, "✅ Clicked notification bubble to return to app")
+                Thread.sleep(1000) // Give time for app to come to foreground
+            } else {
+                Log.d(TAG, "ℹ️ No notification bubble found")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error clicking notification bubble: ${e.message}")
+        }
+        
         // Clean up test chats
         runBlocking {
             try {
@@ -265,7 +286,26 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 if (stillInWhiz) {
                     Log.e(TAG, "❌ Still in Whiz app, navigation to WhatsApp didn't occur")
                     
-                    // Look for error messages in Whiz UI
+                    // Try to click bubble first to bring app to foreground
+                    Log.d(TAG, "🔔 Attempting to click bubble to bring app to foreground...")
+                    try {
+                        // Try different content descriptions based on bubble state
+                        val bubble = device.findObject(By.desc("WhizVoice Chat Bubble"))
+                            ?: device.findObject(By.desc("WhizVoice Chat Bubble - Listening Mode"))
+                            ?: device.findObject(By.desc("WhizVoice Chat Bubble - Mic Off"))
+                            ?: device.findObject(By.desc("WhizVoice Chat Bubble - Speaking Mode"))
+                            ?: device.findObject(By.res("com.example.whiz.debug:id/chat_head"))
+                        if (bubble != null) {
+                            bubble.click()
+                            Log.d(TAG, "✅ Clicked bubble")
+                            delay(1000)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not click bubble: ${e.message}")
+                    }
+                    
+                    // Use UiAutomator to look for error messages instead of Compose test rules
+                    // This works better when app is in bubble/background state
                     val errorPatterns = listOf(
                         "couldn't open",
                         "unable to",
@@ -276,8 +316,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                     
                     for (pattern in errorPatterns) {
                         try {
-                            val nodes = composeTestRule.onAllNodesWithText(pattern, substring = true, ignoreCase = true).fetchSemanticsNodes()
-                            if (nodes.isNotEmpty()) {
+                            val errorNode = device.findObject(By.textContains(pattern))
+                            if (errorNode != null) {
                                 Log.e(TAG, "❌ Found error message with pattern: '$pattern'")
                                 break
                             }
