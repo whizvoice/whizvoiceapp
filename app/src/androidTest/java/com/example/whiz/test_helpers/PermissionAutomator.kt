@@ -53,8 +53,6 @@ class PermissionAutomator {
         
         if (permissionsHandled) {
             Log.d(TAG, "✅ Permissions granted successfully")
-            // Wait for app to return to foreground
-            delay(2000)
             returnToApp()
         } else {
             Log.d(TAG, "ℹ️ No permission dialogs found")
