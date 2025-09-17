@@ -25,6 +25,7 @@ class PermissionAutomator {
     }
     
     private val device: UiDevice = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    private val screenshotDir = "/sdcard/Download/test_screenshots"
     
     /**
      * Automatically handles any permission dialogs that appear.
@@ -82,64 +83,24 @@ class PermissionAutomator {
                 Log.d(TAG, "Clicking Open Settings button...")
                 openSettingsButton.click()
                 device.waitForIdle()
-                delay(1500) // Wait for Settings to open
-                
-                // Now we should be in Android Settings - Accessibility
-                if (device.currentPackageName == SETTINGS_PACKAGE) {
-                    // Find and enable WhizVoice accessibility service
-                    return enableAccessibilityService()
-                } else {
-                    Log.w(TAG, "Not in settings after clicking button, trying to navigate manually")
-                    navigateToAccessibilitySettings()
-                    return enableAccessibilityService()
+
+                // Wait for Settings to open
+                if (!device.wait(Until.hasObject(By.pkg(SETTINGS_PACKAGE)), TIMEOUT_MS)) {
+                    Log.e(TAG, "Settings didn't open after clicking button")
+                    takeScreenshot("accessibility_dialog_settings_failed_to_open")
+                    return false
                 }
+
+                // Now we're in Settings, enable the service
+                return enableAccessibilityService()
+            }
+            else {
+                return false
             }
         }
         
-        // Also check for text patterns in case content description isn't set
-        val dialogPatterns = listOf(
-            "Enable Accessibility Service",
-            "Accessibility permission",
-            "needs accessibility",
-            "Enable accessibility",
-            "Accessibility service"
-        )
-        
-        var dialogFound = false
-        for (pattern in dialogPatterns) {
-            if (device.wait(Until.hasObject(By.textContains(pattern)), SHORT_TIMEOUT_MS)) {
-                Log.d(TAG, "📍 Found accessibility dialog with pattern: $pattern")
-                dialogFound = true
-                break
-            }
-        }
-        
-        if (!dialogFound) {
-            return false
-        }
-        
-        Log.d(TAG, "🔧 Handling accessibility permission...")
-        
-        // Click on Settings or OK button to go to accessibility settings
-        val actionButton = device.findObject(By.text("Settings"))
-            ?: device.findObject(By.text("Open Settings"))
-            ?: device.findObject(By.text("Go to Settings"))
-            ?: device.findObject(By.text("OK"))
-        
-        if (actionButton != null) {
-            actionButton.click()
-            device.waitForIdle()
-            delay(1000)
-        }
-        
-        // Now we should be in Android Settings - Accessibility
-        if (device.currentPackageName != SETTINGS_PACKAGE) {
-            Log.w(TAG, "Not in settings after clicking button, trying to navigate manually")
-            navigateToAccessibilitySettings()
-        }
-        
-        // Find and enable WhizVoice accessibility service
-        return enableAccessibilityService()
+        // If we didn't find the dialog by content description, just return false
+        return false
     }
     
     /**
@@ -781,6 +742,19 @@ class PermissionAutomator {
         
         override fun toString(): String {
             return "PermissionStatus(accessibility=$accessibilityEnabled, overlay=$overlayEnabled, microphone=$microphoneEnabled)"
+        }
+    }
+    
+    /**
+     * Takes a screenshot for debugging purposes.
+     */
+    private fun takeScreenshot(name: String) {
+        try {
+            val screenshotFile = java.io.File("$screenshotDir/${name}_${System.currentTimeMillis()}.png")
+            device.takeScreenshot(screenshotFile)
+            Log.d(TAG, "📸 Screenshot saved: ${screenshotFile.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to take screenshot: ${e.message}")
         }
     }
 }
