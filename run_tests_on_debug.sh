@@ -916,48 +916,14 @@ fi
 run_with_log "Building test APK" "./gradlew assembleDebugAndroidTest --console=plain --quiet"
 run_with_log "Installing test APK" "adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 
-# Grant permissions and prepare device
-log_with_time "🔐 Granting necessary permissions for testing..."
-# Wake up the screen and unlock (important for UI tests)
-adb shell input keyevent KEYCODE_WAKEUP
-adb shell input keyevent KEYCODE_MENU
-sleep 1
-adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1 || true
-sleep 3
-# Grant runtime permissions
-adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev/null || true
-# Grant overlay permission (Display over other apps)
-adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
-# Enable accessibility service
-# First, get any existing enabled services
-existing_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
-if [[ "$existing_services" == "null" || -z "$existing_services" ]]; then
-    # No existing services, just set ours
-    adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService 2>/dev/null || true
-else
-    # Append our service to existing ones if not already present
-    if [[ ! "$existing_services" == *"com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"* ]]; then
-        adb shell settings put secure enabled_accessibility_services "${existing_services}:com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService" 2>/dev/null || true
-    fi
-fi
-adb shell settings put secure accessibility_enabled 1 2>/dev/null || true
-# Force the settings to take effect
-adb shell content insert --uri content://settings/secure --bind name:s:accessibility_enabled --bind value:s:1 2>/dev/null || true
-
 # Verify accessibility is enabled
 enabled_check=$(adb shell settings get secure accessibility_enabled 2>/dev/null | tr -d '\r\n')
 services_check=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
 if [[ "$enabled_check" == "1" ]] && [[ "$services_check" == *"WhizAccessibilityService"* ]]; then
-    log_with_time "✅ Granted: microphone, overlay, and accessibility permissions (verified)"
+    log_with_time "✅ microphone, overlay, and accessibility permissions (verified)"
 else
-    log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
+    log_with_time "⚠️ accessibility permission may not be fully enabled (enabled=$enabled_check, services=$services_check)"
 fi
-
-# Give accessibility service time to start
-sleep 2
-adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
-sleep 1
-log_with_time "✅ Permissions granted and device prepared"
 
 # Run tests sequentially for maximum reliability
 if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
