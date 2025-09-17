@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -351,7 +352,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 if (notificationBubble != null) {
                     notificationBubble.click()
                     Log.d(TAG, "✅ Clicked notification bubble")
-                    delay(1000) // Give time for app to come to foreground
+                    // Wait for app to come to foreground
+                    device.wait(Until.hasObject(By.pkg(packageName)), 2000L)
                 } else {
                     Log.w(TAG, "⚠️ Notification bubble not found, test may not end properly")
                 }
@@ -415,6 +417,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             }
             
             Log.d(TAG, "✅ ChatViewModel captured successfully")
+
+            handlePermissionDialogIfBlocking()
             
             // Step 2: Send voice command to draft WhatsApp message
             Log.d(TAG, "🎤 Step 2: Sending WhatsApp message request via voice...")
@@ -447,7 +451,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ WhatsApp request visible in chat")
             
-            // Track any new chat created after message is sent
+            // Track any new chat created after message is sent (do this before bubble mode)
             try {
                 val currentChatId = capturedViewModel?.chatId?.value
                 if (currentChatId != null && currentChatId != -1L) {
@@ -463,62 +467,68 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             // Permissions should already be handled by BaseIntegrationTest during setup
             
             // Step 3: Wait for assistant to process and show draft
-            Log.d(TAG, "⏳ Step 3: Waiting for assistant to process and show draft...")
-            delay(3000) // Give assistant time to process
+            Log.d(TAG, "⏳ Step 3: Waiting for assistant to process and show draft overlay...")
             
-            // Look for the draft message in the assistant's response
-            val draftPatterns = listOf(
-                "hey what's up how's it going just tryna test whiz voice",
-                "Draft message:",
-                "Here's the message",
-                "I'll help you send",
-                "WhatsApp message"
+            // Important: App should now be in bubble mode with draft overlay
+            // DO NOT click the bubble as that would dismiss the overlay
+            // The draft appears as an overlay when in bubble mode
+            
+            // Wait for the WhizVoice Draft overlay to appear (up to 5 seconds)
+            val draftAppeared = device.wait(
+                Until.hasObject(By.res("com.example.whiz.debug:id/draft_label")),
+                5000L
+            ) || device.wait(
+                Until.hasObject(By.text("WhizVoice Draft")),
+                1000L
             )
             
+            if (!draftAppeared) {
+                Log.e(TAG, "❌ WhizVoice Draft overlay did not appear within timeout")
+                failWithScreenshot("Draft overlay not shown", "$SCREENSHOT_PREFIX-draft_overlay_timeout")
+                return@runBlocking
+            }
+            
+            Log.d(TAG, "🔍 Draft overlay appeared, now checking content...")
+            
+            // Now get the draft label and message
+            val draftLabel = device.findObject(By.res("com.example.whiz.debug:id/draft_label"))
+                ?: device.findObject(By.text("WhizVoice Draft"))
+            
             var draftFound = false
-            for (pattern in draftPatterns) {
-                try {
-                    val nodes = composeTestRule.onAllNodesWithText(pattern, substring = true).fetchSemanticsNodes()
-                    if (nodes.isNotEmpty()) {
-                        Log.d(TAG, "✅ Found draft/response with pattern: '$pattern'")
+            var draftText: String? = null
+            
+            if (draftLabel != null) {
+                Log.d(TAG, "✅ Found WhizVoice Draft label")
+                
+                // Now find the actual message text
+                val draftMessageElement = device.findObject(By.res("com.example.whiz.debug:id/draft_message_text"))
+                if (draftMessageElement != null) {
+                    draftText = draftMessageElement.text
+                    Log.d(TAG, "📝 Draft message text: '$draftText'")
+                    
+                    // Check if the draft contains the expected content
+                    if (draftText != null && draftText.contains("hey what's up how's it going just tryna test whiz voice", ignoreCase = true)) {
+                        Log.d(TAG, "✅ Draft message contains expected content")
                         draftFound = true
-                        break
+                    } else {
+                        Log.e(TAG, "❌ Draft message doesn't contain expected content. Actual: '$draftText'")
                     }
-                } catch (e: Exception) {
-                    // Continue checking other patterns
+                } else {
+                    Log.e(TAG, "❌ Could not find draft_message_text element")
                 }
+            } else {
+                Log.e(TAG, "❌ WhizVoice Draft overlay not found")
             }
             
             if (!draftFound) {
-                // Also check with UI Automator as fallback
-                val uiDraftFound = device.hasObject(By.textContains("tryna test").pkg(packageName))
-                if (uiDraftFound) {
-                    Log.d(TAG, "✅ Draft found via UI Automator")
-                    draftFound = true
-                }
-            }
-            
-            if (!draftFound) {
-                Log.w(TAG, "⚠️ Draft not clearly visible, but continuing with correction anyway")
-            }
-            
-            // Track updated chat ID if it changed
-            try {
-                val updatedChatId = capturedViewModel?.chatId?.value
-                if (updatedChatId != null && updatedChatId > 0 && !createdChatIds.contains(updatedChatId)) {
-                    createdChatIds.add(updatedChatId)
-                    Log.d(TAG, "📝 Tracked server chat ID for cleanup: $updatedChatId")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Could not track updated chat ID: ${e.message}")
+                Log.e(TAG, "❌ Draft message not found in assistant response")
+                failWithScreenshot("Assistant did not show draft message", "$SCREENSHOT_PREFIX-draft_not_found")
+                return@runBlocking
             }
             
             // Step 4: Send correction via voice
             Log.d(TAG, "✏️ Step 4: Sending correction via voice...")
             val correction = "actually can you change tryna to trying to, and then finish the sentence with a period and add hope you're having a good day!"
-            
-            // Wait a bit before sending correction
-            delay(2000)
             
             instrumentation.runOnMainSync {
                 capturedViewModel?.let { vm ->
@@ -529,13 +539,14 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 }
             }
             
-            // Wait for correction to appear
-            Log.d(TAG, "🔍 Waiting for correction to appear in UI...")
-            val correctionAppeared = ComposeTestHelper.waitForElement(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithText(correction, substring = true) },
-                timeoutMs = 5000L,
-                description = "correction message"
+            // Wait for correction to appear in overlay (app still in bubble mode)
+            Log.d(TAG, "🔍 Waiting for correction to appear in overlay...")
+            
+            // DO NOT click bubble - we want to stay in bubble mode to see the overlay
+            // Use UiAutomator to check for correction in the overlay
+            val correctionAppeared = device.wait(
+                Until.hasObject(By.textContains(correction.take(50)).pkg(packageName)),
+                5000
             )
             
             if (!correctionAppeared) {
@@ -543,68 +554,71 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             }
             
             // Step 5: Wait for assistant to process correction and show updated draft
-            Log.d(TAG, "⏳ Step 5: Waiting for corrected draft...")
-            delay(3000)
+            Log.d(TAG, "⏳ Step 5: Waiting for corrected draft overlay...")
             
-            // Look for the corrected message
-            val correctedPatterns = listOf(
-                "trying to test",
-                "hope you're having a good day",
-                "Updated message:",
-                "Corrected message:"
+            // Wait for the draft overlay to update with corrected text
+            // The overlay should still be showing but with new content
+            val correctedDraftAppeared = device.wait(
+                Until.hasObject(By.res("com.example.whiz.debug:id/draft_label")),
+                5000L
             )
+            
+            if (!correctedDraftAppeared) {
+                Log.e(TAG, "❌ Corrected draft overlay did not appear within timeout")
+                failWithScreenshot("Corrected draft overlay not shown", "$SCREENSHOT_PREFIX-corrected_overlay_timeout")
+                return@runBlocking
+            }
+            
+            // Look for the updated WhizVoice Draft overlay with corrected text
+            val correctedDraftLabel = device.findObject(By.res("com.example.whiz.debug:id/draft_label"))
+                ?: device.findObject(By.text("WhizVoice Draft"))
             
             var correctedFound = false
-            for (pattern in correctedPatterns) {
-                try {
-                    val nodes = composeTestRule.onAllNodesWithText(pattern, substring = true).fetchSemanticsNodes()
-                    if (nodes.isNotEmpty()) {
-                        Log.d(TAG, "✅ Found corrected message with pattern: '$pattern'")
-                        correctedFound = true
-                        break
+            var correctedDraftText: String? = null
+            
+            if (correctedDraftLabel != null) {
+                Log.d(TAG, "✅ Found WhizVoice Draft label for corrected message")
+                
+                // Now find the actual corrected message text
+                val correctedMessageElement = device.findObject(By.res("com.example.whiz.debug:id/draft_message_text"))
+                if (correctedMessageElement != null) {
+                    correctedDraftText = correctedMessageElement.text
+                    Log.d(TAG, "📝 Corrected draft message text: '$correctedDraftText'")
+                    
+                    // Check if the corrected draft contains the expected changes
+                    // Note: The overlay may show track changes with strikethrough for old text
+                    // So we check for both "trying to" (not "tryna") and "hope you're having a good day"
+                    if (correctedDraftText != null) {
+                        val hasCorrection1 = correctedDraftText.contains("trying to", ignoreCase = true)
+                        val hasCorrection2 = correctedDraftText.contains("hope you're having a good day", ignoreCase = true)
+                        val hasPeriod = correctedDraftText.contains(".")
+                        
+                        Log.d(TAG, "Checking corrections: 'trying to'=$hasCorrection1, 'good day'=$hasCorrection2, period=$hasPeriod")
+                        
+                        if (hasCorrection1 && hasCorrection2) {
+                            Log.d(TAG, "✅ Corrected draft contains all expected changes")
+                            correctedFound = true
+                        } else {
+                            Log.w(TAG, "⚠️ Corrected draft missing some changes. Text: '$correctedDraftText'")
+                            // Still consider it found if at least one correction is present
+                            correctedFound = hasCorrection1 || hasCorrection2
+                        }
                     }
-                } catch (e: Exception) {
-                    // Continue checking other patterns
+                } else {
+                    Log.e(TAG, "❌ Could not find corrected draft_message_text element")
                 }
+            } else {
+                Log.e(TAG, "❌ WhizVoice Draft overlay not found for corrected message")
             }
             
             if (!correctedFound) {
-                // Check with UI Automator as fallback
-                val uiCorrectedFound = device.hasObject(By.textContains("trying to").pkg(packageName)) ||
-                                       device.hasObject(By.textContains("good day").pkg(packageName))
-                if (uiCorrectedFound) {
-                    Log.d(TAG, "✅ Corrected message found via UI Automator")
-                    correctedFound = true
-                }
+                Log.e(TAG, "❌ Corrected draft not properly displayed")
+                failWithScreenshot("Corrected draft not shown", "$SCREENSHOT_PREFIX-corrected_draft_not_found")
+                return@runBlocking
             }
             
-            if (!correctedFound) {
-                Log.w(TAG, "⚠️ Corrected message not clearly visible, test may need adjustment")
-            }
-            
-            // Step 6: Verify all messages are in the chat
-            Log.d(TAG, "🔍 Step 6: Verifying conversation flow...")
-            
-            // Check that our voice messages are visible
-            val userMessages = listOf(
-                whatsappRequest,
-                correction
-            )
-            
-            var allMessagesFound = true
-            for (msg in userMessages) {
-                try {
-                    composeTestRule.onNodeWithText(msg, substring = true).assertIsDisplayed()
-                    Log.d(TAG, "✅ Found user message: '${msg.take(50)}...'")
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ User message not clearly visible: '${msg.take(50)}...'")
-                    allMessagesFound = false
-                }
-            }
-            
-            if (!allMessagesFound) {
-                Log.w(TAG, "⚠️ Not all messages clearly visible, but test structure is correct")
-            }
+            // Step 6: Skip verification of messages in chat (they're in the overlay, not the main chat)
+            Log.d(TAG, "✅ Test flow completed - messages were sent via overlay while in bubble mode")
             
             Log.d(TAG, "🎉 WhatsApp voice integration test completed!")
             Log.d(TAG, "✅ Successfully tested:")
@@ -621,7 +635,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 if (notificationBubble != null) {
                     notificationBubble.click()
                     Log.d(TAG, "✅ Clicked notification bubble")
-                    delay(1000) // Give time for app to come to foreground
+                    // Wait for app to come to foreground
+                    device.wait(Until.hasObject(By.pkg(packageName)), 2000L)
                 } else {
                     Log.w(TAG, "⚠️ Notification bubble not found, test may not end properly")
                 }
