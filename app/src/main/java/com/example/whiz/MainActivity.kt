@@ -16,6 +16,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -118,6 +119,56 @@ class MainActivity : ComponentActivity() {
                     
                     // Observe which permission is needed next
                     val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()
+                    
+                    // Handle lifecycle events within Compose context to ensure proper recomposition
+                    DisposableEffect(Unit) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
+                                // Clear dialogs and recheck permissions when returning from Settings
+                                permissionManager.clearPermissionDialogs()
+                                
+                                // For accessibility service, we need to retry checking as it takes time to start
+                                // In tests, the service can take up to a minute to start after being enabled
+                                lifecycleScope.launch {
+                                    var retries = 0
+                                    val maxRetries = 20 // Check for up to 10 seconds (20 * 500ms)
+                                    
+                                    while (retries < maxRetries) {
+                                        permissionManager.checkAllPermissions()
+                                        
+                                        // If all permissions are now granted, we're done
+                                        val allGranted = permissionManager.microphonePermissionGranted.value &&
+                                                        permissionManager.accessibilityPermissionGranted.value &&
+                                                        permissionManager.overlayPermissionGranted.value
+                                        
+                                        if (allGranted) {
+                                            Log.d("MainActivity", "All permissions detected as enabled after $retries retries")
+                                            break
+                                        }
+                                        
+                                        // Log progress for debugging
+                                        if (retries % 4 == 0) {
+                                            Log.d("MainActivity", "Retry $retries: mic=${permissionManager.microphonePermissionGranted.value}, " +
+                                                    "acc=${permissionManager.accessibilityPermissionGranted.value}, " +
+                                                    "overlay=${permissionManager.overlayPermissionGranted.value}")
+                                        }
+                                        
+                                        // Wait a bit before retrying (service might still be starting)
+                                        delay(500)
+                                        retries++
+                                    }
+                                    
+                                    // Final check to ensure UI is updated
+                                    permissionManager.checkAllPermissions()
+                                }
+                            }
+                        }
+                        lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycle.removeObserver(observer)
+                        }
+                    }
                     
                     WhizNavHost(
                         navController = navController,
@@ -579,8 +630,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // Re-check permissions when activity resumes in case they were changed in settings
-        permissionManager.checkAllPermissions()
+        // Permission checking is now handled by DisposableEffect in the Compose UI
+        // This ensures proper recomposition when returning from Settings
+        Log.d("MainActivity", "onResume called - permission check will be handled by Compose")
         // If NavController is initialized, handle current intent again in case it was delivered while paused
         // and MainActivity wasn't recreated but onNewIntent wasn't called (e.g. returning to app)
         // This is a bit of an edge case, but ensures the navigation occurs if pending.

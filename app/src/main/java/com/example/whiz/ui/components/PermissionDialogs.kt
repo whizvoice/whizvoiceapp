@@ -95,7 +95,7 @@ fun OverlayPermissionDialog(
             Button(
                 onClick = {
                     onRequestPermission()
-                    onDismiss()
+                    // Don't dismiss here - let onResume handle it when returning from Settings
                 },
                 modifier = Modifier.semantics { 
                     contentDescription = "Grant overlay permission button"
@@ -159,7 +159,7 @@ fun AccessibilityPermissionDialog(
             TextButton(
                 onClick = {
                     onOpenSettings()
-                    onDismiss()
+                    // Don't dismiss here - let onResume handle it when returning from Settings
                 },
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = Color.Black

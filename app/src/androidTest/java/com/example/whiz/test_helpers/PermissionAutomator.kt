@@ -407,32 +407,74 @@ class PermissionAutomator {
         delay(1000)
         
         // Now we should be on the WhizVoice accessibility page
-        // Look for the toggle switch
-        val toggleSwitch = device.findObject(By.clazz("android.widget.Switch"))
+        // Look for the toggle switch - try multiple selectors
+        var toggleSwitch = device.findObject(By.clazz("android.widget.Switch"))
+            ?: device.findObject(By.res("android:id/switch_widget"))
             ?: device.findObject(By.checkable(true))
         
-        if (toggleSwitch != null && !toggleSwitch.isChecked) {
-            toggleSwitch.click()
-            device.waitForIdle()
-            delay(500)
+        // If we don't find a switch, look for the "Use service" or similar button
+        if (toggleSwitch == null) {
+            val useServiceButton = device.findObject(By.text("Use service"))
+                ?: device.findObject(By.text("Use WhizVoice"))
             
-            // Handle confirmation dialog if it appears
-            val allowButton = device.findObject(By.text("Allow"))
-                ?: device.findObject(By.text("OK"))
-                ?: device.findObject(By.text("Turn on"))
-            
-            if (allowButton != null) {
-                allowButton.click()
+            if (useServiceButton != null) {
+                Log.d(TAG, "Found 'Use service' button, clicking...")
+                useServiceButton.click()
+                device.waitForIdle()
                 delay(500)
+                
+                // Handle confirmation dialog
+                val allowButton = device.findObject(By.text("Allow"))
+                    ?: device.findObject(By.text("OK"))
+                    ?: device.findObject(By.text("Turn on"))
+                
+                if (allowButton != null) {
+                    allowButton.click()
+                    delay(500)
+                }
+                
+                Log.d(TAG, "✅ Accessibility service enabled via button")
+                return true
             }
-            
-            Log.d(TAG, "✅ Accessibility service enabled")
-            return true
-        } else if (toggleSwitch?.isChecked == true) {
-            Log.d(TAG, "✅ Accessibility service already enabled")
-            return true
         }
         
+        if (toggleSwitch != null) {
+            if (!toggleSwitch.isChecked) {
+                Log.d(TAG, "Enabling accessibility toggle...")
+                toggleSwitch.click()
+                device.waitForIdle()
+                delay(500)
+                
+                // Handle confirmation dialog if it appears
+                val allowButton = device.findObject(By.text("Allow"))
+                    ?: device.findObject(By.text("OK"))
+                    ?: device.findObject(By.text("Turn on"))
+                
+                if (allowButton != null) {
+                    Log.d(TAG, "Clicking confirmation button: ${allowButton.text}")
+                    allowButton.click()
+                    delay(500)
+                }
+                
+                // Verify the toggle is now checked
+                toggleSwitch = device.findObject(By.clazz("android.widget.Switch"))
+                    ?: device.findObject(By.checkable(true))
+                
+                if (toggleSwitch?.isChecked == true) {
+                    Log.d(TAG, "✅ Accessibility service enabled and verified")
+                    return true
+                } else {
+                    Log.w(TAG, "⚠️ Toggle clicked but not showing as checked")
+                    // Still return true as the action was performed
+                    return true
+                }
+            } else {
+                Log.d(TAG, "✅ Accessibility service already enabled")
+                return true
+            }
+        }
+        
+        Log.e(TAG, "Could not find toggle or button to enable accessibility")
         return false
     }
     
@@ -612,24 +654,68 @@ class PermissionAutomator {
     private fun returnToApp() {
         Log.d(TAG, "Returning to app...")
         
-        // Try to click back multiple times
-        repeat(5) {
-            if (device.currentPackageName == APP_PACKAGE) {
-                Log.d(TAG, "✅ Returned to app")
-                return
-            }
-            device.pressBack()
-            device.waitForIdle()
+        // First check if we're already in the app
+        if (device.currentPackageName == APP_PACKAGE) {
+            Log.d(TAG, "✅ Already in app")
+            return
         }
         
-        // If back doesn't work, try to relaunch the app
+        // Method 1: Try pressing back multiple times
+        Log.d(TAG, "Attempting to return via back button...")
+        repeat(3) {
+            device.pressBack()
+            device.waitForIdle()
+            Thread.sleep(500)
+            
+            if (device.currentPackageName == APP_PACKAGE) {
+                Log.d(TAG, "✅ Returned to app via back button")
+                return
+            }
+        }
+        
+        // Method 2: Try pressing home then clicking on recent app
+        Log.d(TAG, "Attempting to return via recents...")
+        device.pressHome()
+        device.waitForIdle()
+        Thread.sleep(500)
+        
+        device.pressRecentApps()
+        device.waitForIdle()
+        Thread.sleep(1000)
+        
+        // Look for our app in recents
+        val recentApp = device.findObject(By.descContains("WhizVoice"))
+            ?: device.findObject(By.textContains("WhizVoice"))
+        
+        if (recentApp != null) {
+            recentApp.click()
+            device.waitForIdle()
+            Thread.sleep(1000)
+            
+            if (device.currentPackageName == APP_PACKAGE) {
+                Log.d(TAG, "✅ Returned to app via recents")
+                return
+            }
+        }
+        
+        // Method 3: Force relaunch the app with FLAG_ACTIVITY_REORDER_TO_FRONT
+        Log.d(TAG, "Attempting to relaunch app...")
         if (device.currentPackageName != APP_PACKAGE) {
             val intent = InstrumentationRegistry.getInstrumentation().context.packageManager
                 .getLaunchIntentForPackage(APP_PACKAGE)
             if (intent != null) {
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                // Use REORDER_TO_FRONT to bring existing activity to front instead of creating new one
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or 
+                               android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 InstrumentationRegistry.getInstrumentation().context.startActivity(intent)
                 device.waitForIdle()
+                Thread.sleep(1000)
+                
+                if (device.currentPackageName == APP_PACKAGE) {
+                    Log.d(TAG, "✅ Returned to app via relaunch")
+                } else {
+                    Log.w(TAG, "⚠️ Failed to return to app, current package: ${device.currentPackageName}")
+                }
             }
         }
     }

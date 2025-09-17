@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.whiz.accessibility.AccessibilityChecker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -21,6 +22,10 @@ open class PermissionManager @Inject constructor(
     @ApplicationContext protected val context: Context,
     protected val accessibilityChecker: AccessibilityChecker
 ) {
+    companion object {
+        private const val TAG = "PermissionManager"
+    }
+    
     enum class PermissionType {
         MICROPHONE,
         ACCESSIBILITY,
@@ -77,6 +82,7 @@ open class PermissionManager @Inject constructor(
      */
     fun checkAccessibilityPermission() {
         val isEnabled = accessibilityChecker.isServiceEnabled()
+        Log.d(TAG, "checkAccessibilityPermission: isEnabled=$isEnabled")
         _accessibilityPermissionGranted.value = isEnabled
         updateNextRequiredPermission()
     }
@@ -119,11 +125,22 @@ open class PermissionManager @Inject constructor(
     }
 
     private fun updateNextRequiredPermission() {
-        _nextRequiredPermission.value = when {
+        val nextPermission = when {
             !_microphonePermissionGranted.value -> PermissionType.MICROPHONE
             !_accessibilityPermissionGranted.value -> PermissionType.ACCESSIBILITY
             !_overlayPermissionGranted.value -> PermissionType.OVERLAY
             else -> null
         }
+        Log.d(TAG, "updateNextRequiredPermission: nextPermission=$nextPermission (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, overlay=${_overlayPermissionGranted.value})")
+        _nextRequiredPermission.value = nextPermission
+    }
+    
+    /**
+     * Clear permission dialogs temporarily (used when returning from settings)
+     * This prevents stale dialogs from persisting while permissions are being rechecked
+     */
+    fun clearPermissionDialogs() {
+        Log.d(TAG, "clearPermissionDialogs called - clearing nextRequiredPermission")
+        _nextRequiredPermission.value = null
     }
 } 
