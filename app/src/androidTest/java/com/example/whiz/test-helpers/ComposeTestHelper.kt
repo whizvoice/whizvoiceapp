@@ -436,6 +436,73 @@ object ComposeTestHelper {
     }
     
     /**
+     * Wait for a specific UI element to disappear using Compose Testing
+     * Useful for waiting for dialogs or loading indicators to go away
+     * Returns true if element disappears within timeout, false if still present
+     */
+    fun waitForElementToDisappear(
+        composeTestRule: ComposeTestRule,
+        selector: () -> SemanticsNodeInteraction,
+        timeoutMs: Long = 10000L,
+        description: String = "UI element"
+    ): Boolean {
+        return try {
+            val startTime = System.currentTimeMillis()
+            Log.d(TAG, "⏳ Waiting for $description to disappear...")
+            
+            // First check if element exists at all
+            var elementExists = false
+            try {
+                val node = selector()
+                val semanticsNode = node.fetchSemanticsNode()
+                if (semanticsNode != null) {
+                    elementExists = true
+                    Log.d(TAG, "🔍 Found $description, now waiting for it to disappear...")
+                }
+            } catch (e: Exception) {
+                // Element doesn't exist, so it's already "disappeared"
+                Log.d(TAG, "✅ $description not present (already disappeared or never existed)")
+                return true
+            }
+            
+            if (!elementExists) {
+                Log.d(TAG, "✅ $description not present (already disappeared)")
+                return true
+            }
+            
+            // Now wait for it to disappear
+            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    val node = selector()
+                    val semanticsNode = node.fetchSemanticsNode()
+                    if (semanticsNode == null) {
+                        Log.d(TAG, "✅ $description disappeared after ${System.currentTimeMillis() - startTime}ms")
+                        return true
+                    }
+                    // Element still exists, continue waiting
+                    Log.v(TAG, "⏳ $description still present, waiting...")
+                } catch (e: Exception) {
+                    // Node not found - it disappeared!
+                    Log.d(TAG, "✅ $description disappeared after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                } catch (e: AssertionError) {
+                    // Node not found - it disappeared!
+                    Log.d(TAG, "✅ $description disappeared (assertion failed) after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+                Thread.sleep(50) // Use shorter sleep for more responsive waiting
+            }
+            
+            Log.w(TAG, "⚠️ $description still present after ${timeoutMs}ms timeout")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception waiting for $description to disappear", e)
+            false
+        }
+    }
+    
+    /**
      * Find and interact with the message input field using Compose testing
      */
     fun findMessageInputField(composeTestRule: ComposeTestRule): SemanticsNodeInteraction? {

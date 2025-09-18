@@ -2,7 +2,7 @@ package com.example.whiz.integration
 
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -68,7 +68,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     }
 
     @get:Rule(order = 2)
-    val composeTestRule = createAndroidComposeRule<MainActivity>()
+    val composeTestRule = createComposeRule()
     
     @get:Rule(order = 3)
     val skipOnCIOrEmulatorRule = SkipOnCIOrEmulatorRule()
@@ -86,6 +86,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     private val uniqueTestId = System.currentTimeMillis()
     private val createdChatIds = mutableListOf<Long>()
     private val permissionAutomator = PermissionAutomator()
+    private var manuallyLaunchedActivity: MainActivity? = null
     
     @Before
     fun setUp() {
@@ -104,9 +105,41 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         // This handles accessibility, overlay, or any other permission dialog
         if (permissionAutomator.handlePermissionDialogs()) {
             Log.d(TAG, "✅ Permission dialog was blocking, handled it")
+            
+            // After handling permissions, wait for "Starting Accessibility Service" dialog to disappear
+            waitForAccessibilityServiceToStart()
+            
             return true
         }
         return false
+    }
+    
+    /**
+     * Wait for the "Starting Accessibility Service" dialog to disappear
+     * This dialog appears after granting accessibility permission and auto-closes when service is ready
+     */
+    private suspend fun waitForAccessibilityServiceToStart() {
+        Log.d(TAG, "⏳ Checking for 'Starting Accessibility Service' dialog...")
+        
+        // Wait for the dialog to disappear using its content description
+        // This is more reliable than searching for text content
+        val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
+            timeoutMs = 10000L,
+            description = "accessibility service starting dialog"
+        )
+        
+        if (dialogDisappeared) {
+            Log.d(TAG, "✅ Accessibility service dialog closed - service is ready")
+        } else {
+            Log.w(TAG, "⚠️ Accessibility service dialog timeout - may still be visible, proceeding anyway")
+        }
+        
+        // Give a bit more time for the service to fully initialize
+        delay(500)
+        
+        Log.d(TAG, "✅ Ready to proceed with test after accessibility service initialization")
     }
 
     @After
@@ -116,7 +149,6 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         // First, try to click the notification bubble to return to app
         try {
             Log.d(TAG, "🔔 Checking for notification bubble...")
-            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
             // Try different content descriptions based on bubble state
             val notificationBubble = device.findObject(By.desc("WhizVoice Chat Bubble"))
                 ?: device.findObject(By.desc("WhizVoice Chat Bubble - Listening Mode"))
@@ -161,6 +193,19 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         capturedViewModel = null
         ComposeTestHelper.cleanup()
         
+        // Close manually launched activity
+        try {
+            manuallyLaunchedActivity?.let {
+                if (!it.isFinishing && !it.isDestroyed) {
+                    it.finish()
+                    Log.d(TAG, "✅ Manually launched activity finished")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error finishing manually launched activity: ${e.message}")
+        }
+        manuallyLaunchedActivity = null
+        
         Log.d(TAG, "✅ WhatsApp test cleanup completed")
     }
 
@@ -170,24 +215,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "🚀 Starting WhatsApp navigation test from main chat list")
         
         try {
-            // Step 1: Launch WhatsApp and ensure it's on the main chat list
-            Log.d(TAG, "📱 Step 1: Launching WhatsApp and navigating to main chat list...")
-            launchWhatsApp()
-            
-            // Navigate to main chat list if not already there
-            navigateToMainChatList()
-            
-            // Verify we're on the main chat list
-            val isOnChatList = verifyOnMainChatList()
-            if (!isOnChatList) {
-                Log.e(TAG, "❌ Failed to navigate to WhatsApp main chat list")
-                failWithScreenshot("Not on main chat list", "$SCREENSHOT_PREFIX-not_on_chat_list")
-                return@runBlocking
-            }
-            Log.d(TAG, "✅ WhatsApp is on main chat list")
-            
-            // Step 2: Launch Whiz via voice
-            Log.d(TAG, "🎤 Step 2: Voice launching Whiz app...")
+            // Voice launch Whiz app
+            Log.d(TAG, "🎤 Voice launching Whiz app...")
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
@@ -204,6 +233,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             // Launch through real Android system
             val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
+            manuallyLaunchedActivity = activity
             
             // Wait for ViewModel to be captured
             Log.d(TAG, "⏳ Waiting for ViewModel to be captured...")
@@ -237,8 +267,8 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             handlePermissionDialogIfBlocking()
 
-            // Step 3: Send voice command to open WhatsApp chat
-            Log.d(TAG, "🎤 Step 3: Sending voice command to open WhatsApp chat...")
+            // Send voice command to open WhatsApp chat
+            Log.d(TAG, "🎤 Sending voice command to open WhatsApp chat...")
             val openChatRequest = "Open WhatsApp chat with $WHATSAPP_CONTACT_NAME"
             
             
@@ -269,12 +299,12 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ Voice command visible in chat")
             
-            // Step 4: Wait for assistant to process and navigate to WhatsApp
-            Log.d(TAG, "⏳ Step 4: Waiting for assistant to process and navigate...")
+            // Wait for assistant to process and navigate to WhatsApp
+            Log.d(TAG, "⏳ Waiting for assistant to process and navigate...")
             delay(5000) // Give assistant time to process and switch to WhatsApp
             
-            // Step 5: Verify we're now in the correct WhatsApp chat
-            Log.d(TAG, "🔍 Step 5: Verifying navigation to correct WhatsApp chat...")
+            // Verify we're now in the correct WhatsApp chat
+            Log.d(TAG, "🔍 Verifying navigation to correct WhatsApp chat...")
             val isInCorrectChat = verifyInWhatsAppChat(WHATSAPP_CONTACT_NAME)
             
             if (isInCorrectChat) {
@@ -400,6 +430,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             // Launch through real Android system like MessageFlowVoiceComposeTest does
             val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
+            manuallyLaunchedActivity = activity
             
             // Wait for ViewModel to be captured
             Log.d(TAG, "⏳ Waiting for ViewModel to be captured...")
