@@ -103,44 +103,14 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     private suspend fun handlePermissionDialogIfBlocking(): Boolean {
         // Just check if there's a permission dialog and handle it
         // This handles accessibility, overlay, or any other permission dialog
-        if (permissionAutomator.handlePermissionDialogs()) {
+        // Pass composeTestRule to also wait for "Starting Accessibility Service" dialog
+        if (permissionAutomator.handlePermissionDialogs(composeTestRule)) {
             Log.d(TAG, "✅ Permission dialog was blocking, handled it")
-            
-            // After handling permissions, wait for "Starting Accessibility Service" dialog to disappear
-            waitForAccessibilityServiceToStart()
-            
             return true
         }
         return false
     }
     
-    /**
-     * Wait for the "Starting Accessibility Service" dialog to disappear
-     * This dialog appears after granting accessibility permission and auto-closes when service is ready
-     */
-    private suspend fun waitForAccessibilityServiceToStart() {
-        Log.d(TAG, "⏳ Checking for 'Starting Accessibility Service' dialog...")
-        
-        // Wait for the dialog to disappear using its content description
-        // This is more reliable than searching for text content
-        val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
-            composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
-            timeoutMs = 10000L,
-            description = "accessibility service starting dialog"
-        )
-        
-        if (dialogDisappeared) {
-            Log.d(TAG, "✅ Accessibility service dialog closed - service is ready")
-        } else {
-            Log.w(TAG, "⚠️ Accessibility service dialog timeout - may still be visible, proceeding anyway")
-        }
-        
-        // Give a bit more time for the service to fully initialize
-        delay(500)
-        
-        Log.d(TAG, "✅ Ready to proceed with test after accessibility service initialization")
-    }
 
     @After
     fun cleanup() {

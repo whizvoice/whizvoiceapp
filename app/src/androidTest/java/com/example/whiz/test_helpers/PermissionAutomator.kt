@@ -1,8 +1,11 @@
 package com.example.whiz.test_helpers
 
 import android.util.Log
+import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.*
+import com.example.whiz.test_helpers.ComposeTestHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
@@ -30,8 +33,9 @@ class PermissionAutomator {
     /**
      * Automatically handles any permission dialogs that appear.
      * Returns true if permissions were granted, false if no dialogs were found.
+     * @param composeTestRule Optional ComposeTestRule for waiting for accessibility service dialog
      */
-    fun handlePermissionDialogs(): Boolean = runBlocking {
+    fun handlePermissionDialogs(composeTestRule: ComposeTestRule? = null): Boolean = runBlocking {
         Log.d(TAG, "🔍 Checking for permission dialogs...")
         
         var permissionsHandled = false
@@ -62,6 +66,11 @@ class PermissionAutomator {
             Log.d(TAG, "✅ Permissions granted successfully")
         } else {
             Log.d(TAG, "ℹ️ No permission dialogs found")
+        }
+
+        // Wait for "Starting Accessibility Service" dialog to disappear if ComposeTestRule provided
+        if (composeTestRule != null) {
+            waitForAccessibilityServiceToStart(composeTestRule)
         }
         
         return@runBlocking permissionsHandled
@@ -648,6 +657,32 @@ class PermissionAutomator {
         override fun toString(): String {
             return "PermissionStatus(accessibility=$accessibilityEnabled, overlay=$overlayEnabled, microphone=$microphoneEnabled)"
         }
+    }
+    
+    /**
+     * Wait for the "Starting Accessibility Service" dialog to disappear
+     * This dialog appears after granting accessibility permission and auto-closes when service is ready
+     */
+    private suspend fun waitForAccessibilityServiceToStart(composeTestRule: ComposeTestRule) {
+        Log.d(TAG, "⏳ Checking for 'Starting Accessibility Service' dialog...")
+        
+        // Wait for the dialog to disappear using its content description
+        // This is more reliable than searching for text content
+        val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
+            timeoutMs = 10000L,
+            description = "accessibility service starting dialog"
+        )
+        
+        if (dialogDisappeared) {
+            Log.d(TAG, "✅ Accessibility service dialog closed - service is ready")
+        } else {
+            Log.w(TAG, "⚠️ Accessibility service dialog timeout - may still be visible, proceeding anyway")
+        }
+        
+        // Give a bit more time for the service to fully initialize
+        delay(500)
     }
     
     /**
