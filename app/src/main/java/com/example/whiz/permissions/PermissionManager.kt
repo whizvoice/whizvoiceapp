@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.whiz.accessibility.AccessibilityChecker
+import com.example.whiz.accessibility.WhizAccessibilityService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +44,10 @@ open class PermissionManager @Inject constructor(
     // StateFlow for overlay permission status
     private val _overlayPermissionGranted = MutableStateFlow(false)
     val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted
+
+    // StateFlow for tracking if we're waiting for accessibility service to start
+    private val _isWaitingForAccessibilityService = MutableStateFlow(false)
+    val isWaitingForAccessibilityService: StateFlow<Boolean> = _isWaitingForAccessibilityService
 
     // Combined state to track which permission is needed next
     private val _nextRequiredPermission = MutableStateFlow<PermissionType?>(null)
@@ -142,5 +147,28 @@ open class PermissionManager @Inject constructor(
     fun clearPermissionDialogs() {
         Log.d(TAG, "clearPermissionDialogs called - clearing nextRequiredPermission")
         _nextRequiredPermission.value = null
+    }
+    
+    /**
+     * Set whether we're waiting for the accessibility service to start
+     */
+    fun setWaitingForAccessibilityService(waiting: Boolean) {
+        Log.d(TAG, "setWaitingForAccessibilityService: $waiting")
+        _isWaitingForAccessibilityService.value = waiting
+    }
+    
+    /**
+     * Check if accessibility permission is granted but service is not yet running
+     */
+    fun checkAccessibilityServiceStartupState() {
+        val permissionGranted = accessibilityChecker.isServiceEnabled()
+        val serviceRunning = WhizAccessibilityService.getInstance() != null
+        
+        if (permissionGranted && !serviceRunning) {
+            Log.d(TAG, "Accessibility permission granted but service not running yet")
+            setWaitingForAccessibilityService(true)
+        } else {
+            setWaitingForAccessibilityService(false)
+        }
     }
 } 

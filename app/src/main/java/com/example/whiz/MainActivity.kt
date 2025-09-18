@@ -120,6 +120,9 @@ class MainActivity : ComponentActivity() {
                     // Observe which permission is needed next
                     val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()
                     
+                    // Observe if we're waiting for accessibility service to start
+                    val isWaitingForAccessibilityService by permissionManager.isWaitingForAccessibilityService.collectAsState()
+                    
                     // Handle lifecycle events within Compose context to ensure proper recomposition
                     DisposableEffect(Unit) {
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -127,6 +130,9 @@ class MainActivity : ComponentActivity() {
                                 Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
                                 // Clear dialogs and recheck permissions when returning from Settings
                                 permissionManager.clearPermissionDialogs()
+                                
+                                // Check if we're waiting for accessibility service to start
+                                permissionManager.checkAccessibilityServiceStartupState()
                                 
                                 // For accessibility service, we need to retry checking as it takes time to start
                                 // In tests, the service can take up to a minute to start after being enabled
@@ -136,14 +142,19 @@ class MainActivity : ComponentActivity() {
                                     
                                     while (retries < maxRetries) {
                                         permissionManager.checkAllPermissions()
+                                        permissionManager.checkAccessibilityServiceStartupState()
+                                        
+                                        // Check if accessibility service is now running
+                                        val serviceRunning = com.example.whiz.accessibility.WhizAccessibilityService.getInstance() != null
                                         
                                         // If all permissions are now granted, we're done
                                         val allGranted = permissionManager.microphonePermissionGranted.value &&
                                                         permissionManager.accessibilityPermissionGranted.value &&
                                                         permissionManager.overlayPermissionGranted.value
                                         
-                                        if (allGranted) {
+                                        if (allGranted && (serviceRunning || !permissionManager.accessibilityPermissionGranted.value)) {
                                             Log.d("MainActivity", "All permissions detected as enabled after $retries retries")
+                                            permissionManager.setWaitingForAccessibilityService(false)
                                             break
                                         }
                                         
@@ -151,7 +162,8 @@ class MainActivity : ComponentActivity() {
                                         if (retries % 4 == 0) {
                                             Log.d("MainActivity", "Retry $retries: mic=${permissionManager.microphonePermissionGranted.value}, " +
                                                     "acc=${permissionManager.accessibilityPermissionGranted.value}, " +
-                                                    "overlay=${permissionManager.overlayPermissionGranted.value}")
+                                                    "overlay=${permissionManager.overlayPermissionGranted.value}, " +
+                                                    "serviceRunning=$serviceRunning")
                                         }
                                         
                                         // Wait a bit before retrying (service might still be starting)
@@ -161,6 +173,7 @@ class MainActivity : ComponentActivity() {
                                     
                                     // Final check to ensure UI is updated
                                     permissionManager.checkAllPermissions()
+                                    permissionManager.setWaitingForAccessibilityService(false) // Stop waiting after timeout
                                 }
                             }
                         }
@@ -187,8 +200,17 @@ class MainActivity : ComponentActivity() {
                     // Only show permission dialogs if user is authenticated
                     // Login takes priority over all permissions
                     if (isAuthenticated) {
-                        // Show appropriate permission dialog based on what's needed
-                        when (nextRequiredPermission) {
+                        // Show loading dialog if we're waiting for accessibility service to start
+                        if (isWaitingForAccessibilityService) {
+                            com.example.whiz.ui.components.AccessibilityServiceLoadingDialog(
+                                onDismiss = {
+                                    // User clicked OK, stop waiting
+                                    permissionManager.setWaitingForAccessibilityService(false)
+                                }
+                            )
+                        } else {
+                            // Show appropriate permission dialog based on what's needed
+                            when (nextRequiredPermission) {
                             PermissionManager.PermissionType.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
@@ -221,6 +243,7 @@ class MainActivity : ComponentActivity() {
                             null -> {
                                 // All permissions granted, no dialog needed
                             }
+                        }
                         }
                     }
                     
