@@ -440,7 +440,7 @@ object ComposeTestHelper {
      * Useful for waiting for dialogs or loading indicators to go away
      * Returns true if element disappears within timeout, false if still present
      */
-    fun waitForElementToDisappear(
+    suspend fun waitForElementToDisappear(
         composeTestRule: ComposeTestRule,
         selector: () -> SemanticsNodeInteraction,
         timeoutMs: Long = 10000L,
@@ -490,7 +490,7 @@ object ComposeTestHelper {
                     Log.d(TAG, "✅ $description disappeared (assertion failed) after ${System.currentTimeMillis() - startTime}ms")
                     return true
                 }
-                Thread.sleep(50) // Use shorter sleep for more responsive waiting
+                kotlinx.coroutines.delay(200)
             }
             
             Log.w(TAG, "⚠️ $description still present after ${timeoutMs}ms timeout")

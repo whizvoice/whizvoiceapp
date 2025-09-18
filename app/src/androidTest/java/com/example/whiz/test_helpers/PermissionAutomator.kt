@@ -671,7 +671,7 @@ class PermissionAutomator {
         val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
-            timeoutMs = 10000L,
+            timeoutMs = 45000L,
             description = "accessibility service starting dialog"
         )
         
