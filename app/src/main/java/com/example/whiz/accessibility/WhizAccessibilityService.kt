@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class WhizAccessibilityService : AccessibilityService() {
     
@@ -22,21 +25,37 @@ class WhizAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile
         private var instance: WhizAccessibilityService? = null
-        
+
+        // StateFlow to track service connection state
+        private val _serviceState = MutableStateFlow(ServiceState.DISCONNECTED)
+        val serviceState: StateFlow<ServiceState> = _serviceState.asStateFlow()
+
         fun getInstance(): WhizAccessibilityService? = instance
-        
-        fun isServiceEnabled(): Boolean = instance != null
+
+        // Legacy method - kept for backward compatibility
+        fun isServiceEnabled(): Boolean = _serviceState.value != ServiceState.DISCONNECTED
+
+        // New method to check if service is fully connected
+        fun isServiceConnected(): Boolean = _serviceState.value == ServiceState.CONNECTED
+    }
+
+    enum class ServiceState {
+        DISCONNECTED,  // Service not running
+        CREATED,       // onCreate called but not connected yet
+        CONNECTED      // onServiceConnected called - fully ready
     }
     
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Log.d(TAG, "Accessibility service created")
+        _serviceState.value = ServiceState.CREATED
+        Log.d(TAG, "Accessibility service created - state: CREATED")
     }
-    
+
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "Accessibility service connected")
+        _serviceState.value = ServiceState.CONNECTED
+        Log.d(TAG, "Accessibility service connected - state: CONNECTED")
         
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
@@ -74,12 +93,13 @@ class WhizAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility service interrupted")
     }
-    
+
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        _serviceState.value = ServiceState.DISCONNECTED
         serviceScope.cancel()
-        Log.d(TAG, "Accessibility service destroyed")
+        Log.d(TAG, "Accessibility service destroyed - state: DISCONNECTED")
     }
     
     /**
