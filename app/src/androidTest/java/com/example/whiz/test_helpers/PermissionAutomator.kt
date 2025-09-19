@@ -8,11 +8,6 @@ import androidx.test.uiautomator.*
 import com.example.whiz.test_helpers.ComposeTestHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 
 /**
  * Helper class to automatically grant accessibility and overlay permissions during tests
@@ -665,70 +660,38 @@ class PermissionAutomator {
     }
     
     /**
-     * Wait for the "Starting Accessibility Service" dialog to disappear AND service to connect
-     * This dialog appears after granting accessibility permission and auto-closes when service is ready
+     * Wait for the "Starting Accessibility Service" dialog to disappear
+     * This dialog appears after granting accessibility permission and auto-closes when service is ready.
+     * We avoid checking the service connection directly as that might interfere with the connection process.
      */
     private suspend fun waitForAccessibilityServiceToStart(composeTestRule: ComposeTestRule) {
         Log.d(TAG, "⏳ Waiting for accessibility service to start...")
 
         try {
-            // Use coroutineScope to run both checks in parallel
-            coroutineScope {
-                // Wait for BOTH conditions to be met:
-                // 1. Service state changes to CONNECTED
-                val serviceConnectedDeferred = async {
-                    try {
-                        withTimeout(45000L) {
-                            val serviceClass = Class.forName("com.example.whiz.accessibility.WhizAccessibilityService")
-                            val serviceStateField = serviceClass.getField("serviceState")
-                            val stateFlow = serviceStateField.get(null) as kotlinx.coroutines.flow.StateFlow<*>
+            // Wait a moment for the dialog to appear after permission is granted
+            delay(2000)
 
-                            // Wait for the service to be connected
-                            stateFlow.first { state ->
-                                val stateName = state?.toString() ?: "null"
-                                Log.d(TAG, "Service state: $stateName")
-                                stateName == "CONNECTED"
-                            }
-                            Log.d(TAG, "✅ Accessibility service connected!")
-                            true
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to wait for service connection via StateFlow: ${e.message}")
-                        false
-                    }
-                }
+            // Wait for the dialog to disappear (indicating service has started)
+            val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
+                timeoutMs = 45000L, // 45 seconds as the service takes ~24 seconds to start
+                description = "accessibility service starting dialog"
+            )
 
-                // 2. Dialog disappears (or timeout)
-                val dialogDisappearedDeferred = async {
-                    ComposeTestHelper.waitForElementToDisappear(
-                        composeTestRule = composeTestRule,
-                        selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
-                        timeoutMs = 45000L,
-                        description = "accessibility service starting dialog"
-                    )
-                }
-
-                // Wait for both conditions
-                val serviceConnected = serviceConnectedDeferred.await()
-                val dialogDisappeared = dialogDisappearedDeferred.await()
-
-                if (serviceConnected && dialogDisappeared) {
-                    Log.d(TAG, "✅ Accessibility service fully ready - connected and dialog closed")
-                } else if (serviceConnected && !dialogDisappeared) {
-                    Log.w(TAG, "⚠️ Service connected but dialog may still be visible")
-                } else if (!serviceConnected && dialogDisappeared) {
-                    Log.w(TAG, "⚠️ Dialog closed but service not connected yet")
-                } else {
-                    Log.w(TAG, "⚠️ Timeout waiting for accessibility service - proceeding anyway")
-                }
+            if (dialogDisappeared) {
+                Log.d(TAG, "✅ Accessibility service dialog closed - service should be ready")
+            } else {
+                Log.w(TAG, "⚠️ Timeout waiting for accessibility service dialog to close - proceeding anyway")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error waiting for accessibility service to start: ${e.message}", e)
         }
 
-        // Give a bit more time for the service to fully initialize
-        delay(500)
+        // Give a bit more time for the service to fully initialize after dialog disappears
+        delay(1000)
     }
+
     
     /**
      * Takes a screenshot for debugging purposes.
