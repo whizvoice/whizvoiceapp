@@ -117,11 +117,8 @@ class MainActivity : ComponentActivity() {
                     val authViewModel: com.example.whiz.ui.viewmodels.AuthViewModel = hiltViewModel()
                     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
                     
-                    // Observe which permission is needed next
-                    val nextRequiredPermission by permissionManager.nextRequiredPermission.collectAsState()
-                    
-                    // Observe if we're waiting for accessibility service to start
-                    val isWaitingForAccessibilityService by permissionManager.isWaitingForAccessibilityService.collectAsState()
+                    // Observe which step is needed next
+                    val nextRequiredStep by permissionManager.nextRequiredStep.collectAsState()
                     
                     // Handle lifecycle events within Compose context to ensure proper recomposition
                     DisposableEffect(Unit) {
@@ -133,7 +130,6 @@ class MainActivity : ComponentActivity() {
 
                                 // Check permissions and accessibility service state
                                 permissionManager.checkAllPermissions()
-                                permissionManager.checkAccessibilityServiceStartupState()
                             }
                         }
                         lifecycle.addObserver(observer)
@@ -159,30 +155,30 @@ class MainActivity : ComponentActivity() {
                     // Only show permission dialogs if user is authenticated
                     // Login takes priority over all permissions
                     if (isAuthenticated) {
-                        // Show loading dialog if we're waiting for accessibility service to start
-                        if (isWaitingForAccessibilityService) {
-                            com.example.whiz.ui.components.AccessibilityServiceLoadingDialog(
-                                onDismiss = {
-                                    // User clicked OK, stop waiting
-                                    permissionManager.setWaitingForAccessibilityService(false)
-                                }
-                            )
-                        } else {
-                            // Show appropriate permission dialog based on what's needed
-                            when (nextRequiredPermission) {
-                            PermissionManager.PermissionType.MICROPHONE -> {
+                        // Show appropriate dialog based on what's needed
+                        when (nextRequiredStep) {
+                            PermissionManager.RequiredStep.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
                                     onRequestPermission = { requestMicrophonePermission() }
                                 )
                             }
-                            PermissionManager.PermissionType.ACCESSIBILITY -> {
+                            PermissionManager.RequiredStep.ACCESSIBILITY -> {
                                 com.example.whiz.ui.components.AccessibilityPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
                                     onOpenSettings = { openAccessibilitySettings() }
                                 )
                             }
-                            PermissionManager.PermissionType.OVERLAY -> {
+                            PermissionManager.RequiredStep.ACCESSIBILITY_SERVICE_STARTING -> {
+                                com.example.whiz.ui.components.AccessibilityServiceLoadingDialog(
+                                    onDismiss = {
+                                        // User clicked OK, but let the service connection naturally update the state
+                                        // Just refresh the permissions to update the UI
+                                        permissionManager.checkAllPermissions()
+                                    }
+                                )
+                            }
+                            PermissionManager.RequiredStep.OVERLAY -> {
                                 com.example.whiz.ui.components.OverlayPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
                                     onRequestPermission = {
@@ -190,7 +186,7 @@ class MainActivity : ComponentActivity() {
                                         // Note: Android 16+ strips package name from URI due to security restrictions
                                         // Users will need to manually find the app in the list
                                         val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-                                        
+
                                         try {
                                             startActivity(intent)
                                         } catch (e: Exception) {
@@ -202,7 +198,6 @@ class MainActivity : ComponentActivity() {
                             null -> {
                                 // All permissions granted, no dialog needed
                             }
-                        }
                         }
                     }
                     

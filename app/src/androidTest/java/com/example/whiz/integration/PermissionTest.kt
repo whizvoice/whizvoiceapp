@@ -112,14 +112,14 @@ class PermissionTest : BaseIntegrationTest() {
         // Given: The app checks permissions
         permissionManager.checkAllPermissions()
         
-        // Then: Check what permission is needed next
-        val nextPermission = permissionManager.nextRequiredPermission.first()
-        
+        // Then: Check what step is needed next
+        val nextStep = permissionManager.nextRequiredStep.first()
+
         // Since microphone is granted and accessibility is not, next should be accessibility
-        if (nextPermission != PermissionManager.PermissionType.ACCESSIBILITY) {
+        if (nextStep != PermissionManager.RequiredStep.ACCESSIBILITY) {
             failWithScreenshot(
-                "Expected ACCESSIBILITY to be next required permission but got $nextPermission",
-                "wrong_next_permission"
+                "Expected ACCESSIBILITY to be next required step but got $nextStep",
+                "wrong_next_step"
             )
         }
         

@@ -27,10 +27,11 @@ open class PermissionManager @Inject constructor(
         private const val TAG = "PermissionManager"
     }
     
-    enum class PermissionType {
+    enum class RequiredStep {
         MICROPHONE,
         ACCESSIBILITY,
-        OVERLAY
+        OVERLAY,
+        ACCESSIBILITY_SERVICE_STARTING  // Lowest priority - can wait in background
     }
 
     // StateFlow for microphone permission status
@@ -45,13 +46,9 @@ open class PermissionManager @Inject constructor(
     private val _overlayPermissionGranted = MutableStateFlow(false)
     val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted
 
-    // StateFlow for tracking if we're waiting for accessibility service to start
-    private val _isWaitingForAccessibilityService = MutableStateFlow(false)
-    val isWaitingForAccessibilityService: StateFlow<Boolean> = _isWaitingForAccessibilityService
-
-    // Combined state to track which permission is needed next
-    private val _nextRequiredPermission = MutableStateFlow<PermissionType?>(null)
-    val nextRequiredPermission: StateFlow<PermissionType?> = _nextRequiredPermission
+    // Combined state to track which step is needed next
+    private val _nextRequiredStep = MutableStateFlow<RequiredStep?>(null)
+    val nextRequiredStep: StateFlow<RequiredStep?> = _nextRequiredStep
 
     init {
         // Don't check permissions here - MainActivity will call checkAllPermissions()
@@ -66,7 +63,7 @@ open class PermissionManager @Inject constructor(
         checkMicrophonePermission()
         checkAccessibilityPermission()
         checkOverlayPermission()
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
 
     /**
@@ -79,7 +76,7 @@ open class PermissionManager @Inject constructor(
         ) == PackageManager.PERMISSION_GRANTED
         
         _microphonePermissionGranted.value = hasPermission
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
 
     /**
@@ -89,7 +86,7 @@ open class PermissionManager @Inject constructor(
         val isEnabled = accessibilityChecker.isServiceEnabled()
         Log.d(TAG, "checkAccessibilityPermission: isEnabled=$isEnabled")
         _accessibilityPermissionGranted.value = isEnabled
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
 
     /**
@@ -97,7 +94,7 @@ open class PermissionManager @Inject constructor(
      */
     fun updateMicrophonePermission(granted: Boolean) {
         _microphonePermissionGranted.value = granted
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
 
     /**
@@ -105,7 +102,7 @@ open class PermissionManager @Inject constructor(
      */
     fun updateAccessibilityPermission(granted: Boolean) {
         _accessibilityPermissionGranted.value = granted
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
     
     /**
@@ -118,7 +115,7 @@ open class PermissionManager @Inject constructor(
             true // Always true for older Android versions
         }
         _overlayPermissionGranted.value = hasPermission
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
     
     /**
@@ -126,18 +123,21 @@ open class PermissionManager @Inject constructor(
      */
     fun updateOverlayPermission(granted: Boolean) {
         _overlayPermissionGranted.value = granted
-        updateNextRequiredPermission()
+        updateNextRequiredStep()
     }
 
-    private fun updateNextRequiredPermission() {
-        val nextPermission = when {
-            !_microphonePermissionGranted.value -> PermissionType.MICROPHONE
-            !_accessibilityPermissionGranted.value -> PermissionType.ACCESSIBILITY
-            !_overlayPermissionGranted.value -> PermissionType.OVERLAY
+    private fun updateNextRequiredStep() {
+        val nextStep = when {
+            !_microphonePermissionGranted.value -> RequiredStep.MICROPHONE
+            !_accessibilityPermissionGranted.value -> RequiredStep.ACCESSIBILITY
+            !_overlayPermissionGranted.value -> RequiredStep.OVERLAY
+            // Only show service starting dialog if ALL permissions are granted but service isn't running
+            _accessibilityPermissionGranted.value &&
+                WhizAccessibilityService.getInstance() == null -> RequiredStep.ACCESSIBILITY_SERVICE_STARTING
             else -> null
         }
-        Log.d(TAG, "updateNextRequiredPermission: nextPermission=$nextPermission (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, overlay=${_overlayPermissionGranted.value})")
-        _nextRequiredPermission.value = nextPermission
+        Log.d(TAG, "updateNextRequiredStep: nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value})")
+        _nextRequiredStep.value = nextStep
     }
     
     /**
@@ -145,30 +145,7 @@ open class PermissionManager @Inject constructor(
      * This prevents stale dialogs from persisting while permissions are being rechecked
      */
     fun clearPermissionDialogs() {
-        Log.d(TAG, "clearPermissionDialogs called - clearing nextRequiredPermission")
-        _nextRequiredPermission.value = null
-    }
-    
-    /**
-     * Set whether we're waiting for the accessibility service to start
-     */
-    fun setWaitingForAccessibilityService(waiting: Boolean) {
-        Log.d(TAG, "setWaitingForAccessibilityService: $waiting")
-        _isWaitingForAccessibilityService.value = waiting
-    }
-    
-    /**
-     * Check if accessibility permission is granted but service is not yet running
-     */
-    fun checkAccessibilityServiceStartupState() {
-        val permissionGranted = accessibilityChecker.isServiceEnabled()
-        val serviceRunning = WhizAccessibilityService.getInstance() != null
-        
-        if (permissionGranted && !serviceRunning) {
-            Log.d(TAG, "Accessibility permission granted but service not running yet")
-            setWaitingForAccessibilityService(true)
-        } else {
-            setWaitingForAccessibilityService(false)
-        }
+        Log.d(TAG, "clearPermissionDialogs called - clearing nextRequiredStep")
+        _nextRequiredStep.value = null
     }
 } 
