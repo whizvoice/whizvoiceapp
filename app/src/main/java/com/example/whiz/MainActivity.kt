@@ -130,51 +130,10 @@ class MainActivity : ComponentActivity() {
                                 Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
                                 // Clear dialogs and recheck permissions when returning from Settings
                                 permissionManager.clearPermissionDialogs()
-                                
-                                // Check if we're waiting for accessibility service to start
+
+                                // Check permissions and accessibility service state
+                                permissionManager.checkAllPermissions()
                                 permissionManager.checkAccessibilityServiceStartupState()
-                                
-                                // For accessibility service, we need to retry checking as it takes time to start
-                                // In tests, the service can take up to a minute to start after being enabled
-                                lifecycleScope.launch {
-                                    var retries = 0
-                                    val maxRetries = 20 // Check for up to 10 seconds (20 * 500ms)
-                                    
-                                    while (retries < maxRetries) {
-                                        permissionManager.checkAllPermissions()
-                                        permissionManager.checkAccessibilityServiceStartupState()
-                                        
-                                        // Check if accessibility service is now running
-                                        val serviceRunning = com.example.whiz.accessibility.WhizAccessibilityService.getInstance() != null
-                                        
-                                        // If all permissions are now granted, we're done
-                                        val allGranted = permissionManager.microphonePermissionGranted.value &&
-                                                        permissionManager.accessibilityPermissionGranted.value &&
-                                                        permissionManager.overlayPermissionGranted.value
-                                        
-                                        if (allGranted && (serviceRunning || !permissionManager.accessibilityPermissionGranted.value)) {
-                                            Log.d("MainActivity", "All permissions detected as enabled after $retries retries")
-                                            permissionManager.setWaitingForAccessibilityService(false)
-                                            break
-                                        }
-                                        
-                                        // Log progress for debugging
-                                        if (retries % 4 == 0) {
-                                            Log.d("MainActivity", "Retry $retries: mic=${permissionManager.microphonePermissionGranted.value}, " +
-                                                    "acc=${permissionManager.accessibilityPermissionGranted.value}, " +
-                                                    "overlay=${permissionManager.overlayPermissionGranted.value}, " +
-                                                    "serviceRunning=$serviceRunning")
-                                        }
-                                        
-                                        // Wait a bit before retrying (service might still be starting)
-                                        delay(500)
-                                        retries++
-                                    }
-                                    
-                                    // Final check to ensure UI is updated
-                                    permissionManager.checkAllPermissions()
-                                    permissionManager.setWaitingForAccessibilityService(false) // Stop waiting after timeout
-                                }
                             }
                         }
                         lifecycle.addObserver(observer)
