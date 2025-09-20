@@ -67,12 +67,6 @@ class PermissionAutomator {
         } else {
             Log.d(TAG, "ℹ️ No permission dialogs found")
         }
-
-        // Wait for "Starting Accessibility Service" dialog to disappear if ComposeTestRule provided
-        if (composeTestRule != null) {
-            waitForAccessibilityServiceToStart(composeTestRule)
-        }
-        
         return@runBlocking permissionsHandled
     }
     
@@ -658,40 +652,6 @@ class PermissionAutomator {
             return "PermissionStatus(accessibility=$accessibilityEnabled, overlay=$overlayEnabled, microphone=$microphoneEnabled)"
         }
     }
-    
-    /**
-     * Wait for the "Starting Accessibility Service" dialog to disappear
-     * This dialog appears after granting accessibility permission and auto-closes when service is ready.
-     * We avoid checking the service connection directly as that might interfere with the connection process.
-     */
-    private suspend fun waitForAccessibilityServiceToStart(composeTestRule: ComposeTestRule) {
-        Log.d(TAG, "⏳ Waiting for accessibility service to start...")
-
-        try {
-            // Wait a moment for the dialog to appear after permission is granted
-            delay(2000)
-
-            // Wait for the dialog to disappear (indicating service has started)
-            val dialogDisappeared = ComposeTestHelper.waitForElementToDisappear(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithContentDescription("Accessibility service starting dialog") },
-                timeoutMs = 45000L, // 45 seconds as the service takes ~24 seconds to start
-                description = "accessibility service starting dialog"
-            )
-
-            if (dialogDisappeared) {
-                Log.d(TAG, "✅ Accessibility service dialog closed - service should be ready")
-            } else {
-                Log.w(TAG, "⚠️ Timeout waiting for accessibility service dialog to close - proceeding anyway")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error waiting for accessibility service to start: ${e.message}", e)
-        }
-
-        // Give a bit more time for the service to fully initialize after dialog disappears
-        delay(1000)
-    }
-
     
     /**
      * Takes a screenshot for debugging purposes.
