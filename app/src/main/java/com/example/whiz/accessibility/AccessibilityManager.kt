@@ -51,15 +51,6 @@ class AccessibilityManager @Inject constructor(
         accessibilityChecker.openAccessibilitySettings()
     }
     
-    fun openApp(packageName: String): Boolean {
-        val service = WhizAccessibilityService.getInstance()
-        return if (service != null) {
-            service.openApp(packageName)
-        } else {
-            Log.w(TAG, "Accessibility service not available")
-            false
-        }
-    }
     
     fun getInstalledApps(): List<WhizAccessibilityService.AppInfo> {
         val service = WhizAccessibilityService.getInstance()

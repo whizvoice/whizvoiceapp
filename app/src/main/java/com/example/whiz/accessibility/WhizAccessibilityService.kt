@@ -102,59 +102,6 @@ class WhizAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Accessibility service destroyed - state: DISCONNECTED")
     }
     
-    /**
-     * Opens any app by package name
-     */
-    fun openApp(packageName: String): Boolean {
-        return try {
-            if (!isAppInstalled(packageName)) {
-                Log.w(TAG, "App $packageName is not installed")
-                return false
-            }
-            
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
-                Log.d(TAG, "Successfully launched $packageName")
-                
-                // Start bubble overlay when launching non-WhizVoice apps
-                if (!packageName.contains("com.example.whiz")) {
-                    startBubbleOverlay()
-                }
-                
-                true
-            } else {
-                Log.e(TAG, "Could not get launch intent for $packageName")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error opening app $packageName", e)
-            false
-        }
-    }
-    
-    /**
-     * Starts the bubble overlay service if overlay permission is granted
-     */
-    private fun startBubbleOverlay() {
-        try {
-            // Check if bubble is already active
-            if (com.example.whiz.services.BubbleOverlayService.isActive) {
-                Log.d(TAG, "Bubble overlay already active, skipping start")
-                return
-            }
-            
-            if (android.provider.Settings.canDrawOverlays(this)) {
-                com.example.whiz.services.BubbleOverlayService.start(this)
-                Log.d(TAG, "Started bubble overlay service after launching app")
-            } else {
-                Log.w(TAG, "Cannot start bubble overlay - permission not granted")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start bubble overlay", e)
-        }
-    }
     
     /**
      * Performs a global action like going home, back, recent apps, etc.
