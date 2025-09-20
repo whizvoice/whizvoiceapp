@@ -235,7 +235,17 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 Log.w(TAG, "⚠️ Could not track chat ID: ${e.message}")
             }
             
-            handlePermissionDialogIfBlocking()
+            if (!handlePermissionDialogIfBlocking()) {
+                Log.d(TAG, "⚠️ No permission dialog was handled")
+            }
+
+            // Wait for accessibility service to start via app launch
+            Log.d(TAG, "🔧 Waiting for accessibility service to start...")
+            if (!waitForAccessibilityServiceViaAppLaunch()) {
+                takeFailureScreenshotAndWaitForCompletion("testWhatsAppChatOpeningOnlyDoesNotDuplicate", "Accessibility service failed to start")
+                throw AssertionError("Accessibility service failed to start within timeout")
+            }
+            Log.d(TAG, "✅ Accessibility service is ready")
 
             // Send voice command to open WhatsApp chat
             Log.d(TAG, "🎤 Sending voice command to open WhatsApp chat...")
@@ -419,8 +429,18 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             
             Log.d(TAG, "✅ ChatViewModel captured successfully")
 
-            handlePermissionDialogIfBlocking()
-            
+            if (!handlePermissionDialogIfBlocking()) {
+                Log.d(TAG, "⚠️ No permission dialog was handled")
+            }
+
+            // Wait for accessibility service to start via app launch
+            Log.d(TAG, "🔧 Waiting for accessibility service to start...")
+            if (!waitForAccessibilityServiceViaAppLaunch()) {
+                takeFailureScreenshotAndWaitForCompletion("testVoiceDraftMessageToWhatsApp", "Accessibility service failed to start")
+                throw AssertionError("Accessibility service failed to start within timeout")
+            }
+            Log.d(TAG, "✅ Accessibility service is ready")
+
             // Step 2: Send voice command to draft WhatsApp message
             Log.d(TAG, "🎤 Step 2: Sending WhatsApp message request via voice...")
             val whatsappRequest = "Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey what's up how's it going just tryna test whiz voice"

@@ -1474,7 +1474,7 @@ abstract class BaseIntegrationTest {
     protected fun getCurrentMessageCount(): Int {
         return device.findObjects(
             By.clazz("android.widget.TextView").pkg(packageName)
-        ).filter { 
+        ).filter {
             try {
                 val text = it.text
                 text != null && text.length > 10 // filter out short UI labels
@@ -1484,7 +1484,68 @@ abstract class BaseIntegrationTest {
         }.size
     }
 
-    
+    /**
+     * Wait for accessibility service to start by launching the Clock app.
+     * This triggers the bubble overlay mode which helps the accessibility service start.
+     * @param timeoutMs Timeout in milliseconds (default: 45 seconds)
+     * @return true if accessibility service connected within timeout, false otherwise
+     */
+    protected fun waitForAccessibilityServiceViaAppLaunch(timeoutMs: Long = 45000): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔧 Starting accessibility service via Clock app launch")
+
+        // Check if already connected
+        if (WhizAccessibilityService.isServiceConnected()) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Accessibility service already connected")
+            return true
+        }
+
+        // Send message to trigger launch_app tool for Clock app
+        android.util.Log.d("BaseIntegrationTest", "📱 Sending message to open Clock app...")
+        val messageSent = sendMessageAndVerifyDisplay("Open the Clock app")
+
+        if (!messageSent) {
+            android.util.Log.e("BaseIntegrationTest", "❌ Failed to send message to open Clock app")
+            return false
+        }
+
+        // Wait for accessibility service to be connected
+        val startTime = System.currentTimeMillis()
+        android.util.Log.d("BaseIntegrationTest", "⏳ Waiting up to ${timeoutMs/1000} seconds for accessibility service to connect...")
+
+        while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+            if (WhizAccessibilityService.isServiceConnected()) {
+                val elapsedTime = (System.currentTimeMillis() - startTime) / 1000
+                android.util.Log.d("BaseIntegrationTest", "✅ Accessibility service connected after $elapsedTime seconds")
+
+                // Brief delay to ensure service is fully ready
+                Thread.sleep(1000)
+
+                // Click on the notification bubble to return to the main app
+                android.util.Log.d("BaseIntegrationTest", "🔄 Clicking notification bubble to return to main app...")
+                val bubble = device.findObject(By.desc("WhizVoice Chat Bubble"))
+                if (bubble != null) {
+                    bubble.click()
+                    android.util.Log.d("BaseIntegrationTest", "✅ Clicked notification bubble")
+                    Thread.sleep(500) // Brief delay for app transition
+                } else {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find notification bubble to click")
+                }
+
+                return true
+            }
+
+            // Check service state for debugging
+            val currentState = WhizAccessibilityService.serviceState.value
+            android.util.Log.d("BaseIntegrationTest", "⏳ Current service state: $currentState")
+
+            Thread.sleep(1000) // Check every second
+        }
+
+        val finalState = WhizAccessibilityService.serviceState.value
+        android.util.Log.e("BaseIntegrationTest", "❌ Accessibility service failed to connect within timeout. Final state: $finalState")
+        return false
+    }
+
     /**
      * Take a screenshot and UI dump for test failure debugging with guaranteed completion
      * @param testName Name of the test that failed
