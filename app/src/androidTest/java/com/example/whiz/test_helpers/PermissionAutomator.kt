@@ -349,9 +349,22 @@ class PermissionAutomator {
                     allowButton.click()
                     delay(500)
                 }
-                
+
                 Log.d(TAG, "✅ Accessibility service enabled via button")
-                return true
+
+                // Wait for the dialog to disappear and return to app
+                Log.d(TAG, "⏳ Waiting for return to app after enabling via button...")
+                val startTime = System.currentTimeMillis()
+                while (System.currentTimeMillis() - startTime < 10000) {
+                    if (device.currentPackageName != SETTINGS_PACKAGE) {
+                        Log.d(TAG, "✅ Returned to app from Settings")
+                        delay(500) // Brief delay to ensure UI is stable
+                        return true
+                    }
+                    delay(500)
+                }
+                Log.w(TAG, "⚠️ Timed out waiting for return to app")
+                return false
             }
         }
         
@@ -376,17 +389,50 @@ class PermissionAutomator {
                 // Verify the toggle is now checked
                 toggleSwitch = device.findObject(By.clazz("android.widget.Switch"))
                     ?: device.findObject(By.checkable(true))
-                
+
                 if (toggleSwitch?.isChecked == true) {
                     Log.d(TAG, "✅ Accessibility service enabled and verified")
-                    return true
+
+                    // Wait for the "Enable Accessibility Settings" dialog to disappear
+                    Log.d(TAG, "⏳ Waiting for accessibility dialog to dismiss...")
+                    val startTime = System.currentTimeMillis()
+                    while (System.currentTimeMillis() - startTime < 10000) {
+                        // Check if we're back in the app (not in Settings anymore)
+                        if (device.currentPackageName != SETTINGS_PACKAGE) {
+                            Log.d(TAG, "✅ Returned to app from Settings")
+                            delay(500) // Brief delay to ensure UI is stable
+                            return true
+                        }
+                        delay(500)
+                    }
+                    Log.w(TAG, "⚠️ Timed out waiting for return to app after enabling accessibility")
+                    return false
                 } else {
                     Log.w(TAG, "⚠️ Toggle clicked but not showing as checked")
-                    // Still return true as the action was performed
-                    return true
+                    // Still wait for return to app
+                    Log.d(TAG, "⏳ Waiting for return to app...")
+                    val startTime = System.currentTimeMillis()
+                    while (System.currentTimeMillis() - startTime < 10000) {
+                        if (device.currentPackageName != SETTINGS_PACKAGE) {
+                            Log.d(TAG, "✅ Returned to app from Settings")
+                            delay(500)
+                            return true
+                        }
+                        delay(500)
+                    }
+                    return false
                 }
             } else {
                 Log.d(TAG, "✅ Accessibility service already enabled")
+                // Even if already enabled, wait for return to app
+                val startTime = System.currentTimeMillis()
+                while (System.currentTimeMillis() - startTime < 5000) {
+                    if (device.currentPackageName != SETTINGS_PACKAGE) {
+                        delay(500)
+                        return true
+                    }
+                    delay(500)
+                }
                 return true
             }
         }
