@@ -20,6 +20,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -156,8 +157,10 @@ class MainActivity : ComponentActivity() {
                     // Only show permission dialogs if user is authenticated
                     // Login takes priority over all permissions
                     if (isAuthenticated) {
-                        // Show appropriate dialog based on what's needed
-                        when (nextRequiredStep) {
+                        // Use key to force recomposition when nextRequiredStep changes
+                        key(nextRequiredStep) {
+                            // Show appropriate dialog based on what's needed
+                            when (nextRequiredStep) {
                             PermissionManager.RequiredStep.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
@@ -200,6 +203,7 @@ class MainActivity : ComponentActivity() {
                                 // All permissions granted, no dialog needed
                             }
                         }
+                        } // end key block
                     }
                     
                     // Handle navigation after navController is initialized
