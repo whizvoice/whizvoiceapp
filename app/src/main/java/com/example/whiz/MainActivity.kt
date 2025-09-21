@@ -127,7 +127,10 @@ class MainActivity : ComponentActivity() {
                                 Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
                                 // Recheck permissions when returning from Settings
                                 // This will update nextRequiredStep to show the correct dialog or none
-                                permissionManager.checkAllPermissions()
+                                // Ensure this runs on main thread for proper Compose recomposition
+                                lifecycleScope.launch {
+                                    permissionManager.checkAllPermissions()
+                                }
                             }
                         }
                         lifecycle.addObserver(observer)
