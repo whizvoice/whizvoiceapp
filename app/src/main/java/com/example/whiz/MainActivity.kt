@@ -118,10 +118,13 @@ class MainActivity : ComponentActivity() {
                     // Get AuthViewModel to observe authentication state
                     val authViewModel: com.example.whiz.ui.viewmodels.AuthViewModel = hiltViewModel()
                     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
-                    
+
+                    // Ensure stable reference to permissionManager within Composable context
+                    val stablePermissionManager = remember { permissionManager }
+
                     // Observe which step is needed next
-                    // Directly collect from the singleton's StateFlow to ensure we always get updates
-                    val nextRequiredStep by permissionManager.nextRequiredStep.collectAsState()
+                    // Collect from the stable reference to ensure proper recomposition
+                    val nextRequiredStep by stablePermissionManager.nextRequiredStep.collectAsState()
                     
                     // Handle lifecycle events within Compose context to ensure proper recomposition
                     DisposableEffect(Unit) {
@@ -135,7 +138,7 @@ class MainActivity : ComponentActivity() {
                                 // Ensure this runs on main thread for proper Compose recomposition
                                 lifecycleScope.launch {
                                     Log.d("MainActivity", "checkAllPermissions called on thread: ${Thread.currentThread().name} (id=${Thread.currentThread().id})")
-                                    permissionManager.checkAllPermissions()
+                                    stablePermissionManager.checkAllPermissions()
                                 }
                             }
                         }
@@ -148,9 +151,9 @@ class MainActivity : ComponentActivity() {
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
-                        permissionManager = permissionManager,
+                        permissionManager = stablePermissionManager,
                         voiceManager = voiceManager,
-                        hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
+                        hasPermission = stablePermissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() },
                         isVoiceLaunch = isVoiceLaunch,
                         onChatViewModelReady = { vm ->
@@ -189,7 +192,7 @@ class MainActivity : ComponentActivity() {
                                     onDismiss = {
                                         // User clicked OK, but let the service connection naturally update the state
                                         // Just refresh the permissions to update the UI
-                                        permissionManager.checkAllPermissions()
+                                        stablePermissionManager.checkAllPermissions()
                                     }
                                 )
                             }
