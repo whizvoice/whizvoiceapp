@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.whiz.accessibility.AccessibilityChecker
+import com.example.whiz.accessibility.AccessibilityManager
 import com.example.whiz.permissions.PermissionManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -20,8 +21,9 @@ import javax.inject.Singleton
 @Singleton
 class TestPermissionManager @Inject constructor(
     @ApplicationContext context: Context,
-    accessibilityChecker: AccessibilityChecker
-) : PermissionManager(context, accessibilityChecker) {
+    accessibilityChecker: AccessibilityChecker,
+    accessibilityManager: AccessibilityManager
+) : PermissionManager(context, accessibilityChecker, accessibilityManager) {
     
     companion object {
         private const val TAG = "TestPermissionManager"

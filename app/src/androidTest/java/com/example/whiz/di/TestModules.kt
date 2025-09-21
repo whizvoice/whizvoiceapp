@@ -268,9 +268,10 @@ object TestAppModule {
     @Singleton
     fun providePermissionManager(
         @ApplicationContext context: Context,
-        accessibilityChecker: AccessibilityChecker
+        accessibilityChecker: AccessibilityChecker,
+        accessibilityManager: com.example.whiz.accessibility.AccessibilityManager
     ): PermissionManager {
         Log.d(TAG, "🔧 Creating TestPermissionManager for testing...")
-        return TestPermissionManager(context, accessibilityChecker)
+        return TestPermissionManager(context, accessibilityChecker, accessibilityManager)
     }
 } 
