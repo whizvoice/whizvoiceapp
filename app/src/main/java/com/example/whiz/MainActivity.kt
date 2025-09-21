@@ -125,6 +125,11 @@ class MainActivity : ComponentActivity() {
                     // Observe which step is needed next
                     // Collect from the stable reference to ensure proper recomposition
                     val nextRequiredStep by stablePermissionManager.nextRequiredStep.collectAsState()
+
+                    // Debug: Force recomposition when state changes
+                    LaunchedEffect(nextRequiredStep) {
+                        Log.d("MainActivity", "LaunchedEffect triggered: nextRequiredStep changed to $nextRequiredStep")
+                    }
                     
                     // Handle lifecycle events within Compose context to ensure proper recomposition
                     DisposableEffect(Unit) {
@@ -137,6 +142,8 @@ class MainActivity : ComponentActivity() {
                                 // This will update nextRequiredStep to show the correct dialog or none
                                 // Ensure this runs on main thread for proper Compose recomposition
                                 lifecycleScope.launch {
+                                    // Small delay to ensure Compose UI is ready after activity restart
+                                    kotlinx.coroutines.delay(100)
                                     Log.d("MainActivity", "checkAllPermissions called on thread: ${Thread.currentThread().name} (id=${Thread.currentThread().id})")
                                     stablePermissionManager.checkAllPermissions()
                                 }
@@ -170,11 +177,10 @@ class MainActivity : ComponentActivity() {
                         val threadId = Thread.currentThread().id
                         Log.d("MainActivity", "Dialog render on thread: $threadName (id=$threadId), nextRequiredStep=$nextRequiredStep")
 
-                        // Use key to force recomposition when nextRequiredStep changes
-                        key(nextRequiredStep) {
-                            Log.d("MainActivity", "Inside key block on thread: ${Thread.currentThread().name}, nextRequiredStep=$nextRequiredStep")
-                            // Show appropriate dialog based on what's needed
-                            when (nextRequiredStep) {
+                        // Show appropriate dialog based on what's needed
+                        // Removed key() wrapper - the when expression will recompose naturally when nextRequiredStep changes
+                        Log.d("MainActivity", "Rendering dialog for nextRequiredStep=$nextRequiredStep on thread: ${Thread.currentThread().name}")
+                        when (nextRequiredStep) {
                             PermissionManager.RequiredStep.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
@@ -217,7 +223,6 @@ class MainActivity : ComponentActivity() {
                                 // All permissions granted, no dialog needed
                             }
                         }
-                        } // end key block
                     }
                     
                     // Handle navigation after navController is initialized
