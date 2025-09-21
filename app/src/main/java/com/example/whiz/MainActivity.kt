@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -119,17 +120,21 @@ class MainActivity : ComponentActivity() {
                     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
                     
                     // Observe which step is needed next
+                    // Directly collect from the singleton's StateFlow to ensure we always get updates
                     val nextRequiredStep by permissionManager.nextRequiredStep.collectAsState()
                     
                     // Handle lifecycle events within Compose context to ensure proper recomposition
                     DisposableEffect(Unit) {
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                                Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
+                                val observerThread = Thread.currentThread().name
+                                val observerId = Thread.currentThread().id
+                                Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose on thread: $observerThread (id=$observerId)")
                                 // Recheck permissions when returning from Settings
                                 // This will update nextRequiredStep to show the correct dialog or none
                                 // Ensure this runs on main thread for proper Compose recomposition
                                 lifecycleScope.launch {
+                                    Log.d("MainActivity", "checkAllPermissions called on thread: ${Thread.currentThread().name} (id=${Thread.currentThread().id})")
                                     permissionManager.checkAllPermissions()
                                 }
                             }
@@ -157,8 +162,14 @@ class MainActivity : ComponentActivity() {
                     // Only show permission dialogs if user is authenticated
                     // Login takes priority over all permissions
                     if (isAuthenticated) {
+                        // Log thread info when collecting StateFlow
+                        val threadName = Thread.currentThread().name
+                        val threadId = Thread.currentThread().id
+                        Log.d("MainActivity", "Dialog render on thread: $threadName (id=$threadId), nextRequiredStep=$nextRequiredStep")
+
                         // Use key to force recomposition when nextRequiredStep changes
                         key(nextRequiredStep) {
+                            Log.d("MainActivity", "Inside key block on thread: ${Thread.currentThread().name}, nextRequiredStep=$nextRequiredStep")
                             // Show appropriate dialog based on what's needed
                             when (nextRequiredStep) {
                             PermissionManager.RequiredStep.MICROPHONE -> {

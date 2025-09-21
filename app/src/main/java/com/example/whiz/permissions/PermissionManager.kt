@@ -147,7 +147,9 @@ open class PermissionManager @Inject constructor(
                 WhizAccessibilityService.getInstance() == null -> RequiredStep.ACCESSIBILITY_SERVICE_STARTING
             else -> null
         }
-        Log.d(TAG, "updateNextRequiredStep: nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value})")
+        val threadName = Thread.currentThread().name
+        val threadId = Thread.currentThread().id
+        Log.d(TAG, "updateNextRequiredStep on thread: $threadName (id=$threadId): nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value})")
         _nextRequiredStep.value = nextStep
     }
     
@@ -171,7 +173,9 @@ open class PermissionManager @Inject constructor(
                 val wasGranted = _accessibilityPermissionGranted.value
                 val isNowEnabled = state != WhizAccessibilityService.ServiceState.DISCONNECTED
 
-                Log.d(TAG, "Accessibility service state changed: $state, wasGranted=$wasGranted, isNowEnabled=$isNowEnabled")
+                val threadName = Thread.currentThread().name
+                val threadId = Thread.currentThread().id
+                Log.d(TAG, "Accessibility service state changed on thread: $threadName (id=$threadId): $state, wasGranted=$wasGranted, isNowEnabled=$isNowEnabled")
 
                 // Update the accessibility permission status
                 if (isNowEnabled != wasGranted) {
