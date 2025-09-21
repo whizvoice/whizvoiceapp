@@ -125,10 +125,8 @@ class MainActivity : ComponentActivity() {
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                                 Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose")
-                                // Clear dialogs and recheck permissions when returning from Settings
-                                permissionManager.clearPermissionDialogs()
-
-                                // Check permissions and accessibility service state
+                                // Recheck permissions when returning from Settings
+                                // This will update nextRequiredStep to show the correct dialog or none
                                 permissionManager.checkAllPermissions()
                             }
                         }
