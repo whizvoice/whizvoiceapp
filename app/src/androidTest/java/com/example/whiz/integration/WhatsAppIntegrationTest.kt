@@ -480,33 +480,27 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
             Log.d(TAG, "✅ Compose recomposition complete")
 
-            // Try to toggle accessibility services to allow our service to start
-            Log.d(TAG, "🔓 Attempting to disable UIAutomator accessibility service temporarily...")
+            // Try to kill UIAutomator to allow accessibility service to start
+            Log.d(TAG, "🔓 Attempting to kill UIAutomator temporarily...")
 
             try {
-                // First, get the current enabled services to restore later if needed
-                val currentServices = device.executeShellCommand("settings get secure enabled_accessibility_services").trim()
-                Log.d(TAG, "📦 Current accessibility services: $currentServices")
+                // Kill current UIAutomator instance
+                Log.d(TAG, "💀 Killing UIAutomator process...")
+                device.executeShellCommand("am force-stop com.android.uiautomator")
 
-                // Disable UIAutomator's accessibility service temporarily
-                Log.d(TAG, "🔌 Disabling UIAutomator accessibility service...")
-                device.executeShellCommand("settings put secure enabled_accessibility_services \"\"")
-                Thread.sleep(500) // Brief pause to let the system process the change
+                // Wait a moment for cleanup
+                Thread.sleep(1000)
 
-                // Enable WhizVoice accessibility service
-                Log.d(TAG, "🔧 Enabling WhizVoice accessibility service...")
-                val whizService = "com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"
-                device.executeShellCommand("settings put secure enabled_accessibility_services \"$whizService\"")
-                device.executeShellCommand("settings put secure accessibility_enabled 1")
+                Log.d(TAG, "✅ UIAutomator killed, creating new instance...")
 
-                Log.d(TAG, "✅ WhizVoice accessibility service enabled via settings")
+                // Create new instance
+                val newDevice = UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
+                device = newDevice
 
-                // Force garbage collection to help process the change
-                System.gc()
-                Thread.sleep(1000) // Give the system time to start the service
+                Log.d(TAG, "✅ New UiDevice instance created")
 
                 // Check if accessibility service starts now - wait up to 30 seconds
-                Log.d(TAG, "⏳ Waiting up to 30 seconds for accessibility service to start...")
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for accessibility service to start after killing UIAutomator...")
 
                 var serviceStarted = false
                 val maxWaitTime = 30000L // 30 seconds
@@ -526,30 +520,28 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 }
 
                 if (!serviceStarted) {
-                    Log.e(TAG, "❌ Accessibility service failed to start within 30 seconds")
-
-                    // Try to re-enable UIAutomator's service before failing
-                    try {
-                        Log.d(TAG, "🔧 Re-enabling UIAutomator accessibility service...")
-                        val uiAutomatorService = "com.android.uiautomator/com.android.uiautomator.UiAutomatorAccessibilityService"
-                        device.executeShellCommand("settings put secure enabled_accessibility_services \"$uiAutomatorService\"")
-                    } catch (restoreError: Exception) {
-                        Log.e(TAG, "❌ Failed to restore UIAutomator service: ${restoreError.message}")
-                    }
+                    Log.e(TAG, "❌ Accessibility service failed to start within 30 seconds of killing UIAutomator")
 
                     // Take a screenshot to debug what state we're in
-                    takeFailureScreenshotAndWaitForCompletion("accessibility_service_failed_after_toggle", "Service did not start after toggling services")
+                    takeFailureScreenshotAndWaitForCompletion("accessibility_service_failed_after_kill", "Service did not start after killing UIAutomator")
 
                     // Fail the test since this approach didn't work
-                    throw AssertionError("Accessibility service failed to start even after toggling accessibility services for 30 seconds")
+                    throw AssertionError("Accessibility service failed to start even after killing UIAutomator for 30 seconds")
                 }
 
-                // Note: We're keeping WhizVoice service enabled for the test
-                // UIAutomator commands still work even without its accessibility service
+                // UIAutomator is now working again with the new instance
                 Log.d(TAG, "✅ WhizVoice accessibility service is running, continuing with test")
 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to toggle accessibility services: ${e.message}", e)
+                Log.e(TAG, "❌ Failed to kill/restart UIAutomator: ${e.message}", e)
+
+                // Try to recover by creating a new device instance
+                try {
+                    device = UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
+                    Log.d(TAG, "✅ Recovered UiDevice instance")
+                } catch (recoveryError: Exception) {
+                    Log.e(TAG, "❌ Failed to recover UiDevice: ${recoveryError.message}")
+                }
             }
 
             // Wait for accessibility service to start via app launch
