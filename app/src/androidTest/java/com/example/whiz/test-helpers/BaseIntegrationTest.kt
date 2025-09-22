@@ -1490,7 +1490,7 @@ abstract class BaseIntegrationTest {
      * @param timeoutMs Timeout in milliseconds (default: 45 seconds)
      * @return true if accessibility service connected within timeout, false otherwise
      */
-    protected fun waitForAccessibilityServiceViaAppLaunch(timeoutMs: Long = 45000): Boolean {
+    protected fun waitForAccessibilityServiceViaAppLaunch(timeoutMs: Long = 10000): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔧 Starting accessibility service via Clock app launch")
 
         // Check if already connected

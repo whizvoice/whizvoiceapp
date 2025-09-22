@@ -438,16 +438,27 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             // Wait for accessibility service to start
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
 
-            // Check every 500ms if accessibility service permission has been granted
+            // Check every 500ms if accessibility service permission has been granted at system level
             Log.d(TAG, "🔍 Checking if accessibility service permission is granted...")
             var elapsedTime = 0L
             val checkInterval = 500L
             val maxWaitTime = 10000L
-            var serviceGranted = false
+            var permissionGranted = false
 
-            while (elapsedTime < maxWaitTime && !serviceGranted) {
-                serviceGranted = WhizAccessibilityService.isServiceConnected()
-                if (serviceGranted) {
+            // Check system settings directly for immediate feedback
+            while (elapsedTime < maxWaitTime && !permissionGranted) {
+                // Check if the accessibility service is enabled in system settings
+                val enabledServices = android.provider.Settings.Secure.getString(
+                    instrumentation.targetContext.contentResolver,
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                )
+
+                if (enabledServices != null) {
+                    val serviceName = "${packageName}/com.example.whiz.accessibility.WhizAccessibilityService"
+                    permissionGranted = enabledServices.contains(serviceName)
+                }
+
+                if (permissionGranted) {
                     Log.d(TAG, "✅ Accessibility service permission granted after ${elapsedTime}ms")
                     break
                 }
@@ -457,10 +468,33 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 elapsedTime += checkInterval
             }
 
-            if (!serviceGranted) {
+            if (!permissionGranted) {
                 Log.e(TAG, "❌ Accessibility service permission NOT granted after ${maxWaitTime/1000} seconds")
                 takeFailureScreenshotAndWaitForCompletion("testWhatsAppMessageFlow_withVoiceCommands", "Accessibility_permission_not_granted_timeout")
                 throw AssertionError("Accessibility service permission was not granted within ${maxWaitTime/1000} seconds")
+            }
+
+            // Force Compose to process any pending state changes from permission grant
+            Log.d(TAG, "⏰ Forcing Compose recomposition after permission grant...")
+            composeTestRule.waitForIdle()  // Wait for any pending recompositions
+            composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
+            composeTestRule.waitForIdle()  // Wait again for the forced recomposition
+            delay(500) // Small delay to let UI settle
+            Log.d(TAG, "✅ Compose recomposition complete")
+
+            // Now wait for the service to actually connect (with a reasonable timeout)
+            Log.d(TAG, "⏳ Permission granted, waiting for service to connect...")
+            val serviceConnected = withTimeoutOrNull(20000) { // Give it 20 seconds to connect
+                while (!WhizAccessibilityService.isServiceConnected()) {
+                    delay(500)
+                }
+                true
+            } ?: false
+
+            if (!serviceConnected) {
+                Log.w(TAG, "⚠️ Service didn't connect after permission grant, but continuing anyway...")
+            } else {
+                Log.d(TAG, "✅ Accessibility service connected!")
             }
 
             // Service is now connected, clear any lingering dialogs
@@ -473,6 +507,14 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Called checkAllPermissions to clear dialogs")
             } ?: Log.w(TAG, "⚠️ No activity reference to call checkAllPermissions")
 
+            Log.d(TAG, "✅ Accessibility service permission granted")
+
+            // Wait for accessibility service to start via app launch
+            Log.d(TAG, "🔧 Waiting for accessibility service to start...")
+            if (!waitForAccessibilityServiceViaAppLaunch()) {
+                takeFailureScreenshotAndWaitForCompletion("testWhatsAppChatOpeningOnlyDoesNotDuplicate", "Accessibility service failed to start")
+                throw AssertionError("Accessibility service failed to start within timeout")
+            }
             Log.d(TAG, "✅ Accessibility service is ready")
 
             // Step 2: Send voice command to draft WhatsApp message
