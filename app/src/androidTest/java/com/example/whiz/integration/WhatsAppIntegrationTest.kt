@@ -480,6 +480,89 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
             Log.d(TAG, "✅ Compose recomposition complete")
 
+            // Try to temporarily release UiAutomation to allow accessibility service to start
+            Log.d(TAG, "🔓 Attempting to release UiAutomation temporarily...")
+            var previousAutomation: Any? = null
+            var uiAutomationField: java.lang.reflect.Field? = null
+
+            try {
+                // Get the instrumentation
+                val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+
+                // Access the mUiAutomation field via reflection
+                uiAutomationField = android.app.Instrumentation::class.java.getDeclaredField("mUiAutomation")
+                uiAutomationField.isAccessible = true
+
+                // Store the current UiAutomation instance
+                previousAutomation = uiAutomationField.get(instrumentation)
+                Log.d(TAG, "📦 Stored UiAutomation instance: ${previousAutomation?.javaClass?.simpleName}")
+
+                // Clear the UiAutomation connection
+                uiAutomationField.set(instrumentation, null)
+                Log.d(TAG, "✅ UiAutomation field set to null")
+
+                // Note: We can't set device to null because it's a non-null property
+                // The UiDevice will just have a null UiAutomation backing it temporarily
+                Log.d(TAG, "ℹ️ UiDevice still exists but UiAutomation is disconnected")
+
+                // Force garbage collection to help release resources
+                System.gc()
+                Thread.sleep(500) // Brief pause to let system process the change
+
+                // Check if accessibility service starts now - wait up to 30 seconds
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for accessibility service to start after releasing UiAutomation...")
+
+                var serviceStarted = false
+                val maxWaitTime = 30000L // 30 seconds
+                val startTime = System.currentTimeMillis()
+
+                while ((System.currentTimeMillis() - startTime) < maxWaitTime) {
+                    if (WhizAccessibilityService.isServiceConnected()) {
+                        val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000
+                        Log.d(TAG, "🎉 Accessibility service started after ${elapsedSeconds} seconds of releasing UiAutomation!")
+                        serviceStarted = true
+                        break
+                    }
+
+                    val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000
+                    Log.d(TAG, "⏱️ Waiting... ${elapsedSeconds}s elapsed, service still not connected")
+                    Thread.sleep(1000) // Check every second
+                }
+
+                if (!serviceStarted) {
+                    Log.e(TAG, "❌ Accessibility service failed to start within 30 seconds of releasing UiAutomation")
+                    // Fail the test early since this approach didn't work
+                    throw AssertionError("Accessibility service failed to start even after releasing UiAutomation for 30 seconds")
+                }
+
+                // Restore UiAutomation for the rest of the test
+                if (previousAutomation != null && uiAutomationField != null) {
+                    uiAutomationField.set(instrumentation, previousAutomation)
+                    Log.d(TAG, "✅ UiAutomation restored")
+
+                    // The existing UiDevice should now work again with the restored UiAutomation
+                    Log.d(TAG, "✅ UiDevice should now be functional again")
+                }
+
+            } catch (e: NoSuchFieldException) {
+                Log.e(TAG, "❌ Could not find mUiAutomation field: ${e.message}")
+            } catch (e: IllegalAccessException) {
+                Log.e(TAG, "❌ Could not access mUiAutomation field: ${e.message}")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to manipulate UiAutomation: ${e.message}", e)
+
+                // Try to restore if we have the references
+                try {
+                    if (previousAutomation != null && uiAutomationField != null) {
+                        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                        uiAutomationField.set(instrumentation, previousAutomation)
+                        Log.d(TAG, "✅ UiAutomation restored in catch block")
+                    }
+                } catch (restoreError: Exception) {
+                    Log.e(TAG, "❌ Failed to restore UiAutomation: ${restoreError.message}")
+                }
+            }
+
             // Wait for accessibility service to start via app launch
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
             if (!waitForAccessibilityServiceViaAppLaunch(chatViewModel = capturedViewModel)) {
