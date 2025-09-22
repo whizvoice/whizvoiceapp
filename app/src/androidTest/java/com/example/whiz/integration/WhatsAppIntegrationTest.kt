@@ -243,7 +243,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
 
             // Wait for accessibility service to start via app launch
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
-            if (!waitForAccessibilityServiceViaAppLaunch()) {
+            if (!waitForAccessibilityServiceViaAppLaunch(chatViewModel = capturedViewModel)) {
                 takeFailureScreenshotAndWaitForCompletion("testWhatsAppChatOpeningOnlyDoesNotDuplicate", "Accessibility service failed to start")
                 throw AssertionError("Accessibility service failed to start within timeout")
             }
@@ -481,7 +481,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
 
             // Wait for accessibility service to start via app launch
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
-            if (!waitForAccessibilityServiceViaAppLaunch()) {
+            if (!waitForAccessibilityServiceViaAppLaunch(chatViewModel = capturedViewModel)) {
                 takeFailureScreenshotAndWaitForCompletion("testWhatsAppChatOpeningOnlyDoesNotDuplicate", "Accessibility service failed to start")
                 throw AssertionError("Accessibility service failed to start within timeout")
             }

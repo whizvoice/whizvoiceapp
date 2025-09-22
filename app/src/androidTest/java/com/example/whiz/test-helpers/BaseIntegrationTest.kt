@@ -1487,10 +1487,14 @@ abstract class BaseIntegrationTest {
     /**
      * Wait for accessibility service to start by launching the Clock app.
      * This triggers the bubble overlay mode which helps the accessibility service start.
-     * @param timeoutMs Timeout in milliseconds (default: 45 seconds)
+     * @param chatViewModel Optional ChatViewModel to use voice transcript method (more reliable when UI is blocked)
+     * @param timeoutMs Timeout in milliseconds (default: 10 seconds)
      * @return true if accessibility service connected within timeout, false otherwise
      */
-    protected fun waitForAccessibilityServiceViaAppLaunch(timeoutMs: Long = 10000): Boolean {
+    protected fun waitForAccessibilityServiceViaAppLaunch(
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null,
+        timeoutMs: Long = 10000
+    ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔧 Starting accessibility service via Clock app launch")
 
         // Check if already connected
@@ -1501,7 +1505,18 @@ abstract class BaseIntegrationTest {
 
         // Send message to trigger launch_app tool for Clock app
         android.util.Log.d("BaseIntegrationTest", "📱 Sending message to open Clock app...")
-        val messageSent = sendMessageAndVerifyDisplay("Open the Clock app")
+
+        val messageSent = if (chatViewModel != null) {
+            // Use voice transcript method when ChatViewModel is available
+            // This is more reliable when the UI is blocked by dialogs
+            android.util.Log.d("BaseIntegrationTest", "📝 Using voice transcript method to send message (UI may be blocked)")
+            // Note: SpeechRecognitionService is not needed for direct ChatViewModel method
+            simulateVoiceTranscriptionAndSend("Open the Clock app", rapid = false, chatViewModel = chatViewModel, speechRecognitionService = null)
+        } else {
+            // Fall back to typing in input field
+            android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: 'Open the Clock app...'")
+            sendMessageAndVerifyDisplay("Open the Clock app")
+        }
 
         if (!messageSent) {
             android.util.Log.e("BaseIntegrationTest", "❌ Failed to send message to open Clock app")
@@ -2217,8 +2232,9 @@ abstract class BaseIntegrationTest {
     ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🎤 Simulating voice transcription: '${message.take(30)}...' (rapid=$rapid)")
         
-        return if (chatViewModel != null && speechRecognitionService != null) {
+        return if (chatViewModel != null) {
             // Use DIRECT ChatViewModel methods for reliable voice message sending
+            // Note: speechRecognitionService is optional - we can work without it
             android.util.Log.d("BaseIntegrationTest", "✅ Using DIRECT ChatViewModel voice message approach")
             try {
                 // No need to start speech recognition - directly simulate what happens after silence detection
