@@ -479,33 +479,6 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
             Log.d(TAG, "✅ Compose recomposition complete")
 
-            // Now wait for the service to actually connect (with a reasonable timeout)
-            Log.d(TAG, "⏳ Permission granted, waiting for service to connect...")
-            val serviceConnected = withTimeoutOrNull(20000) { // Give it 20 seconds to connect
-                while (!WhizAccessibilityService.isServiceConnected()) {
-                    delay(500)
-                }
-                true
-            } ?: false
-
-            if (!serviceConnected) {
-                Log.w(TAG, "⚠️ Service didn't connect after permission grant, but continuing anyway...")
-            } else {
-                Log.d(TAG, "✅ Accessibility service connected!")
-            }
-
-            // Service is now connected, clear any lingering dialogs
-            Log.d(TAG, "🔄 Calling checkAllPermissions to clear any stuck dialogs...")
-            manuallyLaunchedActivity?.let { activity ->
-                instrumentation.runOnMainSync {
-                    activity.permissionManager.checkAllPermissions()
-                }
-                delay(1000) // Give UI time to update
-                Log.d(TAG, "✅ Called checkAllPermissions to clear dialogs")
-            } ?: Log.w(TAG, "⚠️ No activity reference to call checkAllPermissions")
-
-            Log.d(TAG, "✅ Accessibility service permission granted")
-
             // Wait for accessibility service to start via app launch
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
             if (!waitForAccessibilityServiceViaAppLaunch()) {

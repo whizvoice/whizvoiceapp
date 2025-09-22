@@ -1649,7 +1649,13 @@ abstract class BaseIntegrationTest {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
             val filename = "${testName}_${timestamp}.png"
             val filepath = "$screenshotDir/$filename"
-            
+
+            // Log test failure summary with emoji for easy visibility in test_summary.log
+            android.util.Log.e("TEST_SUMMARY", "❌ TEST FAILED: $testName")
+            android.util.Log.e("TEST_SUMMARY", "❌ FAILURE REASON: $reason")
+            android.util.Log.e("TEST_SUMMARY", "❌ SCREENSHOT: $filename")
+            android.util.Log.e("TEST_SUMMARY", "❌ TIMESTAMP: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())}")
+
             android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
             android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory: $screenshotDir")
             android.util.Log.d("BaseIntegrationTest", "📸 Screenshot filename: $filename")

@@ -1017,6 +1017,21 @@ if [[ "$overall_exit_code" -eq 0 ]]; then
     log_summary_only "🎉 ALL TESTS PASSED!"
 else
     log_summary_only "❌ SOME TESTS FAILED (exit code: $overall_exit_code)"
+
+    # Extract and display test failure summaries from logcat
+    if [[ -f "test_logcat_output.log" ]]; then
+        log_summary_only ""
+        log_summary_only "❌ TEST FAILURE DETAILS:"
+        log_summary_only "=================================="
+        # Extract failure summaries logged with TEST_SUMMARY tag
+        grep "TEST_SUMMARY.*❌" test_logcat_output.log 2>/dev/null | while read -r line; do
+            # Extract the message part after TEST_SUMMARY tag
+            failure_msg=$(echo "$line" | sed -E 's/.*TEST_SUMMARY[^:]*: //')
+            log_summary_only "   $failure_msg"
+        done
+        log_summary_only "=================================="
+    fi
+
     log_summary_only "📋 Check log files for details:"
     log_summary_only "   • test_gradle_output.log: Full Gradle build and test execution output"
     log_summary_only "   • test_logcat_output.log: Complete Android logcat from test execution"
