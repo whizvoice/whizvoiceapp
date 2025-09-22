@@ -6,14 +6,14 @@
 set -e
 
 # Check if export_anthropic_key.sh exists
-if [ ! -f ./export_anthropic_key.sh ]; then
+if [ ! -f ./droidrun/export_anthropic_key.sh ]; then
     echo "Error: export_anthropic_key.sh not found!"
     echo "Please copy export_anthropic_key.sh.example to export_anthropic_key.sh and add your Anthropic API key"
     exit 1
 fi
 
 # Source the API key
-source ./export_anthropic_key.sh
+source ./droidrun/export_anthropic_key.sh
 
 # Verify API key is set
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -32,7 +32,7 @@ fi
 
 # Default values
 PROVIDER="Anthropic"
-MODEL="claude-3-5-sonnet-20241022"
+MODEL="claude-sonnet-4-20250514"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -61,9 +61,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+echo "Installing debug app..."
+./install.sh
+echo "Done installing debug app"
+
 echo "Using provider: $PROVIDER"
 echo "Using model: $MODEL"
 echo ""
+
+echo "Running droidrun setup..."
+droidrun "Are you able to see UI elements through Accessibility Service? If yes, you are done. If not, open Settings. Take a screenshot. If you are not on the settings home page which has no back arrow, click the back arrow on the top left of Settings screen until you are at the settings home page. It may take several clicks. Click Accessibility, scrolling down if necessary. Click Droidrun Portal. Click Use Droidrun Portal. Click Allow on the dialog" --provider "$PROVIDER" --model "$MODEL"
+echo "Finished droidrun setup."
+
 
 # Example test: WhatsApp integration test
 echo "Running WhatsApp integration test with DroidRun..."
@@ -75,7 +84,11 @@ echo "=========================================="
 
 # Quick verification test
 echo "Running verification test..."
-droidrun "Open the settings app and tell me the Android version" --provider "$PROVIDER" --model "$MODEL"
+droidrun "Open the 🧪 WhizVoice DEBUG app" --provider "$PROVIDER" --model "$MODEL"
 
 echo ""
 echo "Test completed!"
+
+droidrun "Open the settings app. If we are not in the home page of the settings app, click the back button until we are. Click on the search bar. Click on the globe icon under [Droidrun Keyboard (ON)] at the bottom of the screen. Scroll down to Accessibility and click it. Click Droidrun Portal. Click [Turn off] on the Turn off Droidrun Portal dialog." --provider "$PROVIDER" --model "$MODEL"
+
+echo "Test cleanup completed!"
