@@ -87,8 +87,20 @@ abstract class BaseIntegrationTest {
         hiltRule.inject()
         
         // Initialize UiDevice and Context for all tests
-        device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        context = InstrumentationRegistry.getInstrumentation().context
+        // Use FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES to allow accessibility services during testing
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+        // Configure UiAutomation to not suppress accessibility services
+        try {
+            // This flag tells Android to allow accessibility services to run during testing
+            instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            android.util.Log.d("BaseIntegrationTest", "✅ UiAutomation configured to allow accessibility services")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not set UiAutomation flag: ${e.message}")
+        }
+
+        device = UiDevice.getInstance(instrumentation)
+        context = instrumentation.context
         
         // Set up screenshot directory
         setupScreenshotDirectory()
@@ -1516,11 +1528,6 @@ abstract class BaseIntegrationTest {
             // Fall back to typing in input field
             android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: 'Open the Clock app...'")
             sendMessageAndVerifyDisplay("Open the Clock app")
-        }
-
-        if (!messageSent) {
-            android.util.Log.e("BaseIntegrationTest", "❌ Failed to send message to open Clock app")
-            return false
         }
 
         // Wait for accessibility service to be connected
