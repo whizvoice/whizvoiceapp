@@ -480,27 +480,33 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
             composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
             Log.d(TAG, "✅ Compose recomposition complete")
 
-            // Try to disconnect and reconnect UiAutomation to allow accessibility service to start
-            Log.d(TAG, "🔓 Attempting to disconnect UiAutomation temporarily...")
+            // Try to toggle accessibility services to allow our service to start
+            Log.d(TAG, "🔓 Attempting to disable UIAutomator accessibility service temporarily...")
 
             try {
-                // Get the instrumentation
-                val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                // First, get the current enabled services to restore later if needed
+                val currentServices = device.executeShellCommand("settings get secure enabled_accessibility_services").trim()
+                Log.d(TAG, "📦 Current accessibility services: $currentServices")
 
-                // Get current UiAutomation instance
-                val currentAutomation = instrumentation.uiAutomation
-                Log.d(TAG, "📦 Current UiAutomation instance: ${currentAutomation?.javaClass?.simpleName}")
+                // Disable UIAutomator's accessibility service temporarily
+                Log.d(TAG, "🔌 Disabling UIAutomator accessibility service...")
+                device.executeShellCommand("settings put secure enabled_accessibility_services \"\"")
+                Thread.sleep(500) // Brief pause to let the system process the change
 
-                // Disconnect UiAutomation
-                currentAutomation?.disconnect()
-                Log.d(TAG, "✅ UiAutomation disconnected")
+                // Enable WhizVoice accessibility service
+                Log.d(TAG, "🔧 Enabling WhizVoice accessibility service...")
+                val whizService = "com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"
+                device.executeShellCommand("settings put secure enabled_accessibility_services \"$whizService\"")
+                device.executeShellCommand("settings put secure accessibility_enabled 1")
 
-                // Force garbage collection to help release resources
+                Log.d(TAG, "✅ WhizVoice accessibility service enabled via settings")
+
+                // Force garbage collection to help process the change
                 System.gc()
-                Thread.sleep(500) // Brief pause to let system process the change
+                Thread.sleep(1000) // Give the system time to start the service
 
                 // Check if accessibility service starts now - wait up to 30 seconds
-                Log.d(TAG, "⏳ Waiting up to 30 seconds for accessibility service to start after disconnecting UiAutomation...")
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for accessibility service to start...")
 
                 var serviceStarted = false
                 val maxWaitTime = 30000L // 30 seconds
@@ -509,7 +515,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 while ((System.currentTimeMillis() - startTime) < maxWaitTime) {
                     if (WhizAccessibilityService.isServiceConnected()) {
                         val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000
-                        Log.d(TAG, "🎉 Accessibility service started after ${elapsedSeconds} seconds of disconnecting UiAutomation!")
+                        Log.d(TAG, "🎉 Accessibility service started after ${elapsedSeconds} seconds!")
                         serviceStarted = true
                         break
                     }
@@ -520,51 +526,30 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 }
 
                 if (!serviceStarted) {
-                    Log.e(TAG, "❌ Accessibility service failed to start within 30 seconds of disconnecting UiAutomation")
+                    Log.e(TAG, "❌ Accessibility service failed to start within 30 seconds")
 
-                    // Try to reconnect before failing
+                    // Try to re-enable UIAutomator's service before failing
                     try {
-                        val newAutomation = instrumentation.uiAutomation
-                        newAutomation?.let {
-                            Log.d(TAG, "🔧 Reconnected UiAutomation before failing")
-                            // Recreate UiDevice with the new automation
-                            device = UiDevice.getInstance(instrumentation)
-                        }
-                    } catch (reconnectError: Exception) {
-                        Log.e(TAG, "❌ Failed to reconnect UiAutomation: ${reconnectError.message}")
+                        Log.d(TAG, "🔧 Re-enabling UIAutomator accessibility service...")
+                        val uiAutomatorService = "com.android.uiautomator/com.android.uiautomator.UiAutomatorAccessibilityService"
+                        device.executeShellCommand("settings put secure enabled_accessibility_services \"$uiAutomatorService\"")
+                    } catch (restoreError: Exception) {
+                        Log.e(TAG, "❌ Failed to restore UIAutomator service: ${restoreError.message}")
                     }
+
+                    // Take a screenshot to debug what state we're in
+                    takeFailureScreenshotAndWaitForCompletion("accessibility_service_failed_after_toggle", "Service did not start after toggling services")
 
                     // Fail the test since this approach didn't work
-                    throw AssertionError("Accessibility service failed to start even after disconnecting UiAutomation for 30 seconds")
+                    throw AssertionError("Accessibility service failed to start even after toggling accessibility services for 30 seconds")
                 }
 
-                // Reconnect UiAutomation for the rest of the test
-                Log.d(TAG, "🔧 Reconnecting UiAutomation...")
-                val newAutomation = instrumentation.uiAutomation
-                if (newAutomation != null) {
-                    Log.d(TAG, "✅ UiAutomation reconnected: ${newAutomation.javaClass.simpleName}")
-
-                    // Recreate UiDevice with the new automation connection
-                    device = UiDevice.getInstance(instrumentation)
-                    Log.d(TAG, "✅ UiDevice recreated with new UiAutomation connection")
-                } else {
-                    Log.e(TAG, "⚠️ Could not reconnect UiAutomation - it returned null")
-                }
+                // Note: We're keeping WhizVoice service enabled for the test
+                // UIAutomator commands still work even without its accessibility service
+                Log.d(TAG, "✅ WhizVoice accessibility service is running, continuing with test")
 
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to disconnect/reconnect UiAutomation: ${e.message}", e)
-
-                // Try to ensure we have a working UiAutomation for the rest of the test
-                try {
-                    val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-                    val currentAutomation = instrumentation.uiAutomation
-                    if (currentAutomation != null) {
-                        device = UiDevice.getInstance(instrumentation)
-                        Log.d(TAG, "✅ UiDevice recovered in catch block")
-                    }
-                } catch (recoveryError: Exception) {
-                    Log.e(TAG, "❌ Failed to recover UiAutomation: ${recoveryError.message}")
-                }
+                Log.e(TAG, "❌ Failed to toggle accessibility services: ${e.message}", e)
             }
 
             // Wait for accessibility service to start via app launch
