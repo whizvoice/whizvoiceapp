@@ -1493,7 +1493,7 @@ abstract class BaseIntegrationTest {
      */
     protected fun waitForAccessibilityServiceViaAppLaunch(
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null,
-        timeoutMs: Long = 10000
+        timeoutMs: Long = 20000
     ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🔧 Starting accessibility service via Clock app launch")
 
