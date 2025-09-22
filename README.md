@@ -39,3 +39,13 @@ cd whizvoiceapp
 ```
 sudo journalctl -u whizvoice --since "Aug 05 07:15:36 UTC" --no-pager > whizvoice_server_logs.txt
 ```
+
+### set up droidrun for integration testing of screen agent capabilities
+
+Screen agent functionality cannot be tested using the regular Android framework because accessibility services are prevented from starting while the instrumentation framework is running due to security reasons. So we are using Droidrun.
+
+```
+python3 -m venv venv
+source venv/bin/activate
+pip install -r whizvoiceapp/requirements-screen-agent-testing.txt
+```
