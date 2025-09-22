@@ -476,10 +476,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
 
             // Force Compose to process any pending state changes from permission grant
             Log.d(TAG, "⏰ Forcing Compose recomposition after permission grant...")
-            composeTestRule.waitForIdle()  // Wait for any pending recompositions
             composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
-            composeTestRule.waitForIdle()  // Wait again for the forced recomposition
-            delay(500) // Small delay to let UI settle
             Log.d(TAG, "✅ Compose recomposition complete")
 
             // Now wait for the service to actually connect (with a reasonable timeout)
