@@ -126,9 +126,18 @@ class MainActivity : ComponentActivity() {
                     // Collect from the stable reference to ensure proper recomposition
                     val nextRequiredStep by stablePermissionManager.nextRequiredStep.collectAsState()
 
+                    // Add diagnostic logging for recomposition
+                    Log.d("MainActivity", "🔄 RECOMPOSITION: nextRequiredStep=$nextRequiredStep, " +
+                        "isResumed=${lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)}, " +
+                        "thread=${Thread.currentThread().name}, " +
+                        "threadId=${Thread.currentThread().id}, " +
+                        "timestamp=${System.currentTimeMillis()}")
+
                     // Debug: Force recomposition when state changes
                     LaunchedEffect(nextRequiredStep) {
-                        Log.d("MainActivity", "LaunchedEffect triggered: nextRequiredStep changed to $nextRequiredStep")
+                        Log.d("MainActivity", "LaunchedEffect triggered: nextRequiredStep changed to $nextRequiredStep, " +
+                            "lifecycle=${lifecycle.currentState}, " +
+                            "isMainThread=${android.os.Looper.myLooper() == android.os.Looper.getMainLooper()}")
                     }
                     
                     // Handle lifecycle events within Compose context to ensure proper recomposition
@@ -175,11 +184,17 @@ class MainActivity : ComponentActivity() {
                         // Log thread info when collecting StateFlow
                         val threadName = Thread.currentThread().name
                         val threadId = Thread.currentThread().id
-                        Log.d("MainActivity", "Dialog render on thread: $threadName (id=$threadId), nextRequiredStep=$nextRequiredStep")
+                        val currentTime = System.currentTimeMillis()
+                        val lifecycleState = lifecycle.currentState
+                        Log.d("MainActivity", "📊 DIALOG RENDER: thread=$threadName (id=$threadId), " +
+                            "nextRequiredStep=$nextRequiredStep, " +
+                            "lifecycle=$lifecycleState, " +
+                            "time=$currentTime")
 
                         // Show appropriate dialog based on what's needed
                         // Removed key() wrapper - the when expression will recompose naturally when nextRequiredStep changes
-                        Log.d("MainActivity", "Rendering dialog for nextRequiredStep=$nextRequiredStep on thread: ${Thread.currentThread().name}")
+                        Log.d("MainActivity", "🎨 RENDERING DIALOG: nextRequiredStep=$nextRequiredStep, " +
+                            "isActivityResumed=${lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)}")
                         when (nextRequiredStep) {
                             PermissionManager.RequiredStep.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(

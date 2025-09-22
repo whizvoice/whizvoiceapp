@@ -16,6 +16,7 @@ import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Before
 import org.junit.After
 import org.junit.Rule
@@ -28,6 +29,7 @@ import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
 import android.util.Log
+import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.test_helpers.SkipOnCIOrEmulatorRule
 import com.example.whiz.test_helpers.PermissionAutomator
 import com.example.whiz.data.auth.AuthRepository
@@ -433,12 +435,73 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "⚠️ No permission dialog was handled")
             }
 
-            // Wait for accessibility service to start via app launch
+            // Wait for accessibility service to start
             Log.d(TAG, "🔧 Waiting for accessibility service to start...")
-            if (!waitForAccessibilityServiceViaAppLaunch()) {
-                takeFailureScreenshotAndWaitForCompletion("testVoiceDraftMessageToWhatsApp", "Accessibility service failed to start")
-                throw AssertionError("Accessibility service failed to start within timeout")
+
+            // First check if the "Enable Accessibility Service" dialog is still visible after 10 seconds
+            // Add UI thread heartbeat monitoring during the wait
+            Log.d(TAG, "🔍 Starting 10-second wait with UI thread monitoring...")
+            repeat(10) { i ->
+                delay(1000)
+                // Check if UI thread is responsive
+                try {
+                    instrumentation.runOnMainSync {
+                        Log.d(TAG, "💓 UI HEARTBEAT $i/10: Thread responsive, lifecycle=${manuallyLaunchedActivity?.lifecycle?.currentState}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ UI THREAD BLOCKED at $i seconds: ${e.message}")
+                }
             }
+
+            val dialogStillVisible = device.findObject(By.text("Enable Accessibility Service")) != null
+            if (dialogStillVisible) {
+                Log.w(TAG, "⚠️ WARNING: 'Enable Accessibility Service' dialog is still visible after 10 seconds - likely a recomposition issue")
+                takeFailureScreenshotAndWaitForCompletion("testVoiceDraftMessageToWhatsApp", "Dialog_stuck_after_permission_enabled")
+
+                // Try to trigger checkAllPermissions to potentially unstick the dialog
+                Log.d(TAG, "🔄 Calling checkAllPermissions to try to unstick dialog...")
+                manuallyLaunchedActivity?.let { activity ->
+                    // Check activity state before calling
+                    Log.d(TAG, "📱 Activity state before checkAllPermissions: lifecycle=${activity.lifecycle.currentState}, isFinishing=${activity.isFinishing}")
+                    instrumentation.runOnMainSync {
+                        Log.d(TAG, "🧵 Running on main thread: ${Thread.currentThread().name}")
+                        activity.permissionManager.checkAllPermissions()
+                    }
+                    delay(2000) // Give UI time to update
+                    Log.d(TAG, "✅ Called checkAllPermissions")
+                } ?: Log.w(TAG, "⚠️ No activity reference to call checkAllPermissions")
+            }
+
+            // Now wait for the accessibility service to actually start (give it another 10 seconds)
+            Log.d(TAG, "⏳ Waiting up to 10 seconds for accessibility service to connect...")
+            val serviceStarted = withTimeoutOrNull(10000) {
+                while (!WhizAccessibilityService.isServiceConnected()) {
+                    delay(500)
+                }
+                true
+            } ?: false
+
+            if (serviceStarted) {
+                Log.d(TAG, "✅ Accessibility service connected!")
+
+                // Call checkAllPermissions to clear any stuck dialogs
+                Log.d(TAG, "🔄 Calling checkAllPermissions to clear stuck dialogs...")
+                manuallyLaunchedActivity?.let { activity ->
+                    instrumentation.runOnMainSync {
+                        activity.permissionManager.checkAllPermissions()
+                    }
+                    delay(1000) // Give UI time to update
+                    Log.d(TAG, "✅ Called checkAllPermissions to clear dialogs")
+                } ?: Log.w(TAG, "⚠️ No activity reference to call checkAllPermissions")
+            } else {
+                // If service didn't start, try the app launch method as fallback
+                Log.d(TAG, "⚠️ Service didn't connect naturally, trying app launch method...")
+                if (!waitForAccessibilityServiceViaAppLaunch()) {
+                    takeFailureScreenshotAndWaitForCompletion("testVoiceDraftMessageToWhatsApp", "Accessibility service failed to start")
+                    throw AssertionError("Accessibility service failed to start within timeout")
+                }
+            }
+
             Log.d(TAG, "✅ Accessibility service is ready")
 
             // Step 2: Send voice command to draft WhatsApp message

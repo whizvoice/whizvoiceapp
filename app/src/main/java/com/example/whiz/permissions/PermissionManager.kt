@@ -150,7 +150,15 @@ open class PermissionManager @Inject constructor(
         val threadName = Thread.currentThread().name
         val threadId = Thread.currentThread().id
         Log.d(TAG, "updateNextRequiredStep on thread: $threadName (id=$threadId): nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value})")
-        _nextRequiredStep.value = nextStep
+
+        // Force re-emission even if the value is the same to ensure UI updates
+        // This helps with race conditions during Activity restart
+        if (_nextRequiredStep.value == nextStep && nextStep != null) {
+            _nextRequiredStep.value = null
+            _nextRequiredStep.value = nextStep
+        } else {
+            _nextRequiredStep.value = nextStep
+        }
     }
     
     /**
