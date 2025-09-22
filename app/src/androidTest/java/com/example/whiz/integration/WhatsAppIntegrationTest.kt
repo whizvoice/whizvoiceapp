@@ -467,8 +467,15 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
                         Log.d(TAG, "🧵 Running on main thread: ${Thread.currentThread().name}")
                         activity.permissionManager.checkAllPermissions()
                     }
-                    delay(2000) // Give UI time to update
-                    Log.d(TAG, "✅ Called checkAllPermissions")
+
+                    // Force Compose to process the state change
+                    Log.d(TAG, "⏰ Forcing Compose recomposition...")
+                    composeTestRule.waitForIdle()  // Wait for any pending recompositions
+                    composeTestRule.mainClock.advanceTimeBy(100)  // Advance the Compose test clock
+                    composeTestRule.waitForIdle()  // Wait again for the forced recomposition
+
+                    delay(500) // Small delay to let UI settle
+                    Log.d(TAG, "✅ Called checkAllPermissions and forced recomposition")
                 } ?: Log.w(TAG, "⚠️ No activity reference to call checkAllPermissions")
             }
 
