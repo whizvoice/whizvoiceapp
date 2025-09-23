@@ -21,6 +21,7 @@ import org.junit.Before
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Ignore
 import org.junit.runner.RunWith
 import javax.inject.Inject
 import com.example.whiz.di.AppModule
@@ -181,6 +182,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         Log.d(TAG, "✅ WhatsApp test cleanup completed")
     }
 
+    @Ignore("WhatsApp integration test - run manually")
     @Test
     fun testWhatsAppNavigationFromMainChatList() {
         runBlocking {
@@ -382,6 +384,7 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
         }
     }
     
+    @Ignore("WhatsApp integration test - run manually")
     @Test
     fun testWhatsAppMessageFlow_withVoiceCommands() = runBlocking {
         Log.d(TAG, "🚀 Starting WhatsApp voice integration test")

@@ -11,6 +11,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import javax.inject.Inject
+import com.example.whiz.data.auth.AuthRepository
 
 @AndroidEntryPoint
 class AssistantActivity : AppCompatActivity() {
@@ -19,9 +20,12 @@ class AssistantActivity : AppCompatActivity() {
     private val chatsListViewModel: ChatsListViewModel by viewModels()
     private var isHandlingLaunch = false
     private var isFinishing = false
-    
+
     @Inject
     lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+
+    @Inject
+    lateinit var authRepository: AuthRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,36 +43,57 @@ class AssistantActivity : AppCompatActivity() {
                 try {
                     // Add a small delay to ensure activity is fully initialized
                     delay(100)
-                    
+
                     if (isAssistantLaunch) {
-                        Log.d(TAG, "Creating new optimistic chat for assistant launch...")
-                        val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
-                        Log.d(TAG, "New optimistic chat created with ID: $newChatId")
-                        if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
-                            // Navigate directly to the chat screen
-                            val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
-                                putExtra("FROM_ASSISTANT", true)
-                                putExtra("FORCE_NAVIGATION", true)
-                                putExtra("ENABLE_VOICE_MODE", true)
-                                // Add transcription if available
-                                transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                        // Check if user is authenticated before creating chat
+                        val isAuthenticated = authRepository.isSignedIn()
+                        Log.d(TAG, "Assistant launch - user authenticated: $isAuthenticated")
+
+                        if (isAuthenticated) {
+                            Log.d(TAG, "User is authenticated, creating new optimistic chat for assistant launch...")
+                            val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
+                            Log.d(TAG, "New optimistic chat created with ID: $newChatId")
+                            if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
+                                // Navigate directly to the chat screen
+                                val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
+                                    putExtra("FROM_ASSISTANT", true)
+                                    putExtra("FORCE_NAVIGATION", true)
+                                    putExtra("ENABLE_VOICE_MODE", true)
+                                    // Add transcription if available
+                                    transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                                }
+                                Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
+                                startMainActivityAndFinish(intent)
+                            } else {
+                                Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
+                                // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
+                                val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    putExtra("FROM_ASSISTANT", true)
+                                    putExtra("ENABLE_VOICE_MODE", true)
+                                    putExtra("CREATE_NEW_CHAT_ON_START", true)
+                                    // Add transcription if available
+                                    transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                                }
+                                Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                                startMainActivityAndFinish(intent)
                             }
-                            Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
-                            startMainActivityAndFinish(intent)
                         } else {
-                            Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
-                            // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
+                            Log.d(TAG, "User not authenticated, starting MainActivity without creating chat")
+                            // User not authenticated - start MainActivity with voice flags but don't create chat
+                            // MainActivity and WhizNavHost will handle showing login screen
                             val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                                 putExtra("FROM_ASSISTANT", true)
                                 putExtra("ENABLE_VOICE_MODE", true)
-                                putExtra("CREATE_NEW_CHAT_ON_START", true)
-                                // Add transcription if available
+                                // Add transcription if available - can be used after login
                                 transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                                // Don't set CREATE_NEW_CHAT_ON_START or NAVIGATE_TO_CHAT_ID
+                                // Let the normal auth flow handle navigation
                             }
-                            Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                            Log.d(TAG, "Starting MainActivity for unauthenticated voice launch")
                             startMainActivityAndFinish(intent)
                         }
                     } else {
