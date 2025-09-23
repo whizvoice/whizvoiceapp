@@ -242,7 +242,7 @@ main() {
     # Setup
     log_info "Setting up test environment..."
     # install latest app
-    ./install.sh
+    ./install.sh --force
     grant_permissions
 
     # Enable accessibility service if not already enabled
@@ -252,13 +252,23 @@ main() {
         log_info "Accessibility service already enabled"
     fi
 
+    # Handle login using the UI automator login script
+    log_info "Running login automation..."
+    ./adb_tests/test_ui_automator_login.sh
+    if [ $? -ne 0 ]; then
+        log_error "Login automation failed"
+        exit 1
+    fi
+    log_success "Login automation completed"
+    sleep 5
+
     # Test 1: Navigation to WhatsApp Chat
     echo ""
     echo "TEST 1: Navigation to WhatsApp Chat"
     echo "------------------------------------"
 
-    launch_whizvoice
-    take_screenshot "01_app_launched"
+    # App is already launched by login script
+    take_screenshot "01_app_after_login"
 
     # Send command to open WhatsApp chat
     send_text_to_input "Open WhatsApp chat with $WHATSAPP_CONTACT"
