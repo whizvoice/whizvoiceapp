@@ -1,8 +1,12 @@
 package com.example.whiz
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.os.Handler
@@ -40,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import com.example.whiz.BuildConfig
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 
@@ -75,7 +80,8 @@ class MainActivity : ComponentActivity() {
     
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
-    
+    private var testTranscriptionReceiver: BroadcastReceiver? = null
+
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
     
@@ -111,13 +117,18 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     navController = rememberNavController()
-                    
+
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
-                    
+
                     // Get AuthViewModel to observe authentication state
                     val authViewModel: com.example.whiz.ui.viewmodels.AuthViewModel = hiltViewModel()
                     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+
+                    // Setup test broadcast receiver for debug builds
+                    if (BuildConfig.DEBUG) {
+                        setupTestTranscriptionReceiver()
+                    }
 
                     // Ensure stable reference to permissionManager within Composable context
                     val stablePermissionManager = remember { permissionManager }
@@ -694,5 +705,78 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
+
+        // Unregister test broadcast receiver if it was registered
+        if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
+            try {
+                unregisterReceiver(testTranscriptionReceiver)
+                Log.d(TAG, "Test transcription receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering test receiver", e)
+            }
+        }
+    }
+
+    private fun setupTestTranscriptionReceiver() {
+        if (!BuildConfig.DEBUG) return
+
+        Log.d(TAG, "Setting up test transcription receiver for debug build")
+
+        // Create the broadcast receiver
+        testTranscriptionReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != "com.example.whiz.TEST_TRANSCRIPTION") {
+                    return
+                }
+
+                val text = intent.getStringExtra("text") ?: ""
+                val fromVoice = intent.getBooleanExtra("fromVoice", true)
+                val autoSend = intent.getBooleanExtra("autoSend", true)
+
+                Log.d(TAG, "Test transcription received: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
+
+                // Try to get from TestTranscriptionReceiver static reference
+                val chatViewModel = com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel
+                if (chatViewModel != null) {
+                    Log.d(TAG, "Using ChatViewModel from TestTranscriptionReceiver")
+                    processTestTranscription(chatViewModel, text, fromVoice, autoSend)
+                } else {
+                    Log.e(TAG, "No ChatViewModel available for test transcription")
+                }
+            }
+        }
+
+        // Register the receiver - use EXPORTED for testing from ADB
+        val filter = IntentFilter("com.example.whiz.TEST_TRANSCRIPTION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Use EXPORTED flag to allow ADB broadcasts to reach the receiver
+            registerReceiver(testTranscriptionReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(testTranscriptionReceiver, filter)
+        }
+
+        Log.d(TAG, "Test transcription receiver registered")
+    }
+
+    private fun processTestTranscription(
+        viewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
+        text: String,
+        fromVoice: Boolean,
+        autoSend: Boolean
+    ) {
+        try {
+            // Update the input text with the transcription
+            viewModel.updateInputText(text, fromVoice = fromVoice)
+
+            // If autoSend is true, automatically send the message
+            if (autoSend && text.isNotBlank()) {
+                viewModel.sendUserInput(text)
+                Log.d(TAG, "Test transcription sent: '$text'")
+            } else {
+                Log.d(TAG, "Test transcription set to input field: '$text'")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing test transcription", e)
+        }
     }
 }

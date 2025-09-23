@@ -262,7 +262,15 @@ fun WhizNavHost(
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController,
-                onViewModelReady = onChatViewModelReady
+                onViewModelReady = { viewModel ->
+                    // Call the test callback if provided
+                    onChatViewModelReady?.invoke(viewModel)
+
+                    // Also set the static reference for debug builds
+                    if (com.example.whiz.BuildConfig.DEBUG) {
+                        com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel = viewModel
+                    }
+                }
             )
         }
 
@@ -305,7 +313,15 @@ fun WhizNavHost(
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController,
-                onViewModelReady = onChatViewModelReady
+                onViewModelReady = { viewModel ->
+                    // Call the test callback if provided
+                    onChatViewModelReady?.invoke(viewModel)
+
+                    // Also set the static reference for debug builds
+                    if (com.example.whiz.BuildConfig.DEBUG) {
+                        com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel = viewModel
+                    }
+                }
             )
         }
     }
