@@ -219,15 +219,6 @@ class MainActivity : ComponentActivity() {
                                     onOpenSettings = { openAccessibilitySettings() }
                                 )
                             }
-                            PermissionManager.RequiredStep.ACCESSIBILITY_SERVICE_STARTING -> {
-                                com.example.whiz.ui.components.AccessibilityServiceLoadingDialog(
-                                    onDismiss = {
-                                        // User clicked OK, but let the service connection naturally update the state
-                                        // Just refresh the permissions to update the UI
-                                        stablePermissionManager.checkAllPermissions()
-                                    }
-                                )
-                            }
                             PermissionManager.RequiredStep.OVERLAY -> {
                                 com.example.whiz.ui.components.OverlayPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },

@@ -38,8 +38,7 @@ open class PermissionManager @Inject constructor(
     enum class RequiredStep {
         MICROPHONE,
         ACCESSIBILITY,
-        OVERLAY,
-        ACCESSIBILITY_SERVICE_STARTING  // Lowest priority - can wait in background
+        OVERLAY
     }
 
     // StateFlow for microphone permission status
@@ -142,9 +141,6 @@ open class PermissionManager @Inject constructor(
             !_microphonePermissionGranted.value -> RequiredStep.MICROPHONE
             !_accessibilityPermissionGranted.value -> RequiredStep.ACCESSIBILITY
             !_overlayPermissionGranted.value -> RequiredStep.OVERLAY
-            // Only show service starting dialog if ALL permissions are granted but service isn't running
-            _accessibilityPermissionGranted.value &&
-                WhizAccessibilityService.getInstance() == null -> RequiredStep.ACCESSIBILITY_SERVICE_STARTING
             else -> null
         }
         val threadName = Thread.currentThread().name

@@ -106,7 +106,6 @@ class WhatsAppIntegrationTest : BaseIntegrationTest() {
     private suspend fun handlePermissionDialogIfBlocking(): Boolean {
         // Just check if there's a permission dialog and handle it
         // This handles accessibility, overlay, or any other permission dialog
-        // Pass composeTestRule to also wait for "Starting Accessibility Service" dialog
         if (permissionAutomator.handlePermissionDialogs(composeTestRule)) {
             Log.d(TAG, "✅ Permission dialog was blocking, handled it")
             return true
