@@ -25,19 +25,19 @@ TEST_ID=$(date +%s)
 
 # Function to print colored output
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} [$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} [$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} [$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} [$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 # Function to take screenshot
@@ -85,20 +85,6 @@ enable_accessibility_service() {
     fi
 }
 
-# Function to grant permissions
-grant_permissions() {
-    log_info "Granting permissions to WhizVoice..."
-
-    # Grant all necessary permissions
-    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO
-    adb shell pm grant "$PACKAGE_NAME" android.permission.SYSTEM_ALERT_WINDOW
-    adb shell pm grant "$PACKAGE_NAME" android.permission.POST_NOTIFICATIONS
-
-    # Grant overlay permission
-    adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow
-
-    log_success "Permissions granted"
-}
 
 # Function to launch WhizVoice app in voice mode
 launch_whizvoice() {
@@ -243,7 +229,25 @@ main() {
     log_info "Setting up test environment..."
     # install latest app
     ./install.sh --force
-    grant_permissions
+
+    # Grant permissions in the correct order: after install, pm grant then appops
+    log_info "Granting permissions to WhizVoice..."
+
+    # Grant the runtime permission first
+    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO
+
+    # Then set the app operation
+    adb shell appops set "$PACKAGE_NAME" RECORD_AUDIO allow
+    adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow
+
+    # Force-stop and restart the app to ensure it picks up the changes
+    log_info "Restarting app to apply permissions..."
+    adb shell am force-stop "$PACKAGE_NAME"
+    sleep 1
+    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
+    sleep 3
+
+    log_success "Permissions granted and app restarted"
 
     # Enable accessibility service if not already enabled
     if ! check_accessibility_enabled; then
