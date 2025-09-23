@@ -33,21 +33,10 @@ main() {
     echo "WhizVoice Deterministic Login"
     echo "=========================================="
 
-    # Check device
-    if ! adb devices | grep -q "device$"; then
-        log_error "No ADB device connected"
-        exit 1
-    fi
-
-    # 1. Clear app data (ensure fresh state)
-    log_info "Clearing app data for fresh start..."
-    adb shell pm clear "$PACKAGE_NAME" 2>/dev/null || true
-    sleep 1
-
     # 2. Launch app
     log_info "Launching WhizVoice app..."
     adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
-    sleep 4  # Wait for app to fully load
+    sleep 10  # Wait for app to fully load
 
     # 3. Take a screenshot to see what's on screen
     log_info "Taking screenshot of current screen..."

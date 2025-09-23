@@ -506,6 +506,17 @@ fun ChatScreen(
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
 
+    // Navigate to login immediately if not authenticated
+    LaunchedEffect(isAuthenticated) {
+        if (!isAuthenticated) {
+            android.util.Log.d("ChatScreen", "User not authenticated, navigating to login")
+            navController.navigate(Screen.Login.route) {
+                popUpTo(0) { inclusive = true } // Clear entire back stack
+                launchSingleTop = true
+            }
+        }
+    }
+
     // Check for TTS mode flag (full voice experience: speech recognition + TTS responses)
     val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")

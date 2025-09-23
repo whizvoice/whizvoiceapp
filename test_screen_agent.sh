@@ -227,27 +227,8 @@ main() {
 
     # Setup
     log_info "Setting up test environment..."
-    # install latest app
+    # install latest app (this does force stop and reinstall)
     ./install.sh --force
-
-    # Grant permissions in the correct order: after install, pm grant then appops
-    log_info "Granting permissions to WhizVoice..."
-
-    # Grant the runtime permission first
-    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO
-
-    # Then set the app operation
-    adb shell appops set "$PACKAGE_NAME" RECORD_AUDIO allow
-    adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow
-
-    # Force-stop and restart the app to ensure it picks up the changes
-    log_info "Restarting app to apply permissions..."
-    adb shell am force-stop "$PACKAGE_NAME"
-    sleep 1
-    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
-    sleep 3
-
-    log_success "Permissions granted and app restarted"
 
     # Enable accessibility service if not already enabled
     if ! check_accessibility_enabled; then
@@ -256,7 +237,7 @@ main() {
         log_info "Accessibility service already enabled"
     fi
 
-    # Handle login using the UI automator login script
+    # Handle login using the UI automator login script (this clears app data)
     log_info "Running login automation..."
     ./adb_tests/test_ui_automator_login.sh
     if [ $? -ne 0 ]; then
@@ -264,6 +245,25 @@ main() {
         exit 1
     fi
     log_success "Login automation completed"
+
+    # IMPORTANT: Grant permissions AFTER login script (which does pm clear)
+    log_info "Granting permissions to WhizVoice after login..."
+    sleep 2  # Wait a moment after login
+
+    # Grant the runtime permission first
+    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO
+
+    # Then set the app operation
+    adb shell appops set "$PACKAGE_NAME" RECORD_AUDIO allow
+    adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow
+
+    log_success "Permissions granted after login"
+
+    # Restart app to apply permissions
+    log_info "Restarting app to apply permissions..."
+    adb shell am force-stop "$PACKAGE_NAME"
+    sleep 1
+    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
     sleep 5
 
     # Test 1: Navigation to WhatsApp Chat
