@@ -15,20 +15,25 @@ BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+# Function to get timestamp
+get_timestamp() {
+    date '+%Y-%m-%d %H:%M:%S'
+}
+
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} [$(get_timestamp)] $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} [$(get_timestamp)] $1"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} [$(get_timestamp)] $1"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} [$(get_timestamp)] $1"
 }
 
 # Function to dump UI and find element bounds
@@ -127,6 +132,7 @@ take_screenshot() {
 main() {
     echo "=========================================="
     echo "WhizVoice UI Automator Login"
+    echo "Started: $(get_timestamp)"
     echo "=========================================="
 
     # 1. Clear app data for clean state (unless --no-clear flag is passed)
@@ -229,6 +235,7 @@ main() {
 
     echo "=========================================="
     log_success "Login process completed!"
+    echo "Finished: $(get_timestamp)"
     echo ""
     echo "Screenshots saved in adb_tests/screenshots/:"
     ls -la "$(dirname "$0")/screenshots"/login_*.png 2>/dev/null | tail -5 || echo "No screenshots found"
@@ -239,6 +246,7 @@ main() {
 launch_only() {
     echo "=========================================="
     echo "Launching WhizVoice App"
+    echo "Started: $(get_timestamp)"
     echo "=========================================="
 
     log_info "Launching app..."
