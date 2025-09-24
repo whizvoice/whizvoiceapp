@@ -237,9 +237,10 @@ main() {
         log_info "Accessibility service already enabled"
     fi
 
-    # Handle login using the UI automator login script (this clears app data)
+    # Handle login using the UI automator login script (clicks through actual Google sign-in)
     log_info "Running login automation..."
-    ./adb_tests/test_ui_automator_login.sh
+    # Pass --no-clear since we already reinstalled the app above
+    ./adb_tests/ui_automator_login.sh --no-clear
     if [ $? -ne 0 ]; then
         log_error "Login automation failed"
         exit 1
