@@ -36,6 +36,60 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} [$(get_timestamp)] $1"
 }
 
+# Function to check authentication state via debug broadcast receiver
+check_auth_state() {
+    log_info "Checking authentication state..."
+
+    # Clear logcat to get fresh output
+    adb logcat -c
+
+    # Send broadcast to check auth state
+    adb shell am broadcast -a com.example.whiz.debug.CHECK_AUTH_STATE -p com.example.whiz.debug >/dev/null 2>&1
+
+    # Give it a moment to process
+    sleep 1
+
+    # Check the logcat for the result
+    AUTH_RESULT=$(adb logcat -d -s AuthStateReceiver:I | grep "AUTH_STATE:" | head -1)
+
+    if echo "$AUTH_RESULT" | grep -q "LOGGED_IN"; then
+        USER_EMAIL=$(adb logcat -d -s AuthStateReceiver:I | grep "AUTH_USER:" | head -1 | sed 's/.*AUTH_USER: //')
+        log_success "Already logged in as: $USER_EMAIL"
+        return 0
+    elif echo "$AUTH_RESULT" | grep -q "NOT_LOGGED_IN"; then
+        log_info "Not logged in"
+        return 1
+    else
+        log_warning "Could not determine auth state"
+        return 2
+    fi
+}
+
+# Function to force logout via debug broadcast receiver
+force_logout() {
+    log_info "Forcing logout via debug command..."
+
+    # Clear logcat to get fresh output
+    adb logcat -c
+
+    # Send broadcast to force logout
+    adb shell am broadcast -a com.example.whiz.debug.FORCE_LOGOUT -p com.example.whiz.debug >/dev/null 2>&1
+
+    # Give it a moment to process
+    sleep 1
+
+    # Check the result
+    LOGOUT_RESULT=$(adb logcat -d -s AuthStateReceiver:I | grep "AUTH_STATE:" | head -1)
+
+    if echo "$LOGOUT_RESULT" | grep -q "LOGGED_OUT_SUCCESSFULLY"; then
+        log_success "Logout successful"
+        return 0
+    else
+        log_warning "Logout may have failed"
+        return 1
+    fi
+}
+
 # Function to dump UI and find element bounds
 find_element_bounds() {
     local search_text="$1"
@@ -148,7 +202,20 @@ main() {
     adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
     sleep 3  # Wait for app to fully load
 
-    # 3. Take initial screenshot
+    # 3. Check if already logged in
+    if check_auth_state; then
+        log_info "App is already authenticated, no login needed"
+        take_screenshot "already_logged_in"
+        echo "=========================================="
+        log_success "Auth check complete - already logged in"
+        echo "Finished: $(get_timestamp)"
+        echo "=========================================="
+        return 0
+    fi
+
+    log_info "App is not logged in, proceeding with login flow..."
+
+    # 4. Take initial screenshot
     take_screenshot "01_login_screen"
 
     # 4. Click "Sign in with Google" button
@@ -268,6 +335,17 @@ case "${1:-}" in
     --launch)
         launch_only
         ;;
+    --check-auth)
+        if check_auth_state; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    --force-logout)
+        force_logout
+        exit $?
+        ;;
     --no-clear)
         main "--no-clear"
         ;;
@@ -276,6 +354,8 @@ case "${1:-}" in
         echo ""
         echo "Options:"
         echo "  (no options)  Run full login flow"
+        echo "  --check-auth  Check if app is logged in"
+        echo "  --force-logout Force logout via debug command"
         echo "  --no-clear    Skip clearing app data"
         echo "  --launch      Just launch the app and check state"
         echo "  --help        Show this help message"

@@ -225,6 +225,11 @@ main() {
     echo "Test ID: $TEST_ID"
     echo "=========================================="
 
+    # Clean up previous screenshots
+    log_info "Cleaning up previous screenshots from adb_tests/screenshots..."
+    rm -rf adb_tests/screenshots/*
+    log_info "Previous screenshots deleted"
+
     # Setup
     log_info "Setting up test environment..."
     # install latest app (this does force stop and reinstall)
