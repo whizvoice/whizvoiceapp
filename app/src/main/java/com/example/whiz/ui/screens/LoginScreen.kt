@@ -170,14 +170,6 @@ fun LoginScreen(
                 fontWeight = FontWeight.Bold
             )
             
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "Sign in to continue",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
             Spacer(modifier = Modifier.height(48.dp))
             
             Button(

@@ -235,13 +235,6 @@ main() {
     # install latest app (this does force stop and reinstall)
     ./install.sh --force
 
-    # Enable accessibility service if not already enabled
-    if ! check_accessibility_enabled; then
-        enable_accessibility_service
-    else
-        log_info "Accessibility service already enabled"
-    fi
-
     # Handle login using the UI automator login script (clicks through actual Google sign-in)
     log_info "Running login automation..."
     # Pass --no-clear since we already reinstalled the app above
@@ -252,18 +245,49 @@ main() {
     fi
     log_success "Login automation completed"
 
-    # IMPORTANT: Grant permissions AFTER login script (which does pm clear)
-    log_info "Granting permissions to WhizVoice after login..."
+    # IMPORTANT: Grant basic permissions AFTER login (these can be done via ADB)
+    log_info "Granting basic permissions after login..."
     sleep 2  # Wait a moment after login
 
-    # Grant the runtime permission first
-    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO
+    # Grant microphone permission
+    if adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null; then
+        log_success "✅ Microphone permission granted"
+    else
+        log_warning "⚠️ Could not grant microphone permission"
+    fi
 
-    # Then set the app operation
-    adb shell appops set "$PACKAGE_NAME" RECORD_AUDIO allow
-    adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow
+    # Grant overlay permission
+    if adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow 2>/dev/null; then
+        log_success "✅ Overlay permission granted"
+    else
+        log_warning "⚠️ Could not grant overlay permission"
+    fi
 
-    log_success "Permissions granted after login"
+    # Now run the instrumented test for accessibility service setup
+    # This requires UI automation and cannot be done via simple ADB commands
+    log_info "Running instrumented test to set up accessibility service..."
+    ./adb_tests/setup_permissions.sh --accessibility-only
+    if [ $? -ne 0 ]; then
+        log_error "Accessibility service setup failed"
+        exit 1
+    fi
+
+    log_success "All permissions setup completed after login"
+
+    # Verify accessibility service is actually enabled
+    log_info "Verifying accessibility service status..."
+    if check_accessibility_enabled; then
+        log_success "✅ Accessibility service is enabled and ready"
+        # Check if the service is actually running
+        if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+            log_success "✅ Accessibility service is actively running"
+        else
+            log_warning "⚠️ Accessibility service is enabled but may not be actively running yet"
+        fi
+    else
+        log_error "❌ Accessibility service is not enabled - test may fail"
+        # Don't exit, just warn - the test might still work with overlay permissions
+    fi
 
     # Restart app to apply permissions
     log_info "Restarting app to apply permissions..."
