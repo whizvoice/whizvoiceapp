@@ -21,3 +21,4 @@ testing
 venv
 export_anthropic_key.sh
 current_screen.png
+adb_tests/screenshots/*
