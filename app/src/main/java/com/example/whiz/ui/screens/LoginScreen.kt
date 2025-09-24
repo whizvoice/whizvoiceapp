@@ -37,6 +37,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -191,6 +193,7 @@ fun LoginScreen(
                 modifier = Modifier
                     .fillMaxWidth(0.8f)
                     .height(50.dp)
+                    .semantics { contentDescription = "Sign in with Google button" }
             ) {
                 Text(text = "Sign in with Google", fontSize = 16.sp)
             }
