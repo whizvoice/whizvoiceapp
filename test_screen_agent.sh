@@ -22,6 +22,8 @@ CORRECTED_MESSAGE="hey what's up how's it going just trying to test whiz voice. 
 SCREENSHOT_DIR="/sdcard/Download/test_screenshots"
 LOCAL_SCREENSHOT_DIR="whizvoiceapp/test_screenshots"
 TEST_ID=$(date +%s)
+LOGCAT_FILE="adb_tests/screenshots/logcat_${TEST_ID}.txt"
+LOGCAT_PID=""
 
 # Function to print colored output
 log_info() {
@@ -38,6 +40,49 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} [$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Function to start logcat capture
+start_logcat() {
+    # Create directory if it doesn't exist
+    mkdir -p "adb_tests/screenshots"
+
+    # Clear existing logcat
+    adb logcat -c
+
+    # Start logcat in background, filtering for our package and related services
+    log_info "Starting logcat capture to $LOGCAT_FILE"
+    adb logcat -v time "*:V" > "$LOGCAT_FILE" 2>&1 &
+    LOGCAT_PID=$!
+
+    # Give logcat a moment to start
+    sleep 1
+    log_success "Logcat capture started (PID: $LOGCAT_PID)"
+}
+
+# Function to stop logcat capture
+stop_logcat() {
+    if [ -n "$LOGCAT_PID" ]; then
+        log_info "Stopping logcat capture..."
+        kill $LOGCAT_PID 2>/dev/null || true
+        wait $LOGCAT_PID 2>/dev/null || true
+        LOGCAT_PID=""
+
+        # Check if logcat file was created and has content
+        if [ -f "$LOGCAT_FILE" ]; then
+            local file_size=$(stat -f%z "$LOGCAT_FILE" 2>/dev/null || stat -c%s "$LOGCAT_FILE" 2>/dev/null || echo "0")
+            log_success "Logcat saved to $LOGCAT_FILE (size: $file_size bytes)"
+
+            # Also save a filtered version with just our package
+            local filtered_file="${LOGCAT_FILE%.txt}_filtered.txt"
+            grep -E "(WhizVoice|WhizAccessibility|$PACKAGE_NAME)" "$LOGCAT_FILE" > "$filtered_file" || true
+            if [ -s "$filtered_file" ]; then
+                log_info "Filtered logcat saved to $filtered_file"
+            fi
+        else
+            log_warning "Logcat file not created or empty"
+        fi
+    fi
 }
 
 # Function to take screenshot
@@ -207,6 +252,9 @@ wait_for_overlay() {
 cleanup() {
     log_info "Cleaning up test..."
 
+    # Stop logcat capture first (always do this)
+    stop_logcat
+
     # Return to WhizVoice app
     adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
     sleep 2
@@ -230,6 +278,9 @@ main() {
     rm -rf adb_tests/screenshots/*
     log_info "Previous screenshots deleted"
 
+    # Start logcat capture early to capture everything
+    start_logcat
+
     # Setup
     log_info "Setting up test environment..."
     # install latest app (this does force stop and reinstall)
@@ -249,26 +300,26 @@ main() {
     log_info "Granting basic permissions after login..."
     sleep 2  # Wait a moment after login
 
-    # Grant microphone permission
+    # Grant microphone permission via ADB (this one works fine with ADB)
     if adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null; then
-        log_success "✅ Microphone permission granted"
+        log_success "✅ Microphone permission granted via ADB"
     else
-        log_warning "⚠️ Could not grant microphone permission"
+        log_warning "⚠️ Could not grant microphone permission via ADB"
     fi
 
-    # Grant overlay permission
+    # Grant overlay permission via ADB (this one works fine with ADB)
     if adb shell appops set "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW allow 2>/dev/null; then
-        log_success "✅ Overlay permission granted"
+        log_success "✅ Overlay permission granted via ADB"
     else
-        log_warning "⚠️ Could not grant overlay permission"
+        log_warning "⚠️ Could not grant overlay permission via ADB"
     fi
 
-    # Now run the instrumented test for accessibility service setup
-    # This requires UI automation and cannot be done via simple ADB commands
-    log_info "Running instrumented test to set up accessibility service..."
-    ./adb_tests/setup_permissions.sh --accessibility-only
+    # Now run the instrumented test with PermissionAutomator for accessibility service
+    # Force it to use UI automation, not ADB
+    log_info "Running instrumented test with PermissionAutomator for accessibility service..."
+    ./adb_tests/setup_permissions.sh --accessibility-only --force-instrumentation
     if [ $? -ne 0 ]; then
-        log_error "Accessibility service setup failed"
+        log_error "Accessibility service setup via PermissionAutomator failed"
         exit 1
     fi
 
@@ -283,18 +334,50 @@ main() {
             log_success "✅ Accessibility service is actively running"
         else
             log_warning "⚠️ Accessibility service is enabled but may not be actively running yet"
+            # Give it a moment to fully initialize
+            sleep 2
+            # Check again
+            if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+                log_success "✅ Accessibility service is now actively running"
+            fi
         fi
     else
         log_error "❌ Accessibility service is not enabled - test may fail"
-        # Don't exit, just warn - the test might still work with overlay permissions
+        exit 1  # Exit since accessibility is required for this test
     fi
 
-    # Restart app to apply permissions
-    log_info "Restarting app to apply permissions..."
-    adb shell am force-stop "$PACKAGE_NAME"
-    sleep 1
-    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
-    sleep 5
+    # Do NOT force-stop or restart the app here! That would kill the accessibility service we just enabled
+    # Only bring to foreground if needed, and do it gently to preserve the service connection
+
+    log_info "Checking app and accessibility service status..."
+    local current_app=$(adb shell dumpsys window windows | grep -E 'mCurrentFocus' | cut -d '/' -f1 | sed 's/.* //' | tr -d '\r')
+    local service_running=$(adb shell dumpsys accessibility | grep -c "WhizAccessibilityService" || echo "0")
+
+    if [[ "$current_app" == *"$PACKAGE_NAME"* ]] && [[ "$service_running" -gt 0 ]]; then
+        log_success "✅ App is in foreground and accessibility service is running - preserving state"
+        # Don't restart anything, just continue
+    elif [[ "$current_app" == *"$PACKAGE_NAME"* ]]; then
+        log_warning "App is in foreground but accessibility service may not be connected"
+        # App is there but service might need reconnection - just wait a bit for it to reconnect
+        sleep 2
+    else
+        log_info "App not in foreground, bringing it forward gently..."
+        # Use flags to avoid creating new process/task
+        # FLAG_ACTIVITY_REORDER_TO_FRONT (0x00020000) - brings existing activity to front
+        # FLAG_ACTIVITY_SINGLE_TOP (0x20000000) - reuses existing instance
+        adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" \
+            --activity-reorder-to-front \
+            --activity-single-top
+        sleep 3
+
+        # Check if service reconnected
+        service_running=$(adb shell dumpsys accessibility | grep -c "WhizAccessibilityService" || echo "0")
+        if [[ "$service_running" -gt 0 ]]; then
+            log_success "✅ Accessibility service reconnected"
+        else
+            log_warning "⚠️ Accessibility service may not be connected"
+        fi
+    fi
 
     # Test 1: Navigation to WhatsApp Chat
     echo ""
@@ -385,18 +468,61 @@ main() {
     echo "Test ID: $TEST_ID"
     echo "Screenshots saved to: $LOCAL_SCREENSHOT_DIR"
 
-    if check_accessibility_enabled; then
-        echo -e "${GREEN}✓ Accessibility Service: ENABLED${NC}"
+    # Check both permission and actual service status
+    echo ""
+    echo "Accessibility Status:"
+
+    # Check if permission is granted (service is in enabled list)
+    local enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null || echo "")
+    if [[ "$enabled_services" == *"$PACKAGE_NAME/com.example.whiz.accessibility.WhizAccessibilityService"* ]]; then
+        echo -e "${GREEN}  ✓ Permission: GRANTED${NC} (service in enabled list)"
     else
-        echo -e "${RED}✗ Accessibility Service: DISABLED${NC}"
+        echo -e "${RED}  ✗ Permission: NOT GRANTED${NC}"
+    fi
+
+    # Check if service is actually running
+    local service_info=$(adb shell dumpsys accessibility | grep -A 1 "WhizAccessibilityService" 2>/dev/null || echo "")
+    if [[ -n "$service_info" ]] && [[ "$service_info" != *"Crashed"* ]]; then
+        echo -e "${GREEN}  ✓ Service: RUNNING${NC}"
+    else
+        echo -e "${RED}  ✗ Service: NOT RUNNING${NC}"
     fi
 
     echo "=========================================="
     log_success "Test completed"
 }
 
-# Handle script termination
-trap cleanup EXIT
+# Enhanced cleanup for script termination or errors
+cleanup_on_exit() {
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        log_error "Script exited with error code: $exit_code"
+        # Take a final screenshot on error
+        take_screenshot "error_final" 2>/dev/null || true
+    fi
+
+    # Always run cleanup
+    cleanup
+
+    # Show logcat location
+    if [ -f "$LOGCAT_FILE" ]; then
+        echo ""
+        echo "=========================================="
+        echo "Logcat output saved to:"
+        echo "  Full: $LOGCAT_FILE"
+        local filtered_file="${LOGCAT_FILE%.txt}_filtered.txt"
+        if [ -f "$filtered_file" ]; then
+            echo "  Filtered: $filtered_file"
+        fi
+        echo "=========================================="
+    fi
+
+    exit $exit_code
+}
+
+# Handle script termination and errors
+trap cleanup_on_exit EXIT INT TERM
 
 # Run the main test
 main "$@"

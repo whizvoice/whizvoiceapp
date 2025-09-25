@@ -74,25 +74,28 @@ run_permission_setup() {
 
     log_with_time "🚀 Running permission setup test: $test_method"
 
-    # Build the test APK first (if needed)
-    log_with_time "📦 Building test APK..."
-    if ! ./gradlew :app:assembleDebugAndroidTest -q; then
+    # Always rebuild test APK when using instrumentation to ensure latest code
+    local test_apk="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+
+    log_with_time "📦 Building test APK with PermissionSetupTest..."
+    if ! ./gradlew :app:assembleDebugAndroidTest; then
         print_color $RED "❌ Failed to build test APK"
         exit 1
     fi
+    log_with_time "✅ Test APK built successfully"
 
-    # Install the test APK
+    # Always reinstall the test APK to ensure latest version
     log_with_time "📲 Installing test APK..."
-    local test_apk="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-    if [[ -f "$test_apk" ]]; then
-        adb install -r -g "$test_apk" 2>/dev/null || true
+    if ! adb install -r -g "$test_apk"; then
+        print_color $RED "❌ Failed to install test APK"
+        return 1
     fi
 
     # Run the specific test method
     log_with_time "🏃 Running instrumented test to set up permissions..."
     adb shell am instrument -w \
         -e class "${TEST_CLASS}#${test_method}" \
-        "${TEST_PACKAGE}/androidx.test.runner.AndroidJUnitRunner" | tee permission_setup.log
+        "${TEST_PACKAGE}/com.example.whiz.HiltTestRunner" | tee permission_setup.log
 
     # Check if test completed
     if grep -q "OK (1 test)" permission_setup.log; then

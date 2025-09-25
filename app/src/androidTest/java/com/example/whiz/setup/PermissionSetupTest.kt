@@ -5,7 +5,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import com.example.whiz.test_helpers.PermissionAutomator
-import com.example.whiz.test_helpers.AdbPermissionGranter
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
@@ -31,6 +30,12 @@ class PermissionSetupTest {
 
     companion object {
         private const val TAG = "PermissionSetupTest"
+
+        init {
+            // Tell TestAppModule to use real accessibility for this test
+            System.setProperty("test.real.accessibility", "true")
+            Log.d(TAG, "📱 Configured test to use REAL accessibility services (not mocked)")
+        }
     }
 
     @get:Rule
@@ -38,138 +43,131 @@ class PermissionSetupTest {
 
     private lateinit var device: UiDevice
     private lateinit var permissionAutomator: PermissionAutomator
-    private lateinit var adbPermissionGranter: AdbPermissionGranter
 
     @Before
     fun setUp() {
         hiltRule.inject()
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         permissionAutomator = PermissionAutomator()
-        adbPermissionGranter = AdbPermissionGranter()
 
         Log.d(TAG, "🚀 Permission Setup Test initialized")
     }
 
     @Test
-    fun setupAllPermissions() = runBlocking {
+    fun setupAllPermissions() {
+        runBlocking {
         Log.d(TAG, "==========================================")
         Log.d(TAG, "🔧 SETTING UP PERMISSIONS FOR TESTING")
         Log.d(TAG, "==========================================")
 
-        // First try ADB method (faster and more reliable)
-        Log.d(TAG, "📱 Attempting to grant permissions via ADB...")
-        val adbSuccess = try {
-            adbPermissionGranter.grantAllPermissions()
-        } catch (e: Exception) {
-            Log.w(TAG, "⚠️ ADB permission grant failed: ${e.message}")
-            false
-        }
+        // Use UI automation to grant permissions
+        Log.d(TAG, "📱 Using UI automation to grant permissions...")
 
-        if (adbSuccess) {
-            Log.d(TAG, "✅ Permissions granted via ADB")
+        // Launch the app to trigger permission dialogs
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
 
-            // Verify the permissions are actually enabled
-            val status = adbPermissionGranter.getPermissionStatus()
-            Log.d(TAG, "📊 Permission Status:")
-            Log.d(TAG, "  • Microphone: ${if (status.microphoneGranted) "✅" else "❌"}")
-            Log.d(TAG, "  • Overlay: ${if (status.overlayGranted) "✅" else "❌"}")
-            Log.d(TAG, "  • Accessibility: ${if (status.accessibilityEnabled) "✅" else "❌"}")
+        if (launchIntent != null) {
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(launchIntent)
 
-            // Give time for services to initialize
-            delay(2000)
-        } else {
-            // Fallback to UI automation if ADB fails
-            Log.d(TAG, "📱 Falling back to UI automation method...")
+            // Wait for app to launch
+            delay(3000)
 
-            // Launch the app to trigger permission dialogs
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
+            // Handle any permission dialogs that appear
+            var dialogsHandled = false
+            var attempts = 0
+            val maxAttempts = 5
 
-            if (launchIntent != null) {
-                launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
+            while (attempts < maxAttempts) {
+                Log.d(TAG, "🔍 Checking for permission dialogs (attempt ${attempts + 1}/$maxAttempts)...")
 
-                // Wait for app to launch
-                delay(3000)
-
-                // Handle any permission dialogs that appear
-                var dialogsHandled = false
-                var attempts = 0
-                val maxAttempts = 5
-
-                while (attempts < maxAttempts) {
-                    Log.d(TAG, "🔍 Checking for permission dialogs (attempt ${attempts + 1}/$maxAttempts)...")
-
-                    if (permissionAutomator.handlePermissionDialogs()) {
-                        dialogsHandled = true
-                        Log.d(TAG, "✅ Permission dialog handled")
-                        delay(2000) // Wait for next dialog
-                    } else {
-                        if (dialogsHandled) {
-                            // We handled at least one dialog and now there are no more
-                            Log.d(TAG, "✅ All permission dialogs handled")
-                            break
-                        } else if (attempts > 2) {
-                            // After a few attempts, if no dialogs found, we're done
-                            Log.d(TAG, "ℹ️ No more permission dialogs to handle")
-                            break
-                        }
-                        delay(1000)
+                if (permissionAutomator.handlePermissionDialogs()) {
+                    dialogsHandled = true
+                    Log.d(TAG, "✅ Permission dialog handled")
+                    delay(2000) // Wait for next dialog
+                } else {
+                    if (dialogsHandled) {
+                        // We handled at least one dialog and now there are no more
+                        Log.d(TAG, "✅ All permission dialogs handled")
+                        break
+                    } else if (attempts > 2) {
+                        // After a few attempts, if no dialogs found, we're done
+                        Log.d(TAG, "ℹ️ No more permission dialogs to handle")
+                        break
                     }
-                    attempts++
+                    delay(1000)
                 }
-            } else {
-                Log.e(TAG, "❌ Could not create launch intent for app")
+                attempts++
             }
+        } else {
+            Log.e(TAG, "❌ Could not create launch intent for app")
         }
-
-        // Final verification
-        Log.d(TAG, "==========================================")
-        Log.d(TAG, "📊 FINAL PERMISSION STATUS:")
-        val finalStatus = adbPermissionGranter.getPermissionStatus()
-        Log.d(TAG, "  • Microphone: ${if (finalStatus.microphoneGranted) "✅ GRANTED" else "❌ NOT GRANTED"}")
-        Log.d(TAG, "  • Overlay: ${if (finalStatus.overlayGranted) "✅ GRANTED" else "❌ NOT GRANTED"}")
-        Log.d(TAG, "  • Accessibility: ${if (finalStatus.accessibilityEnabled) "✅ ENABLED" else "❌ NOT ENABLED"}")
-        Log.d(TAG, "==========================================")
 
         // The test passes regardless - its job is just to set up permissions
         Log.d(TAG, "✅ Permission setup complete. Permissions will persist for subsequent tests.")
         Log.d(TAG, "ℹ️ You can now run your actual tests with permissions already granted.")
+        }
     }
 
     @Test
-    fun setupAccessibilityOnly() = runBlocking {
+    fun setupAccessibilityOnly() {
+        runBlocking {
         Log.d(TAG, "==========================================")
         Log.d(TAG, "🔧 SETTING UP ACCESSIBILITY SERVICE ONLY")
         Log.d(TAG, "==========================================")
 
-        // This test only sets up accessibility service, useful when other permissions are already granted
-        Log.d(TAG, "📱 Enabling accessibility service via ADB...")
+        // Launch the app to foreground first
+        Log.d(TAG, "📱 Launching WhizVoice app to foreground...")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
 
-        val success = adbPermissionGranter.enableAccessibilityService()
+        if (launchIntent != null) {
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            context.startActivity(launchIntent)
 
-        if (success) {
-            Log.d(TAG, "✅ Accessibility service enabled successfully")
-        } else {
-            Log.d(TAG, "⚠️ Failed to enable accessibility service via ADB, trying UI automation...")
+            // Wait for app to fully launch
+            Log.d(TAG, "⏳ Waiting for app to launch...")
+            delay(3000)
 
-            // Launch settings and navigate to accessibility
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
+            // Now the app should be in foreground and might show permission dialogs
+            Log.d(TAG, "🔍 Looking for permission dialogs...")
 
-            if (launchIntent != null) {
-                launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-                delay(2000)
+            var dialogsHandled = false
+            var attempts = 0
+            val maxAttempts = 5
 
-                // Try to handle accessibility dialog
-                permissionAutomator.handlePermissionDialogs()
+            while (attempts < maxAttempts) {
+                Log.d(TAG, "🔍 Checking for permission dialogs (attempt ${attempts + 1}/$maxAttempts)...")
+
+                // PermissionAutomator will handle any permission dialogs including accessibility
+                if (permissionAutomator.handlePermissionDialogs()) {
+                    dialogsHandled = true
+                    Log.d(TAG, "✅ Permission dialog handled by PermissionAutomator")
+                    // Wait a bit in case there are more dialogs
+                    delay(2000)
+                } else {
+                    if (dialogsHandled) {
+                        Log.d(TAG, "✅ All permission dialogs handled")
+                        break
+                    } else {
+                        Log.d(TAG, "ℹ️ No permission dialogs found, waiting...")
+                        // Maybe the dialog will appear after a delay
+                        delay(2000)
+                    }
+                }
+                attempts++
             }
+
+            if (!dialogsHandled) {
+                Log.w(TAG, "⚠️ No permission dialogs were shown by the app")
+                Log.d(TAG, "The app may already have permissions or needs to be configured to request them")
+            }
+        } else {
+            Log.e(TAG, "❌ Could not create launch intent for app")
         }
 
-        // Verify
-        val status = adbPermissionGranter.getPermissionStatus()
-        Log.d(TAG, "📊 Accessibility Status: ${if (status.accessibilityEnabled) "✅ ENABLED" else "❌ NOT ENABLED"}")
-        Log.d(TAG, "✅ Accessibility setup complete")
+        Log.d(TAG, "✅ Accessibility setup test complete")
+        }
     }
 }
