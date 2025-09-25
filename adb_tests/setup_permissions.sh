@@ -1,248 +1,371 @@
 #!/bin/bash
 
-# Script to set up permissions for WhizVoice app testing
-# This runs an instrumented test to grant accessibility and other permissions,
-# which will persist for subsequent test runs
+# Enable accessibility service by clicking through WhizVoice app's own UI
+# This uses pure ADB UI automation instead of instrumentation to avoid force-stop issues
 
 set -e
 
-SCRIPT_NAME="setup_permissions.sh"
 PACKAGE_NAME="com.example.whiz.debug"
-TEST_PACKAGE="${PACKAGE_NAME}.test"
-TEST_CLASS="com.example.whiz.setup.PermissionSetupTest"
+SERVICE_NAME="WhizAccessibilityService"
 
-# Color codes for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Function to print colored output
-print_color() {
-    local color=$1
-    shift
-    echo -e "${color}$@${NC}"
+# Function to get timestamp
+timestamp() {
+    date '+%H:%M:%S'
 }
 
-# Function to log with timestamp
-log_with_time() {
-    echo "[$(date '+%H:%M:%S')] $1"
+log_info() {
+    echo -e "${BLUE}[$(timestamp)]${NC} $1"
 }
 
-# Function to check if device is connected
-check_device() {
-    if ! adb devices | grep -q "device$"; then
-        print_color $RED "❌ No device connected. Please connect a device or start an emulator."
-        exit 1
-    fi
-    print_color $GREEN "✅ Device connected"
+log_success() {
+    echo -e "${GREEN}[$(timestamp)]${NC} ✅ $1"
 }
 
-# Function to check current permission status
-check_permission_status() {
-    log_with_time "📊 Checking current permission status..."
-
-    # Check microphone permission
-    mic_granted=$(adb shell pm list permissions -g | grep -A 20 "com.example.whiz.debug" | grep "android.permission.RECORD_AUDIO" || echo "")
-    if [[ -n "$mic_granted" ]]; then
-        print_color $GREEN "  ✅ Microphone permission: GRANTED"
-    else
-        print_color $YELLOW "  ⚠️ Microphone permission: NOT GRANTED"
-    fi
-
-    # Check overlay permission
-    overlay_granted=$(adb shell appops get $PACKAGE_NAME SYSTEM_ALERT_WINDOW 2>/dev/null | grep -i "allow" || echo "")
-    if [[ -n "$overlay_granted" ]]; then
-        print_color $GREEN "  ✅ Overlay permission: GRANTED"
-    else
-        print_color $YELLOW "  ⚠️ Overlay permission: NOT GRANTED"
-    fi
-
-    # Check accessibility service
-    enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null || echo "")
-    if [[ "$enabled_services" == *"$PACKAGE_NAME/com.example.whiz.accessibility.WhizAccessibilityService"* ]]; then
-        print_color $GREEN "  ✅ Accessibility service: ENABLED"
-    else
-        print_color $YELLOW "  ⚠️ Accessibility service: NOT ENABLED"
-    fi
+log_error() {
+    echo -e "${RED}[$(timestamp)]${NC} ❌ $1"
 }
 
-# Function to run permission setup test
-run_permission_setup() {
-    local test_method=${1:-"setupAllPermissions"}
-
-    log_with_time "🚀 Running permission setup test: $test_method"
-
-    # Always rebuild test APK when using instrumentation to ensure latest code
-    local test_apk="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-
-    log_with_time "📦 Building test APK with PermissionSetupTest..."
-    if ! ./gradlew :app:assembleDebugAndroidTest; then
-        print_color $RED "❌ Failed to build test APK"
-        exit 1
-    fi
-    log_with_time "✅ Test APK built successfully"
-
-    # Always reinstall the test APK to ensure latest version
-    log_with_time "📲 Installing test APK..."
-    if ! adb install -r -g "$test_apk"; then
-        print_color $RED "❌ Failed to install test APK"
-        return 1
-    fi
-
-    # Run the specific test method
-    log_with_time "🏃 Running instrumented test to set up permissions..."
-    adb shell am instrument -w \
-        -e class "${TEST_CLASS}#${test_method}" \
-        "${TEST_PACKAGE}/com.example.whiz.HiltTestRunner" | tee permission_setup.log
-
-    # Check if test completed
-    if grep -q "OK (1 test)" permission_setup.log; then
-        print_color $GREEN "✅ Permission setup test completed successfully"
-        return 0
-    else
-        print_color $YELLOW "⚠️ Permission setup test may have encountered issues"
-        return 1
-    fi
+log_warning() {
+    echo -e "${YELLOW}[$(timestamp)]${NC} ⚠️ $1"
 }
 
-# Function to try direct ADB permission grant (faster alternative)
-try_direct_adb_grant() {
-    log_with_time "⚡ Attempting direct ADB permission grant (faster method)..."
+# Function to dump UI and save for debugging
+dump_ui() {
+    adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1
+    # Optionally copy to local for debugging
+    # adb pull /sdcard/window_dump.xml ./debug_ui_dump.xml 2>/dev/null
+}
 
-    local all_success=true
+# Function to click on element by content-desc
+click_by_content_desc() {
+    local desc="$1"
+    log_info "Looking for content-desc: '$desc'"
 
-    # Grant microphone permission
-    if adb shell pm grant $PACKAGE_NAME android.permission.RECORD_AUDIO 2>/dev/null; then
-        print_color $GREEN "  ✅ Microphone permission granted"
-    else
-        print_color $YELLOW "  ⚠️ Could not grant microphone permission via ADB"
-        all_success=false
-    fi
+    dump_ui
 
-    # Grant overlay permission
-    if adb shell appops set $PACKAGE_NAME SYSTEM_ALERT_WINDOW allow 2>/dev/null; then
-        print_color $GREEN "  ✅ Overlay permission granted"
-    else
-        print_color $YELLOW "  ⚠️ Could not grant overlay permission via ADB"
-        all_success=false
-    fi
+    # Get coordinates of element with matching content-desc
+    local coords=$(adb shell "cat /sdcard/window_dump.xml | grep -o \"content-desc=\\\"[^\\\"]*${desc}[^\\\"]*\\\"[^>]*bounds=\\\"\\[[0-9,]*\\]\\[[0-9,]*\\]\\\"\" | head -1 | sed 's/.*bounds=\"\\[\\([0-9]*\\),\\([0-9]*\\)\\]\\[\\([0-9]*\\),\\([0-9]*\\)\\]\".*/\\1 \\2 \\3 \\4/'" 2>/dev/null)
 
-    # Enable accessibility service
-    local current_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null || echo "")
-    local our_service="${PACKAGE_NAME}/com.example.whiz.accessibility.WhizAccessibilityService"
+    if [ -n "$coords" ]; then
+        read x1 y1 x2 y2 <<< "$coords"
+        local x=$(( (x1 + x2) / 2 ))
+        local y=$(( (y1 + y2) / 2 ))
 
-    if [[ "$current_services" != *"$our_service"* ]]; then
-        if [[ "$current_services" == "null" ]] || [[ -z "$current_services" ]]; then
-            new_services="$our_service"
-        else
-            new_services="${current_services}:${our_service}"
-        fi
-
-        if adb shell settings put secure enabled_accessibility_services "$new_services" 2>/dev/null && \
-           adb shell settings put secure accessibility_enabled 1 2>/dev/null; then
-            print_color $GREEN "  ✅ Accessibility service enabled"
-        else
-            print_color $YELLOW "  ⚠️ Could not enable accessibility service via ADB"
-            all_success=false
-        fi
-    else
-        print_color $GREEN "  ✅ Accessibility service already enabled"
-    fi
-
-    if $all_success; then
+        log_info "Found element, clicking at ($x, $y)"
+        adb shell input tap $x $y
         return 0
     else
         return 1
     fi
 }
 
-# Main execution
-main() {
-    print_color $BLUE "==========================================
-🔧 WhizVoice Permission Setup Script
-==========================================
-"
+# Function to click on element by text (exact match)
+click_by_text() {
+    local text="$1"
+    log_info "Looking for exact text: '$text'"
 
-    # Parse command line arguments
-    local method="all"
-    local use_instrumentation=false
+    dump_ui
 
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --accessibility-only)
-                method="accessibility"
-                shift
-                ;;
-            --force-instrumentation)
-                use_instrumentation=true
-                shift
-                ;;
-            --help)
-                echo "Usage: $SCRIPT_NAME [options]"
-                echo ""
-                echo "Options:"
-                echo "  --accessibility-only     Only set up accessibility service"
-                echo "  --force-instrumentation  Use instrumentation method (slower but more reliable)"
-                echo "  --help                   Show this help message"
-                echo ""
-                echo "By default, tries direct ADB grant first, falls back to instrumentation if needed."
-                exit 0
-                ;;
-            *)
-                print_color $RED "Unknown option: $1"
-                echo "Use --help for usage information"
-                exit 1
-                ;;
-        esac
-    done
+    # Debug: Show all elements with our text
+    log_info "Searching for all instances of '$text'..."
+    local all_matches=$(adb shell "cat /sdcard/window_dump.xml | grep -n \"text=\\\"${text}\\\"\"" 2>/dev/null || echo "")
+    if [ -n "$all_matches" ]; then
+        log_info "All matches found: $all_matches"
+    fi
 
-    # Check device connection
-    check_device
+    # Get ONLY the TextView element with the exact text, not the whole document
+    local element_line=$(adb shell "cat /sdcard/window_dump.xml" 2>/dev/null | grep -o "<node[^>]*text=\"${text}\"[^>]*>" | head -1)
 
-    # Check current status
-    print_color $BLUE "\n📊 Current permission status:"
-    check_permission_status
+    if [ -n "$element_line" ]; then
+        log_info "Found element (first 400 chars): ${element_line:0:400}"
 
-    # Decide which method to use
-    if $use_instrumentation; then
-        log_with_time "\n🎯 Using instrumentation method as requested..."
-        if [[ "$method" == "accessibility" ]]; then
-            run_permission_setup "setupAccessibilityOnly"
+        # Extract bounds from this specific node element
+        local bounds_match=$(echo "$element_line" | grep -o 'bounds="[^"]*"' | head -1)
+        log_info "Bounds attribute: $bounds_match"
+
+        # Extract the numbers from bounds="[x1,y1][x2,y2]"
+        local coords=$(echo "$bounds_match" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/')
+        log_info "Extracted coordinates: $coords"
+
+        if [ -n "$coords" ] && [ "$coords" != "$bounds_match" ]; then
+            read x1 y1 x2 y2 <<< "$coords"
+            local x=$(( (x1 + x2) / 2 ))
+            local y=$(( (y1 + y2) / 2 ))
+
+            log_info "Bounds: left=$x1, top=$y1, right=$x2, bottom=$y2"
+            log_info "Calculated center point: x=$x, y=$y"
+            log_info "CLICKING at ($x, $y) for text '$text'"
+
+            adb shell input tap $x $y
+            return 0
         else
-            run_permission_setup "setupAllPermissions"
+            log_error "Failed to parse coordinates from bounds: $bounds_match"
         fi
-    else
-        # Try direct ADB method first
-        log_with_time "\n🎯 Trying fast ADB method first..."
-        if try_direct_adb_grant; then
-            print_color $GREEN "\n✅ All permissions granted via direct ADB commands!"
-        else
-            print_color $YELLOW "\n⚠️ Some permissions couldn't be granted via ADB, falling back to instrumentation..."
-            if [[ "$method" == "accessibility" ]]; then
-                run_permission_setup "setupAccessibilityOnly"
+    fi
+
+    log_warning "Could not find or click text: '$text'"
+    return 1
+}
+
+# Function to check if accessibility dialog is visible
+check_for_accessibility_dialog() {
+    dump_ui
+
+    # Look for the accessibility dialog based on exact text from code
+    if adb shell "cat /sdcard/window_dump.xml | grep -q -E '(Enable Accessibility Service|Open accessibility settings button|WhizVoice needs permission to automate actions across apps)'" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Main function
+enable_accessibility_via_app() {
+    log_info "Closing Settings app to ensure clean state..."
+
+    # Force stop Settings app to ensure we start fresh
+    adb shell am force-stop com.android.settings 2>/dev/null
+    sleep 1
+
+    log_info "Checking if app is running..."
+
+    # Start or bring app to foreground
+    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" 2>/dev/null
+    sleep 3
+
+    # Check if accessibility dialog is showing
+    if check_for_accessibility_dialog; then
+        log_success "Found accessibility permission dialog"
+
+        # Click on "Open Settings" button using exact content description from code
+        if click_by_content_desc "Open accessibility settings button" || \
+           click_by_text "Open Settings"; then
+
+            log_success "Clicked on settings button"
+            sleep 3
+
+            # We might land on either:
+            # 1. The accessibility list page - need to click "WhizVoice DEBUG"
+            # 2. Directly on the WhizVoice DEBUG detail page - can toggle immediately
+
+            # Check if we're on the list page by looking for "WhizVoice DEBUG" text
+            dump_ui
+
+            if adb shell "cat /sdcard/window_dump.xml | grep -q 'WhizVoice DEBUG'" 2>/dev/null && \
+               adb shell "cat /sdcard/window_dump.xml | grep -q 'Downloaded apps'" 2>/dev/null; then
+                # We're on the list page, need to click the item
+                log_info "On accessibility list page, need to click WhizVoice DEBUG..."
+
+                # The WhizVoice DEBUG is the second item in the list
+                # Try different methods to click on it
+
+                # Method 1: Try clicking the parent LinearLayout that contains WhizVoice DEBUG
+                log_info "Method 1: Looking for clickable parent containing WhizVoice DEBUG..."
+                local whiz_parent=$(adb shell "cat /sdcard/window_dump.xml | grep -B5 '&#129514; WhizVoice DEBUG' | grep 'clickable=\"true\"' | tail -1" 2>/dev/null)
+                if [ -n "$whiz_parent" ]; then
+                    local parent_bounds=$(echo "$whiz_parent" | grep -o 'bounds="[^"]*"' | head -1)
+                    if [ -n "$parent_bounds" ]; then
+                        local coords=$(echo "$parent_bounds" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/')
+                        if [ -n "$coords" ]; then
+                            read x1 y1 x2 y2 <<< "$coords"
+                            local x=$(( (x1 + x2) / 2 ))
+                            local y=$(( (y1 + y2) / 2 ))
+                            log_info "Found clickable parent at bounds $parent_bounds, clicking at ($x, $y)"
+                            adb shell input tap $x $y
+                            sleep 2
+                        fi
+                    fi
+                # Method 2: Try text matching with emoji
+                elif click_by_text "&#129514; WhizVoice DEBUG"; then
+                    log_success "Clicked on WhizVoice DEBUG item via text match (with emoji)"
+                    sleep 2
+                # Method 3: Try text matching without emoji
+                elif click_by_text "WhizVoice DEBUG"; then
+                    log_success "Clicked on WhizVoice DEBUG item via text match (without emoji)"
+                    sleep 2
+                else
+                    # Method 4: Fallback to hardcoded coordinates
+                    log_warning "All methods failed, using hardcoded coordinates for WhizVoice DEBUG"
+                    # Based on the UI dump, WhizVoice DEBUG (second item):
+                    # bounds="[0,618][1080,808]"
+                    # The text "Off" under it is at [221,716][279,766]
+                    # To safely hit the second item, use Y=700 (well within 618-808 range)
+                    log_info "Clicking at WhizVoice DEBUG item (X=540, Y=700)"
+                    adb shell input tap 540 700
+                    sleep 3
+
+                    # Verify we're on the right page now
+                    dump_ui
+                    if adb shell "cat /sdcard/window_dump.xml | grep -q 'Use.*DEBUG\\|Use.*service\\|WhizVoice DEBUG'" 2>/dev/null; then
+                        log_success "Successfully navigated to WhizVoice DEBUG settings"
+                    else
+                        log_warning "May not be on correct page, checking what we clicked..."
+                        # Let's see what page we're on
+                        local page_title=$(adb shell "cat /sdcard/window_dump.xml | grep -o '<node[^>]*text=\"[^\"]*\"[^>]*class=\"android.widget.TextView\"[^>]*>' | head -1" 2>/dev/null)
+                        log_info "Current page title element: $page_title"
+
+                        # Go back and try again with a different approach
+                        log_info "Going back to try again..."
+                        adb shell input keyevent KEYCODE_BACK
+                        sleep 2
+
+                        # Try clicking lower on the second item
+                        log_info "Trying alternative coordinates (540, 480)"
+                        adb shell input tap 540 480
+                        sleep 2
+                    fi
+                fi
             else
-                run_permission_setup "setupAllPermissions"
+                log_info "Already on WhizVoice DEBUG detail page"
             fi
+
+            # Stop here - user will manually handle the rest
+            log_success "Successfully clicked on WhizVoice DEBUG in accessibility settings"
+            log_info "Please manually toggle the switch to enable the service"
+
+            return 0
+        else
+            log_error "Could not find button to open accessibility settings"
+            return 1
+        fi
+    else
+        log_warning "Accessibility dialog not visible in app"
+
+        # Maybe the service is already enabled?
+        if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+            log_success "Accessibility service is already running"
+            return 0
+        else
+            log_error "Accessibility dialog not shown and service not running"
+            log_info "The app may need to request accessibility permission first"
+            return 1
         fi
     fi
-
-    # Final status check
-    print_color $BLUE "\n📊 Final permission status:"
-    check_permission_status
-
-    print_color $GREEN "\n==========================================
-✅ Permission setup complete!
-==========================================
-
-You can now run your tests with permissions already granted.
-The permissions will persist until explicitly revoked.
-
-To run your tests:
-  ./run_tests_on_debug.sh --skip-unit --test YourTestClass
-"
 }
 
-# Run main function
-main "$@"
+# Parse command line arguments
+MODE=""
+for arg in "$@"; do
+    case $arg in
+        --accessibility-only)
+            MODE="accessibility"
+            shift
+            ;;
+        --force-instrumentation)
+            log_warning "Ignoring --force-instrumentation flag (using pure ADB UI automation instead)"
+            shift
+            ;;
+        *)
+            ;;
+    esac
+done
+
+echo "=========================================="
+echo "🔧 WhizVoice Permission Setup Script"
+echo "=========================================="
+echo ""
+
+# Check device connection
+if ! adb devices | grep -q "device$"; then
+    log_error "No device connected. Please connect a device or start an emulator."
+    exit 1
+fi
+log_success "Device connected"
+echo ""
+
+# Check current status
+echo ""
+echo "📊 Current permission status:"
+echo "[$(timestamp)] 📊 Checking current permission status..."
+
+# Check microphone permission
+mic_granted=$(adb shell pm list permissions -g | grep -A 20 "com.example.whiz.debug" | grep "android.permission.RECORD_AUDIO" || echo "")
+if [[ -n "$mic_granted" ]]; then
+    echo "  ✅ Microphone permission: GRANTED"
+else
+    echo "  ⚠️ Microphone permission: NOT GRANTED"
+fi
+
+# Check overlay permission
+overlay_granted=$(adb shell appops get "$PACKAGE_NAME" SYSTEM_ALERT_WINDOW 2>/dev/null | grep -c "allow" || echo "0")
+if [[ "$overlay_granted" -gt 0 ]]; then
+    echo "  ✅ Overlay permission: GRANTED"
+else
+    echo "  ⚠️ Overlay permission: NOT GRANTED"
+fi
+
+# Check accessibility service
+enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+if [[ "$enabled_services" == *"$PACKAGE_NAME"* ]]; then
+    echo "  ✅ Accessibility service: ENABLED"
+
+    # Check if it's actually running
+    if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+        log_success "Accessibility service is running"
+        echo ""
+        echo "=========================================="
+        echo "[$(timestamp)] ✅ All permissions are already set up!"
+        echo "=========================================="
+        exit 0
+    else
+        log_warning "Service is enabled but not running, attempting to start..."
+        # Try to restart the app
+        adb shell am force-stop "$PACKAGE_NAME"
+        sleep 1
+        adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity"
+        sleep 3
+
+        if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+            log_success "Accessibility service is now running"
+            exit 0
+        fi
+    fi
+else
+    echo "  ⚠️ Accessibility service: NOT ENABLED"
+fi
+
+# Set up permissions
+echo ""
+log_info "Setting up accessibility permission via app UI..."
+
+if enable_accessibility_via_app; then
+    # Verify it worked
+    sleep 2
+    enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+
+    if [[ "$enabled_services" == *"$PACKAGE_NAME"* ]]; then
+        log_success "Accessibility service is now enabled"
+
+        if adb shell dumpsys accessibility | grep -q "WhizAccessibilityService"; then
+            log_success "Accessibility service is running"
+        else
+            log_warning "Service enabled but not yet running"
+        fi
+
+        echo ""
+        echo "=========================================="
+        echo "[$(timestamp)] ✅ Permission setup complete!"
+        echo "=========================================="
+        echo ""
+        echo "You can now run your tests with permissions already granted."
+        echo "The permissions will persist until explicitly revoked."
+        echo ""
+        echo "To run your tests:"
+        echo "  ./run_tests_on_debug.sh --skip-unit --test YourTestClass"
+        echo ""
+
+        exit 0
+    else
+        log_error "Failed to enable accessibility service"
+        exit 1
+    fi
+else
+    log_error "Failed to enable accessibility through app UI"
+    exit 1
+fi

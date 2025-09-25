@@ -314,16 +314,21 @@ main() {
         log_warning "⚠️ Could not grant overlay permission via ADB"
     fi
 
-    # Now run the instrumented test with PermissionAutomator for accessibility service
-    # Force it to use UI automation, not ADB
-    log_info "Running instrumented test with PermissionAutomator for accessibility service..."
-    ./adb_tests/setup_permissions.sh --accessibility-only --force-instrumentation
+    # Use app's own UI to enable accessibility service (no instrumentation)
+    log_info "Enabling accessibility service via app UI..."
+    ./adb_tests/setup_permissions.sh --accessibility-only
     if [ $? -ne 0 ]; then
-        log_error "Accessibility service setup via PermissionAutomator failed"
+        log_error "Failed to enable accessibility service via UI"
+        log_error "Please manually enable it in Settings → Accessibility → WhizVoice DEBUG"
         exit 1
     fi
 
     log_success "All permissions setup completed after login"
+
+    # Make sure app is back in foreground after settings navigation
+    log_info "Bringing WhizVoice back to foreground..."
+    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" 2>/dev/null
+    sleep 3
 
     # Verify accessibility service is actually enabled
     log_info "Verifying accessibility service status..."
@@ -386,6 +391,10 @@ main() {
 
     # App is already launched by login script
     take_screenshot "01_app_after_login"
+
+    # Ensure app is fully initialized - wait for ChatViewModel to be ready
+    log_info "Ensuring app is fully initialized..."
+    sleep 3
 
     # Send command to open WhatsApp chat
     send_text_to_input "Open WhatsApp chat with $WHATSAPP_CONTACT"
@@ -473,17 +482,39 @@ main() {
     echo "Accessibility Status:"
 
     # Check if permission is granted (service is in enabled list)
-    local enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null || echo "")
-    if [[ "$enabled_services" == *"$PACKAGE_NAME/com.example.whiz.accessibility.WhizAccessibilityService"* ]]; then
-        echo -e "${GREEN}  ✓ Permission: GRANTED${NC} (service in enabled list)"
+    local enabled_services=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n' || echo "")
+    local dumpsys_output=$(adb shell dumpsys accessibility | grep "Enabled services:" || echo "")
+
+    # Check both settings and dumpsys
+    if [[ "$enabled_services" != "null" ]] && [[ "$enabled_services" == *"$PACKAGE_NAME"* ]] && [[ "$enabled_services" == *"WhizAccessibilityService"* ]]; then
+        echo -e "${GREEN}  ✓ Permission: GRANTED${NC} (in settings)"
+    elif [[ "$dumpsys_output" == *"$PACKAGE_NAME"* ]] && [[ "$dumpsys_output" == *"WhizAccessibilityService"* ]]; then
+        echo -e "${GREEN}  ✓ Permission: GRANTED${NC} (in dumpsys)"
     else
         echo -e "${RED}  ✗ Permission: NOT GRANTED${NC}"
+        echo "    Debug: enabled_services='$enabled_services'"
+        echo "    Debug: dumpsys='$dumpsys_output'"
     fi
 
-    # Check if service is actually running
-    local service_info=$(adb shell dumpsys accessibility | grep -A 1 "WhizAccessibilityService" 2>/dev/null || echo "")
-    if [[ -n "$service_info" ]] && [[ "$service_info" != *"Crashed"* ]]; then
+    # Check if service is actually running and not crashed
+    local service_dump=$(adb shell dumpsys accessibility 2>/dev/null || echo "")
+
+    # Use separate grep commands to avoid multiline issues
+    local has_enabled=0
+    local has_crashed=0
+
+    if echo "$service_dump" | grep "Enabled services:" | grep -q "$PACKAGE_NAME.*WhizAccessibilityService"; then
+        has_enabled=1
+    fi
+
+    if echo "$service_dump" | grep "Crashed services:" | grep -q "$PACKAGE_NAME.*WhizAccessibilityService"; then
+        has_crashed=1
+    fi
+
+    if [[ $has_enabled -eq 1 ]] && [[ $has_crashed -eq 0 ]]; then
         echo -e "${GREEN}  ✓ Service: RUNNING${NC}"
+    elif [[ $has_crashed -eq 1 ]]; then
+        echo -e "${RED}  ✗ Service: CRASHED${NC}"
     else
         echo -e "${RED}  ✗ Service: NOT RUNNING${NC}"
     fi
