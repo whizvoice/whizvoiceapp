@@ -62,9 +62,28 @@ log "Installing debug app..."
 ./install.sh
 log "Done installing debug app"
 
+# Grant permissions to WhizVoice DEBUG app
+WHIZ_PACKAGE="com.example.whiz.debug"
+log "Granting permissions to WhizVoice DEBUG app..."
+
+# Grant microphone permission
+log "Granting microphone permission..."
+adb shell pm grant $WHIZ_PACKAGE android.permission.RECORD_AUDIO
+
+# Grant overlay permission (SYSTEM_ALERT_WINDOW)
+log "Granting overlay permission..."
+adb shell appops set $WHIZ_PACKAGE SYSTEM_ALERT_WINDOW allow
+
+log "✅ Permissions granted"
+
 log "Using provider: $PROVIDER"
 log "Using model: $MODEL"
 echo ""
+
+# Return to home screen to reset state
+log "Returning to home screen to reset state..."
+adb shell input keyevent KEYCODE_HOME
+sleep 1
 
 # Setup DroidRun before running the agent
 log "Setting up DroidRun accessibility and keyboard..."
@@ -80,7 +99,7 @@ log "Current enabled accessibility services: $ENABLED_SERVICES"
 if [[ "$ENABLED_SERVICES" == *"$DROIDRUN_PACKAGE"* ]]; then
     log "✅ DroidRun accessibility service is ALREADY ENABLED"
 else
-    log "❌ DroidRun accessibility service is NOT ENABLED"
+    log "DroidRun accessibility service is NOT ENABLED"
 
     # Close Settings app to ensure clean state when we open it later
     log "Closing Settings app to ensure clean state..."
@@ -88,14 +107,14 @@ else
     sleep 1
 fi
 
-# Force stop DroidRun app to ensure clean state
-log "Closing DroidRun app..."
+# Force stop DroidRun Portal app to ensure clean state
+log "Closing DroidRun Portal app..."
 adb shell am force-stop $DROIDRUN_PACKAGE
 
 sleep 1
 
-# Restart DroidRun app
-log "Opening DroidRun app..."
+# Restart DroidRun Portal app
+log "Opening DroidRun Portal app..."
 adb shell monkey -p $DROIDRUN_PACKAGE -c android.intent.category.LAUNCHER 1
 
 sleep 1
@@ -107,7 +126,7 @@ ENABLED_SERVICES=$(adb shell settings get secure enabled_accessibility_services 
 if [[ "$ENABLED_SERVICES" == *"$DROIDRUN_PACKAGE"* ]]; then
     log "✅ DroidRun accessibility service is ENABLED - skipping setup"
 else
-    log "❌ DroidRun accessibility service is NOT ENABLED - need to enable it"
+    log "DroidRun accessibility service is NOT ENABLED - need to enable it"
 
     # Click on DroidRun Portal settings
     log "Clicking on DroidRun Portal settings button..."
@@ -115,7 +134,7 @@ else
     sleep 0.5
     log "Clicking on DroidRun Portal in Accessibility Settings..."
     adb shell input tap 500 500
-    sleep 0.5
+    sleep 1
     log "Clicking Use Droidrun Portal toggle..."
     adb shell input tap 1000 500
     sleep 0.5
@@ -129,6 +148,19 @@ else
     adb shell input keyevent KEYCODE_HOME
 
     sleep 1
+
+    # Check if accessibility service is now enabled
+    log "Verifying DroidRun accessibility service is now enabled..."
+    ENABLED_SERVICES=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+
+    if [[ "$ENABLED_SERVICES" == *"$DROIDRUN_PACKAGE"* ]]; then
+        log "✅ DroidRun accessibility service successfully enabled"
+    else
+        log "❌ ERROR: Failed to enable DroidRun accessibility service"
+        log "Current enabled services: $ENABLED_SERVICES"
+        log "Exiting script..."
+        exit 1
+    fi
 fi
 
 # Check which keyboard is currently active and save it
@@ -139,7 +171,7 @@ log "Current keyboard: $ORIGINAL_KEYBOARD"
 if [[ "$ORIGINAL_KEYBOARD" == *"droidrun"* ]]; then
     log "✅ DroidRun keyboard is already active"
 else
-    log "❌ DroidRun keyboard is NOT active"
+    log "DroidRun keyboard is NOT active"
 
     # Try to find the DroidRun keyboard IME ID
     log "Looking for DroidRun keyboard IME..."
@@ -165,29 +197,68 @@ else
     fi
 fi
 
-# echo "Running droidrun setup..."
-# droidrun "Are you able to see UI elements through Accessibility Service? If yes, you are done. If not, open Settings. Take a screenshot. If you are not on the settings home page which has no back arrow, click the back arrow on the top left of Settings screen until you are at the settings home page. It may take several clicks. Click Accessibility, scrolling down if necessary. Click Droidrun Portal. Click Use Droidrun Portal. Click Allow on the dialog" --provider "$PROVIDER" --model "$MODEL"
-# echo "Finished droidrun setup."
+
+# Example test: WhatsApp integration test
+echo "Running WhatsApp integration test with DroidRun..."
+echo "=========================================="
+
+# You can add your specific test commands here
+# For example:
+# droidrun "Open WhatsApp and send a test message" --provider "$PROVIDER" --model "$MODEL"
+
+# Quick verification test
+echo "Checking authentication status..."
+
+# Read credentials from test_credentials.json
+if [ -f "test_credentials.json" ]; then
+    TEST_EMAIL=$(cat test_credentials.json | grep -o '"email"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+    TEST_PASSWORD=$(cat test_credentials.json | grep -o '"password"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+    log "Using test credentials for: $TEST_EMAIL"
+else
+    log "Warning: test_credentials.json not found"
+    TEST_EMAIL=""
+    TEST_PASSWORD=""
+fi
+
+log "Checking WhizVoice authentication..."
+
+droidrun "Open the 🧪 WhizVoice DEBUG app. If you see a login page with 'Sign in with Google' button, click on it. If you don't, the user is alraedy logged in, so just stop and return. If you see a Google account selection screen, look for the account with email $TEST_EMAIL and click on it. If asked for a password, enter: $TEST_PASSWORD. If you see 'Continue' or 'Allow' buttons, click them. Once logged in or if already logged in, confirm you can see the main app screen." --provider "$PROVIDER" --model "$MODEL"
+
+log "✅ Confirmed authentication"
+
+log "Testing WhizVoice draft functionality..."
+
+WHATSAPP_CONTACT_NAME="+1\(628\)209-9005"
+
+# MICROPHONE PERMISSIONS
+droidrun "Navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
+
+droidrun "Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop." --provider "$PROVIDER" --model "$MODEL"
+
+sleep 3
+adb shell am start -n com.example.whiz/.AssistantActivity \
+    -e "TRANSCRIPTION" "Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey what's up how's it going just tryna test whiz voice" \
+    -e "IS_ASSISTANT_LAUNCH" "true" \
+    -e "ENABLE_VOICE_MODE" "true"
+
+sleep 2
+adb shell am start -n com.example.whiz/.AssistantActivity \
+    -e "TRANSCRIPTION" "Actually, can you update  the message to be a bit more polite?" \
+    -e "IS_ASSISTANT_LAUNCH" "true" \
+    -e "ENABLE_VOICE_MODE" "true"
+
+sleep 3
+adb shell am start -n com.example.whiz/.AssistantActivity \
+    -e "TRANSCRIPTION" "That looks good. go ahead and send it." \
+    -e "IS_ASSISTANT_LAUNCH" "true" \
+    -e "ENABLE_VOICE_MODE" "true"
 
 
-# # Example test: WhatsApp integration test
-# echo "Running WhatsApp integration test with DroidRun..."
-# echo "=========================================="
 
-# # You can add your specific test commands here
-# # For example:
-# # droidrun "Open WhatsApp and send a test message" --provider "$PROVIDER" --model "$MODEL"
+echo ""
+echo "Test completed!"
 
-# # Quick verification test
-# echo "Running verification test..."
-# droidrun "Open the 🧪 WhizVoice DEBUG app" --provider "$PROVIDER" --model "$MODEL"
-
-# echo ""
-# echo "Test completed!"
-
-# droidrun "Open the settings app. If we are not in the home page of the settings app, click the back button until we are. Click on the search bar. Click on the globe icon under [Droidrun Keyboard (ON)] at the bottom of the screen. Scroll down to Accessibility and click it. Click Droidrun Portal. Click [Turn off] on the Turn off Droidrun Portal dialog." --provider "$PROVIDER" --model "$MODEL"
-
-# echo "Test cleanup completed!"
+echo "Test cleanup completed!"
 
 # Restore original keyboard if it was changed
 if [[ "$ORIGINAL_KEYBOARD" != *"droidrun"* ]] && [ -n "$ORIGINAL_KEYBOARD" ]; then
@@ -208,15 +279,9 @@ fi
 log "Opening DroidRun Portal app..."
 adb shell monkey -p $DROIDRUN_PACKAGE -c android.intent.category.LAUNCHER 1
 sleep 0.5
-adb shell input tap 500 600
-sleep 0.5
-log "Clicking on DroidRun Portal in Accessibility Settings..."
-adb shell input tap 500 500
-sleep 0.5
 log "Clicking Use Droidrun Portal toggle..."
 adb shell input tap 1000 500
 sleep 0.5
-log "Clicking Disable..."
-adb shell input tap 500 1600
-
+log "Clicking Turn off..."
+adb shell input tap 800 1275
 log "Script complete!"
