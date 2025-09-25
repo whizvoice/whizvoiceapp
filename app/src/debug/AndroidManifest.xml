@@ -14,6 +14,17 @@
                 <action android:name="com.example.whiz.debug.FORCE_LOGOUT" />
             </intent-filter>
         </receiver>
+
+        <!-- Debug-only broadcast receiver for simulating voice transcriptions via ADB -->
+        <receiver
+            android:name=".test.TestTranscriptionReceiver"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="com.example.whiz.TEST_TRANSCRIPTION" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -236,22 +236,22 @@ droidrun "Navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. Yo
 droidrun "Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop." --provider "$PROVIDER" --model "$MODEL"
 
 sleep 3
-adb shell am start -n com.example.whiz/.AssistantActivity \
-    -e "TRANSCRIPTION" "Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey what's up how's it going just tryna test whiz voice" \
-    -e "IS_ASSISTANT_LAUNCH" "true" \
-    -e "ENABLE_VOICE_MODE" "true"
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
+    -es "text" "Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey what's up how's it going just tryna test whiz voice" \
+    -ez "fromVoice" "true" \
+    -ez "autoSend" "true"
 
 sleep 2
-adb shell am start -n com.example.whiz/.AssistantActivity \
-    -e "TRANSCRIPTION" "Actually, can you update  the message to be a bit more polite?" \
-    -e "IS_ASSISTANT_LAUNCH" "true" \
-    -e "ENABLE_VOICE_MODE" "true"
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
+    -es "text" "Actually, can you update  the message to be a bit more polite?" \
+    -ez "fromVoice" "true" \
+    -ez "autoSend" "true"
 
 sleep 3
-adb shell am start -n com.example.whiz/.AssistantActivity \
-    -e "TRANSCRIPTION" "That looks good. go ahead and send it." \
-    -e "IS_ASSISTANT_LAUNCH" "true" \
-    -e "ENABLE_VOICE_MODE" "true"
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
+    -es "text" "That looks good. go ahead and send it." \
+    -ez "fromVoice" "true" \
+    -ez "autoSend" "true"
 
 
 
