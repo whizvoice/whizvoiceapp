@@ -191,9 +191,53 @@ enable_accessibility_via_app() {
                 log_info "Already on WhizVoice DEBUG detail page"
             fi
 
-            # Stop here - user will manually handle the rest
-            log_success "Successfully clicked on WhizVoice DEBUG in accessibility settings"
-            log_info "Please manually toggle the switch to enable the service"
+            # Now click the toggle switch to enable the service
+            log_info "Clicking toggle switch to enable accessibility service..."
+            sleep 2
+
+            # First try to find the toggle switch dynamically
+            dump_ui
+
+            # Look for the switch/toggle element near "Use WhizVoice" text
+            log_info "Looking for toggle switch element..."
+
+            # Try to find Switch element (usually has class android.widget.Switch)
+            local switch_element=$(adb shell "cat /sdcard/window_dump.xml | grep -o '<node[^>]*class=\"android.widget.Switch\"[^>]*bounds=\"[^\"]*\"[^>]*>' | head -1" 2>/dev/null)
+
+            if [ -n "$switch_element" ]; then
+                log_info "Found switch element: ${switch_element:0:200}"
+                local switch_bounds=$(echo "$switch_element" | grep -o 'bounds="[^"]*"' | head -1)
+
+                if [ -n "$switch_bounds" ]; then
+                    log_info "Switch bounds: $switch_bounds"
+                    local coords=$(echo "$switch_bounds" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/')
+
+                    if [ -n "$coords" ]; then
+                        read x1 y1 x2 y2 <<< "$coords"
+                        local x=$(( (x1 + x2) / 2 ))
+                        local y=$(( (y1 + y2) / 2 ))
+                        log_info "Calculated toggle center coordinates: ($x, $y)"
+                        log_info "Clicking toggle at calculated position ($x, $y)"
+                        adb shell input tap $x $y
+                    else
+                        log_warning "Could not parse toggle coordinates, using fallback"
+                        log_info "Clicking toggle at fallback coordinates (X=900, Y=500)"
+                        adb shell input tap 900 500
+                    fi
+                else
+                    log_warning "Could not find toggle bounds, using fallback"
+                    log_info "Clicking toggle at fallback coordinates (X=900, Y=500)"
+                    adb shell input tap 900 500
+                fi
+            else
+                log_warning "Could not find toggle switch element, using fallback coordinates"
+                log_info "Clicking toggle at fallback coordinates (X=900, Y=500)"
+                adb shell input tap 900 500
+            fi
+
+            sleep 2
+
+            log_success "Successfully clicked on WhizVoice DEBUG and toggled the service"
 
             return 0
         else
