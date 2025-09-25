@@ -162,64 +162,30 @@ enable_accessibility_via_app() {
                 # We're on the list page, need to click the item
                 log_info "On accessibility list page, need to click WhizVoice DEBUG..."
 
-                # The WhizVoice DEBUG is the second item in the list
-                # Try different methods to click on it
+                # Click on WhizVoice DEBUG using fixed coordinates
+                log_info "Clicking at WhizVoice DEBUG item (X=500, Y=700)"
+                adb shell input tap 500 700
+                sleep 3
 
-                # Method 1: Try clicking the parent LinearLayout that contains WhizVoice DEBUG
-                log_info "Method 1: Looking for clickable parent containing WhizVoice DEBUG..."
-                local whiz_parent=$(adb shell "cat /sdcard/window_dump.xml | grep -B5 '&#129514; WhizVoice DEBUG' | grep 'clickable=\"true\"' | tail -1" 2>/dev/null)
-                if [ -n "$whiz_parent" ]; then
-                    local parent_bounds=$(echo "$whiz_parent" | grep -o 'bounds="[^"]*"' | head -1)
-                    if [ -n "$parent_bounds" ]; then
-                        local coords=$(echo "$parent_bounds" | sed 's/bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]"/\1 \2 \3 \4/')
-                        if [ -n "$coords" ]; then
-                            read x1 y1 x2 y2 <<< "$coords"
-                            local x=$(( (x1 + x2) / 2 ))
-                            local y=$(( (y1 + y2) / 2 ))
-                            log_info "Found clickable parent at bounds $parent_bounds, clicking at ($x, $y)"
-                            adb shell input tap $x $y
-                            sleep 2
-                        fi
-                    fi
-                # Method 2: Try text matching with emoji
-                elif click_by_text "&#129514; WhizVoice DEBUG"; then
-                    log_success "Clicked on WhizVoice DEBUG item via text match (with emoji)"
-                    sleep 2
-                # Method 3: Try text matching without emoji
-                elif click_by_text "WhizVoice DEBUG"; then
-                    log_success "Clicked on WhizVoice DEBUG item via text match (without emoji)"
-                    sleep 2
+                # Verify we're on the right page now
+                dump_ui
+                if adb shell "cat /sdcard/window_dump.xml | grep -q 'Use.*DEBUG\\|Use.*service\\|WhizVoice DEBUG'" 2>/dev/null; then
+                    log_success "Successfully navigated to WhizVoice DEBUG settings"
                 else
-                    # Method 4: Fallback to hardcoded coordinates
-                    log_warning "All methods failed, using hardcoded coordinates for WhizVoice DEBUG"
-                    # Based on the UI dump, WhizVoice DEBUG (second item):
-                    # bounds="[0,618][1080,808]"
-                    # The text "Off" under it is at [221,716][279,766]
-                    # To safely hit the second item, use Y=700 (well within 618-808 range)
-                    log_info "Clicking at WhizVoice DEBUG item (X=540, Y=700)"
-                    adb shell input tap 540 700
-                    sleep 3
+                    log_warning "May not be on correct page, checking what we clicked..."
+                    # Let's see what page we're on
+                    local page_title=$(adb shell "cat /sdcard/window_dump.xml | grep -o '<node[^>]*text=\"[^\"]*\"[^>]*class=\"android.widget.TextView\"[^>]*>' | head -1" 2>/dev/null)
+                    log_info "Current page title element: $page_title"
 
-                    # Verify we're on the right page now
-                    dump_ui
-                    if adb shell "cat /sdcard/window_dump.xml | grep -q 'Use.*DEBUG\\|Use.*service\\|WhizVoice DEBUG'" 2>/dev/null; then
-                        log_success "Successfully navigated to WhizVoice DEBUG settings"
-                    else
-                        log_warning "May not be on correct page, checking what we clicked..."
-                        # Let's see what page we're on
-                        local page_title=$(adb shell "cat /sdcard/window_dump.xml | grep -o '<node[^>]*text=\"[^\"]*\"[^>]*class=\"android.widget.TextView\"[^>]*>' | head -1" 2>/dev/null)
-                        log_info "Current page title element: $page_title"
+                    # Go back and try again with a different approach
+                    log_info "Going back to try again..."
+                    adb shell input keyevent KEYCODE_BACK
+                    sleep 2
 
-                        # Go back and try again with a different approach
-                        log_info "Going back to try again..."
-                        adb shell input keyevent KEYCODE_BACK
-                        sleep 2
-
-                        # Try clicking lower on the second item
-                        log_info "Trying alternative coordinates (540, 480)"
-                        adb shell input tap 540 480
-                        sleep 2
-                    fi
+                    # Try clicking lower on the second item
+                    log_info "Trying alternative coordinates (540, 480)"
+                    adb shell input tap 540 480
+                    sleep 2
                 fi
             else
                 log_info "Already on WhizVoice DEBUG detail page"
