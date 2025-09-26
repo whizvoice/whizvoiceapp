@@ -62,6 +62,16 @@ log "Installing debug app..."
 ./install.sh
 log "Done installing debug app"
 
+# Start logcat monitoring in background
+log "Starting logcat monitoring for WhizVoice debug app..."
+adb logcat -c  # Clear existing logs
+# Use unbuffered output to ensure logs are written immediately
+adb logcat -v time TestTranscription:* ChatViewModel:* VoiceManager:* AssistantActivity:* *:S | tee droidrun/logcat_output.txt &
+LOGCAT_PID=$!
+log "Logcat monitoring started (PID: $LOGCAT_PID)"
+# Give logcat a moment to start capturing
+sleep 2
+
 # Grant permissions to WhizVoice DEBUG app
 WHIZ_PACKAGE="com.example.whiz.debug"
 log "Granting permissions to WhizVoice DEBUG app..."
@@ -131,12 +141,12 @@ else
     # Click on DroidRun Portal settings
     log "Clicking on DroidRun Portal settings button..."
     adb shell input tap 500 600
-    sleep 0.5
+    sleep 1
     log "Clicking on DroidRun Portal in Accessibility Settings..."
     adb shell input tap 500 500
     sleep 1
     log "Clicking Use Droidrun Portal toggle..."
-    adb shell input tap 1000 500
+    adb shell input tap 1025 450
     sleep 0.5
     log "Clicking Allow..."
     adb shell input tap 500 1600
@@ -222,7 +232,7 @@ fi
 
 log "Checking WhizVoice authentication..."
 
-droidrun "Open the 🧪 WhizVoice DEBUG app. If you see a login page with 'Sign in with Google' button, click on it. If you don't, the user is alraedy logged in, so just stop and return. If you see a Google account selection screen, look for the account with email $TEST_EMAIL and click on it. If asked for a password, enter: $TEST_PASSWORD. If you see 'Continue' or 'Allow' buttons, click them. Once logged in or if already logged in, confirm you can see the main app screen." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "Open the 🧪 WhizVoice DEBUG app. If you see a login page with 'Sign in with Google' button, click on it. If you don't, the user is alraedy logged in, so just stop and return. If you see a Google account selection screen, look for the account with email $TEST_EMAIL and click on it. If asked for a password, enter: $TEST_PASSWORD. If you see 'Continue' or 'Allow' buttons, click them. Once logged in or if already logged in, confirm you can see the main app screen." --provider "$PROVIDER" --model "$MODEL"
 
 log "✅ Confirmed authentication"
 
@@ -231,32 +241,38 @@ log "Testing WhizVoice draft functionality..."
 WHATSAPP_CONTACT_NAME="+1\(628\)209-9005"
 
 # MICROPHONE PERMISSIONS
-droidrun "Navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "We are trying to open a new chat in an app. If we are already in 🧪 WhizVoice DEBUG app on New Chat page, then you are done. If not, navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
 
-droidrun "Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "We are testing the Whiz Voice app. It is already open. Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test." --provider "$PROVIDER" --model "$MODEL"
 
-sleep 3
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
-    -es "text" "Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey what's up how's it going just tryna test whiz voice" \
-    -ez "fromVoice" "true" \
-    -ez "autoSend" "true"
+sleep 6
+TEXT1="Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey whats up hows it going just tryna test whiz voice"
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT1'" --ez fromVoice true --ez autoSend true
 
 sleep 2
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
-    -es "text" "Actually, can you update  the message to be a bit more polite?" \
-    -ez "fromVoice" "true" \
-    -ez "autoSend" "true"
+TEXT2="Actually, can you update the message to be a bit more polite?"
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT2'" --ez fromVoice true --ez autoSend true
 
 sleep 3
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION \
-    -es "text" "That looks good. go ahead and send it." \
-    -ez "fromVoice" "true" \
-    -ez "autoSend" "true"
+TEXT3="That looks good. go ahead and send it."
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT3'" --ez fromVoice true --ez autoSend true
 
 
 
 echo ""
 echo "Test completed!"
+
+# Stop logcat monitoring
+if [ ! -z "$LOGCAT_PID" ]; then
+    log "Stopping logcat monitoring..."
+    # Give time for final logs to be written
+    sleep 2
+    # Use SIGKILL to ensure the process terminates
+    kill -9 $LOGCAT_PID 2>/dev/null || true
+    # No need to wait since we used SIGKILL
+    log "Logcat saved to droidrun/logcat_output.txt"
+    log "Logcat file size: $(wc -c < droidrun/logcat_output.txt) bytes"
+fi
 
 echo "Test cleanup completed!"
 

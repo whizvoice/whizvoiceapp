@@ -1,0 +1,202 @@
+--------- beginning of main
+09-26 14:18:55.781 D/ChatViewModel( 8528): App foreground event received
+09-26 14:18:55.783 D/ChatViewModel( 8528): [LOG] onAppForegrounded called. continuousListeningEnabled=true, micPermissionGranted=true, chatId=-1758921364019
+09-26 14:18:55.783 D/ChatViewModel( 8528): [LOG] Current states - isListening: false, isSpeaking: false, isResponding: true
+09-26 14:18:55.784 D/ChatViewModel( 8528): [LOG] Not restarting continuous listening - permission: true, chatId: -1758921364019, continuousEnabled: true
+09-26 14:18:55.857 D/VoiceManager( 8528): App foregrounded
+09-26 14:18:55.857 D/VoiceManager( 8528): onAppForegrounded called. continuousListeningEnabled=true
+09-26 14:19:20.405 D/ChatViewModel( 8528): Chat migration detected: updating chat ID from -1758921364019 to 5052
+09-26 14:19:20.406 D/ChatViewModel( 8528): 🔥 messages flow: Chat ID changed to 5052
+09-26 14:19:20.407 D/ChatViewModel( 8528): Updated active conversation in ConnectionStateManager: 5052
+09-26 14:19:20.407 D/ChatViewModel( 8528): Chat ID migration complete: 5052
+09-26 14:19:20.431 D/ChatViewModel( 8528): 📝 Migrating chat ID from -1 to 5052 (keeping WebSocket connected)
+09-26 14:19:20.431 D/ChatViewModel( 8528): ✅ Chat ID migration complete. WebSocket remains connected: true
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Processing 0 messages for chat 5052:
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔥 MESSAGES_FLOW_DEBUG: Emitting 0 messages to UI for chat 5052
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Processing 1 messages for chat 5052:
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔥 MESSAGES_FLOW_DEBUG: Emitting 1 messages to UI for chat 5052
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG:   [0] ID:307 Type:USER RequestID:4cb774df-32ed-45c4-ae0e-5c32f9d51be2 Timestamp:1758921364019 Content:'Open a WhatsApp chat with +1(6...'
+09-26 14:19:20.431 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Creating key for message ID:307 RequestID:4cb774df-32ed-45c4-ae0e-5c32f9d51be2 -> (4cb774df-32ed-45c4-ae0e-5c32f9d51be2, USER)
+09-26 14:19:20.464 D/ChatViewModel( 8528): ViewModel cleared. Releasing resources.
+09-26 14:19:20.464 W/ChatViewModel( 8528): 🔥 onCleared: CLEARING 1 pending requests: [4cb774df-32ed-45c4-ae0e-5c32f9d51be2]
+09-26 14:19:20.464 W/ChatViewModel( 8528): 🔥 onCleared: Pending requests map before clearing: {4cb774df-32ed-45c4-ae0e-5c32f9d51be2=-1758921364019}
+09-26 14:19:20.464 W/ChatViewModel( 8528): 🔥 onCleared: Pending requests map after clearing: {}
+09-26 14:19:20.465 D/ChatViewModel( 8528): onCleared: Clearing active conversation (NOT disconnecting WebSocket for retry continuity)
+09-26 14:19:20.466 D/VoiceManager( 8528): [DEBUG] updateContinuousListeningEnabled called with: false (was: true)
+09-26 14:19:20.466 D/VoiceManager( 8528): updateContinuousListeningEnabled: false
+09-26 14:19:20.466 D/ChatViewModel( 8528): ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.
+09-26 14:19:20.473 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=false, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=false
+09-26 14:19:26.454 D/ChatViewModel( 8528): 🔥 messages flow: Chat ID changed to -1
+09-26 14:19:26.459 D/ChatViewModel( 8528): Init: Using remote agent. WebSocket will connect when sending first message or loading existing chat.
+09-26 14:19:26.459 D/ChatViewModel( 8528): Updated active conversation in ConnectionStateManager: -1
+09-26 14:19:26.459 D/ChatViewModel( 8528): Setting up app foreground event collection
+09-26 14:19:26.461 D/ChatViewModel( 8528): Started collecting app foreground events
+09-26 14:19:26.462 D/ChatViewModel( 8528): App foreground event received
+09-26 14:19:26.462 D/ChatViewModel( 8528): [LOG] onAppForegrounded called. continuousListeningEnabled=false, micPermissionGranted=true, chatId=-1
+09-26 14:19:26.462 D/ChatViewModel( 8528): [LOG] Current states - isListening: false, isSpeaking: false, isResponding: false
+09-26 14:19:26.462 D/ChatViewModel( 8528): [LOG] Not restarting continuous listening - permission: true, chatId: -1, continuousEnabled: false
+09-26 14:19:26.462 D/ChatViewModel( 8528): Setting up app background event collection
+09-26 14:19:26.462 D/ChatViewModel( 8528): Started collecting app background events
+09-26 14:19:26.462 D/ChatViewModel( 8528): App background event received
+09-26 14:19:26.462 D/ChatViewModel( 8528): [LOG] onAppBackgrounded called. continuousListeningEnabled=false
+09-26 14:19:26.462 D/ChatViewModel( 8528): [LOG] Set lastBackgroundedTime to 1758921566462
+09-26 14:19:26.462 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: WebSocket collector starting on thread: main
+09-26 14:19:26.462 I/ChatViewModel( 8528): [TOOL_COLLECTOR] Starting tool result collector
+09-26 14:19:26.480 D/ChatViewModel( 8528): 🔥 loadChatWithVoiceMode STARTED for chatId: -1, voiceMode: false
+09-26 14:19:26.480 D/ChatViewModel( 8528): [RACE_DEBUG] loadChatWithVoiceMode: Current input text: ''
+09-26 14:19:26.481 D/ChatViewModel( 8528): Loading chat -1. Current chat: -1, Pending requests: 0
+09-26 14:19:26.481 D/ChatViewModel( 8528): 🔥 loadChat: Setup for new chat (ID: -1), responding state reset to false
+09-26 14:19:26.496 D/ChatViewModel( 8528): loadChat: Triggered conversations refresh for home page
+09-26 14:19:26.496 D/ChatViewModel( 8528): [LOG] loadChat: Preserving input text. Current value: ''
+09-26 14:19:26.496 D/ChatViewModel( 8528): [LOG] loadChat: Voice responses already OFF
+09-26 14:19:26.496 D/ChatViewModel( 8528): loadChat: Stopping speech recognition service (isListening: false)
+09-26 14:19:26.496 D/ChatViewModel( 8528): loadChat: Stopping TTS (isSpeaking: false)
+09-26 14:19:26.496 D/ChatViewModel( 8528): loadChat: Speech services stopped successfully
+09-26 14:19:26.496 D/ChatViewModel( 8528): 🔌 Checking WebSocket reconnect: configUseRemoteAgent=true, _chatId.value=-1, isConnected=false, persistentDisconnectForTest=false
+09-26 14:19:26.496 D/ChatViewModel( 8528): [LOG] Chat load complete - UI layer will handle voice app default behavior (always enable microphone)
+09-26 14:19:26.496 D/ChatViewModel( 8528): 🔥 loadChatWithVoiceMode COMPLETED for chatId: -1, final _chatId.value: -1
+09-26 14:19:26.496 D/ChatViewModel( 8528): [RACE_DEBUG] loadChatWithVoiceMode COMPLETED: Final input text: ''
+09-26 14:19:26.498 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Processing 0 messages for chat -1:
+09-26 14:19:26.498 D/ChatViewModel( 8528): 🔥 MESSAGES_FLOW_DEBUG: Emitting 0 messages to UI for chat -1
+09-26 14:19:26.498 D/ChatViewModel( 8528): TTS initialized successfully
+09-26 14:19:26.520 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=false, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=false
+09-26 14:19:26.999 D/VoiceManager( 8528): [DEBUG] updateContinuousListeningEnabled called with: true (was: false)
+09-26 14:19:26.999 D/VoiceManager( 8528): updateContinuousListeningEnabled: true
+09-26 14:19:26.999 D/VoiceManager( 8528): [DEBUG] Calling startContinuousListening()
+09-26 14:19:26.999 D/VoiceManager( 8528): [DEBUG] startContinuousListening() called, continuousListeningEnabled=true
+09-26 14:19:26.999 D/VoiceManager( 8528): [DEBUG] About to call startListening()
+09-26 14:19:27.000 D/VoiceManager( 8528): [DEBUG] startContinuousListening() returned
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG] ensureContinuousListeningEnabled called. micPermissionGranted=true, continuousListeningEnabled=true, isListening=true, isSpeaking=false, isResponding=false
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG] STACK TRACE: Called from:
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   com.example.whiz.ui.screens.ChatScreenKt$ChatScreen$17$1.invokeSuspend:759
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith:33
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   kotlinx.coroutines.DispatchedTask.run:104
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher.performTrampolineDispatch:81
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher.access$performTrampolineDispatch:41
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher$dispatchCallback$1.run:57
+09-26 14:19:27.003 D/ChatViewModel( 8528): [LOG] Continuous listening already enabled, ensuring it's active
+09-26 14:19:29.565 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:29.573 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:29.782 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:35.101 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:40.455 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:45.821 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:51.149 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:19:56.500 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:20:01.827 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:20:03.494 D/ChatViewModel( 8528): [LOG] updateInputText called. Setting text from '' to: 'Open a WhatsApp chat with +1(628)209-9005', fromVoice: false
+09-26 14:20:03.502 D/ChatViewModel( 8528): [RACE_DEBUG] updateInputText: Stack trace: dalvik.system.VMStack.getThreadStackTrace(Native Method), java.lang.Thread.getStackTrace(Thread.java:1960), com.example.whiz.ui.viewmodels.ChatViewModel.updateInputText(ChatViewModel.kt:1456), com.example.whiz.ui.viewmodels.ChatViewModel.updateInputText$default(ChatViewModel.kt:1454), com.example.whiz.ui.screens.ChatScreenKt$ChatScreen$18$5$1.invoke(ChatScreen.kt:889)
+09-26 14:20:03.502 D/ChatViewModel( 8528): [RACE_DEBUG] updateInputText: Text actually set to: 'Open a WhatsApp chat with +1(628)209-9005'
+09-26 14:20:03.502 D/ChatViewModel( 8528): [LOG] 🔥 updateInputText: User started typing - auto-disabling continuous listening
+09-26 14:20:03.502 D/VoiceManager( 8528): [DEBUG] updateContinuousListeningEnabled called with: false (was: true)
+09-26 14:20:03.502 D/VoiceManager( 8528): updateContinuousListeningEnabled: false
+09-26 14:20:03.513 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=false, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=false
+09-26 14:20:03.533 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=false, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=false
+09-26 14:20:11.348 D/ChatViewModel( 8528): 📤 SEND_USER_INPUT: Starting send for content='Open a WhatsApp chat with +1(628)209-9005'
+09-26 14:20:11.378 D/ChatViewModel( 8528): 🔥 messages flow: Chat ID changed to -1758921611355
+09-26 14:20:11.381 D/ChatViewModel( 8528): Updated active conversation in ConnectionStateManager: -1758921611355
+09-26 14:20:11.388 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: About to wait for message in flow on thread: main
+09-26 14:20:11.389 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Processing 1 messages for chat -1758921611355:
+09-26 14:20:11.390 D/ChatViewModel( 8528): 🔥 MESSAGES_FLOW_DEBUG: Emitting 1 messages to UI for chat -1758921611355
+09-26 14:20:11.390 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG:   [0] ID:308 Type:USER RequestID:9d5b7b62-1fc3-4302-bea9-0dd763e10762 Timestamp:1758921611348 Content:'Open a WhatsApp chat with +1(6...'
+09-26 14:20:11.390 D/ChatViewModel( 8528): 🔍 DEDUP_DEBUG: Creating key for message ID:308 RequestID:9d5b7b62-1fc3-4302-bea9-0dd763e10762 -> (9d5b7b62-1fc3-4302-bea9-0dd763e10762, USER)
+09-26 14:20:11.390 D/ChatViewModel( 8528): [LOG] sendUserInput: Message appeared in flow after 2ms, clearing input field
+09-26 14:20:11.390 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: Message appeared on thread: main
+09-26 14:20:11.390 D/ChatViewModel( 8528): [LOG] sendUserInput: Clearing input field after optimistic message added: 'Open a WhatsApp chat with +1(628)209-9005'
+09-26 14:20:11.390 D/ChatViewModel( 8528): [RACE_DEBUG] sendUserInput: Current input matches sent message ('Open a WhatsApp chat with +1(628)209-9005' == 'Open a WhatsApp chat with +1(628)209-9005'), clearing...
+09-26 14:20:11.390 D/ChatViewModel( 8528): [RACE_DEBUG] sendUserInput: Input text cleared to: ''
+09-26 14:20:11.390 D/ChatViewModel( 8528): 📤 CALLING whizServerRepository.sendMessage: requestId=9d5b7b62-1fc3-4302-bea9-0dd763e10762, content='Open a WhatsApp chat with +1(628)209-9005', chatId=-1758921611355, timestamp=1758921611348
+09-26 14:20:11.391 D/ChatViewModel( 8528): Message queued for retry
+09-26 14:20:11.392 D/ChatViewModel( 8528): 📝 Migrating chat ID from -1 to -1758921611355 (keeping WebSocket connected)
+09-26 14:20:11.392 D/ChatViewModel( 8528): ✅ Chat ID migration complete. WebSocket remains connected: false
+09-26 14:20:11.456 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: Processing WebSocket event on thread: main
+09-26 14:20:11.456 D/ChatViewModel( 8528): WebSocketEvent.Connected: Called. isReconnectingAfterDisconnect=false
+09-26 14:20:11.456 D/ChatViewModel( 8528): WebSocketEvent.Connected: Resetting isDisconnectingForAuthError to false.
+09-26 14:20:11.456 D/ChatViewModel( 8528): WebSocketEvent.Connected: Syncing messages for chat -1758921611355 (reconnect=false)
+09-26 14:20:11.737 D/ChatViewModel( 8528): WebSocketEvent.Connected: Retrieved 1 messages from server for chat -1758921611355
+09-26 14:20:11.737 D/ChatViewModel( 8528): Checking for orphaned messages in chat -1758921611355
+09-26 14:20:11.737 D/ChatViewModel( 8528): No orphaned messages found in chat -1758921611355
+09-26 14:20:11.894 D/VoiceManager( 8528): [DEBUG] updateContinuousListeningEnabled called with: true (was: false)
+09-26 14:20:11.895 D/VoiceManager( 8528): updateContinuousListeningEnabled: true
+09-26 14:20:11.895 D/VoiceManager( 8528): [DEBUG] Calling startContinuousListening()
+09-26 14:20:11.895 D/VoiceManager( 8528): [DEBUG] startContinuousListening() called, continuousListeningEnabled=true
+09-26 14:20:11.895 D/VoiceManager( 8528): [DEBUG] About to call startListening()
+09-26 14:20:11.896 D/VoiceManager( 8528): [DEBUG] startContinuousListening() returned
+09-26 14:20:11.897 D/ChatViewModel( 8528): [LOG] ensureContinuousListeningEnabled called. micPermissionGranted=true, continuousListeningEnabled=true, isListening=true, isSpeaking=false, isResponding=true
+09-26 14:20:11.897 D/ChatViewModel( 8528): [LOG] STACK TRACE: Called from:
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   com.example.whiz.ui.screens.ChatScreenKt$ChatScreen$17$1.invokeSuspend:759
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith:33
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   kotlinx.coroutines.DispatchedTask.run:104
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher.performTrampolineDispatch:81
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher.access$performTrampolineDispatch:41
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG]   androidx.compose.ui.platform.AndroidUiDispatcher$dispatchCallback$1.run:57
+09-26 14:20:11.902 D/ChatViewModel( 8528): [LOG] Continuous listening already enabled, ensuring it's active
+09-26 14:20:14.268 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: Processing WebSocket event on thread: main
+09-26 14:20:14.269 I/ChatViewModel( 8528): 🔧 TOOL EXECUTION EVENT RECEIVED IN CHATVIEWMODEL
+09-26 14:20:14.269 I/ChatViewModel( 8528): 🔧 Tool request: {"type":"tool_execution","tool":"launch_app","request_id":"tool_2753806a","params":{"app_name":"WhatsApp"},"conversation_id":5054}
+09-26 14:20:14.269 I/ChatViewModel( 8528): 🔧 Tool name: launch_app
+09-26 14:20:14.269 I/ChatViewModel( 8528): 🔧 Request ID: tool_2753806a
+09-26 14:20:14.269 I/ChatViewModel( 8528): 🔧 Calling toolExecutor.executeToolFromJson
+09-26 14:20:18.047 I/ChatViewModel( 8528): [TOOL_COLLECTOR] Received tool execution result: Success(toolName=launch_app, requestId=tool_2753806a, result={"success":true,"app_name":"WhatsApp","package_name":"com.whatsapp","overlay_started":true,"overlayPermissionRequired":false})
+09-26 14:20:18.047 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=tool_2753806a, chatId=-1758921611355
+09-26 14:20:18.047 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Tool name: launch_app
+09-26 14:20:18.047 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Result: {
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "status": "success",
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "success": true,
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "app_name": "WhatsApp",
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "package_name": "com.whatsapp",
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "overlay_started": true,
+09-26 14:20:18.047 I/ChatViewModel( 8528):   "overlayPermissionRequired": false
+09-26 14:20:18.047 I/ChatViewModel( 8528): }
+09-26 14:20:18.047 I/ChatViewModel( 8528): ✅ [TOOL_COLLECTOR] Successfully sent tool result to server for requestId=tool_2753806a
+09-26 14:20:18.051 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.051 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=true, bubble=false, bubbleMode=MIC_OFF, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.054 D/ChatViewModel( 8528): App background event received
+09-26 14:20:18.054 D/ChatViewModel( 8528): [LOG] onAppBackgrounded called. continuousListeningEnabled=true
+09-26 14:20:18.054 D/ChatViewModel( 8528): [LOG] Set lastBackgroundedTime to 1758921618054
+09-26 14:20:18.082 D/VoiceManager( 8528): [DEBUG] updateContinuousListeningEnabled called with: true (was: true)
+09-26 14:20:18.082 D/VoiceManager( 8528): updateContinuousListeningEnabled: true
+09-26 14:20:18.082 D/VoiceManager( 8528): [DEBUG] Calling startContinuousListening()
+09-26 14:20:18.082 D/VoiceManager( 8528): [DEBUG] startContinuousListening() called, continuousListeningEnabled=true
+09-26 14:20:18.082 D/VoiceManager( 8528): [DEBUG] About to call startListening()
+09-26 14:20:18.082 D/VoiceManager( 8528): [DEBUG] startContinuousListening() returned
+09-26 14:20:18.083 D/VoiceManager( 8528): App backgrounded - stopping continuous listening
+09-26 14:20:18.083 D/VoiceManager( 8528): onAppBackgrounded called. continuousListeningEnabled=true
+09-26 14:20:18.083 D/VoiceManager( 8528): Bubble overlay is active - keeping voice recognition running with continuous listening
+09-26 14:20:18.101 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.111 D/VoiceManager( 8528): Bubble mode changed to: CONTINUOUS_LISTENING
+09-26 14:20:18.111 D/VoiceManager( 8528): CONTINUOUS_LISTENING mode - stopping TTS if active
+09-26 14:20:18.111 D/VoiceManager( 8528): Mode allows listening, checking if should restart
+09-26 14:20:18.111 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.111 D/VoiceManager( 8528): Restarting speech recognition for mode: CONTINUOUS_LISTENING
+09-26 14:20:18.232 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.232 D/VoiceManager( 8528): Force restarting continuous listening after mode change
+09-26 14:20:18.232 D/VoiceManager( 8528): [DEBUG] startContinuousListening() called, continuousListeningEnabled=true
+09-26 14:20:18.232 D/VoiceManager( 8528): [DEBUG] About to call startListening()
+09-26 14:20:18.261 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:18.764 D/ChatViewModel( 8528): App background event received
+09-26 14:20:18.764 D/ChatViewModel( 8528): [LOG] onAppBackgrounded called. continuousListeningEnabled=true
+09-26 14:20:18.764 D/ChatViewModel( 8528): [LOG] Set lastBackgroundedTime to 1758921618764
+09-26 14:20:18.764 D/VoiceManager( 8528): App backgrounded - stopping continuous listening
+09-26 14:20:18.764 D/VoiceManager( 8528): onAppBackgrounded called. continuousListeningEnabled=true
+09-26 14:20:18.764 D/VoiceManager( 8528): Bubble overlay is active - keeping voice recognition running with continuous listening
+09-26 14:20:20.091 D/ChatViewModel( 8528): 🧵 THREAD DEBUG: Processing WebSocket event on thread: main
+09-26 14:20:20.092 I/ChatViewModel( 8528): 🔧 TOOL EXECUTION EVENT RECEIVED IN CHATVIEWMODEL
+09-26 14:20:20.092 I/ChatViewModel( 8528): 🔧 Tool request: {"type":"tool_execution","tool":"whatsapp_select_chat","request_id":"tool_19db240b","params":{"chat_name":"+1(628)209-9005"},"conversation_id":5054}
+09-26 14:20:20.092 I/ChatViewModel( 8528): 🔧 Tool name: whatsapp_select_chat
+09-26 14:20:20.092 I/ChatViewModel( 8528): 🔧 Request ID: tool_19db240b
+09-26 14:20:20.092 I/ChatViewModel( 8528): 🔧 Calling toolExecutor.executeToolFromJson
+09-26 14:20:23.353 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:23.382 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:23.433 D/VoiceManager( 8528): shouldBeListening check: continuousEnabled=true, foreground=false, bubble=true, bubbleMode=CONTINUOUS_LISTENING, permission=true, notSpeaking=true, result=true
+09-26 14:20:24.352 I/ChatViewModel( 8528): [TOOL_COLLECTOR] Received tool execution result: Success(toolName=whatsapp_select_chat, requestId=tool_19db240b, result={"success":false,"action":"select_chat","chat_name":"+1(628)209-9005","error":"Could not find contact or chat named '+1(628)209-9005' in WhatsApp. Please verify the contact name and ask the user to confirm the exact spelling if needed."})
+09-26 14:20:24.353 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=tool_19db240b, chatId=-1758921611355
+09-26 14:20:24.353 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Tool name: whatsapp_select_chat
+09-26 14:20:24.353 I/ChatViewModel( 8528): 📮 [TOOL_COLLECTOR] Result: {
+09-26 14:20:24.353 I/ChatViewModel( 8528):   "status": "success",
+09-26 14:20:24.353 I/ChatViewModel( 8528):   "success": false,
+09-26 14:20:24.353 I/ChatViewModel( 8528):   "action": "select_chat",
+09-26 14:20:24.353 I/ChatViewModel( 8528):   "chat_name": "+1(628)209-9005",
+09-26 14:20:24.353 I/ChatViewModel( 8528):   "error": "Could not find contact or chat named '+1(628)209-9005' in WhatsApp. Please verify the contact name and ask the user to confirm the exact spelling if needed."
+09-26 14:20:24.353 I/ChatViewModel( 8528): }
+09-26 14:20:24.353 I/ChatViewModel( 8528): ✅ [TOOL_COLLECTOR] Successfully sent tool result to server for requestId=tool_19db240b
