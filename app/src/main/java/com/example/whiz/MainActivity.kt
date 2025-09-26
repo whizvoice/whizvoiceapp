@@ -712,14 +712,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupTestTranscriptionReceiver() {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.DEBUG) {
+            Log.d(TAG, "Not setting up test transcription receiver - not a debug build")
+            return
+        }
 
-        Log.d(TAG, "Setting up test transcription receiver for debug build")
+        Log.d(TAG, "Setting up test transcription receiver for debug build - BuildConfig.DEBUG = ${BuildConfig.DEBUG}")
 
         // Create the broadcast receiver
         testTranscriptionReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
+                Log.d(TAG, "BroadcastReceiver.onReceive called with action: ${intent?.action}")
+
                 if (intent?.action != "com.example.whiz.TEST_TRANSCRIPTION") {
+                    Log.d(TAG, "Ignoring non-TEST_TRANSCRIPTION action: ${intent?.action}")
                     return
                 }
 
@@ -770,14 +776,21 @@ class MainActivity : ComponentActivity() {
 
         // Register the receiver - use EXPORTED for testing from ADB
         val filter = IntentFilter("com.example.whiz.TEST_TRANSCRIPTION")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Use EXPORTED flag to allow ADB broadcasts to reach the receiver
-            registerReceiver(testTranscriptionReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(testTranscriptionReceiver, filter)
-        }
+        Log.d(TAG, "Creating IntentFilter for action: com.example.whiz.TEST_TRANSCRIPTION")
 
-        Log.d(TAG, "Test transcription receiver registered")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Log.d(TAG, "Registering receiver with RECEIVER_EXPORTED flag (API 33+)")
+                // Use EXPORTED flag to allow ADB broadcasts to reach the receiver
+                registerReceiver(testTranscriptionReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                Log.d(TAG, "Registering receiver without RECEIVER_EXPORTED flag (API < 33)")
+                registerReceiver(testTranscriptionReceiver, filter)
+            }
+            Log.d(TAG, "Test transcription receiver registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register test transcription receiver", e)
+        }
     }
 
     private fun processTestTranscription(

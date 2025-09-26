@@ -48,26 +48,64 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
         if (voiceManager != null && fromVoice) {
             Log.d(TAG, "Using VoiceManager to simulate voice transcription")
 
+            // Try multiple approaches to trigger voice input
             try {
-                // Use reflection to get the transcriptionCallback field
+                // Approach 1: Try to use the transcriptionCallback if it exists
                 val transcriptionCallbackField: Field = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
                 transcriptionCallbackField.isAccessible = true
                 val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
 
                 if (callback != null) {
                     // Simulate transcription through VoiceManager's callback
-                    // This will trigger the same flow as real voice input
                     CoroutineScope(Dispatchers.Main).launch {
                         Log.d(TAG, "Invoking transcription callback with: '$text'")
                         callback.invoke(text)
-                        Log.d(TAG, "Test transcription processed through VoiceManager")
+                        Log.d(TAG, "Test transcription processed through VoiceManager callback")
                     }
                     return
                 } else {
-                    Log.w(TAG, "VoiceManager transcription callback is not set")
+                    Log.w(TAG, "VoiceManager transcription callback is not set, trying direct approach")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error accessing VoiceManager transcription callback", e)
+            }
+
+            // Approach 2: If callback doesn't work, try to find and call ChatViewModel directly from any available source
+            try {
+                // Try to get ChatViewModel from MessageDraftOverlayService if it exists
+                val overlayServiceClass = Class.forName("com.example.whiz.services.MessageDraftOverlayService")
+                val companionField = overlayServiceClass.getDeclaredField("Companion")
+                companionField.isAccessible = true
+                val companion = companionField.get(null)
+
+                val getInstanceMethod = companion.javaClass.getDeclaredMethod("getInstance")
+                val overlayService = getInstanceMethod.invoke(companion)
+
+                if (overlayService != null) {
+                    Log.d(TAG, "Found MessageDraftOverlayService instance, looking for ChatViewModel")
+
+                    // Try to find viewModel field
+                    val viewModelField = overlayService.javaClass.getDeclaredField("viewModel")
+                    viewModelField.isAccessible = true
+                    val overlayViewModel = viewModelField.get(overlayService)
+
+                    if (overlayViewModel != null) {
+                        Log.d(TAG, "Found ChatViewModel in overlay service, processing transcription")
+                        CoroutineScope(Dispatchers.Main).launch {
+                            val updateMethod = overlayViewModel.javaClass.getDeclaredMethod("updateInputText", String::class.java, Boolean::class.java)
+                            updateMethod.invoke(overlayViewModel, text, fromVoice)
+
+                            if (autoSend && text.isNotBlank()) {
+                                val sendMethod = overlayViewModel.javaClass.getDeclaredMethod("sendUserInput", String::class.java)
+                                sendMethod.invoke(overlayViewModel, text)
+                                Log.d(TAG, "Test transcription sent via overlay ChatViewModel: '$text'")
+                            }
+                        }
+                        return
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not access MessageDraftOverlayService: ${e.message}")
             }
         }
 
