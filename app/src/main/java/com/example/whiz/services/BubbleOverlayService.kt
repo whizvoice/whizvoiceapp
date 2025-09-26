@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 // Listening modes enum outside the class for global access
 enum class ListeningMode {
@@ -42,15 +44,20 @@ enum class ListeningMode {
     TTS_WITH_LISTENING    // TTS enabled + continuous listening
 }
 
+@AndroidEntryPoint
 class BubbleOverlayService : Service() {
+    @Inject
+    lateinit var appLifecycleService: AppLifecycleService
+
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var recognitionJob: Job? = null
     private var botResponseJob: Job? = null
+    private var foregroundListenerJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
-    
+
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
     
     companion object {
@@ -116,6 +123,7 @@ class BubbleOverlayService : Service() {
         applyCurrentMode() // Apply initial mode to VoiceManager
         startVoiceTranscriptionListener()
         startBotResponseListener()
+        startForegroundListener()
     }
     
     @SuppressLint("InflateParams")
@@ -412,6 +420,23 @@ class BubbleOverlayService : Service() {
                 }
         }
     }
+
+    private fun startForegroundListener() {
+        Log.d(TAG, "Starting foreground listener")
+        val serviceStartTime = System.currentTimeMillis()
+        foregroundListenerJob = serviceScope.launch {
+            appLifecycleService.appForegroundEvent.collect {
+                val timeSinceStart = System.currentTimeMillis() - serviceStartTime
+                // Add a 1 second grace period to prevent immediate self-destruction due to race conditions
+                if (timeSinceStart < 1000) {
+                    Log.d(TAG, "Ignoring app foreground event - service just started (${timeSinceStart}ms ago)")
+                } else {
+                    Log.d(TAG, "App foregrounded - stopping bubble overlay service")
+                    stopSelf()
+                }
+            }
+        }
+    }
     
     private fun showMessage(text: String, isUserMessage: Boolean) {
         handler.post {
@@ -452,6 +477,7 @@ class BubbleOverlayService : Service() {
         isActive = false
         recognitionJob?.cancel()
         botResponseJob?.cancel()
+        foregroundListenerJob?.cancel()
         hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
             chatHeadView?.let { windowManager.removeView(it) }

@@ -66,7 +66,7 @@ log "Done installing debug app"
 log "Starting logcat monitoring for WhizVoice debug app..."
 adb logcat -c  # Clear existing logs
 # Use unbuffered output to ensure logs are written immediately
-adb logcat -v time TestTranscription:* ChatViewModel:* VoiceManager:* AssistantActivity:* *:S | tee droidrun/logcat_output.txt &
+adb logcat -v time TestTranscription:* ChatViewModel:* VoiceManager:* AssistantActivity:* *:S > droidrun/logcat_output.txt 2>&1 &
 LOGCAT_PID=$!
 log "Logcat monitoring started (PID: $LOGCAT_PID)"
 # Give logcat a moment to start capturing
@@ -243,19 +243,21 @@ WHATSAPP_CONTACT_NAME="+1\(628\)209-9005"
 # MICROPHONE PERMISSIONS
 ./venv/bin/droidrun "We are trying to open a new chat in an app. If we are already in 🧪 WhizVoice DEBUG app on New Chat page, then you are done. If not, navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
 
-./venv/bin/droidrun "We are testing the Whiz Voice app. It is already open. Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test." --provider "$PROVIDER" --model "$MODEL"
+sleep 10
 
-sleep 6
+./venv/bin/droidrun "We are testing the 🧪 WhizVoice DEBUG app. It is already open. Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test." --provider "$PROVIDER" --model "$MODEL"
+
+sleep 15
 TEXT1="Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey whats up hows it going just tryna test whiz voice"
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT1'" --ez fromVoice true --ez autoSend true
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT1" --ez fromVoice true --ez autoSend true
 
 sleep 2
 TEXT2="Actually, can you update the message to be a bit more polite?"
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT2'" --ez fromVoice true --ez autoSend true
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT2" --ez fromVoice true --ez autoSend true
 
 sleep 3
 TEXT3="That looks good. go ahead and send it."
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION --es text "'$TEXT3'" --ez fromVoice true --ez autoSend true
+adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT3" --ez fromVoice true --ez autoSend true
 
 
 
