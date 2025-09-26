@@ -6,6 +6,10 @@ import android.content.Intent
 import android.util.Log
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.lang.reflect.Field
 
 /**
  * Debug-only broadcast receiver for simulating voice transcriptions via ADB.
@@ -22,7 +26,7 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
         private const val TAG = "TestTranscription"
         const val ACTION_TEST_TRANSCRIPTION = "com.example.whiz.TEST_TRANSCRIPTION"
 
-        // Store reference to active ChatViewModel for testing
+        // Store reference to active ChatViewModel for testing (kept for backward compatibility)
         @Volatile
         var activeChatViewModel: ChatViewModel? = null
     }
@@ -38,38 +42,59 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "Received test transcription: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
 
-        // Get the active ChatViewModel
+        // First try to use VoiceManager (works in bubble mode)
+        val voiceManager = VoiceManager.instance
+
+        if (voiceManager != null && fromVoice) {
+            Log.d(TAG, "Using VoiceManager to simulate voice transcription")
+
+            try {
+                // Use reflection to get the transcriptionCallback field
+                val transcriptionCallbackField: Field = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
+                transcriptionCallbackField.isAccessible = true
+                val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+
+                if (callback != null) {
+                    // Simulate transcription through VoiceManager's callback
+                    // This will trigger the same flow as real voice input
+                    CoroutineScope(Dispatchers.Main).launch {
+                        Log.d(TAG, "Invoking transcription callback with: '$text'")
+                        callback.invoke(text)
+                        Log.d(TAG, "Test transcription processed through VoiceManager")
+                    }
+                    return
+                } else {
+                    Log.w(TAG, "VoiceManager transcription callback is not set")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error accessing VoiceManager transcription callback", e)
+            }
+        }
+
+        // Fallback to direct ChatViewModel approach (for non-voice or if VoiceManager fails)
         val viewModel = activeChatViewModel
 
         if (viewModel == null) {
-            Log.e(TAG, "No active ChatViewModel available for test transcription")
+            Log.e(TAG, "No active ChatViewModel and VoiceManager fallback failed")
             return
         }
 
-        // Simulate voice transcription
+        // Simulate transcription directly through ChatViewModel
         try {
-            // Update the input text with the transcription
-            viewModel.updateInputText(text, fromVoice = fromVoice)
+            CoroutineScope(Dispatchers.Main).launch {
+                // Update the input text with the transcription
+                viewModel.updateInputText(text, fromVoice = fromVoice)
 
-            // If autoSend is true, automatically send the message
-            if (autoSend && text.isNotBlank()) {
-                viewModel.sendUserInput(text)
-                Log.d(TAG, "Test transcription sent: '$text'")
-            } else {
-                Log.d(TAG, "Test transcription set to input field: '$text'")
-            }
-
-            // If this is a voice transcription, update VoiceManager state
-            if (fromVoice) {
-                // This simulates what would happen with real voice input
-                VoiceManager.instance?.let { voiceManager ->
-                    // The VoiceManager would normally update its transcription state
-                    // but we're bypassing that and going directly to ChatViewModel
-                    Log.d(TAG, "Simulated voice transcription complete")
+                // If autoSend is true, automatically send the message
+                if (autoSend && text.isNotBlank()) {
+                    viewModel.sendUserInput(text)
+                    Log.d(TAG, "Test transcription sent via ChatViewModel: '$text'")
+                } else {
+                    Log.d(TAG, "Test transcription set to input field via ChatViewModel: '$text'")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing test transcription", e)
+            Log.e(TAG, "Error processing test transcription through ChatViewModel", e)
         }
     }
 }

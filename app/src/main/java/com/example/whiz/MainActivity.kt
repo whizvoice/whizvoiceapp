@@ -42,6 +42,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import com.example.whiz.BuildConfig
@@ -726,13 +729,41 @@ class MainActivity : ComponentActivity() {
 
                 Log.d(TAG, "Test transcription received: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
 
-                // Try to get from TestTranscriptionReceiver static reference
+                // First try to use VoiceManager (works in bubble mode)
+                val voiceManager = com.example.whiz.ui.viewmodels.VoiceManager.instance
+
+                if (voiceManager != null && fromVoice) {
+                    Log.d(TAG, "Using VoiceManager to simulate voice transcription")
+
+                    try {
+                        // Use reflection to get the transcriptionCallback field
+                        val transcriptionCallbackField: Field = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
+                        transcriptionCallbackField.isAccessible = true
+                        val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+
+                        if (callback != null) {
+                            // Simulate transcription through VoiceManager's callback
+                            CoroutineScope(Dispatchers.Main).launch {
+                                Log.d(TAG, "Invoking transcription callback with: '$text'")
+                                callback.invoke(text)
+                                Log.d(TAG, "Test transcription processed through VoiceManager")
+                            }
+                            return  // Early return when successfully using VoiceManager
+                        } else {
+                            Log.w(TAG, "VoiceManager transcription callback is not set")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error accessing VoiceManager transcription callback", e)
+                    }
+                }
+
+                // Fallback to ChatViewModel approach
                 val chatViewModel = com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel
                 if (chatViewModel != null) {
-                    Log.d(TAG, "Using ChatViewModel from TestTranscriptionReceiver")
+                    Log.d(TAG, "Using ChatViewModel from TestTranscriptionReceiver (fallback)")
                     processTestTranscription(chatViewModel, text, fromVoice, autoSend)
                 } else {
-                    Log.e(TAG, "No ChatViewModel available for test transcription")
+                    Log.e(TAG, "No ChatViewModel and VoiceManager fallback failed")
                 }
             }
         }
