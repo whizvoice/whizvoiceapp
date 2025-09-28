@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # DroidRun Screen Agent Test Runner
@@ -232,33 +233,42 @@ fi
 
 log "Checking WhizVoice authentication..."
 
-./venv/bin/droidrun "Open the 🧪 WhizVoice DEBUG app. If you see a login page with 'Sign in with Google' button, click on it. If you don't, the user is alraedy logged in, so just stop and return. If you see a Google account selection screen, look for the account with email $TEST_EMAIL and click on it. If asked for a password, enter: $TEST_PASSWORD. If you see 'Continue' or 'Allow' buttons, click them. Once logged in or if already logged in, confirm you can see the main app screen." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "Open the 🧪 WhizVoice DEBUG app (NOT the regular WhizVoice app). Confirm that the correct is opened by getting and printing the name of the app. Now, if you see a login page with 'Sign in with Google' button, click on it. If you don't, the user is alraedy logged in, so just stop and return. If you see a Google account selection screen, look for the account with email $TEST_EMAIL and click on it. If asked for a password, enter: $TEST_PASSWORD. If you see 'Continue' or 'Allow' buttons, click them. Once the correct app is on a non-login screen, you are done this task." --provider "$PROVIDER" --model "$MODEL"
 
 log "✅ Confirmed authentication"
+
+log "Checking WhizVoice Accessibilty Services dialog..."
+
+./venv/bin/droidrun "The 🧪 WhizVoice DEBUG app (NOT the regular WhizVoice app) should be open already. For this task, you are clicking through the Enable Accessibility Service dialog. If you have the correct app open and you do not see the dialog, you are done the task. If you see the dialog, please click Open Settings. Then, click 🧪 WhizVoice DEBUG app (NOT the regular WhizVoice app). Then, click the toggle beside Use 🧪 WhizVoice DEBUG. Finally, click Allow. After it's been enabled, click the back button until you are out of Settings and back into the 🧪 WhizVoice DEBUG app."
+
+log "✅ Processed Accessibility Services dialog"
 
 log "Testing WhizVoice draft functionality..."
 
 WHATSAPP_CONTACT_NAME="+1\(628\)209-9005"
 
 # MICROPHONE PERMISSIONS
-./venv/bin/droidrun "We are trying to open a new chat in an app. If we are already in 🧪 WhizVoice DEBUG app on New Chat page, then you are done. If not, navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "We are trying to open a new chat in the 🧪 WhizVoice DEBUG app (NOT the regular WhizVoice app). Can you confirm that the correct app is foregrounded. If we are on the New Chat page on the correct app, you are done. If not, navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat." --provider "$PROVIDER" --model "$MODEL"
 
 sleep 10
 
-./venv/bin/droidrun "We are testing the 🧪 WhizVoice DEBUG app. It is already open. Type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test." --provider "$PROVIDER" --model "$MODEL"
+./venv/bin/droidrun "We are testing the 🧪 WhizVoice DEBUG app (NOT to be confused with the regular WhizVoice app). Will you confirm that the correct app is open. If it is, type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test." --provider "$PROVIDER" --model "$MODEL"
 
 sleep 15
 TEXT1="Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey whats up hows it going just tryna test whiz voice"
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT1" --ez fromVoice true --ez autoSend true
+adb shell "am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text '$TEXT1' --ez fromVoice true --ez autoSend true"
 
 sleep 2
 TEXT2="Actually, can you update the message to be a bit more polite?"
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT2" --ez fromVoice true --ez autoSend true
+adb shell "am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text '$TEXT2' --ez fromVoice true --ez autoSend true"
 
 sleep 3
 TEXT3="That looks good. go ahead and send it."
-adb shell am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text "$TEXT3" --ez fromVoice true --ez autoSend true
+adb shell "am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver --es text '$TEXT3' --ez fromVoice true --ez autoSend true"
 
+sleep 3
+
+./venv/bin/droidrun "This is a test of what is currently on the screen. We want to see WhatsApp open with a chat to +1(628)209-9005. We want to see a recent message that's been sent. And we do NOT want to see a big yellow overlay at the bottom of the screen. If all these conditions are met, please return success. If any of these conditions are not met, please return immedately with a fail or error."
 
 
 echo ""

@@ -2,8 +2,10 @@ package com.example.whiz.services
 
 import android.annotation.SuppressLint
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -57,6 +59,7 @@ class BubbleOverlayService : Service() {
     private var foregroundListenerJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
+    private var testTranscriptionReceiver: BroadcastReceiver? = null
 
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
     
@@ -121,9 +124,21 @@ class BubbleOverlayService : Service() {
         createChatHead()
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
+
+        // Set up transcription callback for test broadcasts and voice input
+        VoiceManager.instance?.setTranscriptionCallback { transcription ->
+            if (transcription.isNotBlank()) {
+                Log.d(TAG, "Transcription callback triggered in bubble mode: '$transcription'")
+                serviceScope.launch {
+                    _userTranscriptionFlow.emit(transcription)
+                }
+            }
+        }
+
         startVoiceTranscriptionListener()
         startBotResponseListener()
         startForegroundListener()
+        registerTestTranscriptionReceiver()
     }
     
     @SuppressLint("InflateParams")
@@ -470,11 +485,45 @@ class BubbleOverlayService : Service() {
             handler.postDelayed(hideMessageRunnable!!, MESSAGE_DISPLAY_DURATION)
         }
     }
-    
+
+    private fun registerTestTranscriptionReceiver() {
+        testTranscriptionReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val text = intent?.getStringExtra("text") ?: return
+                val fromVoice = intent.getBooleanExtra("fromVoice", true)
+
+                Log.d(TAG, "Received test transcription broadcast in bubble: '$text'")
+
+                // Emit the transcription to the flow
+                serviceScope.launch {
+                    _userTranscriptionFlow.emit(text)
+                    Log.d(TAG, "Emitted test transcription to flow: '$text'")
+                }
+            }
+        }
+
+        val filter = IntentFilter("com.example.whiz.TEST_TRANSCRIPTION_LOCAL")
+        registerReceiver(testTranscriptionReceiver, filter)
+        Log.d(TAG, "Registered test transcription receiver")
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
         isActive = false
+
+        // Clear transcription callback
+        VoiceManager.instance?.setTranscriptionCallback { }
+
+        // Unregister test receiver
+        testTranscriptionReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unregistering test receiver", e)
+            }
+        }
+
         recognitionJob?.cancel()
         botResponseJob?.cancel()
         foregroundListenerJob?.cancel()

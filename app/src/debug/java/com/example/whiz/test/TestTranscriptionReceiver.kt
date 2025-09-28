@@ -32,7 +32,7 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context?, intent: Intent?) {
-        if (intent?.action != ACTION_TEST_TRANSCRIPTION) {
+        if (intent?.action != ACTION_TEST_TRANSCRIPTION || context == null) {
             return
         }
 
@@ -42,11 +42,21 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "Received test transcription: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
 
-        // First try to use VoiceManager (works in bubble mode)
+        // Send a local broadcast that BubbleOverlayService can listen to
+        // This works across process boundaries
+        val localIntent = Intent("com.example.whiz.TEST_TRANSCRIPTION_LOCAL")
+        localIntent.putExtra("text", text)
+        localIntent.putExtra("fromVoice", fromVoice)
+        localIntent.putExtra("autoSend", autoSend)
+        localIntent.setPackage(context.packageName) // Keep it local to our app
+        context.sendBroadcast(localIntent)
+        Log.d(TAG, "Sent local broadcast for transcription: '$text'")
+
+        // Also try to use VoiceManager if available (for when app is in foreground)
         val voiceManager = VoiceManager.instance
 
         if (voiceManager != null && fromVoice) {
-            Log.d(TAG, "Using VoiceManager to simulate voice transcription")
+            Log.d(TAG, "VoiceManager instance found, trying to use it")
 
             // Try multiple approaches to trigger voice input
             try {
@@ -64,7 +74,7 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
                     }
                     return
                 } else {
-                    Log.w(TAG, "VoiceManager transcription callback is not set, trying direct approach")
+                    Log.w(TAG, "VoiceManager transcription callback is not set")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error accessing VoiceManager transcription callback", e)

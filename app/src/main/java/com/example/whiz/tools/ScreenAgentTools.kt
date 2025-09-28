@@ -239,7 +239,9 @@ class ScreenAgentTools @Inject constructor(
     }
     
     private fun isWhizApp(packageName: String): Boolean {
-        return packageName.contains("com.example.whiz")
+        // Only return true if the package name matches THIS app's package name exactly
+        // This ensures production and debug apps don't interfere with each other
+        return packageName == context.packageName
     }
     
     private fun startBubbleOverlay(): Boolean {
