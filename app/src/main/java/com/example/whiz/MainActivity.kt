@@ -626,9 +626,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
-        // Notify that app is returning to foreground
-        appLifecycleService.notifyAppForegrounded()
-        Log.d("MainActivity", "Notified app foregrounded")
+        // Removed appLifecycleService.notifyAppForegrounded() to fix bubble service issue
+        // ProcessLifecycleOwner in WhizApplication handles foreground detection more reliably
+        // This prevents false foreground events during app-to-app transitions
         
         // 🕵️ DEBUG: Log intent state when resuming to understand chat ID issue
         Log.d(TAG, "🔍 RESUME DEBUG: Checking intent state after returning from background")

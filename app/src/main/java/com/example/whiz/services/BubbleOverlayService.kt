@@ -440,14 +440,24 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "Starting foreground listener")
         val serviceStartTime = System.currentTimeMillis()
         foregroundListenerJob = serviceScope.launch {
+            // Skip the first emission to avoid replayed events from before service started
+            var isFirstEmission = true
             appLifecycleService.appForegroundEvent.collect {
-                val timeSinceStart = System.currentTimeMillis() - serviceStartTime
-                // Add a 1 second grace period to prevent immediate self-destruction due to race conditions
-                if (timeSinceStart < 1000) {
-                    Log.d(TAG, "Ignoring app foreground event - service just started (${timeSinceStart}ms ago)")
+                if (isFirstEmission) {
+                    // This is likely a replayed event from before the service started (due to replay=1)
+                    // Always skip it regardless of current foreground state
+                    Log.d(TAG, "Ignoring first foreground event emission (likely replayed from before service start)")
+                    isFirstEmission = false
                 } else {
-                    Log.d(TAG, "App foregrounded - stopping bubble overlay service")
-                    stopSelf()
+                    // This is a new foreground event after service started
+                    val timeSinceStart = System.currentTimeMillis() - serviceStartTime
+                    // Add a 1 second grace period to prevent immediate self-destruction due to race conditions
+                    if (timeSinceStart < 1000) {
+                        Log.d(TAG, "Ignoring app foreground event - service just started (${timeSinceStart}ms ago)")
+                    } else {
+                        Log.d(TAG, "App foregrounded - stopping bubble overlay service")
+                        stopSelf()
+                    }
                 }
             }
         }

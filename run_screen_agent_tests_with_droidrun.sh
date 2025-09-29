@@ -245,14 +245,14 @@ log "✅ Processed Accessibility Services dialog"
 
 log "Testing WhizVoice draft functionality..."
 
-WHATSAPP_CONTACT_NAME="+1\(628\)209-9005"
+WHATSAPP_CONTACT_NAME="+1(628)209-9005"
 
 # MICROPHONE PERMISSIONS
 ./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "We are trying to open a new chat in the 🧪 WhizVoice DEBUG app (NOT the regular WhizVoice app). Can you confirm that the correct app is foregrounded. If we are on the New Chat page on the correct app, you are done. If not, navigate to the main chats list screen of 🧪 WhizVoice DEBUG app. You may have to click the back button several times to get there. Open a new chat with the plus symbol button the bottom right. You should end up on a page that says New Chat."
 
 sleep 10
 
-./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "We are testing the 🧪 WhizVoice DEBUG app (NOT to be confused with the regular WhizVoice app). Will you confirm that the correct app is open. If it is, type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. After you've typed something, a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test."
+./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "We are testing the 🧪 WhizVoice DEBUG app (NOT to be confused with the regular WhizVoice app). Will you confirm that the correct app is open. If it is, type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. You don't need to switch it from Listening mode to type. After you've typed something, listening mode automatically stops and a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test."
 
 sleep 15
 TEXT1="Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey whats up hows it going just tryna test whiz voice"
