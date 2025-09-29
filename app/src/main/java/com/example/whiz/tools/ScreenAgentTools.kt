@@ -193,18 +193,18 @@ class ScreenAgentTools @Inject constructor(
                         // Start bubble overlay if enabled and we have permission
                         var overlayStarted = false
                         var overlayPermissionRequired = false
-                        Log.d(TAG, "Checking overlay: enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
+                        Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                         if (enableOverlay && !isWhizApp(mappedPackage)) {
                             if (hasOverlayPermission()) {
-                                Log.d(TAG, "Starting bubble overlay service")
+                                Log.i(TAG, "🔵 STARTING BUBBLE OVERLAY SERVICE for $mappedPackage")
                                 overlayStarted = startBubbleOverlay()
-                                Log.d(TAG, "Bubble overlay started: $overlayStarted")
+                                Log.i(TAG, "🔵 BUBBLE OVERLAY RESULT: $overlayStarted")
                             } else {
                                 overlayPermissionRequired = true
-                                Log.w(TAG, "Overlay permission required to show bubble")
+                                Log.w(TAG, "🔵 OVERLAY PERMISSION REQUIRED to show bubble")
                             }
                         } else {
-                            Log.d(TAG, "Not starting overlay: enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(mappedPackage)}")
+                            Log.i(TAG, "🔵 NOT STARTING BUBBLE: enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(mappedPackage)}")
                         }
                         
                         Log.i(TAG, "Successfully launched mapped app: $appLabel ($mappedPackage)")
@@ -245,17 +245,19 @@ class ScreenAgentTools @Inject constructor(
     }
     
     private fun startBubbleOverlay(): Boolean {
+        Log.i(TAG, "🔵 startBubbleOverlay() called")
         return if (hasOverlayPermission()) {
             try {
+                Log.i(TAG, "🔵 About to call BubbleOverlayService.start()")
                 BubbleOverlayService.start(context)
-                Log.d(TAG, "Started bubble overlay service")
+                Log.i(TAG, "🔵 BubbleOverlayService.start() completed successfully")
                 true
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start bubble overlay", e)
+                Log.e(TAG, "🔵 FAILED to start bubble overlay", e)
                 false
             }
         } else {
-            Log.w(TAG, "No overlay permission, cannot start bubble")
+            Log.w(TAG, "🔵 NO OVERLAY PERMISSION to start bubble")
             false
         }
     }

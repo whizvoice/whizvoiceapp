@@ -51,6 +51,9 @@ class BubbleOverlayService : Service() {
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
 
+    @Inject
+    lateinit var voiceManager: VoiceManager
+
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
@@ -126,7 +129,7 @@ class BubbleOverlayService : Service() {
         applyCurrentMode() // Apply initial mode to VoiceManager
 
         // Set up transcription callback for test broadcasts and voice input
-        VoiceManager.instance?.setTranscriptionCallback { transcription ->
+        voiceManager.setTranscriptionCallback { transcription ->
             if (transcription.isNotBlank()) {
                 Log.d(TAG, "Transcription callback triggered in bubble mode: '$transcription'")
                 serviceScope.launch {
@@ -348,43 +351,36 @@ class BubbleOverlayService : Service() {
     
     private fun applyCurrentMode() {
         Log.d(TAG, "[APPLY_MODE] Starting applyCurrentMode for mode: $currentMode")
-        
+
         // Store the current mode in companion object for access from VoiceManager
         bubbleListeningMode = currentMode
         Log.d(TAG, "[APPLY_MODE] Set bubbleListeningMode to: $currentMode")
-        
-        // Get VoiceManager instance if available
-        val voiceManager = VoiceManager.instance
-        Log.d(TAG, "[APPLY_MODE] VoiceManager.instance is ${if (voiceManager != null) "available" else "NULL"}")
-        
-        if (voiceManager != null) {
-            Log.d(TAG, "[APPLY_MODE] Directly controlling VoiceManager for mode: $currentMode")
-            
-            when (currentMode) {
-                ListeningMode.CONTINUOUS_LISTENING -> {
-                    // Enable continuous listening, disable TTS
-                    Log.d(TAG, "[APPLY_MODE] Enabling continuous listening (mic on, TTS off)")
-                    voiceManager.updateContinuousListeningEnabled(true)
-                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true)")
-                    // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
-                }
-                ListeningMode.MIC_OFF -> {
-                    // Disable continuous listening, disable TTS
-                    Log.d(TAG, "[APPLY_MODE] Disabling continuous listening (mic off, TTS off)")
-                    voiceManager.updateContinuousListeningEnabled(false)
-                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(false)")
-                    // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
-                }
-                ListeningMode.TTS_WITH_LISTENING -> {
-                    // Enable continuous listening, enable TTS
-                    Log.d(TAG, "[APPLY_MODE] Enabling continuous listening with TTS (mic on, TTS on)")
-                    voiceManager.updateContinuousListeningEnabled(true)
-                    Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true) for TTS mode")
-                    // TTS will be enabled through shouldEnableTTS() check
-                }
+
+        // Use the injected voiceManager directly
+        Log.d(TAG, "[APPLY_MODE] Using injected VoiceManager for mode: $currentMode")
+
+        when (currentMode) {
+            ListeningMode.CONTINUOUS_LISTENING -> {
+                // Enable continuous listening, disable TTS
+                Log.d(TAG, "[APPLY_MODE] Enabling continuous listening (mic on, TTS off)")
+                voiceManager.updateContinuousListeningEnabled(true)
+                Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true)")
+                // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
             }
-        } else {
-            Log.w(TAG, "[APPLY_MODE] VoiceManager instance not available, cannot directly control listening")
+            ListeningMode.MIC_OFF -> {
+                // Disable continuous listening, disable TTS
+                Log.d(TAG, "[APPLY_MODE] Disabling continuous listening (mic off, TTS off)")
+                voiceManager.updateContinuousListeningEnabled(false)
+                Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(false)")
+                // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
+            }
+            ListeningMode.TTS_WITH_LISTENING -> {
+                // Enable continuous listening, enable TTS
+                Log.d(TAG, "[APPLY_MODE] Enabling continuous listening with TTS (mic on, TTS on)")
+                voiceManager.updateContinuousListeningEnabled(true)
+                Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true) for TTS mode")
+                // TTS will be enabled through shouldEnableTTS() check
+            }
         }
         
         // Always emit mode changes so VoiceManager can stop/start listening appropriately
@@ -523,7 +519,7 @@ class BubbleOverlayService : Service() {
         isActive = false
 
         // Clear transcription callback
-        VoiceManager.instance?.setTranscriptionCallback { }
+        voiceManager.setTranscriptionCallback { }
 
         // Unregister test receiver
         testTranscriptionReceiver?.let {
