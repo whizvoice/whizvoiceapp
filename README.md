@@ -46,10 +46,11 @@ Screen agent functionality cannot be tested using the regular Android framework 
 
 reference: https://docs.droidrun.ai/v3/quickstart
 
+
 ```
 python3 -m venv venv
 source venv/bin/activate
-pip install -r droidrun/requirements-screen-agent-testing.txt
+pip install -r requirements.txt
 droidrun setup
 ```
 
