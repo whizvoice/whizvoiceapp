@@ -434,26 +434,24 @@ class BubbleOverlayService : Service() {
 
     private fun startForegroundListener() {
         Log.d(TAG, "Starting foreground listener")
-        val serviceStartTime = System.currentTimeMillis()
         foregroundListenerJob = serviceScope.launch {
-            // Skip the first emission to avoid replayed events from before service started
-            var isFirstEmission = true
+            // Instead of complex logic with first emission, check if WhizVoice is actually
+            // the foreground app when we receive the event
             appLifecycleService.appForegroundEvent.collect {
-                if (isFirstEmission) {
-                    // This is likely a replayed event from before the service started (due to replay=1)
-                    // Always skip it regardless of current foreground state
-                    Log.d(TAG, "Ignoring first foreground event emission (likely replayed from before service start)")
-                    isFirstEmission = false
+                // Get the current foreground app package
+                val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                val runningTasks = activityManager.getRunningTasks(1)
+                val foregroundPackage = runningTasks.firstOrNull()?.topActivity?.packageName
+
+                Log.d(TAG, "Foreground event received. Current foreground app: $foregroundPackage, Our package: $packageName")
+
+                // Only stop if WhizVoice (our app) is actually in foreground
+                // This prevents stopping when we're still transitioning to WhatsApp
+                if (foregroundPackage == packageName) {
+                    Log.d(TAG, "Same WhizVoice variant ($packageName) returned to foreground - stopping bubble overlay service")
+                    stopSelf()
                 } else {
-                    // This is a new foreground event after service started
-                    val timeSinceStart = System.currentTimeMillis() - serviceStartTime
-                    // Add a 1 second grace period to prevent immediate self-destruction due to race conditions
-                    if (timeSinceStart < 1000) {
-                        Log.d(TAG, "Ignoring app foreground event - service just started (${timeSinceStart}ms ago)")
-                    } else {
-                        Log.d(TAG, "App foregrounded - stopping bubble overlay service")
-                        stopSelf()
-                    }
+                    Log.d(TAG, "Ignoring foreground event - different app is in foreground: $foregroundPackage")
                 }
             }
         }
