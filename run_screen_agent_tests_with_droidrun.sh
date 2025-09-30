@@ -63,11 +63,15 @@ log "Installing debug app..."
 ./install.sh
 log "Done installing debug app"
 
+# Clear any existing logs before starting our test
+log "Clearing existing logcat..."
+adb logcat -c
+sleep 1  # Give it a moment to ensure clear completes
+
 # Start logcat monitoring in background
 log "Starting logcat monitoring for WhizVoice debug app..."
-adb logcat -c  # Clear existing logs
 # Use unbuffered output to ensure logs are written immediately
-adb logcat -v time TestTranscription:* ChatViewModel:* VoiceManager:* AssistantActivity:* *:S > droidrun/logcat_output.txt 2>&1 &
+adb logcat -v time TestTranscription:* ChatViewModel:* VoiceManager:* AssistantActivity:* ToolExecutor:* ScreenAgentTools:* BubbleOverlayService:* *:S > droidrun/logcat_output.txt 2>&1 &
 LOGCAT_PID=$!
 log "Logcat monitoring started (PID: $LOGCAT_PID)"
 # Give logcat a moment to start capturing
@@ -252,7 +256,7 @@ WHATSAPP_CONTACT_NAME="+1(628)209-9005"
 
 sleep 10
 
-./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "We are testing the 🧪 WhizVoice DEBUG app (NOT to be confused with the regular WhizVoice app). Will you confirm that the correct app is open. If it is, type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. You don't need to switch it from Listening mode to type. After you've typed something, listening mode automatically stops and a send button should appear on the bottom right. Click the send button and then stop. Don't do anything else so you don't interfere with the test."
+./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "We are testing the 🧪 WhizVoice DEBUG app (NOT to be confused with the regular WhizVoice app). Will you confirm that the correct app is open. If it is, type in the edit text field: Open a WhatApp chat with $WHATSAPP_CONTACT_NAME. You don't need to switch it from Listening mode to type. After you've typed something, listening mode automatically stops and a send button should appear on the bottom right. Click the send button and then stop. DO NOT do anything else so you don't interfere with the test. Especially DO NOT launch WhatsApp yourself. Just return so we can wait to see if 🧪 WhizVoice DEBUG works properly"
 
 sleep 15
 TEXT1="Hello, can you please send a message to $WHATSAPP_CONTACT_NAME that says hey whats up hows it going just tryna test whiz voice"
@@ -268,7 +272,7 @@ adb shell "am broadcast -a com.example.whiz.TEST_TRANSCRIPTION -n com.example.wh
 
 sleep 3
 
-./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "This is a test of what is currently on the screen. We want to see WhatsApp open with a chat to +1(628)209-9005. We want to see a recent message that's been sent. And we do NOT want to see a big yellow overlay at the bottom of the screen. If all these conditions are met, please return success. If any of these conditions are not met, please return immedately with a fail or error."
+./venv/bin/droidrun --debug --provider "$PROVIDER" --model "$MODEL" "This is a test of what is currently on the screen. DO NOT open any apps or take any actions that would change what's on the screen. We are checking to see if WhatsApp is ALREADY open with a chat to +1(628)209-9005. We are checking to see a recent message that's ALREADY been sent. And we do NOT want to see a big yellow overlay at the bottom of the screen. If all these conditions are met, please return success. If any of these conditions are not met, please return immedately with a fail or error."
 
 
 echo ""

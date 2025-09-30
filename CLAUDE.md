@@ -3,8 +3,8 @@
 This project has two folders: whizvoice which has the webapp code, and whizvoiceapp which has the Android app code.
 
 On my phone, which is what I use for testing as well as running the production app, there are two apps installed: the production app and the debug app. You can update them with these scripts:
-- Production app: `./install.sh --production` (add `--force` to force restart the app so that it's ready)
-- Debug app: `whizvoiceapp/install_debug_for_testing.sh`
+- Production app: `./install.sh --production` (add `--force` to force reinstall even if APK unchanged)
+- Debug app: `./install.sh` (add `--force` to force reinstall even if APK unchanged)
 
 ## Guidelines
 
@@ -14,6 +14,8 @@ On my phone, which is what I use for testing as well as running the production a
 - Don't do anything extra outside of what the user asked. For example if user asked you to add logging to debug a test, don't add code to try to make the test pass.
 
 ## Testing
+
+### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.
 
@@ -32,6 +34,14 @@ When investigating test failures, check these log files for detailed information
 - **test_summary.log** - High-level test results and summaries
 
 Crucially, screenshots from failed tests will show up in whizvoiceapp/test_screenshots directory
+
+### Screen Agent Tests
+
+To run screen agent integration tests (which use ~/android_screenshot_testing/android_accessibility_tester.py):
+
+```
+cd whizvoiceapp && ./venv/bin/python run_screen_agent_tests.py
+```
 
 ## Database
 

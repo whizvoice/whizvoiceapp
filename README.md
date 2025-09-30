@@ -40,35 +40,18 @@ cd whizvoiceapp
 sudo journalctl -u whizvoice --since "Aug 05 07:15:36 UTC" --no-pager > whizvoice_server_logs.txt
 ```
 
-### set up droidrun for integration testing of screen agent capabilities
+### integration tests
 
-Screen agent functionality cannot be tested using the regular Android framework because accessibility services are prevented from starting while the instrumentation framework is running due to security reasons. So we are using Droidrun.
-
-reference: https://docs.droidrun.ai/v3/quickstart
-
+#### set up
 
 ```
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-droidrun setup
 ```
 
-Put your anthropic key in droidrun/export_anthropic_key.sh
+#### run
 
 ```
-#!/bin/bash
-export ANTHROPIC_API_KEY="YOUR-KEY-HERE"
+./venv/bin/python run_screen_agent_tests.py
 ```
-
-Before running DroidRun you'll want to enable Droidrun Portal in Accessibility settings, and switch to the Droidrun keyboard (globe button on your regular keyboard)
-
-run integration tests
-
-```
-./run_screen_agent_tests_with_droidrun.sh
-```
-
-To stop droidrun you need to go to Accessibility Services > Apps > Droidrun Portal
-and turn it off.
-To switch from the droidrun keyboard, click the globe button under Droidrun Keyboard ON at the bottom of the screen.
