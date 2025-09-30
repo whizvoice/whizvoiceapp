@@ -18,6 +18,29 @@ def install_debug_app(force=False):
     subprocess.run(cmd, check=True)
 
 
+def navigate_to_my_chats(tester):
+    """Navigate to the My Chats page by pressing back until we reach it."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+    max_attempts = 5
+
+    for _ in range(max_attempts):
+        tester.screenshot(screenshot_path)
+        if tester.validate_screenshot(
+            screenshot_path,
+            "The screen shows a 'My Chats' or 'Chats List' page with a list of chats or an empty state. "
+            "This is the main chat list view of WhizVoice."
+        ):
+            return True
+
+        # Press back button and try again
+        tester.press_back()
+        time.sleep(1)
+
+    return False
+
+
 def login_if_needed(tester):
     """Log in to the app if we're on the login screen."""
     import time
@@ -74,7 +97,47 @@ def tester(app_installed):
 # Example test - add your actual tests below
 def test_whatsapp_draft_message(tester):
     """Test that we can draft and modify draft and send message in WhatsApp."""
-    # At this point, we're already logged in and on My Chats page (handled by fixture)
+    import time
 
-    # TODO: Add test steps for WhatsApp draft message functionality
-    pass
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # Navigate to My Chats page
+    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+
+    # Click on coordinates to open a new chat
+    tester.tap(1000, 2075)
+    time.sleep(2)
+
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    assert tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"
+    ), "Failed to reach New Chat screen"
+
+    # Click to focus on the text input
+    tester.tap(500, 2100)
+    time.sleep(1)
+
+    # Input text
+    tester.input_text("Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice")
+    time.sleep(1)
+
+    # Click to send the message
+    tester.tap(950, 1400)
+
+    # Wait 10 seconds
+    time.sleep(10)
+
+    # Validate WhatsApp is open with the draft message
+    tester.screenshot(screenshot_path)
+    assert tester.validate_screenshot(
+        screenshot_path,
+        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+        "similar to 'hey whats up hows it going just tryna test whiz voice'"
+    ), "Failed to draft WhatsApp message correctly"
