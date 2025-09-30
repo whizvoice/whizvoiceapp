@@ -507,7 +507,11 @@ class BubbleOverlayService : Service() {
         }
 
         val filter = IntentFilter("com.example.whiz.TEST_TRANSCRIPTION_LOCAL")
-        registerReceiver(testTranscriptionReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(testTranscriptionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(testTranscriptionReceiver, filter)
+        }
         Log.d(TAG, "Registered test transcription receiver")
     }
 
