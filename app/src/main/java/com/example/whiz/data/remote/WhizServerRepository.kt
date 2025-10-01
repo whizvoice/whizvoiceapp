@@ -269,32 +269,30 @@ class WhizServerRepository @Inject constructor(
     
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
-        
-        // If we're turning off persistent disconnect, also try to reconnect with last known conversation
-        var effectiveConversationId = conversationId
+
+        // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
         if (turnOffPersistentDisconnect && conversationId == null) {
-            // Try to get the last active conversation from ConnectionStateManager
-            effectiveConversationId = connectionStateManager.activeConversationId.value 
-                ?: connectionStateManager.getLastActiveConversationId()
-            if (effectiveConversationId != null && effectiveConversationId != -1L) {
-                Log.d(TAG, "Using last active conversation ID for reconnection: $effectiveConversationId")
+            if (persistentDisconnectForTest) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest flag only - no reconnection attempt")
+                persistentDisconnectForTest = false
             }
+            return
         }
-        
+
         // Check if persistent disconnect is active and we're not explicitly turning it off
         if (!turnOffPersistentDisconnect) {
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
-            if (effectiveConversationId == null) {
+            if (conversationId == null) {
                 Log.d(TAG, "NULL conversation ID, returning without attempting connection.")
                 return
             }
         }
-        
+
         // Increment generation for this new connection attempt
         val thisGeneration = connectionGeneration.incrementAndGet()
-        
+
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
             // Reset persistent disconnect flag if requested
@@ -304,9 +302,6 @@ class WhizServerRepository @Inject constructor(
                     persistentDisconnectForTest = false
                 } else {
                     Log.d(TAG, "Tried to reset persistentDisconnectForTest flag from $persistentDisconnectForTest to false but it was already false")
-                }
-                if (conversationId == null) {
-                    return
                 }
             }
             
@@ -388,8 +383,8 @@ class WhizServerRepository @Inject constructor(
             
             // Build WebSocket URL with conversation_id parameter if provided
             // Include any conversation ID except -1 (which represents "no chat")
-            val websocketUrl = if (effectiveConversationId != null && effectiveConversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$effectiveConversationId"
+            val websocketUrl = if (conversationId != null && conversationId != -1L) {
+                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
             } else {
                 WHIZ_SERVER_URL
             }
@@ -411,7 +406,7 @@ class WhizServerRepository @Inject constructor(
                             return
                         }
                         
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$effectiveConversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
@@ -427,7 +422,7 @@ class WhizServerRepository @Inject constructor(
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
-                        processRetryQueue(effectiveConversationId)
+                        processRetryQueue(conversationId)
 
                         // Send timezone via API endpoint after connection is established
                         val timezone = java.util.TimeZone.getDefault().id
@@ -723,7 +718,7 @@ class WhizServerRepository @Inject constructor(
                     
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
-                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$effectiveConversationId")))
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
                     
                     // Only attempt reconnect if not manually disconnected
                     if (!persistentDisconnectForTest) {
