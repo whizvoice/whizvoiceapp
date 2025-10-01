@@ -275,8 +275,8 @@ class WhizServerRepository @Inject constructor(
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest flag only - no reconnection attempt")
                 persistentDisconnectForTest = false
+                return
             }
-            return
         }
 
         // Check if persistent disconnect is active and we're not explicitly turning it off
@@ -973,8 +973,20 @@ class WhizServerRepository @Inject constructor(
         val allMessages = messageRetryQueue.toList()
         val messagesToRetry = if (conversationId != null) {
             allMessages.filter { msg ->
-                // Match if the pending message's chatId matches the current connection
-                msg.chatId == conversationId
+                // Resolve both the queued message's chatId and the current conversationId
+                // to handle optimistic ID migrations (e.g., -1759344504803 → 5127)
+                val effectiveQueuedChatId = connectionStateManager.getEffectiveChatId(msg.chatId) ?: msg.chatId
+                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(conversationId) ?: conversationId
+
+                // Log migration resolution for debugging
+                if (effectiveQueuedChatId != msg.chatId) {
+                    Log.d(TAG, "Resolved queued message chatId ${msg.chatId} → $effectiveQueuedChatId")
+                }
+                if (effectiveCurrentChatId != conversationId) {
+                    Log.d(TAG, "Resolved current conversationId $conversationId → $effectiveCurrentChatId")
+                }
+
+                effectiveQueuedChatId == effectiveCurrentChatId
             }
         } else {
             // If no conversationId specified, process all messages

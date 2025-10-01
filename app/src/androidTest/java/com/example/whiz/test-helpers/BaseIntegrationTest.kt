@@ -58,7 +58,7 @@ abstract class BaseIntegrationTest {
     
     @Inject
     lateinit var authRepository: AuthRepository
-    
+
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
     protected val packageName = "com.example.whiz.debug"
@@ -112,7 +112,7 @@ abstract class BaseIntegrationTest {
                 try {
                     // Use the test authentication method from AuthRepository
                     authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
-                    
+
                     android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
                 } catch (e: Exception) {
                     android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
@@ -122,7 +122,7 @@ abstract class BaseIntegrationTest {
         } else {
             android.util.Log.d("BaseIntegrationTest", "⏭️ Skipping automatic authentication for this test")
         }
-        
+
         // SECOND: Set up permissions (after authentication)
         setupPermissions()
     }

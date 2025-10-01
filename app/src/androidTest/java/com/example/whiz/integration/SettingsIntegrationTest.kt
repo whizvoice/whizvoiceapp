@@ -49,7 +49,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
+
         // Don't clear tokens in @Before since test account should have them set
         // Tests will handle clearing and restoring as needed
         Log.d(TAG, "Test setup complete - preserving existing test account tokens")
