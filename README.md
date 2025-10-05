@@ -48,6 +48,13 @@ sudo journalctl -u whizvoice --since "Aug 05 07:15:36 UTC" --no-pager > whizvoic
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+source export_anthropic_key.sh
+```
+
+export_anthropic_key.sh should look like
+```
+#!/bin/bash
+export ANTHROPIC_API_KEY=your-key-here
 ```
 
 #### run

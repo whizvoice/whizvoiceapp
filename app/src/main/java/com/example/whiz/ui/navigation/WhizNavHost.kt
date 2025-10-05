@@ -26,6 +26,7 @@ import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
+import com.example.whiz.ui.viewmodels.registerForTestTranscription
 
 import kotlinx.coroutines.delay
 
@@ -266,10 +267,8 @@ fun WhizNavHost(
                     // Call the test callback if provided
                     onChatViewModelReady?.invoke(viewModel)
 
-                    // Also set the static reference for debug builds
-                    if (com.example.whiz.BuildConfig.DEBUG) {
-                        com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel = viewModel
-                    }
+                    // Register for test transcription (no-op in release builds)
+                    viewModel.registerForTestTranscription()
                 }
             )
         }
@@ -317,10 +316,8 @@ fun WhizNavHost(
                     // Call the test callback if provided
                     onChatViewModelReady?.invoke(viewModel)
 
-                    // Also set the static reference for debug builds
-                    if (com.example.whiz.BuildConfig.DEBUG) {
-                        com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel = viewModel
-                    }
+                    // Register for test transcription (no-op in release builds)
+                    viewModel.registerForTestTranscription()
                 }
             )
         }

@@ -41,6 +41,21 @@ def navigate_to_my_chats(tester):
     return False
 
 
+def enable_accessibility_service_if_needed(tester):
+    """Enable accessibility service if the dialog is showing."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+    tester.screenshot(screenshot_path)
+
+    if tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows an 'Enable accessibility service' dialog or prompt"
+    ):
+        # TODO: Add code to enable accessibility service
+        pass
+
+
 def login_if_needed(tester):
     """Log in to the app if we're on the login screen."""
     import time

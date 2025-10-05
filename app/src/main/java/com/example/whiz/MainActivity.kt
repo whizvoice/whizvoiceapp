@@ -763,14 +763,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Fallback to ChatViewModel approach
-                val chatViewModel = com.example.whiz.test.TestTranscriptionReceiver.activeChatViewModel
-                if (chatViewModel != null) {
-                    Log.d(TAG, "Using ChatViewModel from TestTranscriptionReceiver (fallback)")
-                    processTestTranscription(chatViewModel, text, fromVoice, autoSend)
-                } else {
-                    Log.e(TAG, "No ChatViewModel and VoiceManager fallback failed")
-                }
+                // Fallback to ChatViewModel approach (debug only, no-op in release)
+                com.example.whiz.test.processTestTranscriptionFallback(
+                    text, fromVoice, autoSend, ::processTestTranscription
+                )
             }
         }
 
