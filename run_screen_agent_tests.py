@@ -17,6 +17,11 @@ def install_debug_app(force=False):
         cmd.append('--force')
     subprocess.run(cmd, check=True)
 
+    # Grant overlay permission using both pm grant and appops
+    package_name = "com.example.whiz.debug"
+    subprocess.run(['adb', 'shell', 'appops', 'set', package_name, 'SYSTEM_ALERT_WINDOW', 'allow'], check=False)
+    subprocess.run(['adb', 'shell', 'pm', 'grant', package_name, 'android.permission.SYSTEM_ALERT_WINDOW'], check=False)
+
 
 def navigate_to_my_chats(tester):
     """Navigate to the My Chats page by pressing back until we reach it."""
@@ -52,8 +57,27 @@ def enable_accessibility_service_if_needed(tester):
         screenshot_path,
         "The screen shows an 'Enable accessibility service' dialog or prompt"
     ):
-        # TODO: Add code to enable accessibility service
-        pass
+        # Click "Open Settings" button
+        tester.tap(700, 1725)
+        time.sleep(2)
+
+        # Click to select WhizVoice DEBUG
+        tester.tap(500, 1000)
+        time.sleep(1)
+
+        # Click toggle to enable WhizVoice DEBUG
+        tester.tap(925, 400)
+        time.sleep(1)
+
+        # Click Allow button
+        tester.tap(500, 1650)
+        time.sleep(1)
+
+        # Press back twice to return to app
+        tester.press_back()
+        time.sleep(0.5)
+        tester.press_back()
+        time.sleep(1)
 
 
 def login_if_needed(tester):
