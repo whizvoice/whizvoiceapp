@@ -178,5 +178,7 @@ def test_whatsapp_draft_message(tester):
         screenshot_path,
         "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'hey whats up hows it going just tryna test whiz voice'"
+        "similar to 'hey whats up hows it going just tryna test whiz voice'. "
+        "There is also a yellow notification bubble with the outline of a robot face "
+        "and a microphone icon inside."
     ), "Failed to draft WhatsApp message correctly"
