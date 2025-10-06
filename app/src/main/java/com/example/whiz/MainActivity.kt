@@ -239,25 +239,6 @@ class MainActivity : ComponentActivity() {
                                     }
                                 )
                             }
-                            PermissionManager.RequiredStep.QUERY_ALL_PACKAGES -> {
-                                com.example.whiz.ui.components.QueryAllPackagesPermissionDialog(
-                                    onDismiss = { /* User dismissed the dialog */ },
-                                    onRequestPermission = {
-                                        // Open system settings for all apps access permission
-                                        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                            Intent(Settings.ACTION_MANAGE_ALL_APPLICATIONS_SETTINGS)
-                                        } else {
-                                            Intent(Settings.ACTION_APPLICATION_SETTINGS)
-                                        }
-
-                                        try {
-                                            startActivity(intent)
-                                        } catch (e: Exception) {
-                                            Log.e("MainActivity", "Failed to open apps settings", e)
-                                        }
-                                    }
-                                )
-                            }
                             null -> {
                                 // All permissions granted, no dialog needed
                             }

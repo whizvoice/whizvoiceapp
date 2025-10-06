@@ -84,7 +84,6 @@ get_apk_checksum() {
 # Parse command line arguments
 FORCE_INSTALL="false"
 SKIP_BUILD="false"
-NO_PERMISSIONS="false"
 BUILD_TYPE="debug"
 DISPLAY_NAME="WhizVoice DEBUG"
 
@@ -103,17 +102,12 @@ while [[ $# -gt 0 ]]; do
             SKIP_BUILD="true"
             shift
             ;;
-        --no-permissions)
-            NO_PERMISSIONS="true"
-            shift
-            ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
             echo "  --production: Install production version (default: debug)"
             echo "  --force: Force reinstall even if APK is unchanged"
             echo "  --skip-build: Skip the build step and use existing APK"
-            echo "  --no-permissions: Install without granting any permissions (for testing permission flow)"
             exit 0
             ;;
         *)
@@ -191,16 +185,12 @@ if adb shell pm list packages 2>/dev/null | grep -q "^package:${PACKAGE_NAME}$";
     # Check if APK has changed
     if [[ "$CURRENT_CHECKSUM" == "$PREVIOUS_CHECKSUM" ]] && [[ "$FORCE_INSTALL" == "false" ]]; then
         log_with_time "✅ Code unchanged (same content signature) - skipping reinstall to preserve accessibility settings"
-
-        # Just grant permissions to be safe (unless --no-permissions is set)
-        if [[ "$NO_PERMISSIONS" == "true" ]]; then
-            log_with_time "⚠️  Skipping permission grants (--no-permissions flag)"
-        else
-            log_with_time "⏳ Ensuring permissions are granted..."
-            adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
-            adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
-            log_with_time "✅ Permissions granted"
-        fi
+        
+        # Just grant permissions to be safe
+        log_with_time "⏳ Ensuring permissions are granted..."
+        adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
+        adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+        log_with_time "✅ Permissions granted"
         
         # Launch and stop the app to verify it works
         log_with_time "⏳ Verifying app installation..."
@@ -253,16 +243,11 @@ else
     exit 1
 fi
 
-# Grant permissions (unless --no-permissions is set)
-if [[ "$NO_PERMISSIONS" == "true" ]]; then
-    log_with_time "⚠️  Skipping permission grants (--no-permissions flag)"
-    log_with_time "📱 You will need to grant permissions manually to test the permission flow"
-else
-    log_with_time "⏳ Granting permissions..."
-    adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
-    adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
-    log_with_time "✅ Permissions granted"
-fi
+# Grant permissions
+log_with_time "⏳ Granting permissions..."
+adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
+adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+log_with_time "✅ Permissions granted"
 
 # Launch and stop the app to verify installation
 log_with_time "⏳ Verifying installation..."

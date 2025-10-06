@@ -40,12 +40,6 @@ class TestPermissionManager @Inject constructor(
      * When null, falls back to checking the real permission.
      */
     var mockOverlayPermission: Boolean? = null
-
-    /**
-     * Mock state for QUERY_ALL_PACKAGES permission. When set, this overrides the real permission check.
-     * When null, falls back to checking the real permission.
-     */
-    var mockQueryAllPackagesPermission: Boolean? = null
     
     /**
      * Override checkMicrophonePermission to use mock state when available
@@ -164,68 +158,5 @@ class TestPermissionManager @Inject constructor(
     fun simulateOverlayGrant() {
         Log.d(TAG, "Simulating overlay permission grant")
         setMockOverlayPermission(true)
-    }
-
-    /**
-     * Override checkQueryAllPackagesPermission to use mock state when available
-     */
-    override fun checkQueryAllPackagesPermission() {
-        // Check mock state first
-        val hasPermission = mockQueryAllPackagesPermission?.let { mockedState ->
-            Log.d(TAG, "Using mocked QUERY_ALL_PACKAGES permission state: $mockedState")
-            mockedState
-        } ?: run {
-            // Fall back to real permission check
-            val realPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.QUERY_ALL_PACKAGES
-                ) == PackageManager.PERMISSION_GRANTED
-            } else {
-                true // Always true for older Android versions
-            }
-            Log.d(TAG, "Using real QUERY_ALL_PACKAGES permission state: $realPermission")
-            realPermission
-        }
-
-        // Update the permission state
-        updateQueryAllPackagesPermission(hasPermission)
-    }
-
-    /**
-     * Set the mock QUERY_ALL_PACKAGES permission state for testing
-     */
-    fun setMockQueryAllPackagesPermission(granted: Boolean) {
-        Log.d(TAG, "Setting mock QUERY_ALL_PACKAGES permission to: $granted")
-        mockQueryAllPackagesPermission = granted
-        // Immediately update the state
-        checkQueryAllPackagesPermission()
-    }
-
-    /**
-     * Reset the mock state to use real permission checking
-     */
-    fun resetMockQueryAllPackagesPermission() {
-        Log.d(TAG, "Resetting mock QUERY_ALL_PACKAGES permission state")
-        mockQueryAllPackagesPermission = null
-        // Re-check with real permission
-        checkQueryAllPackagesPermission()
-    }
-
-    /**
-     * Helper method to simulate revoking QUERY_ALL_PACKAGES permission without actually
-     * revoking it (which would require manual interaction)
-     */
-    fun simulateQueryAllPackagesRevoke() {
-        Log.d(TAG, "Simulating QUERY_ALL_PACKAGES permission revocation")
-        setMockQueryAllPackagesPermission(false)
-    }
-
-    /**
-     * Helper method to simulate granting QUERY_ALL_PACKAGES permission
-     */
-    fun simulateQueryAllPackagesGrant() {
-        Log.d(TAG, "Simulating QUERY_ALL_PACKAGES permission grant")
-        setMockQueryAllPackagesPermission(true)
     }
 }

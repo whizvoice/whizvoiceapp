@@ -127,16 +127,16 @@ fun AccessibilityPermissionDialog(
 ) {
     AlertDialog(
         onDismissRequest = {}, // Make dialog non-dismissible
-        modifier = Modifier.semantics {
+        modifier = Modifier.semantics { 
             contentDescription = "Accessibility permission dialog"
         },
-        title = {
+        title = { 
             Text(
                 "Enable Accessibility Service",
-                modifier = Modifier.semantics {
+                modifier = Modifier.semantics { 
                     contentDescription = "Enable accessibility service title"
                 }
-            )
+            ) 
         },
         text = {
             Text(
@@ -150,7 +150,7 @@ fun AccessibilityPermissionDialog(
                       "2. Find 'WhizVoice' in the list\n" +
                       "3. Toggle it ON and confirm",
                 textAlign = TextAlign.Start,
-                modifier = Modifier.semantics {
+                modifier = Modifier.semantics { 
                     contentDescription = "Accessibility permission explanation"
                 }
             )
@@ -164,7 +164,7 @@ fun AccessibilityPermissionDialog(
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = Color.Black
                 ),
-                modifier = Modifier.semantics {
+                modifier = Modifier.semantics { 
                     contentDescription = "Open accessibility settings button"
                 }
             ) {
@@ -172,61 +172,5 @@ fun AccessibilityPermissionDialog(
             }
         },
         dismissButton = null // Remove the dismiss button entirely
-    )
-}
-
-@Composable
-fun QueryAllPackagesPermissionDialog(
-    onDismiss: () -> Unit,
-    onRequestPermission: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.semantics {
-            contentDescription = "Query all packages permission dialog"
-        },
-        title = {
-            Text(
-                "All Apps Access Permission Required",
-                modifier = Modifier.semantics {
-                    contentDescription = "Query all packages permission required title"
-                }
-            )
-        },
-        text = {
-            Text(
-                "Whiz needs permission to see all installed apps on your device. This allows you to open any app by voice command.",
-                textAlign = TextAlign.Start,
-                modifier = Modifier.semantics {
-                    contentDescription = "Query all packages permission explanation"
-                }
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onRequestPermission()
-                    // Don't dismiss here - let onResume handle it when returning from Settings
-                },
-                modifier = Modifier.semantics {
-                    contentDescription = "Grant query all packages permission button"
-                }
-            ) {
-                Text("Grant Permission")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.semantics {
-                    contentDescription = "Dismiss query all packages permission dialog button"
-                }
-            ) {
-                Text("Not Now")
-            }
-        }
     )
 }

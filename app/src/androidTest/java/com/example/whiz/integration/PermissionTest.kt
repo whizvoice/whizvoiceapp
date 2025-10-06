@@ -101,17 +101,6 @@ class PermissionTest : BaseIntegrationTest() {
         }
     }
 
-    // Helper to mock QUERY_ALL_PACKAGES permission and update permission manager
-    private fun mockQueryAllPackagesAndUpdate(enabled: Boolean) {
-        // Use TestPermissionManager to simulate QUERY_ALL_PACKAGES permission state
-        val testPermissionManager = permissionManager as TestPermissionManager
-        if (enabled) {
-            testPermissionManager.simulateQueryAllPackagesGrant()
-        } else {
-            testPermissionManager.simulateQueryAllPackagesRevoke()
-        }
-    }
-
     @Test
     fun testAccessibilityDialogAppearsAfterMicrophonePermissionGranted() = runTest {
         // Setup: Ensure microphone permission is granted
@@ -303,11 +292,10 @@ class PermissionTest : BaseIntegrationTest() {
         revokeMicrophoneAndUpdate()
         mockAccessibilityAndUpdate(false)
         mockOverlayAndUpdate(false)
-        mockQueryAllPackagesAndUpdate(false)
-
+        
         // Force permission manager to update its state
         permissionManager.checkAllPermissions()
-
+        
         // Step 1: Verify microphone permission dialog appears first
         val micDialogAppeared = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
@@ -315,19 +303,19 @@ class PermissionTest : BaseIntegrationTest() {
             timeoutMs = 1000L,
             description = "microphone permission dialog"
         )
-
+        
         if (!micDialogAppeared) {
             failWithScreenshot(
                 "Microphone permission dialog should appear first in priority order",
                 "no_mic_dialog_priority_order_test"
             )
         }
-
+        
         println("✓ Microphone permission dialog appeared first")
-
+        
         // Step 2: Grant microphone permission
         grantMicrophoneAndUpdate()
-
+        
         // Step 3: Verify accessibility dialog appears next
         val accessibilityDialogAppeared = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
@@ -335,74 +323,53 @@ class PermissionTest : BaseIntegrationTest() {
             timeoutMs = 1000L,
             description = "accessibility permission dialog"
         )
-
+        
         if (!accessibilityDialogAppeared) {
             failWithScreenshot(
                 "Accessibility permission dialog should appear after microphone is granted",
                 "no_accessibility_dialog_priority_order"
             )
         }
-
+        
         println("✓ Accessibility permission dialog appeared second")
-
+        
         // Step 4: Grant accessibility permission
         mockAccessibilityAndUpdate(true)
-
-        // Step 5: Verify overlay dialog appears next
+        
+        // Step 5: Verify overlay dialog appears last
         val overlayDialogAppeared = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithContentDescription("Overlay permission dialog") },
             timeoutMs = 1000L,
             description = "overlay permission dialog"
         )
-
+        
         if (!overlayDialogAppeared) {
             failWithScreenshot(
                 "Overlay permission dialog should appear after accessibility is granted",
                 "no_overlay_dialog_priority_order"
             )
         }
-
+        
         println("✓ Overlay permission dialog appeared third")
-
-        // Step 6: Grant overlay permission
-        mockOverlayAndUpdate(true)
-
-        // Step 7: Verify QUERY_ALL_PACKAGES dialog appears last
-        val queryAllPackagesDialogAppeared = ComposeTestHelper.waitForElement(
-            composeTestRule = composeTestRule,
-            selector = { composeTestRule.onNodeWithContentDescription("Query all packages permission dialog") },
-            timeoutMs = 1000L,
-            description = "query all packages permission dialog"
-        )
-
-        if (!queryAllPackagesDialogAppeared) {
-            failWithScreenshot(
-                "QUERY_ALL_PACKAGES permission dialog should appear after overlay is granted",
-                "no_query_all_packages_dialog_priority_order"
-            )
-        }
-
-        println("✓ QUERY_ALL_PACKAGES permission dialog appeared fourth")
-        println("✓ Dialog priority verified: Microphone → Accessibility → Overlay → QUERY_ALL_PACKAGES")
+        println("✓ Dialog priority verified: Microphone → Accessibility → Overlay")
     }
     
     @Test
     fun testNoPermissionDialogsWhenAllPermissionsGrantedIncludingOverlay() {
-        // Setup: Grant all permissions including overlay and QUERY_ALL_PACKAGES
+        // Setup: Grant all permissions including overlay
         grantMicrophoneAndUpdate()
         mockAccessibilityAndUpdate(true)
         mockOverlayAndUpdate(true)
-        mockQueryAllPackagesAndUpdate(true)
-
+        
         // Force permission manager to update its state
         runBlocking {
             permissionManager.checkAllPermissions()
         }
-
+        
         // Give UI just enough time to show dialogs if they were going to appear
         Thread.sleep(100)
-
+        
         // Verify NO permission dialogs appear
         val micDialogExists = try {
             composeTestRule.onNodeWithContentDescription("Microphone permission dialog").assertExists()
@@ -410,57 +377,43 @@ class PermissionTest : BaseIntegrationTest() {
         } catch (e: AssertionError) {
             false
         }
-
+        
         val accessibilityDialogExists = try {
             composeTestRule.onNodeWithContentDescription("Accessibility permission dialog").assertExists()
             true
         } catch (e: AssertionError) {
             false
         }
-
+        
         val overlayDialogExists = try {
             composeTestRule.onNodeWithContentDescription("Overlay permission dialog").assertExists()
             true
         } catch (e: AssertionError) {
             false
         }
-
-        val queryAllPackagesDialogExists = try {
-            composeTestRule.onNodeWithContentDescription("Query all packages permission dialog").assertExists()
-            true
-        } catch (e: AssertionError) {
-            false
-        }
-
+        
         // Should NOT find any permission dialogs
         if (micDialogExists) {
             failWithScreenshot(
                 "Microphone dialog should not appear when permission is granted",
-                "unexpected_mic_dialog_with_all_permissions"
+                "unexpected_mic_dialog_with_overlay"
             )
         }
-
+        
         if (accessibilityDialogExists) {
             failWithScreenshot(
                 "Accessibility dialog should not appear when permission is granted",
-                "unexpected_accessibility_dialog_with_all_permissions"
+                "unexpected_accessibility_dialog_with_overlay"
             )
         }
-
+        
         if (overlayDialogExists) {
             failWithScreenshot(
                 "Overlay dialog should not appear when permission is granted",
-                "unexpected_overlay_dialog_with_all_permissions"
+                "unexpected_overlay_dialog"
             )
         }
-
-        if (queryAllPackagesDialogExists) {
-            failWithScreenshot(
-                "QUERY_ALL_PACKAGES dialog should not appear when permission is granted",
-                "unexpected_query_all_packages_dialog"
-            )
-        }
-
+        
         // Should be on the main screen
         val onMainScreen = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
@@ -473,15 +426,15 @@ class PermissionTest : BaseIntegrationTest() {
             timeoutMs = 1000L,
             description = "chat input field"
         )
-
+        
         if (!onMainScreen) {
             failWithScreenshot(
-                "Should be on main screen when all permissions are granted",
+                "Should be on main screen when all permissions including overlay are granted",
                 "not_on_main_screen_after_all_permissions"
             )
         }
-
-        println("✓ No permission dialogs shown when all permissions including QUERY_ALL_PACKAGES are granted")
+        
+        println("✓ No permission dialogs shown when all permissions including overlay are granted")
         println("✓ App correctly proceeded to main screen")
     }
 }

@@ -38,8 +38,7 @@ open class PermissionManager @Inject constructor(
     enum class RequiredStep {
         MICROPHONE,
         ACCESSIBILITY,
-        OVERLAY,
-        QUERY_ALL_PACKAGES
+        OVERLAY
     }
 
     // StateFlow for microphone permission status
@@ -53,10 +52,6 @@ open class PermissionManager @Inject constructor(
     // StateFlow for overlay permission status
     private val _overlayPermissionGranted = MutableStateFlow(false)
     val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted
-
-    // StateFlow for QUERY_ALL_PACKAGES permission status
-    private val _queryAllPackagesPermissionGranted = MutableStateFlow(false)
-    val queryAllPackagesPermissionGranted: StateFlow<Boolean> = _queryAllPackagesPermissionGranted
 
     // Combined state to track which step is needed next
     private val _nextRequiredStep = MutableStateFlow<RequiredStep?>(null)
@@ -78,7 +73,6 @@ open class PermissionManager @Inject constructor(
         checkMicrophonePermission()
         checkAccessibilityPermission()
         checkOverlayPermission()
-        checkQueryAllPackagesPermission()
         updateNextRequiredStep()
     }
 
@@ -142,41 +136,16 @@ open class PermissionManager @Inject constructor(
         updateNextRequiredStep()
     }
 
-    /**
-     * Check if the app has QUERY_ALL_PACKAGES permission
-     */
-    open fun checkQueryAllPackagesPermission() {
-        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.QUERY_ALL_PACKAGES
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true // Always true for older Android versions
-        }
-        _queryAllPackagesPermissionGranted.value = hasPermission
-        updateNextRequiredStep()
-    }
-
-    /**
-     * Update the QUERY_ALL_PACKAGES permission status
-     */
-    fun updateQueryAllPackagesPermission(granted: Boolean) {
-        _queryAllPackagesPermissionGranted.value = granted
-        updateNextRequiredStep()
-    }
-
     private fun updateNextRequiredStep() {
         val nextStep = when {
             !_microphonePermissionGranted.value -> RequiredStep.MICROPHONE
             !_accessibilityPermissionGranted.value -> RequiredStep.ACCESSIBILITY
             !_overlayPermissionGranted.value -> RequiredStep.OVERLAY
-            !_queryAllPackagesPermissionGranted.value -> RequiredStep.QUERY_ALL_PACKAGES
             else -> null
         }
         val threadName = Thread.currentThread().name
         val threadId = Thread.currentThread().id
-        Log.d(TAG, "updateNextRequiredStep on thread: $threadName (id=$threadId): nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value}, queryAllPackages=${_queryAllPackagesPermissionGranted.value})")
+        Log.d(TAG, "updateNextRequiredStep on thread: $threadName (id=$threadId): nextStep=$nextStep (mic=${_microphonePermissionGranted.value}, acc=${_accessibilityPermissionGranted.value}, serviceRunning=${WhizAccessibilityService.getInstance() != null}, overlay=${_overlayPermissionGranted.value})")
 
         // Force re-emission even if the value is the same to ensure UI updates
         // This helps with race conditions during Activity restart
