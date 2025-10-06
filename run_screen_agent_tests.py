@@ -148,7 +148,7 @@ def test_whatsapp_draft_message(tester):
     assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
 
     # Click on coordinates to open a new chat
-    tester.tap(1000, 2075)
+    tester.tap(950, 2225)
     time.sleep(2)
 
     # Validate we are on the New Chat screen
@@ -159,7 +159,7 @@ def test_whatsapp_draft_message(tester):
     ), "Failed to reach New Chat screen"
 
     # Click to focus on the text input
-    tester.tap(500, 2100)
+    tester.tap(500, 2250)
     time.sleep(1)
 
     # Input text
@@ -167,7 +167,7 @@ def test_whatsapp_draft_message(tester):
     time.sleep(1)
 
     # Click to send the message
-    tester.tap(950, 1400)
+    tester.tap(1000, 1300)
 
     # Wait 10 seconds
     time.sleep(10)
