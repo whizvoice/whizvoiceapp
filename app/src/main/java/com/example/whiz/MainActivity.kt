@@ -626,6 +626,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
+
+        // Stop bubble overlay when MainActivity comes to foreground
+        // This is more reliable than listening to app lifecycle events, which can fire
+        // incorrectly when transitioning between apps (e.g., opening WhatsApp)
+        if (BubbleOverlayService.isActive) {
+            Log.d("MainActivity", "Stopping bubble overlay service - MainActivity resumed")
+            BubbleOverlayService.stop(this)
+        }
+
         // Removed appLifecycleService.notifyAppForegrounded() to fix bubble service issue
         // ProcessLifecycleOwner in WhizApplication handles foreground detection more reliably
         // This prevents false foreground events during app-to-app transitions

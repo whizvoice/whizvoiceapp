@@ -59,7 +59,6 @@ class BubbleOverlayService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var recognitionJob: Job? = null
     private var botResponseJob: Job? = null
-    private var foregroundListenerJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
     private var testTranscriptionReceiver: BroadcastReceiver? = null
@@ -140,7 +139,6 @@ class BubbleOverlayService : Service() {
 
         startVoiceTranscriptionListener()
         startBotResponseListener()
-        startForegroundListener()
         registerTestTranscriptionReceiver()
     }
     
@@ -432,31 +430,6 @@ class BubbleOverlayService : Service() {
         }
     }
 
-    private fun startForegroundListener() {
-        Log.d(TAG, "Starting foreground listener")
-        foregroundListenerJob = serviceScope.launch {
-            // Instead of complex logic with first emission, check if WhizVoice is actually
-            // the foreground app when we receive the event
-            appLifecycleService.appForegroundEvent.collect {
-                // Get the current foreground app package
-                val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-                val runningTasks = activityManager.getRunningTasks(1)
-                val foregroundPackage = runningTasks.firstOrNull()?.topActivity?.packageName
-
-                Log.d(TAG, "Foreground event received. Current foreground app: $foregroundPackage, Our package: $packageName")
-
-                // Only stop if WhizVoice (our app) is actually in foreground
-                // This prevents stopping when we're still transitioning to WhatsApp
-                if (foregroundPackage == packageName) {
-                    Log.d(TAG, "Same WhizVoice variant ($packageName) returned to foreground - stopping bubble overlay service")
-                    stopSelf()
-                } else {
-                    Log.d(TAG, "Ignoring foreground event - different app is in foreground: $foregroundPackage")
-                }
-            }
-        }
-    }
-    
     private fun showMessage(text: String, isUserMessage: Boolean) {
         handler.post {
             val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
@@ -534,7 +507,6 @@ class BubbleOverlayService : Service() {
 
         recognitionJob?.cancel()
         botResponseJob?.cancel()
-        foregroundListenerJob?.cancel()
         hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
             chatHeadView?.let { windowManager.removeView(it) }
