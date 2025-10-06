@@ -9,6 +9,10 @@ import os
 import pytest
 
 
+# Global variable to store logcat process
+_logcat_process = None
+
+
 def install_debug_app(force=False):
     """Install the debug app, optionally with force restart."""
     script_path = os.path.join(os.path.dirname(__file__), 'install.sh')
@@ -21,6 +25,36 @@ def install_debug_app(force=False):
     package_name = "com.example.whiz.debug"
     subprocess.run(['adb', 'shell', 'appops', 'set', package_name, 'SYSTEM_ALERT_WINDOW', 'allow'], check=False)
     subprocess.run(['adb', 'shell', 'pm', 'grant', package_name, 'android.permission.SYSTEM_ALERT_WINDOW'], check=False)
+
+
+def start_logcat():
+    """Start logcat and return the process."""
+    global _logcat_process
+
+    # Create output directory if it doesn't exist
+    output_dir = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Clear logcat buffer
+    subprocess.run(['adb', 'logcat', '-c'], check=False)
+
+    # Start logcat and capture output
+    logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
+    _logcat_process = subprocess.Popen(
+        ['adb', 'logcat'],
+        stdout=open(logcat_file, 'w'),
+        stderr=subprocess.STDOUT
+    )
+    return _logcat_process
+
+
+def stop_logcat():
+    """Stop the logcat process."""
+    global _logcat_process
+    if _logcat_process:
+        _logcat_process.terminate()
+        _logcat_process.wait()
+        _logcat_process = None
 
 
 def navigate_to_my_chats(tester):
@@ -112,7 +146,9 @@ def login_if_needed(tester):
 def app_installed():
     """Install the debug app once for all tests."""
     install_debug_app(force=True)
+    start_logcat()
     yield
+    stop_logcat()
 
 
 @pytest.fixture(scope="function")
@@ -179,6 +215,30 @@ def test_whatsapp_draft_message(tester):
         "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey whats up hows it going just tryna test whiz voice'. "
+        "There is also a yellow notification bubble with the outline of a robot face "
+        "and a microphone icon inside."
+    ), "Failed to draft WhatsApp message correctly"
+
+    # Send a voice transcription to modify the message
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', 'Actually, can you make the message more polite?',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)
+
+    # Validate that the draft was updated
+    tester.screenshot(screenshot_path)
+    assert tester.validate_screenshot(
+        screenshot_path,
+        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+        "similar to 'just trying to test whiz voice' but may not be an exact match. "
+        "The Yellow overlay should have some text in red strike out and some text in blue. "
         "There is also a yellow notification bubble with the outline of a robot face "
         "and a microphone icon inside."
     ), "Failed to draft WhatsApp message correctly"
