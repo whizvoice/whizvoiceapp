@@ -428,7 +428,7 @@ class ScreenAgentTools @Inject constructor(
                                     val rootNode = accessibilityService.getCurrentRootNode()
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
-                                        val isReady = screen == WhatsAppScreen.INSIDE_CHAT || 
+                                        val isReady = screen == WhatsAppScreen.INSIDE_CHAT ||
                                                      // Check for profile view (has Message button)
                                                      rootNode.findAccessibilityNodeInfosByText("Message").let { nodes ->
                                                          val hasMessageButton = nodes != null && nodes.isNotEmpty()
@@ -441,16 +441,26 @@ class ScreenAgentTools @Inject constructor(
                                         false
                                     }
                                 }
-                                
+
                                 // Check if we need to click a "Message" button (profile view)
                                 val newRootNode = accessibilityService.getCurrentRootNode()
                                 if (newRootNode != null) {
-                                    val messageButtonClicked = clickMessageButton(newRootNode, accessibilityService)
-                                    newRootNode.recycle()
-                                    
-                                    if (messageButtonClicked) {
-                                        Log.d(TAG, "Successfully clicked Message button after opening profile")
+                                    val screen = detectWhatsAppScreen(newRootNode)
+
+                                    // Only click Message button if we're NOT already in a chat
+                                    if (screen != WhatsAppScreen.INSIDE_CHAT) {
+                                        val messageButtonClicked = clickMessageButton(newRootNode, accessibilityService)
+
+                                        if (messageButtonClicked) {
+                                            Log.d(TAG, "Successfully clicked Message button after opening profile")
+                                        } else {
+                                            Log.d(TAG, "No Message button found - might already be in chat")
+                                        }
+                                    } else {
+                                        Log.d(TAG, "Already in chat, no need to click Message button")
                                     }
+
+                                    newRootNode.recycle()
                                 }
                                 
                                 // Clean up
@@ -1387,9 +1397,9 @@ class ScreenAgentTools @Inject constructor(
     private fun findChatNodes(node: AccessibilityNodeInfo, chatName: String): List<AccessibilityNodeInfo> {
         val results = mutableListOf<AccessibilityNodeInfo>()
         val normalizedChatName = chatName.lowercase().trim()
-        
+
         Log.d(TAG, "Searching for chat: '$chatName' (normalized: '$normalizedChatName')")
-        
+
         // Search by text - exact match first
         val nodesByText = node.findAccessibilityNodeInfosByText(chatName)
         if (nodesByText != null && nodesByText.isNotEmpty()) {
@@ -1398,10 +1408,38 @@ class ScreenAgentTools @Inject constructor(
             for (node in nodesByText) {
                 val nodeText = node.text?.toString()?.lowercase()?.trim()
                 val nodeDesc = node.contentDescription?.toString()?.lowercase()?.trim()
-                
+
+                // Skip EditText nodes - these are input fields, not chat items
+                if (node.className == "android.widget.EditText") {
+                    Log.d(TAG, "Skipping EditText node: text='${node.text}', desc='${node.contentDescription}'")
+                    node.recycle()
+                    continue
+                }
+
+                // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
+                val cleanedNodeText = nodeText?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+                val cleanedNodeDesc = nodeDesc?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+                val cleanedChatName = normalizedChatName.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
+
+                // Handle truncated names with ellipsis (…)
+                val isEllipsisMatchText = cleanedNodeText?.let { text ->
+                    if (text.contains("…")) {
+                        val prefix = text.substringBefore("…")
+                        cleanedChatName.startsWith(prefix) && prefix.length >= 5
+                    } else false
+                } ?: false
+
+                val isEllipsisMatchDesc = cleanedNodeDesc?.let { desc ->
+                    if (desc.contains("…")) {
+                        val prefix = desc.substringBefore("…")
+                        cleanedChatName.startsWith(prefix) && prefix.length >= 5
+                    } else false
+                } ?: false
+
                 // Check if this is actually a match for the chat name
-                if ((nodeText != null && (nodeText == normalizedChatName || nodeText.startsWith(normalizedChatName))) ||
-                    (nodeDesc != null && (nodeDesc == normalizedChatName || nodeDesc.startsWith(normalizedChatName)))) {
+                if ((cleanedNodeText != null && (cleanedNodeText == cleanedChatName || cleanedNodeText.startsWith(cleanedChatName))) ||
+                    (cleanedNodeDesc != null && (cleanedNodeDesc == cleanedChatName || cleanedNodeDesc.startsWith(cleanedChatName))) ||
+                    isEllipsisMatchText || isEllipsisMatchDesc) {
                     Log.d(TAG, "Confirmed match: text='${node.text}', desc='${node.contentDescription}'")
                     results.add(node)
                 } else {
@@ -1420,16 +1458,36 @@ class ScreenAgentTools @Inject constructor(
                 val itemText = item.text?.toString()
                 if (itemText != null) {
                     val normalizedItemText = itemText.lowercase().trim()
+                    // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
+                    val cleanedItemText = normalizedItemText
+                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
+                        .replace(" ", "")
+                    val cleanedChatName = normalizedChatName
+                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
+                        .replace(" ", "")
+
+                    Log.d(TAG, "Checking chat list item: original='$itemText', cleaned='$cleanedItemText' vs '$cleanedChatName'")
+
+                    // Handle truncated names with ellipsis (…)
+                    val isEllipsisMatch = if (cleanedItemText.contains("…")) {
+                        // Remove ellipsis and everything after it, then check if search term starts with this prefix
+                        val prefix = cleanedItemText.substringBefore("…")
+                        cleanedChatName.startsWith(prefix) && prefix.length >= 5  // At least 5 chars to avoid false matches
+                    } else {
+                        false
+                    }
+
                     // Be more strict: require exact match or that the chat name starts with our search
-                    if (normalizedItemText == normalizedChatName || 
-                        normalizedItemText.startsWith(normalizedChatName) ||
-                        (normalizedChatName.length >= 3 && normalizedItemText.contains(normalizedChatName))) {
+                    if (cleanedItemText == cleanedChatName ||
+                        cleanedItemText.startsWith(cleanedChatName) ||
+                        cleanedItemText.contains(cleanedChatName) ||
+                        isEllipsisMatch) {
                         Log.d(TAG, "Found chat list match: $itemText")
                         results.add(AccessibilityNodeInfo.obtain(item))
                     }
                 }
             }
-            chatListItems.forEach { 
+            chatListItems.forEach {
                 if (!results.contains(it)) it.recycle()
             }
         }
@@ -1439,33 +1497,135 @@ class ScreenAgentTools @Inject constructor(
             Log.d(TAG, "No exact matches found, searching recursively...")
             searchNodeRecursively(node, normalizedChatName, results, strictMatch = false)
         }
-        
+
+        // If we have multiple results, prioritize ones from "Chats" section over "Groups in common"
+        if (results.size > 1) {
+            val chatsResults = results.filter { resultNode ->
+                isInChatsSection(resultNode)
+            }
+
+            if (chatsResults.isNotEmpty()) {
+                Log.d(TAG, "Found ${chatsResults.size} results in 'Chats' section, prioritizing these over ${results.size - chatsResults.size} other results")
+                // Recycle the non-chats results
+                results.filterNot { chatsResults.contains(it) }.forEach { it.recycle() }
+                results.clear()
+                results.addAll(chatsResults)
+            }
+        }
+
         Log.d(TAG, "Total chat nodes found: ${results.size}")
         return results
     }
+
+    /**
+     * Check if a node is in the "Chats" section (not "Groups in common")
+     * by checking if it appears before any "Groups in common" header
+     */
+    private fun isInChatsSection(node: AccessibilityNodeInfo): Boolean {
+        try {
+            // Get the vertical position of the node
+            val nodeRect = android.graphics.Rect()
+            node.getBoundsInScreen(nodeRect)
+
+            // Get the root to search for section headers
+            var current: AccessibilityNodeInfo? = node
+            var root: AccessibilityNodeInfo? = null
+            while (current != null) {
+                val parent = current.parent
+                if (parent == null) {
+                    root = current
+                    break
+                }
+                if (current != node) {
+                    current.recycle()
+                }
+                current = parent
+            }
+
+            if (root != null) {
+                // Look for "Groups in common" text
+                val groupsHeaderNodes = root.findAccessibilityNodeInfosByText("Groups in common")
+                if (groupsHeaderNodes != null && groupsHeaderNodes.isNotEmpty()) {
+                    for (headerNode in groupsHeaderNodes) {
+                        val headerRect = android.graphics.Rect()
+                        headerNode.getBoundsInScreen(headerRect)
+
+                        // If our node is below the "Groups in common" header, it's in that section
+                        if (nodeRect.top > headerRect.bottom) {
+                            groupsHeaderNodes.forEach { it.recycle() }
+                            if (root != node) {
+                                root.recycle()
+                            }
+                            Log.d(TAG, "Node is in 'Groups in common' section (below header)")
+                            return false
+                        }
+                    }
+                    groupsHeaderNodes.forEach { it.recycle() }
+                }
+
+                if (root != node) {
+                    root.recycle()
+                }
+            }
+
+            // If we didn't find a "Groups in common" header above this node, assume it's in Chats
+            Log.d(TAG, "Node is in 'Chats' section (no 'Groups in common' header found above it)")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking if node is in Chats section", e)
+            return true // Default to true if we can't determine
+        }
+    }
     
     private fun searchNodeRecursively(
-        node: AccessibilityNodeInfo, 
-        searchText: String, 
+        node: AccessibilityNodeInfo,
+        searchText: String,
         results: MutableList<AccessibilityNodeInfo>,
         depth: Int = 0,
         strictMatch: Boolean = true
     ) {
         try {
+            // Skip EditText nodes - these are input fields, not chat items
+            if (node.className == "android.widget.EditText") {
+                return
+            }
+
             // Check current node's text
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
-            
+
+            // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
+            val cleanedNodeText = nodeText?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+            val cleanedSearchText = searchText.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
+            val cleanedContentDesc = contentDesc?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+
+            // Handle truncated names with ellipsis (…)
+            val isEllipsisMatchText = cleanedNodeText?.let { text ->
+                if (text.contains("…")) {
+                    val prefix = text.substringBefore("…")
+                    cleanedSearchText.startsWith(prefix) && prefix.length >= 5
+                } else false
+            } ?: false
+
+            val isEllipsisMatchDesc = cleanedContentDesc?.let { desc ->
+                if (desc.contains("…")) {
+                    val prefix = desc.substringBefore("…")
+                    cleanedSearchText.startsWith(prefix) && prefix.length >= 5
+                } else false
+            } ?: false
+
             val matches = if (strictMatch) {
                 // For strict matching, require exact match or starts with
-                ((nodeText != null && (nodeText.lowercase().trim() == searchText || nodeText.lowercase().startsWith(searchText))) ||
-                 (contentDesc != null && (contentDesc.lowercase().trim() == searchText || contentDesc.lowercase().startsWith(searchText))))
+                ((cleanedNodeText != null && (cleanedNodeText == cleanedSearchText || cleanedNodeText.startsWith(cleanedSearchText))) ||
+                 (cleanedContentDesc != null && (cleanedContentDesc == cleanedSearchText || cleanedContentDesc.startsWith(cleanedSearchText))) ||
+                 isEllipsisMatchText || isEllipsisMatchDesc)
             } else {
                 // For non-strict, allow contains
-                ((nodeText != null && nodeText.lowercase().contains(searchText)) ||
-                 (contentDesc != null && contentDesc.lowercase().contains(searchText)))
+                ((cleanedNodeText != null && cleanedNodeText.contains(cleanedSearchText)) ||
+                 (cleanedContentDesc != null && cleanedContentDesc.contains(cleanedSearchText)) ||
+                 isEllipsisMatchText || isEllipsisMatchDesc)
             }
-            
+
             if (matches) {
                 val info = "Found match at depth $depth: text='$nodeText', desc='$contentDesc', class=${node.className}, clickable=${node.isClickable}"
                 Log.d(TAG, info)
