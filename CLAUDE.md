@@ -43,6 +43,10 @@ To run screen agent integration tests (which use ~/android_screenshot_testing/an
 cd whizvoiceapp && ./venv/bin/python run_screen_agent_tests.py
 ```
 
+Test output for screen agent tests is stored in whizvoiceapp/screen_agent_test_output directory:
+- **screen_agent_logcat.log** - Android logcat output during screen agent test execution
+- Screenshots from tests are also saved in this directory
+
 ## Database
 
 Please refer to whizvoiceapp/.supabaseinfo for info about what's in the database and what functions are in the database.
