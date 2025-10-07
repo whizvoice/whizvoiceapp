@@ -230,8 +230,8 @@ def test_whatsapp_draft_message(tester):
     # Click to send the message
     tester.tap(1000, 1300)
 
-    # Wait 10 seconds
-    time.sleep(15)
+    # Wait for pixel at (500, 2250) to change color
+    tester.wait_for_pixel_change(500, 2250, timeout=15.0)
 
     # Validate WhatsApp is open with the draft message
     tester.screenshot(screenshot_path)
