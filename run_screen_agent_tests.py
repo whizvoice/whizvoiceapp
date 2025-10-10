@@ -27,6 +27,16 @@ def install_debug_app(force=False):
     subprocess.run(['adb', 'shell', 'pm', 'grant', package_name, 'android.permission.SYSTEM_ALERT_WINDOW'], check=False)
 
 
+def clear_test_output_dir():
+    """Clear the screen agent test output directory."""
+    import shutil
+
+    output_dir = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+
 def start_logcat():
     """Start logcat and return the process."""
     global _logcat_process
@@ -167,6 +177,7 @@ def login_if_needed(tester):
 @pytest.fixture(scope="session")
 def app_installed():
     """Install the debug app once for all tests."""
+    clear_test_output_dir()
     install_debug_app(force=True)
     start_logcat()
     yield
@@ -269,6 +280,7 @@ def test_whatsapp_draft_message(tester):
     validation_result = tester.validate_screenshot(
         screenshot_path,
         "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'just trying to test whiz voice' but may not be an exact match. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
@@ -296,6 +308,7 @@ def test_whatsapp_draft_message(tester):
     validation_result = tester.validate_screenshot(
         screenshot_path,
         "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is NO yellow overlay. "
         "The most recent rescue mission is something with text similar to: "
         "just trying to test WhizVoice. Though the message may not be exactly the same. "
@@ -305,3 +318,28 @@ def test_whatsapp_draft_message(tester):
     if not validation_result:
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
     assert validation_result, "Failed to draft WhatsApp message correctly"
+
+    # Cleanup: Delete the sent message
+    # Long press on the newly sent message
+    tester.long_press(500, 1280)
+    time.sleep(1)
+
+    # Click delete button
+    tester.tap(800, 200)
+    time.sleep(1)
+
+    # Click confirm delete
+    tester.tap(750, 1150)
+    time.sleep(2)
+
+    # Validate that the message was deleted
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
+        "The most recent message in the chat has been deleted."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
+    assert validation_result, "Failed to delete the sent message"
