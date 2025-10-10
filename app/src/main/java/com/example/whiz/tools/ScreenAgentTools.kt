@@ -573,7 +573,7 @@ class ScreenAgentTools @Inject constructor(
     
     suspend fun draftWhatsAppMessage(message: String, previousText: String? = null): DraftResult {
         Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText")
-        
+
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -583,7 +583,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Accessibility service not enabled"
                 )
             }
-            
+
             // Wait to ensure we're in a chat
             waitForCondition(maxWaitMs = 1000) {
                 val rootNode = accessibilityService.getCurrentRootNode()
@@ -595,7 +595,7 @@ class ScreenAgentTools @Inject constructor(
                     false
                 }
             }
-            
+
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return DraftResult(
@@ -604,14 +604,14 @@ class ScreenAgentTools @Inject constructor(
                     error = "Could not get root node"
                 )
             }
-            
+
             // Find the WhatsApp message input field specifically
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
             findWhatsAppMessageInput(rootNode, inputNodes, 0)
-            
+
             if (inputNodes.isNotEmpty()) {
                 Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
-                
+
                 // Look for the best candidate - prefer one closer to bottom but not at very bottom (keyboard area)
                 val screenHeight = context.resources.displayMetrics.heightPixels
                 val inputNode = if (inputNodes.size > 1) {
@@ -625,20 +625,111 @@ class ScreenAgentTools @Inject constructor(
                 } else {
                     inputNodes[0]
                 }
-                
-                // Get the bounds of the input field
+
+                // Get the initial bounds of the input field
+                val initialRect = android.graphics.Rect()
+                inputNode.getBoundsInScreen(initialRect)
+
+                Log.d(TAG, "Initial input field bounds before keyboard: $initialRect (top=${initialRect.top}, bottom=${initialRect.bottom})")
+                Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
+
+                // Click on the input field to focus it and open the keyboard
+                val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
+                                   inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+                if (clickSuccess) {
+                    Log.d(TAG, "Clicked/focused input field to open keyboard")
+
+                    // Wait for the keyboard to open and input field to move up
+                    // The input field should move significantly upward when keyboard opens
+                    val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
+                        val currentRootNode = accessibilityService.getCurrentRootNode()
+                        if (currentRootNode != null) {
+                            val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                            findWhatsAppMessageInput(currentRootNode, currentInputNodes, 0)
+
+                            if (currentInputNodes.isNotEmpty()) {
+                                val currentRect = android.graphics.Rect()
+                                currentInputNodes[0].getBoundsInScreen(currentRect)
+
+                                // Check if input field has moved up significantly (at least 300px)
+                                val movedUp = initialRect.top - currentRect.top > 300
+
+                                currentInputNodes.forEach { it.recycle() }
+                                currentRootNode.recycle()
+
+                                movedUp
+                            } else {
+                                currentRootNode.recycle()
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+
+                    if (keyboardOpened) {
+                        Log.d(TAG, "Keyboard opened successfully, input field moved up")
+                    } else {
+                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                    }
+                } else {
+                    Log.w(TAG, "Could not click/focus input field to open keyboard")
+                }
+
+                // Wait a bit more for keyboard animation to complete
+                delay(300)
+
+                // Get the updated root node and input field after keyboard opened
+                val updatedRootNode = accessibilityService.getCurrentRootNode()
+                if (updatedRootNode == null) {
+                    inputNodes.forEach { it.recycle() }
+                    rootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not get root node after keyboard opened"
+                    )
+                }
+
+                // Find the input field again to get its new position
+                val updatedInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                findWhatsAppMessageInput(updatedRootNode, updatedInputNodes, 0)
+
+                if (updatedInputNodes.isEmpty()) {
+                    inputNodes.forEach { it.recycle() }
+                    rootNode.recycle()
+                    updatedRootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not find input field after keyboard opened"
+                    )
+                }
+
+                val finalInputNode = if (updatedInputNodes.size > 1) {
+                    updatedInputNodes.minByOrNull { node ->
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        Math.abs(rect.top - (screenHeight * 0.7)).toInt()
+                    } ?: updatedInputNodes[0]
+                } else {
+                    updatedInputNodes[0]
+                }
+
+                // Get the final bounds of the input field (after keyboard is open)
                 val rect = android.graphics.Rect()
-                inputNode.getBoundsInScreen(rect)
-                
+                finalInputNode.getBoundsInScreen(rect)
+
                 // Get the app window bounds (WhatsApp's actual width on screen)
                 val appBounds = android.graphics.Rect()
-                rootNode.getBoundsInScreen(appBounds)
-                
+                updatedRootNode.getBoundsInScreen(appBounds)
+
                 Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
                 Log.d(TAG, "WhatsApp window bounds: $appBounds (width=${appBounds.width()})")
                 Log.d(TAG, "Screen dimensions: ${context.resources.displayMetrics.widthPixels} x ${context.resources.displayMetrics.heightPixels}")
                 Log.d(TAG, "Input field is at ${(rect.top.toFloat() / context.resources.displayMetrics.heightPixels * 100).toInt()}% of screen height")
-                
+
                 // Create bounds for overlay that uses app width but input field's vertical position
                 val overlayBounds = android.graphics.Rect(
                     appBounds.left,  // Use app's left edge
@@ -646,7 +737,7 @@ class ScreenAgentTools @Inject constructor(
                     appBounds.right, // Use app's right edge
                     rect.bottom      // Use input field's bottom
                 )
-                
+
                 // Start the draft overlay service with the bounds, message, and previousText
                 val overlayStarted = MessageDraftOverlayService.show(
                     context,
@@ -654,11 +745,13 @@ class ScreenAgentTools @Inject constructor(
                     message,
                     previousText
                 )
-                
+
                 // Clean up
                 inputNodes.forEach { it.recycle() }
+                updatedInputNodes.forEach { it.recycle() }
                 rootNode.recycle()
-                
+                updatedRootNode.recycle()
+
                 return DraftResult(
                     success = overlayStarted,
                     message = message,
@@ -666,17 +759,17 @@ class ScreenAgentTools @Inject constructor(
                     error = if (!overlayStarted) "Failed to show draft overlay" else null
                 )
             }
-            
+
             // Clean up
             inputNodes.forEach { it.recycle() }
             rootNode.recycle()
-            
+
             return DraftResult(
                 success = false,
                 message = message,
                 error = "Could not find message input field"
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting WhatsApp message", e)
             return DraftResult(
