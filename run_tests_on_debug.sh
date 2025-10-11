@@ -887,6 +887,12 @@ log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 # Read test credentials
 read_test_credentials
 
+# Push test credentials to device for tests to load
+log_with_time "📲 Pushing test credentials to device..."
+adb shell mkdir -p /data/local/tmp >/dev/null 2>&1 || true
+adb push test_credentials.json /data/local/tmp/test_credentials.json >/dev/null 2>&1
+log_with_time "✅ Test credentials pushed to device"
+
 if [[ "$CLEAN_AFTER_TESTS" == "true" ]]; then
     log_with_time "🗑️ Will uninstall debug app after tests complete"
 else
