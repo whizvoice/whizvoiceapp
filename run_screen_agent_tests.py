@@ -9,6 +9,15 @@ import os
 import pytest
 
 
+# Set up Android SDK paths
+ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
+PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
+
+# Add platform-tools to PATH for all subprocess calls
+os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
+os.environ['ANDROID_HOME'] = ANDROID_HOME
+
+
 # Global variable to store logcat process
 _logcat_process = None
 
@@ -326,10 +335,10 @@ def test_whatsapp_draft_message(tester):
 
     # Click delete button
     tester.tap(800, 200)
-    time.sleep(1)
+    time.sleep(2)
 
     # Click confirm delete
-    tester.tap(750, 1150)
+    tester.tap(750, 1290)
     time.sleep(2)
 
     # Validate that the message was deleted
