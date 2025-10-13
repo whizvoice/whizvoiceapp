@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!-- Debug-only broadcast receiver for checking auth state via ADB -->
+        <receiver
+            android:name=".debug.AuthStateReceiver"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="com.example.whiz.debug.CHECK_AUTH_STATE" />
+                <action android:name="com.example.whiz.debug.FORCE_LOGOUT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Debug-only broadcast receiver for simulating voice transcriptions via ADB -->
+        <receiver
+            android:name=".test.TestTranscriptionReceiver"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="com.example.whiz.TEST_TRANSCRIPTION" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

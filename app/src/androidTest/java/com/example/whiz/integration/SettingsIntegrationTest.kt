@@ -49,7 +49,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
+
         // Don't clear tokens in @Before since test account should have them set
         // Tests will handle clearing and restoring as needed
         Log.d(TAG, "Test setup complete - preserving existing test account tokens")
@@ -60,33 +60,101 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // CRITICAL: Always restore valid tokens to prevent test pollution
         // This ensures subsequent tests have valid API keys even if a test fails
         Log.d(TAG, "Test cleanup - restoring valid test account tokens")
-        
+
         try {
             // Get the actual test credentials
             val testCredentials = TestCredentialsManager.credentials
             val actualClaudeKey = testCredentials.testEnvironment.claudeApiKey
             val actualAsanaToken = testCredentials.testEnvironment.asanaToken
-            
+
             // Use runBlocking to ensure tokens are restored before next test
             runBlocking {
+                // Restore Claude API key - call once and wait for it to persist
                 try {
-                    // Restore Claude API key
                     userPreferences.setClaudeToken(actualClaudeKey)
-                    Log.d(TAG, "Restored valid Claude API key in cleanup")
-                    
-                    // Restore Asana token  
-                    userPreferences.setAsanaToken(actualAsanaToken)
-                    Log.d(TAG, "Restored valid Asana token in cleanup")
+                    Log.d(TAG, "Called setClaudeToken, waiting for it to persist...")
+
+                    // Poll until the token is confirmed set, with timeout
+                    val maxAttempts = 10
+                    var attempt = 0
+                    var tokenIsSet = false
+
+                    while (attempt < maxAttempts && !tokenIsSet) {
+                        delay(300) // Wait between checks
+
+                        // Check if the token is now set
+                        tokenIsSet = withTimeout(2000) {
+                            userPreferences.hasClaudeToken.first()
+                        } == true
+
+                        attempt++
+
+                        if (!tokenIsSet && attempt < maxAttempts) {
+                            Log.d(TAG, "Token not yet persisted, checking again... (attempt $attempt/$maxAttempts)")
+                        }
+                    }
+
+                    if (!tokenIsSet) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Claude token was not set after ${maxAttempts * 300}ms!"
+                        Log.e(TAG, errorMsg)
+                        fail(errorMsg)
+                    }
+
+                    Log.d(TAG, "✅ VERIFIED: Valid Claude API key restored successfully in cleanup after ${attempt * 300}ms")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restore tokens in cleanup: ${e.message}")
-                    // Even if this fails, we tried our best to restore
+                    val errorMsg = "❌ CRITICAL: Failed to restore Claude API key in cleanup: ${e.message}"
+                    Log.e(TAG, errorMsg)
+                    e.printStackTrace()
+                    fail(errorMsg)
+                }
+
+                // Restore Asana token - call once and wait for it to persist
+                try {
+                    userPreferences.setAsanaToken(actualAsanaToken)
+                    Log.d(TAG, "Called setAsanaToken, waiting for it to persist...")
+
+                    // Poll until the token is confirmed set, with timeout
+                    val maxAttempts = 10
+                    var attempt = 0
+                    var tokenIsSet = false
+
+                    while (attempt < maxAttempts && !tokenIsSet) {
+                        delay(300) // Wait between checks
+
+                        // Check if the token is now set
+                        tokenIsSet = withTimeout(2000) {
+                            userPreferences.hasAsanaToken.first()
+                        } == true
+
+                        attempt++
+
+                        if (!tokenIsSet && attempt < maxAttempts) {
+                            Log.d(TAG, "Token not yet persisted, checking again... (attempt $attempt/$maxAttempts)")
+                        }
+                    }
+
+                    if (!tokenIsSet) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Asana token was not set after ${maxAttempts * 300}ms!"
+                        Log.e(TAG, errorMsg)
+                        fail(errorMsg)
+                    }
+
+                    Log.d(TAG, "✅ VERIFIED: Valid Asana token restored successfully in cleanup after ${attempt * 300}ms")
+                } catch (e: Exception) {
+                    val errorMsg = "❌ CRITICAL: Failed to restore Asana token in cleanup: ${e.message}"
+                    Log.e(TAG, errorMsg)
+                    e.printStackTrace()
+                    fail(errorMsg)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error during token restoration: ${e.message}")
+            val errorMsg = "❌ CRITICAL: Error during token restoration in tearDown: ${e.message}"
+            Log.e(TAG, errorMsg)
+            e.printStackTrace()
+            fail(errorMsg)
         }
-        
-        Log.d(TAG, "Test cleanup complete - tokens restored for test account")
+
+        Log.d(TAG, "✅ Test cleanup complete - tokens verified and restored for test account")
     }
     
     private fun navigateToSettings(): Boolean {
@@ -344,6 +412,23 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.d(TAG, "✓ Invalid token saved successfully")
         }
         
+        // Wait for the Snackbar message to confirm server has responded
+        Log.d(TAG, "Waiting for server confirmation via Snackbar message")
+        val serverConfirmed = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { 
+                composeTestRule.onNodeWithText("Claude API Key saved successfully!")
+            },
+            timeoutMs = 3000,
+            description = "Server confirmation Snackbar"
+        )
+        
+        if (serverConfirmed) {
+            Log.d(TAG, "✓ Server confirmed token was saved")
+        } else {
+            Log.d(TAG, "Warning: Snackbar confirmation not found, but continuing with test")
+        }
+        
         // Test Clear button functionality - it should remove token without requiring new input
         Log.d(TAG, "Testing Clear button removes token without requiring new input")
         
@@ -363,67 +448,67 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 composeTestRule.onNode(hasContentDescription("Clear Claude token"))
                     .assertIsEnabled()
                 Log.d(TAG, "✓ Clear button is enabled after setting invalid token")
-                
-                // Click Clear to remove the token
-                composeTestRule.onNode(hasContentDescription("Clear Claude token"))
-                    .performClick()
-                Log.d(TAG, "Clicked Clear button to remove invalid token")
-                
-                // Verify input field appears and is empty
-                val inputFieldAfterClear = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { 
-                        composeTestRule.onNodeWithText("Enter Claude API Key")
-                    },
-                    timeoutMs = 3000,
-                    description = "Input field after clearing"
-                )
-                
-                if (inputFieldAfterClear) {
-                    Log.d(TAG, "✓ Clear button successfully removed token - input field is now visible")
-                    
-                    // Set the invalid token again for the next test
-                    val inputField = composeTestRule.onNode(
-                        hasContentDescription("Claude API Key input field"),
-                        useUnmergedTree = true
-                    )
-                    inputField.performTextInput(invalidToken)
-                    
-                    // Save it again - use content description
-                    val saveAgainButton = ComposeTestHelper.waitForElement(
-                        composeTestRule = composeTestRule,
-                        selector = { 
-                            composeTestRule.onNode(hasContentDescription("Save Claude API Key button"))
-                        },
-                        timeoutMs = 3000,
-                        description = "Save Claude API Key button after re-entering token"
-                    )
-                    if (saveAgainButton) {
-                        composeTestRule.onNode(hasContentDescription("Save Claude API Key button")).performClick()
-                        
-                        // Wait for save to complete by checking for "Token set" confirmation
-                        val tokenSaved = ComposeTestHelper.waitForElement(
-                            composeTestRule = composeTestRule,
-                            selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
-                            timeoutMs = 2000,
-                            description = "Claude token set confirmation after re-save"
-                        )
-                        
-                        if (tokenSaved) {
-                            Log.d(TAG, "Re-saved invalid token for chat test")
-                        } else {
-                            Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
-                        }
-                    } else {
-                        Log.e(TAG, "Could not find Save button after re-entering token")
-                    }
-                } else {
-                    Log.e(TAG, "FAILURE: Input field not visible after clicking Clear")
-                    failWithScreenshot("clear_did_not_work", "Clear button did not remove token - input field not visible")
-                }
             } catch (e: AssertionError) {
                 Log.e(TAG, "FAILURE: Clear button is disabled after setting invalid token")
                 failWithScreenshot("clear_disabled_after_invalid", "Clear button should be enabled after setting token")
+            }
+            
+            // Click Clear to remove the token
+            composeTestRule.onNode(hasContentDescription("Clear Claude token"))
+                .performClick()
+            Log.d(TAG, "Clicked Clear button to remove invalid token")
+            
+            // Verify input field appears and is empty
+            val inputFieldAfterClear = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { 
+                    composeTestRule.onNodeWithText("Enter Claude API Key")
+                },
+                timeoutMs = 1000,
+                description = "Input field after clearing"
+            )
+            
+            if (inputFieldAfterClear) {
+                Log.d(TAG, "✓ Clear button successfully removed token - input field is now visible")
+                
+                // Set the invalid token again for the next test
+                val inputField = composeTestRule.onNode(
+                    hasContentDescription("Claude API Key input field"),
+                    useUnmergedTree = true
+                )
+                inputField.performTextInput(invalidToken)
+                
+                // Save it again - use content description
+                val saveAgainButton = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNode(hasContentDescription("Save Claude API Key button"))
+                    },
+                    timeoutMs = 3000,
+                    description = "Save Claude API Key button after re-entering token"
+                )
+                if (saveAgainButton) {
+                    composeTestRule.onNode(hasContentDescription("Save Claude API Key button")).performClick()
+                    
+                    // Wait for save to complete by checking for "Token set" confirmation
+                    val tokenSaved = ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
+                        timeoutMs = 2000,
+                        description = "Claude token set confirmation after re-save"
+                    )
+                    
+                    if (tokenSaved) {
+                        Log.d(TAG, "Re-saved invalid token for chat test")
+                    } else {
+                        Log.w(TAG, "Token set confirmation not shown after re-save, but continuing")
+                    }
+                } else {
+                    Log.e(TAG, "Could not find Save button after re-entering token")
+                }
+            } else {
+                Log.e(TAG, "FAILURE: Input field not visible after clicking Clear")
+                failWithScreenshot("clear_did_not_work", "Clear button did not remove token - input field not visible")
             }
         } else {
             Log.e(TAG, "Clear button not found after setting invalid token")
@@ -664,6 +749,50 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             // Still continue with the test as the save operation might have succeeded
         }
         
+        // CRITICAL: Ensure Claude API key is restored programmatically as a safety measure
+        // The UI-based restoration above might fail or be incomplete
+        runBlocking {
+            try {
+                userPreferences.setClaudeToken(actualClaudeKey)
+                Log.d(TAG, "Called setClaudeToken programmatically, verifying...")
+
+                // Give it a moment to persist
+                delay(500)
+
+                // VERIFY: Read back the token to confirm it was set
+                val tokenIsSet = withTimeout(2000) {
+                    userPreferences.hasClaudeToken.first()
+                }
+
+                if (tokenIsSet != true) {
+                    val errorMsg = "❌ VERIFICATION FAILED: Programmatic Claude token restore failed! hasClaudeToken returned: $tokenIsSet"
+                    Log.e(TAG, errorMsg)
+                    failWithScreenshot("programmatic_restore_failed", errorMsg)
+                }
+
+                Log.d(TAG, "✅ VERIFIED: Programmatically restored Claude API key successfully")
+            } catch (e: Exception) {
+                val errorMsg = "❌ ERROR: Failed to programmatically restore Claude token: ${e.message}"
+                Log.e(TAG, errorMsg)
+                e.printStackTrace()
+                failWithScreenshot("programmatic_restore_exception", errorMsg)
+            }
+        }
+
+        // Wait for the UI to reflect the programmatically restored token
+        val tokenRestoredInUI = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNode(hasContentDescription("Claude token set")) },
+            timeoutMs = 1500,
+            description = "Token set confirmation after programmatic restore"
+        )
+
+        if (tokenRestoredInUI) {
+            Log.d(TAG, "✓ UI confirmed Claude token is set after programmatic restoration")
+        } else {
+            Log.d(TAG, "Warning: UI confirmation timed out, but programmatic verification already succeeded")
+        }
+        
         Log.d(TAG, "✓ TEST COMPLETE: Successfully tested Claude API key management and restored test account token")
         Log.d(TAG, "========== testClaudeApiKey_SetAndUnset completed successfully ==========")
     }
@@ -767,7 +896,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     selector = { 
                         composeTestRule.onNodeWithText("Enter new Asana Access Token")
                     },
-                    timeoutMs = 5000,
+                    timeoutMs = 1000,
                     description = "Asana Access Token input field after clicking Change"
                 )
                 
@@ -908,7 +1037,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     selector = { 
                         composeTestRule.onNodeWithText("Enter Asana Access Token")
                     },
-                    timeoutMs = 3000,
+                    timeoutMs = 1000,
                     description = "Input field after clearing"
                 )
                 
@@ -997,7 +1126,23 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             if (changeButton) {
                 composeTestRule.onNode(hasContentDescription("Change Asana token")).performClick()
                 Log.d(TAG, "Clicked Change button to access input field")
-                Thread.sleep(500) // Brief wait for UI transition
+                
+                // Wait for the input field to appear after clicking Change
+                val inputFieldAppeared = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { 
+                        composeTestRule.onNode(
+                            hasContentDescription("Asana Access Token input field"),
+                            useUnmergedTree = true
+                        )
+                    },
+                    timeoutMs = 2000,
+                    description = "Asana Access Token input field after clicking Change"
+                )
+                
+                if (!inputFieldAppeared) {
+                    Log.w(TAG, "Input field did not appear immediately after clicking Change, continuing anyway")
+                }
             }
         } else {
             Log.d(TAG, "Input field already visible, no need to click Change")
@@ -1088,6 +1233,13 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
     
     @Test
     fun testVoiceSettings_CustomConfiguration() {
+        // Save the initial voice settings to restore at the end
+        var initialVoiceSettings: VoiceSettings? = null
+        runBlocking {
+            initialVoiceSettings = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Initial voice settings: $initialVoiceSettings")
+        }
+        
         if (!navigateToSettings()) {
             failWithScreenshot("navigate_to_settings_failed", "Failed to navigate to Settings screen")
         }
@@ -1124,13 +1276,29 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("voice_settings_not_found", "Voice Settings section not found")
         }
         
-        // Check current state and ensure custom settings are enabled
-        try {
-            composeTestRule.onNodeWithText("Speech Rate").assertExists()
-            Log.d(TAG, "Custom settings already visible")
-        } catch (e: AssertionError) {
-            Log.d(TAG, "Turning off system defaults to show custom settings")
+        // STEP 1: First ensure we're in custom settings mode (system defaults OFF)
+        // This gives us a known starting state for testing
+        val customSettingsVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Speech Rate") },
+            timeoutMs = 500,
+            description = "Speech Rate text (checking if custom settings visible)"
+        )
+        
+        if (!customSettingsVisible) {
+            Log.d(TAG, "System defaults are currently ON - turning them OFF to show custom settings")
             // Find and click the switch using its content description
+            val switchFound = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch") },
+                timeoutMs = 1000,
+                description = "Use System TTS Settings switch"
+            )
+            
+            if (!switchFound) {
+                failWithScreenshot("system_tts_switch_not_found", "Use System TTS Settings switch not found")
+            }
+            
             composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
                 .performClick()
             
@@ -1139,7 +1307,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText("Speech Rate") },
                 timeoutMs = 1000,
-                description = "Speech Rate text"
+                description = "Speech Rate text after toggle"
             )
             if (!speechRateFound) {
                 failWithScreenshot("speech_rate_not_found", "Speech Rate not found after disabling system defaults")
@@ -1154,6 +1322,8 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 timeoutMs = 2000,
                 description = "Test Playback button to be enabled after toggle"
             )
+        } else {
+            Log.d(TAG, "Custom settings already visible (system defaults already OFF)")
         }
         
         // Test adjusting speech rate
@@ -1183,35 +1353,54 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Test the Test Playback button
         Log.d(TAG, "Testing voice playback")
         
-        try {
-            // Wait for the button to be enabled (auto-save may still be in progress)
-            val testPlaybackEnabled = ComposeTestHelper.waitForElementEnabled(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithText("Test Playback") },
-                timeoutMs = 2000,
-                description = "Test Playback button to be enabled"
-            )
-            
-            if (testPlaybackEnabled) {
-                composeTestRule.onNodeWithText("Test Playback")
-                    .performClick()
-                Log.d(TAG, "Successfully clicked Test Playback button")
-            } else {
-                failWithScreenshot("test_playback_disabled", "Test Playback button remained disabled")
-            }
-        } catch (e: AssertionError) {
-            failWithScreenshot("test_playback_not_found", "Test Playback button not found or disabled: ${e.message}")
+        // Wait for the button to be enabled (auto-save may still be in progress)
+        val testPlaybackEnabled = ComposeTestHelper.waitForElementEnabled(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Test Playback") },
+            timeoutMs = 2000,
+            description = "Test Playback button to be enabled"
+        )
+        
+        if (!testPlaybackEnabled) {
+            failWithScreenshot("test_playback_disabled", "Test Playback button remained disabled")
         }
         
-        // Take screenshot of voice settings
-        Log.d(TAG, "Screenshot would be taken here: voice_settings_custom")
+        composeTestRule.onNodeWithText("Test Playback")
+            .performClick()
+        Log.d(TAG, "Successfully clicked Test Playback button")
         
-        // Test switching to system defaults
-        Log.d(TAG, "Testing switch to system defaults")
+        // STEP 2: Now test switching to system defaults (turning them ON)
+        Log.d(TAG, "Testing switch to system defaults - turning system defaults ON")
         
-        // Find and click the switch to turn on system defaults using content description
+        // At this point, custom settings are visible (system defaults are OFF)
+        // We will now click the switch to turn system defaults ON
+        val switchForSystemDefaults = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch") },
+            timeoutMs = 1000,
+            description = "Use System TTS Settings switch for enabling"
+        )
+        
+        if (!switchForSystemDefaults) {
+            failWithScreenshot("switch_not_found_for_system", "Switch not found for enabling system defaults")
+        }
+        
+        // First verify the current state of the toggle before clicking
+        runBlocking {
+            val currentSettings = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Current settings before toggle click: useSystemDefaults=${currentSettings.useSystemDefaults}")
+        }
+        
+        Log.d(TAG, "Clicking switch to enable system defaults (hide custom settings)")
         composeTestRule.onNodeWithContentDescription("Use System TTS Settings switch")
             .performClick()
+        
+        // Verify the toggle actually changed by checking preferences
+        // This also ensures the click has been processed
+        runBlocking {
+            val settingsAfterClick = userPreferences.voiceSettings.first()
+            Log.d(TAG, "Settings after toggle click: useSystemDefaults=${settingsAfterClick.useSystemDefaults}")
+        }
         
         // Wait for auto-save to complete after toggle change
         val saveCompleted = ComposeTestHelper.waitForElementEnabled(
@@ -1225,11 +1414,20 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             Log.w(TAG, "Test Playback button still disabled after 2s, continuing anyway")
         }
         
-        // Verify custom settings are hidden
-        try {
-            composeTestRule.onNodeWithText("Speech Rate").assertDoesNotExist()
-        } catch (e: AssertionError) {
-            Log.w(TAG, "Speech Rate still visible after switching to system defaults")
+        // Verify custom settings are now hidden (Speech Rate should NOT be visible)
+        // We use a short timeout expecting it NOT to be found
+        val speechRateStillVisible = ComposeTestHelper.waitForElement(
+            composeTestRule = composeTestRule,
+            selector = { composeTestRule.onNodeWithText("Speech Rate") },
+            timeoutMs = 500,
+            description = "Speech Rate should be hidden"
+        )
+        
+        if (speechRateStillVisible) {
+            Log.e(TAG, "ERROR: Speech Rate is still visible after switching to system defaults - custom settings should be hidden!")
+            failWithScreenshot("custom_settings_still_visible", "Custom settings still visible when system defaults should be ON")
+        } else {
+            Log.d(TAG, "✓ Custom settings correctly hidden after enabling system defaults")
         }
         
         // Test Playback should still be available - verify it's enabled
@@ -1246,12 +1444,28 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         
         Log.d(TAG, "Screenshot would be taken here: voice_settings_system_defaults")
         
-        // Verify settings were saved
+        // Verify settings were saved - replace assertion with check and screenshot on failure
         runBlocking {
             val settings = withTimeout(1000) {
                 userPreferences.voiceSettings.first()
             }
-            assertTrue("System defaults should be enabled", settings.useSystemDefaults)
+            if (!settings.useSystemDefaults) {
+                Log.e(TAG, "FAILURE: System defaults should be enabled but it's not")
+                failWithScreenshot("system_defaults_not_enabled", "System defaults should be enabled but settings show: useSystemDefaults=${settings.useSystemDefaults}")
+            } else {
+                Log.d(TAG, "✓ System defaults correctly enabled in saved settings")
+            }
+            
+            // Restore the initial voice settings
+            if (initialVoiceSettings != null) {
+                Log.d(TAG, "Restoring initial voice settings: $initialVoiceSettings")
+                try {
+                    userPreferences.saveVoiceSettings(initialVoiceSettings!!)
+                    Log.d(TAG, "✓ Successfully restored initial voice settings")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restore initial voice settings: ${e.message}")
+                }
+            }
         }
     }
     
@@ -1489,7 +1703,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         val premiumActiveFound = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
             selector = { composeTestRule.onNodeWithText("Premium Subscription Active") },
-            timeoutMs = 1000,
+            timeoutMs = 1500,
             description = "Premium Subscription Active text"
         )
         if (!premiumActiveFound) {
@@ -1714,16 +1928,21 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             
             if (changeButtonFound) {
-                composeTestRule.onNodeWithContentDescription("Change Claude token")
-                    .performClick()
-                
-                // Wait for input field to appear
-                ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
-                    timeoutMs = 1000,
-                    description = "Claude API Key input field after Change"
-                )
+                try {
+                    composeTestRule.onNodeWithContentDescription("Change Claude token")
+                        .performClick()
+                    
+                    // Wait for input field to appear
+                    ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithContentDescription("Claude API Key input field") },
+                        timeoutMs = 1000,
+                        description = "Claude API Key input field after Change"
+                    )
+                } catch (e: AssertionError) {
+                    Log.e(TAG, "Failed to click Change button: ${e.message}")
+                    failWithScreenshot("change_button_click_failed", "Found Change button but could not click it")
+                }
             }
         }
         
@@ -1738,7 +1957,27 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             failWithScreenshot("visibility_input_failed", "Could not enter token for visibility test")
         }
         
-        // Find the visibility toggle icon
+        // Check if visibility toggle exists without throwing assertion
+        val visibilityToggleExists = try {
+            composeTestRule.onNode(
+                hasContentDescription("Show password")
+                    .or(hasContentDescription("Show token"))
+                    .or(hasContentDescription("Hide password"))
+                    .or(hasContentDescription("Hide token"))
+            ).assertExists()
+            true
+        } catch (e: AssertionError) {
+            Log.d(TAG, "Visibility toggle not found - taking screenshot to document current UI")
+            false
+        }
+        
+        if (!visibilityToggleExists) {
+            // Take screenshot to show what the UI actually looks like
+            failWithScreenshot("visibility_toggle_not_found", "Could not find visibility toggle icon - UI may not have this feature implemented")
+            return // Exit test since we can't proceed without the toggle
+        }
+        
+        // If we get here, the visibility toggle exists
         try {
             val visibilityIcon = composeTestRule.onNode(
                 hasContentDescription("Show password")
@@ -1746,8 +1985,10 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             )
             // Click to show the token
             visibilityIcon.performClick()
+            Log.d(TAG, "Successfully clicked visibility toggle to show token")
         } catch (e: AssertionError) {
-            failWithScreenshot("visibility_toggle_not_found", "Could not find visibility toggle icon")
+            Log.e(TAG, "Could not click visibility toggle: ${e.message}")
+            failWithScreenshot("visibility_toggle_click_failed", "Found toggle but could not click it")
         }
         
         Log.d(TAG, "Screenshot would be taken here: token_visible")
@@ -1758,6 +1999,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                 hasContentDescription("Hide password")
                     .or(hasContentDescription("Hide token"))
             ).performClick()
+            Log.d(TAG, "Successfully clicked visibility toggle to hide token")
         } catch (e: AssertionError) {
             Log.w(TAG, "Could not hide token again")
         }

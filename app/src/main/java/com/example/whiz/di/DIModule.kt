@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.first
 import okhttp3.Interceptor
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.whiz.accessibility.AccessibilityChecker
+import com.example.whiz.accessibility.AccessibilityCheckerImpl
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -210,5 +212,13 @@ object AppModule {
         authRepository: AuthRepository
     ): UserPreferences {
         return UserPreferences(apiService, authRepository)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideAccessibilityChecker(
+        @ApplicationContext context: Context
+    ): AccessibilityChecker {
+        return AccessibilityCheckerImpl(context)
     }
 }

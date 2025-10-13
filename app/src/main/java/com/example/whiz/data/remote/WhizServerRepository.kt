@@ -38,6 +38,11 @@ sealed class WebSocketEvent {
         val conversationId: Long? = null,
         val clientConversationId: Long? = null
     ) : WebSocketEvent()
+    data class ToolExecution(
+        val toolRequest: org.json.JSONObject,
+        val requestId: String? = null,
+        val conversationId: Long? = null
+    ) : WebSocketEvent()
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
@@ -139,6 +144,7 @@ class WhizServerRepository @Inject constructor(
                 _connectionStateEvents.emit(event)
             }
             is WebSocketEvent.Message,
+            is WebSocketEvent.ToolExecution,
             is WebSocketEvent.Error,
             is WebSocketEvent.AuthError,
             is WebSocketEvent.Cancelled,
@@ -174,6 +180,7 @@ class WhizServerRepository @Inject constructor(
                 is WebSocketEvent.Error -> "ERROR: ${e.error.message}"
                 is WebSocketEvent.AuthError -> "AUTH_ERROR: ${e.message}"
                 is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
+                is WebSocketEvent.ToolExecution -> "TOOL_EXECUTION(requestId=${e.requestId}): ${e.toolRequest.optString("tool")}"
                 is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
                 is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
             }
@@ -223,6 +230,26 @@ class WhizServerRepository @Inject constructor(
     }
     
     /**
+     * Filter out function call XML blocks from message content.
+     * These XML blocks are internal tool call structures that should not be displayed to users.
+     * They typically look like: <function_calls>...</function_calls> or <function_result>...</function_result>
+     */
+    private fun filterToolCallXML(content: String): String {
+        var filtered = content
+        
+        // Remove function_calls blocks
+        filtered = filtered.replace(Regex("<function_calls>.*?</function_calls>", RegexOption.DOT_MATCHES_ALL), "")
+        
+        // Remove function_result blocks  
+        filtered = filtered.replace(Regex("<function_result>.*?</function_result>", RegexOption.DOT_MATCHES_ALL), "")
+        
+        // Clean up any extra whitespace left behind
+        filtered = filtered.replace(Regex("\n{3,}"), "\n\n").trim()
+        
+        return filtered
+    }
+    
+    /**
      * Extract the conversation ID from the current WebSocket connection's URL
      * Checks for both conversation_id (positive) and client_conversation_id (negative) parameters
      */
@@ -242,32 +269,30 @@ class WhizServerRepository @Inject constructor(
     
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
-        
-        // If we're turning off persistent disconnect, also try to reconnect with last known conversation
-        var effectiveConversationId = conversationId
+
+        // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
         if (turnOffPersistentDisconnect && conversationId == null) {
-            // Try to get the last active conversation from ConnectionStateManager
-            effectiveConversationId = connectionStateManager.activeConversationId.value 
-                ?: connectionStateManager.getLastActiveConversationId()
-            if (effectiveConversationId != null && effectiveConversationId != -1L) {
-                Log.d(TAG, "Using last active conversation ID for reconnection: $effectiveConversationId")
+            if (persistentDisconnectForTest) {
+                Log.d(TAG, "Resetting persistentDisconnectForTest flag only - no reconnection attempt")
+                persistentDisconnectForTest = false
+                return
             }
         }
-        
+
         // Check if persistent disconnect is active and we're not explicitly turning it off
         if (!turnOffPersistentDisconnect) {
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
-            if (effectiveConversationId == null) {
+            if (conversationId == null) {
                 Log.d(TAG, "NULL conversation ID, returning without attempting connection.")
                 return
             }
         }
-        
+
         // Increment generation for this new connection attempt
         val thisGeneration = connectionGeneration.incrementAndGet()
-        
+
         // Use lock to ensure thread-safe connection state management
         connectionLock.withLock {
             // Reset persistent disconnect flag if requested
@@ -277,9 +302,6 @@ class WhizServerRepository @Inject constructor(
                     persistentDisconnectForTest = false
                 } else {
                     Log.d(TAG, "Tried to reset persistentDisconnectForTest flag from $persistentDisconnectForTest to false but it was already false")
-                }
-                if (conversationId == null) {
-                    return
                 }
             }
             
@@ -361,8 +383,8 @@ class WhizServerRepository @Inject constructor(
             
             // Build WebSocket URL with conversation_id parameter if provided
             // Include any conversation ID except -1 (which represents "no chat")
-            val websocketUrl = if (effectiveConversationId != null && effectiveConversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$effectiveConversationId"
+            val websocketUrl = if (conversationId != null && conversationId != -1L) {
+                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
             } else {
                 WHIZ_SERVER_URL
             }
@@ -384,7 +406,7 @@ class WhizServerRepository @Inject constructor(
                             return
                         }
                         
-                        Log.i(TAG, "WebSocket connection opened for conversationId=$effectiveConversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
+                        Log.i(TAG, "WebSocket connection opened for conversationId=$conversationId, generation=$thisGeneration. persistentDisconnect=$persistentDisconnectForTest")
                         
                         // CRITICAL FIX: Store the WebSocket reference FIRST before any operations that might use it
                         // This prevents race condition where processRetryQueue() runs before webSocket is assigned
@@ -400,7 +422,7 @@ class WhizServerRepository @Inject constructor(
                         scope.launch { emitEvent(WebSocketEvent.Connected) }
 
                         // Process any queued messages when reconnected
-                        processRetryQueue(effectiveConversationId)
+                        processRetryQueue(conversationId)
 
                         // Send timezone via API endpoint after connection is established
                         val timezone = java.util.TimeZone.getDefault().id
@@ -421,6 +443,7 @@ class WhizServerRepository @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
+                        Log.d(TAG, "📥 WebSocket message received: ${text.take(200)}...") // Log first 200 chars
                         
                         var messageHandled = false
                         var requestId: String? = null
@@ -428,14 +451,32 @@ class WhizServerRepository @Inject constructor(
                         // Attempt to parse as JSON first to extract request_id and handle structured responses
                         try {
                             val jsonObject = org.json.JSONObject(text)
+                            Log.d(TAG, "📥 Parsed JSON message type: ${jsonObject.optString("type", "unknown")}")
                             
                             // Extract request_id if present (could be in regular response or error)
                             requestId = if (jsonObject.has("request_id")) {
                                 jsonObject.getString("request_id")
                             } else null
                             
+                            // Check if this is a tool execution request
+                            if (jsonObject.has("type") && jsonObject.getString("type") == "tool_execution") {
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                
+                                Log.i(TAG, "🔧 TOOL EXECUTION REQUEST RECEIVED!")
+                                Log.i(TAG, "🔧 Tool: ${jsonObject.optString("tool", "unknown")}")
+                                Log.i(TAG, "🔧 Request ID: ${jsonObject.optString("request_id", "none")}")
+                                Log.i(TAG, "🔧 Full request: ${jsonObject.toString(2)}")
+                                
+                                scope.launch { 
+                                    Log.d(TAG, "🔧 Emitting ToolExecution event")
+                                    emitEvent(WebSocketEvent.ToolExecution(jsonObject, requestId, conversationId))
+                                }
+                                messageHandled = true
+                            }
                             // Check if this is a cancellation confirmation
-                            if (jsonObject.has("type") && jsonObject.getString("type") == "cancelled") {
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "cancelled") {
                                 val cancelledRequestId = if (jsonObject.has("cancelled_request_id")) {
                                     jsonObject.getString("cancelled_request_id")
                                 } else null
@@ -457,6 +498,33 @@ class WhizServerRepository @Inject constructor(
                                 scope.launch { emitEvent(WebSocketEvent.Interrupted(interruptedMessage, requestId)) }
                                 messageHandled = true
                             }
+                            // Handle streaming chunk messages
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "stream_chunk") {
+                                // Extract the content from the streaming chunk
+                                var content = if (jsonObject.has("content")) {
+                                    jsonObject.getString("content")
+                                } else ""
+                                
+                                // Filter out function call XML blocks that shouldn't be displayed
+                                // These are internal tool call structures that should be hidden from users
+                                content = filterToolCallXML(content)
+                                
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                
+                                val clientConversationId = if (jsonObject.has("client_conversation_id") && !jsonObject.isNull("client_conversation_id")) {
+                                    jsonObject.getLong("client_conversation_id")
+                                } else null
+                                
+                                Log.d(TAG, "📥 Processing stream_chunk with content: ${content.take(50)}...")
+                                
+                                // Emit the content as a regular message, not the raw JSON
+                                scope.launch { 
+                                    emitEvent(WebSocketEvent.Message(content, requestId, conversationId, clientConversationId))
+                                }
+                                messageHandled = true
+                            }
                             // Handle structured errors with request_id
                             else if (jsonObject.has("error")) {
                                 val errorMessage = jsonObject.getString("error")
@@ -468,7 +536,10 @@ class WhizServerRepository @Inject constructor(
                             // Handle normal structured response with request_id and conversation_id
                             // This handles both "response" type and "broadcast" type messages
                             else if (jsonObject.has("response")) {
-                                val responseText = jsonObject.getString("response")
+                                var responseText = jsonObject.getString("response")
+                                
+                                // Filter out function call XML blocks that shouldn't be displayed
+                                responseText = filterToolCallXML(responseText)
                                 val conversationId = if (jsonObject.has("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
@@ -647,7 +718,7 @@ class WhizServerRepository @Inject constructor(
                     
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
-                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$effectiveConversationId")))
+                    emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
                     
                     // Only attempt reconnect if not manually disconnected
                     if (!persistentDisconnectForTest) {
@@ -692,6 +763,101 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
+    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long): Boolean {
+        Log.i(TAG, "📤📤📤 SENDING TOOL RESULT TO SERVER")
+        Log.i(TAG, "📤 Tool: $toolName")
+        Log.i(TAG, "📤 Request ID: $requestId")
+        Log.i(TAG, "📤 Chat ID: $chatId")
+        Log.i(TAG, "📤 Result: ${result.toString(2)}")
+        
+        return try {
+            val currentSocket = webSocket
+            Log.i(TAG, "📤 WebSocket status: ${if (currentSocket != null) "EXISTS" else "NULL"}")
+            Log.i(TAG, "📤 Connection state: $connectionState")
+            
+            if (currentSocket != null && !persistentDisconnectForTest) {
+                if (connectionState != ConnectionState.CONNECTED) {
+                    Log.w(TAG, "❌ WebSocket exists but connection state is $connectionState - queueing tool result for retry")
+                    // Queue the tool result JSON for retry using existing mechanism
+                    val resultJson = org.json.JSONObject().apply {
+                        put("type", "tool_result")
+                        put("tool", toolName)
+                        put("request_id", requestId)
+                        put("result", result)
+                        if (chatId > 0) {
+                            put("conversation_id", chatId)
+                        } else if (chatId < 0) {
+                            put("client_conversation_id", chatId)
+                        }
+                    }
+                    queueMessageForRetry(resultJson.toString(), requestId, chatId)
+                    return false
+                }
+                
+                // Send tool result as JSON
+                val resultJson = org.json.JSONObject().apply {
+                    put("type", "tool_result")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("result", result)
+                    
+                    // Include conversation ID
+                    if (chatId > 0) {
+                        put("conversation_id", chatId)
+                    } else if (chatId < 0) {
+                        put("client_conversation_id", chatId)
+                    }
+                }
+                val jsonMessage = resultJson.toString()
+                
+                Log.i(TAG, "📤 WEBSOCKET SEND: Sending tool result with requestId=$requestId")
+                Log.i(TAG, "📤 JSON being sent: $jsonMessage")
+                
+                val success = currentSocket.send(jsonMessage)
+                if (success) {
+                    Log.i(TAG, "✅✅✅ TOOL RESULT SENT SUCCESSFULLY: requestId=$requestId, tool=$toolName")
+                    true
+                } else {
+                    Log.e(TAG, "❌❌❌ TOOL RESULT SEND FAILED: requestId=$requestId - queueing for retry")
+                    queueMessageForRetry(jsonMessage, requestId, chatId)
+                    false
+                }
+            } else {
+                Log.w(TAG, "WebSocket not connected - queueing tool result for retry")
+                // Queue the tool result JSON for retry
+                val resultJson = org.json.JSONObject().apply {
+                    put("type", "tool_result")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("result", result)
+                    if (chatId > 0) {
+                        put("conversation_id", chatId)
+                    } else if (chatId < 0) {
+                        put("client_conversation_id", chatId)
+                    }
+                }
+                queueMessageForRetry(resultJson.toString(), requestId, chatId)
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending tool result - queueing for retry", e)
+            // Queue on exception too
+            val resultJson = org.json.JSONObject().apply {
+                put("type", "tool_result")
+                put("tool", toolName)
+                put("request_id", requestId)
+                put("result", result)
+                if (chatId > 0) {
+                    put("conversation_id", chatId)
+                } else if (chatId < 0) {
+                    put("client_conversation_id", chatId)
+                }
+            }
+            queueMessageForRetry(resultJson.toString(), requestId, chatId)
+            false
+        }
+    }
+    
     fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
         Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
@@ -807,8 +973,20 @@ class WhizServerRepository @Inject constructor(
         val allMessages = messageRetryQueue.toList()
         val messagesToRetry = if (conversationId != null) {
             allMessages.filter { msg ->
-                // Match if the pending message's chatId matches the current connection
-                msg.chatId == conversationId
+                // Resolve both the queued message's chatId and the current conversationId
+                // to handle optimistic ID migrations (e.g., -1759344504803 → 5127)
+                val effectiveQueuedChatId = connectionStateManager.getEffectiveChatId(msg.chatId) ?: msg.chatId
+                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(conversationId) ?: conversationId
+
+                // Log migration resolution for debugging
+                if (effectiveQueuedChatId != msg.chatId) {
+                    Log.d(TAG, "Resolved queued message chatId ${msg.chatId} → $effectiveQueuedChatId")
+                }
+                if (effectiveCurrentChatId != conversationId) {
+                    Log.d(TAG, "Resolved current conversationId $conversationId → $effectiveCurrentChatId")
+                }
+
+                effectiveQueuedChatId == effectiveCurrentChatId
             }
         } else {
             // If no conversationId specified, process all messages
@@ -834,28 +1012,36 @@ class WhizServerRepository @Inject constructor(
         
         messagesToRetry.forEach { pendingMessage ->
             try {
-                val messageJson = org.json.JSONObject().apply {
-                    put("message", pendingMessage.message)
-                    put("request_id", pendingMessage.requestId)
-                    put("type", "message")
-                    
-                    // Send as conversation_id if positive, client_conversation_id if negative
-                    if (pendingMessage.chatId > 0) {
-                        put("conversation_id", pendingMessage.chatId)
-                    } else if (pendingMessage.chatId < 0) {
-                        put("client_conversation_id", pendingMessage.chatId)
+                // Check if this is already a complete JSON message (e.g., tool result)
+                val jsonMessage = if (pendingMessage.message.startsWith("{") && pendingMessage.message.contains("\"type\"")) {
+                    // This is already a complete JSON message (like a tool result)
+                    // Just use it as-is
+                    pendingMessage.message
+                } else {
+                    // This is a regular text message, wrap it in JSON structure
+                    val messageJson = org.json.JSONObject().apply {
+                        put("message", pendingMessage.message)
+                        put("request_id", pendingMessage.requestId)
+                        put("type", "message")
+                        
+                        // Send as conversation_id if positive, client_conversation_id if negative
+                        if (pendingMessage.chatId > 0) {
+                            put("conversation_id", pendingMessage.chatId)
+                        } else if (pendingMessage.chatId < 0) {
+                            put("client_conversation_id", pendingMessage.chatId)
+                        }
+                        
+                        pendingMessage.clientMessageId?.let { put("client_message_id", it) }
+                        
+                        // Include timestamp if provided
+                        pendingMessage.timestamp?.let { 
+                            // Convert milliseconds to ISO format string for server
+                            val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                            put("timestamp", isoTimestamp)
+                        }
                     }
-                    
-                    pendingMessage.clientMessageId?.let { put("client_message_id", it) }
-                    
-                    // Include timestamp if provided
-                    pendingMessage.timestamp?.let { 
-                        // Convert milliseconds to ISO format string for server
-                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
-                        put("timestamp", isoTimestamp)
-                    }
+                    messageJson.toString()
                 }
-                val jsonMessage = messageJson.toString()
                 
                 val success = currentSocket.send(jsonMessage)
                 if (success) {

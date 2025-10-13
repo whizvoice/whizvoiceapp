@@ -1,8 +1,14 @@
 package com.example.whiz
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -14,9 +20,12 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -33,8 +42,14 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import com.example.whiz.BuildConfig
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -68,7 +83,8 @@ class MainActivity : ComponentActivity() {
     
     private lateinit var navController: NavHostController
     private val chatsListViewModel: ChatsListViewModel by viewModels()
-    
+    private var testTranscriptionReceiver: BroadcastReceiver? = null
+
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
     
@@ -94,8 +110,8 @@ class MainActivity : ComponentActivity() {
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
         
-        // Check for microphone permission at startup
-        checkMicrophonePermission()
+        // Check for all permissions at startup
+        checkAllPermissions()
         
         setContent {
             WhizTheme {
@@ -104,16 +120,70 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     navController = rememberNavController()
-                    
+
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
+
+                    // Get AuthViewModel to observe authentication state
+                    val authViewModel: com.example.whiz.ui.viewmodels.AuthViewModel = hiltViewModel()
+                    val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+
+                    // Setup test broadcast receiver for debug builds
+                    if (BuildConfig.DEBUG) {
+                        setupTestTranscriptionReceiver()
+                    }
+
+                    // Ensure stable reference to permissionManager within Composable context
+                    val stablePermissionManager = remember { permissionManager }
+
+                    // Observe which step is needed next
+                    // Collect from the stable reference to ensure proper recomposition
+                    val nextRequiredStep by stablePermissionManager.nextRequiredStep.collectAsState()
+
+                    // Add diagnostic logging for recomposition
+                    Log.d("MainActivity", "🔄 RECOMPOSITION: nextRequiredStep=$nextRequiredStep, " +
+                        "isResumed=${lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)}, " +
+                        "thread=${Thread.currentThread().name}, " +
+                        "threadId=${Thread.currentThread().id}, " +
+                        "timestamp=${System.currentTimeMillis()}")
+
+                    // Debug: Force recomposition when state changes
+                    LaunchedEffect(nextRequiredStep) {
+                        Log.d("MainActivity", "LaunchedEffect triggered: nextRequiredStep changed to $nextRequiredStep, " +
+                            "lifecycle=${lifecycle.currentState}, " +
+                            "isMainThread=${android.os.Looper.myLooper() == android.os.Looper.getMainLooper()}")
+                    }
+                    
+                    // Handle lifecycle events within Compose context to ensure proper recomposition
+                    DisposableEffect(Unit) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                val observerThread = Thread.currentThread().name
+                                val observerId = Thread.currentThread().id
+                                Log.d("MainActivity", "Lifecycle ON_RESUME detected in Compose on thread: $observerThread (id=$observerId)")
+                                // Recheck permissions when returning from Settings
+                                // This will update nextRequiredStep to show the correct dialog or none
+                                // Ensure this runs on main thread for proper Compose recomposition
+                                lifecycleScope.launch {
+                                    // Small delay to ensure Compose UI is ready after activity restart
+                                    kotlinx.coroutines.delay(100)
+                                    Log.d("MainActivity", "checkAllPermissions called on thread: ${Thread.currentThread().name} (id=${Thread.currentThread().id})")
+                                    stablePermissionManager.checkAllPermissions()
+                                }
+                            }
+                        }
+                        lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycle.removeObserver(observer)
+                        }
+                    }
                     
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
-                        permissionManager = permissionManager,
+                        permissionManager = stablePermissionManager,
                         voiceManager = voiceManager,
-                        hasPermission = permissionManager.microphonePermissionGranted.collectAsState().value,
+                        hasPermission = stablePermissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() },
                         isVoiceLaunch = isVoiceLaunch,
                         onChatViewModelReady = { vm ->
@@ -121,6 +191,59 @@ class MainActivity : ComponentActivity() {
                             testViewModelCallback?.invoke(vm)
                         }
                     )
+                    
+                    // Only show permission dialogs if user is authenticated
+                    // Login takes priority over all permissions
+                    if (isAuthenticated) {
+                        // Log thread info when collecting StateFlow
+                        val threadName = Thread.currentThread().name
+                        val threadId = Thread.currentThread().id
+                        val currentTime = System.currentTimeMillis()
+                        val lifecycleState = lifecycle.currentState
+                        Log.d("MainActivity", "📊 DIALOG RENDER: thread=$threadName (id=$threadId), " +
+                            "nextRequiredStep=$nextRequiredStep, " +
+                            "lifecycle=$lifecycleState, " +
+                            "time=$currentTime")
+
+                        // Show appropriate dialog based on what's needed
+                        // Removed key() wrapper - the when expression will recompose naturally when nextRequiredStep changes
+                        Log.d("MainActivity", "🎨 RENDERING DIALOG: nextRequiredStep=$nextRequiredStep, " +
+                            "isActivityResumed=${lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)}")
+                        when (nextRequiredStep) {
+                            PermissionManager.RequiredStep.MICROPHONE -> {
+                                com.example.whiz.ui.components.MicrophonePermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onRequestPermission = { requestMicrophonePermission() }
+                                )
+                            }
+                            PermissionManager.RequiredStep.ACCESSIBILITY -> {
+                                com.example.whiz.ui.components.AccessibilityPermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onOpenSettings = { openAccessibilitySettings() }
+                                )
+                            }
+                            PermissionManager.RequiredStep.OVERLAY -> {
+                                com.example.whiz.ui.components.OverlayPermissionDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onRequestPermission = {
+                                        // Open system settings for overlay permission
+                                        // Note: Android 16+ strips package name from URI due to security restrictions
+                                        // Users will need to manually find the app in the list
+                                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+
+                                        try {
+                                            startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Log.e("MainActivity", "Failed to open overlay settings", e)
+                                        }
+                                    }
+                                )
+                            }
+                            null -> {
+                                // All permissions granted, no dialog needed
+                            }
+                        }
+                    }
                     
                     // Handle navigation after navController is initialized
                     LaunchedEffect(navController) {
@@ -468,6 +591,34 @@ class MainActivity : ComponentActivity() {
         permissionManager.checkMicrophonePermission()
     }
     
+    private fun checkAllPermissions() {
+        permissionManager.checkAllPermissions()
+    }
+    
+    private fun openAccessibilitySettings() {
+        // Try to open the specific accessibility service settings for our app
+        val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        
+        // On some devices, we can jump directly to our service settings
+        // by adding the component name as an extra
+        val componentName = android.content.ComponentName(
+            packageName,
+            "com.example.whiz.accessibility.WhizAccessibilityService"
+        )
+        
+        // Try to highlight our specific service (this may not work on all devices)
+        intent.putExtra(":settings:fragment_args_key", componentName.flattenToString())
+        intent.putExtra(":settings:show_fragment_args", Bundle().apply {
+            putString(":settings:fragment_args_key", componentName.flattenToString())
+        })
+        
+        startActivity(intent)
+        
+        // Log instructions for the user
+        Log.d(TAG, "Opening Accessibility Settings. User should look for 'WhizVoice' under 'Downloaded apps' or 'Installed services'")
+    }
+    
     private fun requestMicrophonePermission() {
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
@@ -475,9 +626,18 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
-        // Notify that app is returning to foreground
-        appLifecycleService.notifyAppForegrounded()
-        Log.d("MainActivity", "Notified app foregrounded")
+
+        // Stop bubble overlay when MainActivity comes to foreground
+        // This is more reliable than listening to app lifecycle events, which can fire
+        // incorrectly when transitioning between apps (e.g., opening WhatsApp)
+        if (BubbleOverlayService.isActive) {
+            Log.d("MainActivity", "Stopping bubble overlay service - MainActivity resumed")
+            BubbleOverlayService.stop(this)
+        }
+
+        // Removed appLifecycleService.notifyAppForegrounded() to fix bubble service issue
+        // ProcessLifecycleOwner in WhizApplication handles foreground detection more reliably
+        // This prevents false foreground events during app-to-app transitions
         
         // 🕵️ DEBUG: Log intent state when resuming to understand chat ID issue
         Log.d(TAG, "🔍 RESUME DEBUG: Checking intent state after returning from background")
@@ -500,8 +660,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // Re-check permission when activity resumes in case it was changed in settings
-        permissionManager.checkMicrophonePermission()
+        // Permission checking is now handled by DisposableEffect in the Compose UI
+        // This ensures proper recomposition when returning from Settings
+        Log.d("MainActivity", "onResume called - permission check will be handled by Compose")
         // If NavController is initialized, handle current intent again in case it was delivered while paused
         // and MainActivity wasn't recreated but onNewIntent wasn't called (e.g. returning to app)
         // This is a bit of an edge case, but ensures the navigation occurs if pending.
@@ -525,17 +686,137 @@ class MainActivity : ComponentActivity() {
         // Notify that app is going to background
         appLifecycleService.notifyAppBackgrounded()
         Log.d("MainActivity", "Notified app backgrounded")
-        // Stop TTS when app is backgrounded to prevent speech continuing off-screen
-        try {
-            ttsManager.stop()
-            Log.d("MainActivity", "TTS stopped due to app backgrounding")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error stopping TTS on pause", e)
+        
+        // Check if bubble overlay is active and in TTS mode before stopping TTS
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
+        
+        // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
+        if (!shouldKeepTTS) {
+            try {
+                ttsManager.stop()
+                Log.d("MainActivity", "TTS stopped due to app backgrounding (bubble not in TTS mode)")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error stopping TTS on pause", e)
+            }
+        } else {
+            Log.d("MainActivity", "Keeping TTS active - bubble overlay is in Speaking Mode")
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
+
+        // Unregister test broadcast receiver if it was registered
+        if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
+            try {
+                unregisterReceiver(testTranscriptionReceiver)
+                Log.d(TAG, "Test transcription receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering test receiver", e)
+            }
+        }
+    }
+
+    private fun setupTestTranscriptionReceiver() {
+        if (!BuildConfig.DEBUG) {
+            Log.d(TAG, "Not setting up test transcription receiver - not a debug build")
+            return
+        }
+
+        Log.d(TAG, "Setting up test transcription receiver for debug build - BuildConfig.DEBUG = ${BuildConfig.DEBUG}")
+
+        // Create the broadcast receiver
+        testTranscriptionReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                Log.d(TAG, "BroadcastReceiver.onReceive called with action: ${intent?.action}")
+
+                if (intent?.action != "com.example.whiz.TEST_TRANSCRIPTION") {
+                    Log.d(TAG, "Ignoring non-TEST_TRANSCRIPTION action: ${intent?.action}")
+                    return
+                }
+
+                val text = intent.getStringExtra("text") ?: ""
+                val fromVoice = intent.getBooleanExtra("fromVoice", true)
+                val autoSend = intent.getBooleanExtra("autoSend", true)
+
+                Log.d(TAG, "Test transcription received: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
+
+                // First try to use VoiceManager (works in bubble mode)
+                val voiceManager = com.example.whiz.ui.viewmodels.VoiceManager.instance
+
+                if (voiceManager != null && fromVoice) {
+                    Log.d(TAG, "Using VoiceManager to simulate voice transcription")
+
+                    try {
+                        // Use reflection to get the transcriptionCallback field
+                        val transcriptionCallbackField: Field = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
+                        transcriptionCallbackField.isAccessible = true
+                        val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+
+                        if (callback != null) {
+                            // Simulate transcription through VoiceManager's callback
+                            CoroutineScope(Dispatchers.Main).launch {
+                                Log.d(TAG, "Invoking transcription callback with: '$text'")
+                                callback.invoke(text)
+                                Log.d(TAG, "Test transcription processed through VoiceManager")
+                            }
+                            return  // Early return when successfully using VoiceManager
+                        } else {
+                            Log.w(TAG, "VoiceManager transcription callback is not set")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error accessing VoiceManager transcription callback", e)
+                    }
+                }
+
+                // Fallback to ChatViewModel approach (debug only, no-op in release)
+                com.example.whiz.test.processTestTranscriptionFallback(
+                    text, fromVoice, autoSend, ::processTestTranscription
+                )
+            }
+        }
+
+        // Register the receiver - use EXPORTED for testing from ADB
+        val filter = IntentFilter("com.example.whiz.TEST_TRANSCRIPTION")
+        Log.d(TAG, "Creating IntentFilter for action: com.example.whiz.TEST_TRANSCRIPTION")
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Log.d(TAG, "Registering receiver with RECEIVER_EXPORTED flag (API 33+)")
+                // Use EXPORTED flag to allow ADB broadcasts to reach the receiver
+                registerReceiver(testTranscriptionReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                Log.d(TAG, "Registering receiver without RECEIVER_EXPORTED flag (API < 33)")
+                registerReceiver(testTranscriptionReceiver, filter)
+            }
+            Log.d(TAG, "Test transcription receiver registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register test transcription receiver", e)
+        }
+    }
+
+    private fun processTestTranscription(
+        viewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
+        text: String,
+        fromVoice: Boolean,
+        autoSend: Boolean
+    ) {
+        try {
+            // Update the input text with the transcription
+            viewModel.updateInputText(text, fromVoice = fromVoice)
+
+            // If autoSend is true, automatically send the message
+            if (autoSend && text.isNotBlank()) {
+                viewModel.sendUserInput(text)
+                Log.d(TAG, "Test transcription sent: '$text'")
+            } else {
+                Log.d(TAG, "Test transcription set to input field: '$text'")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing test transcription", e)
+        }
     }
 }

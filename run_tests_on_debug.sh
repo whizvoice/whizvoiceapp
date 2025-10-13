@@ -50,7 +50,7 @@ cleanup_and_ensure_debug_installed() {
             log_with_time "📱 Debug app not found - running installation script..."
             
             # Call the dedicated install script
-            if ./install_debug_for_testing.sh 2>/dev/null; then
+            if ./install.sh 2>/dev/null; then
                 log_with_time "✅ Debug app installed successfully via install script"
             else
                 log_with_time "❌ Install script failed - debug app may not be available"
@@ -887,6 +887,12 @@ log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 # Read test credentials
 read_test_credentials
 
+# Push test credentials to device for tests to load
+log_with_time "📲 Pushing test credentials to device..."
+adb shell mkdir -p /data/local/tmp >/dev/null 2>&1 || true
+adb push test_credentials.json /data/local/tmp/test_credentials.json >/dev/null 2>&1
+log_with_time "✅ Test credentials pushed to device"
+
 if [[ "$CLEAN_AFTER_TESTS" == "true" ]]; then
     log_with_time "🗑️ Will uninstall debug app after tests complete"
 else
@@ -902,8 +908,14 @@ echo "# HUMAN-READABLE SUMMARIES WITH RELEVANT EXCERPTS" > test_summary.log
 if [[ "$SKIP_APP_INSTALL" == "true" ]]; then
     log_with_time "⏭️ Skipping app rebuild and installation (using existing app)"
 else
-run_with_log "Building latest debug version" "./gradlew assembleDebug --console=plain --quiet"
-run_with_log "Installing/updating latest debug APK" "adb install -r app/build/outputs/apk/debug/app-debug.apk"
+    # Use the smart install script which builds and installs the latest code
+    log_with_time "🔧 Building and installing latest debug version..."
+    if ./install.sh >> test_gradle_output.log 2>&1; then
+        log_with_time "✅ App built and installed successfully"
+    else
+        log_with_time "❌ App installation failed"
+        exit 1
+    fi
 fi
 
 # Build and install test APK
@@ -912,16 +924,18 @@ run_with_log "Installing test APK" "adb install -r app/build/outputs/apk/android
 
 # Grant permissions and prepare device
 log_with_time "🔐 Granting necessary permissions for testing..."
-# Wake up the screen and unlock (important for UI tests)
-adb shell input keyevent KEYCODE_WAKEUP
-adb shell input keyevent KEYCODE_MENU
-sleep 1
 adb shell am start -n com.example.whiz.debug/com.example.whiz.MainActivity >/dev/null 2>&1 || true
-sleep 3
-adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO 2>/dev/null || true
-adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
-sleep 1
-log_with_time "✅ Permissions granted and device prepared"
+# Grant overlay permission (Display over other apps)
+adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
+
+# Verify accessibility is enabled
+enabled_check=$(adb shell settings get secure accessibility_enabled 2>/dev/null | tr -d '\r\n')
+services_check=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r\n')
+if [[ "$enabled_check" == "1" ]] && [[ "$services_check" == *"WhizAccessibilityService"* ]]; then
+    log_with_time "✅ Granted: microphone, overlay, and accessibility permissions (verified)"
+else
+    log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
+fi
 
 # Run tests sequentially for maximum reliability
 if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
@@ -930,6 +944,8 @@ if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
     UNIT_TESTS_PASSED="skipped"
     UNIT_TESTS_FAILED="0"
 else
+    adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
+
     log_with_time "📱 Running tests sequentially for maximum reliability..."
     
     # Run unit tests first (don't exit on failure)
@@ -1007,6 +1023,21 @@ if [[ "$overall_exit_code" -eq 0 ]]; then
     log_summary_only "🎉 ALL TESTS PASSED!"
 else
     log_summary_only "❌ SOME TESTS FAILED (exit code: $overall_exit_code)"
+
+    # Extract and display test failure summaries from logcat
+    if [[ -f "test_logcat_output.log" ]]; then
+        log_summary_only ""
+        log_summary_only "❌ TEST FAILURE DETAILS:"
+        log_summary_only "=================================="
+        # Extract failure summaries logged with TEST_SUMMARY tag
+        grep "TEST_SUMMARY.*❌" test_logcat_output.log 2>/dev/null | while read -r line; do
+            # Extract the message part after TEST_SUMMARY tag
+            failure_msg=$(echo "$line" | sed -E 's/.*TEST_SUMMARY[^:]*: //')
+            log_summary_only "   $failure_msg"
+        done
+        log_summary_only "=================================="
+    fi
+
     log_summary_only "📋 Check log files for details:"
     log_summary_only "   • test_gradle_output.log: Full Gradle build and test execution output"
     log_summary_only "   • test_logcat_output.log: Complete Android logcat from test execution"
@@ -1023,7 +1054,7 @@ else
     # Ensure debug app is installed for manual testing
     if ! adb shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
         log_summary_only "📱 Debug app not found - installing for manual testing..."
-        if ./install_debug_for_testing.sh 2>/dev/null; then
+        if ./install.sh 2>/dev/null; then
             log_summary_only "✅ Debug app installed successfully for manual testing"
         else
             log_summary_only "❌ Failed to install debug app for manual testing"

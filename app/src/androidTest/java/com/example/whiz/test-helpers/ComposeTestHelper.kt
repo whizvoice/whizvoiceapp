@@ -2,6 +2,7 @@ package com.example.whiz.test_helpers
 
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import kotlin.math.min
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertIsDisplayed
@@ -431,6 +432,80 @@ object ComposeTestHelper {
             false
         } catch (e: AssertionError) {
             Log.e(TAG, "❌ AssertionError waiting for $description", e)
+            false
+        }
+    }
+    
+    /**
+     * Wait for a specific UI element to disappear using Compose Testing
+     * Useful for waiting for dialogs or loading indicators to go away
+     * Returns true if element disappears within timeout, false if still present
+     */
+    suspend fun waitForElementToDisappear(
+        composeTestRule: ComposeTestRule,
+        selector: () -> SemanticsNodeInteraction,
+        timeoutMs: Long = 10000L,
+        description: String = "UI element"
+    ): Boolean {
+        return try {
+            val startTime = System.currentTimeMillis()
+            Log.d(TAG, "⏳ Waiting for $description to disappear...")
+
+            // First check if element exists at all using assertExists (less intrusive)
+            var elementExists = false
+            try {
+                selector().assertExists()
+                elementExists = true
+                Log.d(TAG, "🔍 Found $description, now waiting for it to disappear...")
+            } catch (e: AssertionError) {
+                // Element doesn't exist, so it's already "disappeared"
+                Log.d(TAG, "✅ $description not present (already disappeared or never existed)")
+                return true
+            } catch (e: Exception) {
+                // Element doesn't exist, so it's already "disappeared"
+                Log.d(TAG, "✅ $description not present (exception: ${e.message})")
+                return true
+            }
+
+            if (!elementExists) {
+                Log.d(TAG, "✅ $description not present (already disappeared)")
+                return true
+            }
+
+            // Now wait for it to disappear with less frequent checking
+            // Start with shorter delays and increase them over time
+            var checkDelay = 500L // Start with 500ms
+            val maxDelay = 2000L // Max delay between checks
+
+            while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    // Use assertDoesNotExist which should be less intrusive than fetchSemanticsNode
+                    selector().assertDoesNotExist()
+                    // If assertion passes, element has disappeared
+                    Log.d(TAG, "✅ $description disappeared after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                } catch (e: AssertionError) {
+                    // Element still exists, continue waiting
+                    val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000
+                    if (elapsedSeconds % 5 == 0L) { // Log every 5 seconds instead of every check
+                        Log.v(TAG, "⏳ $description still present after ${elapsedSeconds}s, waiting...")
+                    }
+                } catch (e: Exception) {
+                    // Unexpected error - element might have disappeared
+                    Log.d(TAG, "✅ $description disappeared (exception) after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+
+                // Use increasing delay to reduce UI thread pressure
+                kotlinx.coroutines.delay(checkDelay)
+                checkDelay = minOf(checkDelay + 250L, maxDelay) // Gradually increase delay
+            }
+            
+            Log.w(TAG, "⚠️ $description still present after ${timeoutMs}ms timeout")
+            false
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception waiting for $description to disappear", e)
             false
         }
     }

@@ -131,7 +131,11 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             if (!chatListReady) {
                 Log.w(TAG, "Chat list may not be fully loaded, continuing with test")
             }
-            
+
+            // Wait for auto-refresh to complete (takes ~1-2 seconds, using 1.5s to be safe)
+            Log.d(TAG, "Waiting for auto-refresh to complete...")
+            delay(1500)
+
             // Disconnect to show offline snackbar
             Log.d(TAG, "Disconnecting WebSocket to trigger offline mode...")
             whizServerRepository.disconnect(setPersistentDisconnect = true)
@@ -143,11 +147,21 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             }
             
             // Trigger refresh to show snackbar
-            composeTestRule.onRoot().performTouchInput {
-                swipeDown(
-                    startY = centerY - (height * 0.2f),
-                    endY = centerY + (height * 0.2f)
-                )
+            try {
+                composeTestRule.onRoot().performTouchInput {
+                    swipeDown(
+                        startY = centerY - (height * 0.2f),
+                        endY = centerY + (height * 0.2f)
+                    )
+                }
+            } catch (e: AssertionError) {
+                Log.e(TAG, "Failed to perform swipe: ${e.message}")
+                failWithScreenshot("Failed to perform swipe - ${e.message}", "swipe_failed_multiple_roots")
+                return@runBlocking
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error during swipe: ${e.message}")
+                failWithScreenshot("Unexpected error during swipe: ${e.message}", "swipe_error")
+                return@runBlocking
             }
             
             // Wait for snackbar

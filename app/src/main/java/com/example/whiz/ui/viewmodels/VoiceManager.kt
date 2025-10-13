@@ -5,6 +5,8 @@ import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.AppLifecycleService
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,12 +28,22 @@ class VoiceManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val permissionManager: PermissionManager,
     private val speechRecognitionService: SpeechRecognitionService,
-    private val ttsManager: TTSManager,
+    val ttsManager: TTSManager,  // Make public for bubble access
     private val userPreferences: UserPreferences,
     private val appLifecycleService: AppLifecycleService
 ) {
 
     private val TAG = "VoiceManager"
+    
+    companion object {
+        @Volatile
+        var instance: VoiceManager? = null
+            private set
+    }
+    
+    init {
+        instance = this
+    }
     
     // Create a coroutine scope for this singleton service
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -73,6 +85,7 @@ class VoiceManager @Inject constructor(
         observeVoiceSettings()
         observePermissionChanges()
         observeAppLifecycle()
+        observeBubbleModeChanges()
         
         // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
@@ -85,14 +98,22 @@ class VoiceManager @Inject constructor(
      */
     private fun shouldBeListening(): Boolean {
         val isInForeground = appLifecycleService.isInForeground()
+        val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
         
-        val should = continuousListeningEnabled && isInForeground && hasPermission && notSpeaking
+        // Check bubble mode - if bubble is active and mic is off, don't listen
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val bubbleAllowsListening = !isBubbleActive || 
+            (bubbleMode == ListeningMode.CONTINUOUS_LISTENING || bubbleMode == ListeningMode.TTS_WITH_LISTENING)
+        
+        // Keep listening if either in foreground OR bubble is active (with mic enabled)
+        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) && 
+                    hasPermission && notSpeaking && bubbleAllowsListening
         
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
-                "foreground=$isInForeground, permission=$hasPermission, notSpeaking=$notSpeaking, " +
-                "result=$should")
+                "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
+                "permission=$hasPermission, notSpeaking=$notSpeaking, result=$should")
         
         return should
     }
@@ -233,8 +254,70 @@ class VoiceManager @Inject constructor(
         }
     }
     
+    private fun observeBubbleModeChanges() {
+        // Listen for bubble mode changes
+        coroutineScope.launch {
+            BubbleOverlayService.modeChangeFlow.collect { mode ->
+                Log.d(TAG, "Bubble mode changed to: $mode")
+                
+                when (mode) {
+                    ListeningMode.MIC_OFF -> {
+                        // Stop both listening and TTS when mic is turned off
+                        Log.d(TAG, "MIC_OFF mode - stopping speech recognition and TTS")
+                        stopListening()
+                        ttsManager.stop()
+                    }
+                    ListeningMode.CONTINUOUS_LISTENING -> {
+                        // Stop TTS when switching to listening-only mode
+                        Log.d(TAG, "CONTINUOUS_LISTENING mode - stopping TTS if active")
+                        if (ttsManager.isSpeaking.value) {
+                            Log.d(TAG, "Stopping TTS as bubble switched to listening-only mode")
+                            ttsManager.stop()
+                        }
+                        
+                        // Re-evaluate if we should be listening
+                        Log.d(TAG, "Mode allows listening, checking if should restart")
+                        if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
+                            Log.d(TAG, "Restarting speech recognition for mode: CONTINUOUS_LISTENING")
+                            // Force restart the continuous listening
+                            coroutineScope.launch {
+                                delay(100) // Small delay to ensure state is settled
+                                if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                                    Log.d(TAG, "Force restarting continuous listening after mode change")
+                                    startContinuousListening()
+                                }
+                            }
+                        }
+                    }
+                    ListeningMode.TTS_WITH_LISTENING -> {
+                        // Re-evaluate if we should be listening
+                        Log.d(TAG, "TTS_WITH_LISTENING mode - keeping TTS enabled")
+                        if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
+                            Log.d(TAG, "Restarting speech recognition for mode: TTS_WITH_LISTENING")
+                            // Force restart the continuous listening
+                            coroutineScope.launch {
+                                delay(100) // Small delay to ensure state is settled
+                                if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                                    Log.d(TAG, "Force restarting continuous listening after mode change")
+                                    startContinuousListening()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
+        
+        // Check if bubble overlay is running - if so, don't stop listening
+        if (com.example.whiz.services.BubbleOverlayService.isActive) {
+            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
+            // Important: Don't stop listening and don't change continuousListeningEnabled
+            return
+        }
         
         // Stop listening but preserve the setting
         if (isListening.value) {
@@ -285,6 +368,26 @@ class VoiceManager @Inject constructor(
     fun setVoiceResponseEnabled(enabled: Boolean) {
         _isVoiceResponseEnabled.value = enabled
         Log.d(TAG, "Voice response enabled: $enabled")
+    }
+    
+    /**
+     * Check if TTS should be enabled based on bubble mode
+     */
+    fun shouldEnableTTS(): Boolean {
+        // If bubble is active and in TTS mode, enable TTS
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val voiceEnabled = _isVoiceResponseEnabled.value
+        
+        Log.d(TAG, "shouldEnableTTS: bubbleActive=$bubbleActive, bubbleMode=$bubbleMode, voiceEnabled=$voiceEnabled")
+        
+        if (bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING) {
+            Log.d(TAG, "shouldEnableTTS: Returning true due to bubble TTS mode")
+            return true
+        }
+        // Otherwise use the normal voice response setting
+        Log.d(TAG, "shouldEnableTTS: Returning $voiceEnabled from voice response setting")
+        return voiceEnabled
     }
 
     fun startListening(callback: (String) -> Unit) {

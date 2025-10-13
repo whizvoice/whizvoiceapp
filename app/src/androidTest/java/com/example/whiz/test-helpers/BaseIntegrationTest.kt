@@ -8,15 +8,22 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.UiSelector
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.content.ContextCompat
+import com.example.whiz.MainActivity
+import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.permissions.PermissionManager
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.runner.RunWith
@@ -51,41 +58,175 @@ abstract class BaseIntegrationTest {
     
     @Inject
     lateinit var authRepository: AuthRepository
-    
+
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
     protected val packageName = "com.example.whiz.debug"
     private val screenshotDir = "/sdcard/Download/test_screenshots"
+    
+    // Permission management
+    private var originalMicrophonePermission: Boolean = false
     
     /**
      * Override this to skip automatic authentication (e.g., for login UI tests)
      */
     protected open val skipAutoAuthentication: Boolean = false
     
+    /**
+     * Override this to skip automatic microphone permission grant
+     */
+    protected open val skipAutoMicrophoneGrant: Boolean = false
+    
+    /**
+     * Override this to require accessibility service to be enabled for the test
+     */
+    protected open val requireAccessibilityService: Boolean = false
+    
     @Before
     open fun setUpAuthentication() {
         hiltRule.inject()
         
         // Initialize UiDevice and Context for all tests
-        device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        context = InstrumentationRegistry.getInstrumentation().context
+        // Use FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES to allow accessibility services during testing
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+        // Configure UiAutomation to not suppress accessibility services
+        try {
+            // This flag tells Android to allow accessibility services to run during testing
+            instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            android.util.Log.d("BaseIntegrationTest", "✅ UiAutomation configured to allow accessibility services")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not set UiAutomation flag: ${e.message}")
+        }
+
+        device = UiDevice.getInstance(instrumentation)
+        context = instrumentation.context
         
         // Set up screenshot directory
         setupScreenshotDirectory()
         
-        // Set up test authentication
-        runBlocking {
-            try {
-                // Use the test authentication method from AuthRepository
-                authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
-                
-                android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
-            } catch (e: Exception) {
-                android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
-                throw e
+        // FIRST: Set up test authentication (unless skipped for login tests)
+        // This must happen before permissions since the app won't show permission dialogs until logged in
+        if (!skipAutoAuthentication) {
+            runBlocking {
+                try {
+                    // Use the test authentication method from AuthRepository
+                    authRepository.setTestAuthenticationState("REDACTED_TEST_EMAIL")
+
+                    android.util.Log.d("BaseIntegrationTest", "✅ Test authentication set up successfully")
+                } catch (e: Exception) {
+                    android.util.Log.e("BaseIntegrationTest", "❌ Failed to set up test authentication", e)
+                    throw e
+                }
             }
+        } else {
+            android.util.Log.d("BaseIntegrationTest", "⏭️ Skipping automatic authentication for this test")
+        }
+
+        // SECOND: Set up permissions (after authentication)
+        setupPermissions()
+    }
+    
+    @After
+    open fun tearDownPermissions() {
+        // Restore original permissions
+        restoreOriginalPermissions()
+    }
+    
+    /**
+     * Set up permissions for the test
+     */
+    private fun setupPermissions() {
+        // Save original permission states
+        originalMicrophonePermission = ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        
+        android.util.Log.d("BaseIntegrationTest", "Original permission states - Microphone: $originalMicrophonePermission")
+        
+        // Grant microphone permission by default unless skipped
+        if (!skipAutoMicrophoneGrant) {
+            grantMicrophonePermission()
+        }
+        
+        // Check accessibility service requirement
+        if (requireAccessibilityService) {
+            android.util.Log.d("BaseIntegrationTest", "Test requires accessibility service")
+            
+            // For WhatsApp tests, we'll check for permission dialogs when the app launches
+            // instead of trying to enable it here, to avoid race conditions with authentication
+            android.util.Log.d("BaseIntegrationTest", "Accessibility will be handled when app launches in the test")
         }
     }
+    
+    /**
+     * Restore original permission states
+     */
+    private fun restoreOriginalPermissions() {
+        // Restore microphone permission
+        if (originalMicrophonePermission && !isMicrophoneGranted()) {
+            grantMicrophonePermission()
+        } else if (!originalMicrophonePermission && isMicrophoneGranted()) {
+            revokeMicrophonePermission()
+        }
+        
+        // Note: Accessibility mocking is now handled by TestAccessibilityChecker
+    }
+    
+    // =============================================================================
+    // PERMISSION MANAGEMENT METHODS
+    // =============================================================================
+    
+    /**
+     * Grant microphone permission
+     */
+    protected fun grantMicrophonePermission() {
+        try {
+            val grantResult = device.executeShellCommand("pm grant $packageName ${Manifest.permission.RECORD_AUDIO}")
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission grant result: $grantResult")
+            Thread.sleep(300) // Give the system time to process
+            
+            // Note: Child classes may have their own permissionManager injection
+            
+            val currentState = isMicrophoneGranted()
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission after grant: $currentState")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "Failed to grant microphone permission", e)
+        }
+    }
+    
+    /**
+     * Revoke microphone permission
+     */
+    protected fun revokeMicrophonePermission() {
+        try {
+            val revokeResult = device.executeShellCommand("pm revoke $packageName ${Manifest.permission.RECORD_AUDIO}")
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission revoke result: $revokeResult")
+            Thread.sleep(300) // Give the system time to process
+            
+            // Note: Child classes may have their own permissionManager injection
+            
+            val currentState = isMicrophoneGranted()
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission after revoke: $currentState")
+        } catch (e: Exception) {
+            android.util.Log.e("BaseIntegrationTest", "Failed to revoke microphone permission", e)
+        }
+    }
+    
+    /**
+     * Check if microphone permission is granted
+     */
+    protected fun isMicrophoneGranted(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+    
+    // Note: Accessibility mocking is now handled by TestAccessibilityChecker
+    // Tests should inject AccessibilityChecker and cast to TestAccessibilityChecker
+    // to access setMockServiceEnabled() method
     
     /**
      * Set up screenshot directory - ensure it exists but preserve existing screenshots from other tests
@@ -212,6 +353,66 @@ abstract class BaseIntegrationTest {
         }
         
         android.util.Log.d("BaseIntegrationTest", "✅ app launched successfully")
+        return true
+    }
+    
+    /**
+     * Launches the app in voice mode (as if triggered by Google Assistant).
+     * This will automatically navigate to a new chat and start voice recording.
+     * Waits up to 20 seconds for the chat screen to appear.
+     * 
+     * @return true if the app launched successfully in voice mode, false otherwise
+     */
+    protected fun launchAppInVoiceMode(): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🎤 launching app in voice mode")
+        
+        // Create intent that mimics Google Assistant voice launch
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = Intent(context, com.example.whiz.MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
+            putExtra("tracing_intent_id", 745783203297493028L) // Magic number that triggers voice mode
+        }
+        
+        // Launch app
+        context.startActivity(intent)
+        
+        // Wait for voice mode - it creates new chat and starts recording
+        val maxWaitTime = 3000 // 3 seconds total
+        val checkInterval = 200 // Check every 200ms
+        var elapsedTime = 0
+        var voiceModeReady = false
+        
+        while (elapsedTime < maxWaitTime && !voiceModeReady) {
+            // Check if we're in a chat (not on "My Chats" screen)
+            val inChat = !device.wait(Until.hasObject(
+                By.text("My Chats").pkg(packageName)
+            ), checkInterval.toLong()) && device.wait(Until.hasObject(
+                By.clazz("android.widget.EditText").pkg(packageName)
+            ), 0)
+            
+            if (inChat) {
+                voiceModeReady = true
+                android.util.Log.d("BaseIntegrationTest", "✅ voice mode ready - navigated to chat")
+                break
+            }
+            
+            elapsedTime += checkInterval
+            if (elapsedTime % 1000 == 0) {
+                android.util.Log.d("BaseIntegrationTest", "⏳ waiting for voice mode... ${elapsedTime/1000}s")
+            }
+        }
+        
+        if (!voiceModeReady) {
+            android.util.Log.e("BaseIntegrationTest", "❌ voice mode failed to initialize after ${maxWaitTime/1000}s")
+            return false
+        }
+        
+        // Give voice recording a moment to stabilize
+        Thread.sleep(1000)
+        
+        android.util.Log.d("BaseIntegrationTest", "✅ app launched successfully in voice mode")
         return true
     }
     
@@ -1285,7 +1486,7 @@ abstract class BaseIntegrationTest {
     protected fun getCurrentMessageCount(): Int {
         return device.findObjects(
             By.clazz("android.widget.TextView").pkg(packageName)
-        ).filter { 
+        ).filter {
             try {
                 val text = it.text
                 text != null && text.length > 10 // filter out short UI labels
@@ -1295,7 +1496,78 @@ abstract class BaseIntegrationTest {
         }.size
     }
 
-    
+    /**
+     * Wait for accessibility service to start by launching the Clock app.
+     * This triggers the bubble overlay mode which helps the accessibility service start.
+     * @param chatViewModel Optional ChatViewModel to use voice transcript method (more reliable when UI is blocked)
+     * @param timeoutMs Timeout in milliseconds (default: 10 seconds)
+     * @return true if accessibility service connected within timeout, false otherwise
+     */
+    protected fun waitForAccessibilityServiceViaAppLaunch(
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null,
+        timeoutMs: Long = 20000
+    ): Boolean {
+        android.util.Log.d("BaseIntegrationTest", "🔧 Starting accessibility service via Clock app launch")
+
+        // Check if already connected
+        if (WhizAccessibilityService.isServiceConnected()) {
+            android.util.Log.d("BaseIntegrationTest", "✅ Accessibility service already connected")
+            return true
+        }
+
+        // Send message to trigger launch_app tool for Clock app
+        android.util.Log.d("BaseIntegrationTest", "📱 Sending message to open Clock app...")
+
+        val messageSent = if (chatViewModel != null) {
+            // Use voice transcript method when ChatViewModel is available
+            // This is more reliable when the UI is blocked by dialogs
+            android.util.Log.d("BaseIntegrationTest", "📝 Using voice transcript method to send message (UI may be blocked)")
+            // Note: SpeechRecognitionService is not needed for direct ChatViewModel method
+            simulateVoiceTranscriptionAndSend("Open the Clock app", rapid = false, chatViewModel = chatViewModel, speechRecognitionService = null)
+        } else {
+            // Fall back to typing in input field
+            android.util.Log.d("BaseIntegrationTest", "📝 attempting to send message: 'Open the Clock app...'")
+            sendMessageAndVerifyDisplay("Open the Clock app")
+        }
+
+        // Wait for accessibility service to be connected
+        val startTime = System.currentTimeMillis()
+        android.util.Log.d("BaseIntegrationTest", "⏳ Waiting up to ${timeoutMs/1000} seconds for accessibility service to connect...")
+
+        while ((System.currentTimeMillis() - startTime) < timeoutMs) {
+            if (WhizAccessibilityService.isServiceConnected()) {
+                val elapsedTime = (System.currentTimeMillis() - startTime) / 1000
+                android.util.Log.d("BaseIntegrationTest", "✅ Accessibility service connected after $elapsedTime seconds")
+
+                // Brief delay to ensure service is fully ready
+                Thread.sleep(1000)
+
+                // Click on the notification bubble to return to the main app
+                android.util.Log.d("BaseIntegrationTest", "🔄 Clicking notification bubble to return to main app...")
+                val bubble = device.findObject(By.desc("WhizVoice Chat Bubble"))
+                if (bubble != null) {
+                    bubble.click()
+                    android.util.Log.d("BaseIntegrationTest", "✅ Clicked notification bubble")
+                    Thread.sleep(500) // Brief delay for app transition
+                } else {
+                    android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find notification bubble to click")
+                }
+
+                return true
+            }
+
+            // Check service state for debugging
+            val currentState = WhizAccessibilityService.serviceState.value
+            android.util.Log.d("BaseIntegrationTest", "⏳ Current service state: $currentState")
+
+            Thread.sleep(1000) // Check every second
+        }
+
+        val finalState = WhizAccessibilityService.serviceState.value
+        android.util.Log.e("BaseIntegrationTest", "❌ Accessibility service failed to connect within timeout. Final state: $finalState")
+        return false
+    }
+
     /**
      * Take a screenshot and UI dump for test failure debugging with guaranteed completion
      * @param testName Name of the test that failed
@@ -1399,7 +1671,13 @@ abstract class BaseIntegrationTest {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
             val filename = "${testName}_${timestamp}.png"
             val filepath = "$screenshotDir/$filename"
-            
+
+            // Log test failure summary with emoji for easy visibility in test_summary.log
+            android.util.Log.e("TEST_SUMMARY", "❌ TEST FAILED: $testName")
+            android.util.Log.e("TEST_SUMMARY", "❌ FAILURE REASON: $reason")
+            android.util.Log.e("TEST_SUMMARY", "❌ SCREENSHOT: $filename")
+            android.util.Log.e("TEST_SUMMARY", "❌ TIMESTAMP: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())}")
+
             android.util.Log.d("BaseIntegrationTest", "🔍 Taking failure screenshot: $reason")
             android.util.Log.d("BaseIntegrationTest", "📁 Screenshot directory: $screenshotDir")
             android.util.Log.d("BaseIntegrationTest", "📸 Screenshot filename: $filename")
@@ -1961,8 +2239,9 @@ abstract class BaseIntegrationTest {
     ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🎤 Simulating voice transcription: '${message.take(30)}...' (rapid=$rapid)")
         
-        return if (chatViewModel != null && speechRecognitionService != null) {
+        return if (chatViewModel != null) {
             // Use DIRECT ChatViewModel methods for reliable voice message sending
+            // Note: speechRecognitionService is optional - we can work without it
             android.util.Log.d("BaseIntegrationTest", "✅ Using DIRECT ChatViewModel voice message approach")
             try {
                 // No need to start speech recognition - directly simulate what happens after silence detection

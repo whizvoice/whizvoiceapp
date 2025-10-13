@@ -17,3 +17,12 @@ test_logcat_output.log
 test_gradle_output.log
 test_screenshots/
 testing
+.debug_apk_checksum
+.production_apk_checksum
+venv
+export_anthropic_key.sh
+current_screen.png
+adb_tests/screenshots/*
+droidrun/logcat_output.txt
+__pycache__/
+screen_agent_test_output/*

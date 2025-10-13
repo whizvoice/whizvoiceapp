@@ -19,6 +19,10 @@ import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.di.AppModule
 import com.example.whiz.TestCredentialsManager
 import com.example.whiz.TestAuthRepository
+import com.example.whiz.accessibility.AccessibilityChecker
+import com.example.whiz.test_helpers.TestAccessibilityChecker
+import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.test_helpers.TestPermissionManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -231,5 +235,43 @@ object TestAppModule {
     ): UserPreferences {
         Log.d(TAG, "🔧 Creating UserPreferences with REAL services...")
         return UserPreferences(apiService, authRepository)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideAccessibilityChecker(
+        @ApplicationContext context: Context
+    ): AccessibilityChecker {
+        // Check if we're running WhatsApp test which needs real accessibility
+        val testClass = System.getProperty("test.class", "")
+        val useRealAccessibility = testClass.contains("WhatsAppIntegrationTest") ||
+                                  System.getProperty("test.real.accessibility", "false") == "true"
+        
+        return if (useRealAccessibility) {
+            Log.d(TAG, "🔧 Creating REAL AccessibilityChecker for WhatsApp integration...")
+            com.example.whiz.accessibility.AccessibilityCheckerImpl(context).also {
+                Log.d(TAG, "📱 Using REAL accessibility service - will check actual Android settings")
+                Log.d(TAG, "📱 Accessibility enabled: ${it.isServiceEnabled()}")
+            }
+        } else {
+            Log.d(TAG, "🔧 Creating TestAccessibilityChecker for testing...")
+            TestAccessibilityChecker(context).apply {
+                // Default to mocking accessibility as enabled for all tests
+                // This prevents the accessibility dialog from appearing
+                setMockServiceEnabled(true)
+                Log.d(TAG, "📱 Defaulting accessibility to ENABLED for tests")
+            }
+        }
+    }
+    
+    @Provides
+    @Singleton
+    fun providePermissionManager(
+        @ApplicationContext context: Context,
+        accessibilityChecker: AccessibilityChecker,
+        accessibilityManager: com.example.whiz.accessibility.AccessibilityManager
+    ): PermissionManager {
+        Log.d(TAG, "🔧 Creating TestPermissionManager for testing...")
+        return TestPermissionManager(context, accessibilityChecker, accessibilityManager)
     }
 } 

@@ -98,6 +98,10 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.res.painterResource
 import com.example.whiz.R
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import com.example.whiz.ui.components.OverlayPermissionDialog
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 
@@ -318,7 +322,7 @@ fun ChatInputBar(
                                 Icons.Filled.Send,
                                 "Send typed message",
                                 onSendClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         shouldShowMuteButton -> {
@@ -335,7 +339,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Start listening during response",
                                 onMicClickDuringTTS,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         isResponding && shouldShowMuteButton -> {
@@ -351,7 +355,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Turn on continuous listening",
                                 onMicClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         hasVoiceText && !isContinuousListeningEnabled -> {
@@ -360,7 +364,7 @@ fun ChatInputBar(
                                 Icons.Filled.Send,
                                 "Send voice message",
                                 onSendClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         shouldShowMuteButton && !hasInputText -> {
@@ -377,7 +381,7 @@ fun ChatInputBar(
                                 Icons.Filled.Mic,
                                 "Start listening",
                                 onMicClick,
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -494,11 +498,24 @@ fun ChatScreen(
     // Call the test hook once when ViewModel is ready
     LaunchedEffect(viewModel) {
         onViewModelReady?.invoke(viewModel)
+        // Set up the permission request callback
+        viewModel.onRequestMicrophonePermission = onRequestPermission
     }
 
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
     android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
+
+    // Navigate to login immediately if not authenticated
+    LaunchedEffect(isAuthenticated) {
+        if (!isAuthenticated) {
+            android.util.Log.d("ChatScreen", "User not authenticated, navigating to login")
+            navController.navigate(Screen.Login.route) {
+                popUpTo(0) { inclusive = true } // Clear entire back stack
+                launchSingleTop = true
+            }
+        }
+    }
 
     // Check for TTS mode flag (full voice experience: speech recognition + TTS responses)
     val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
@@ -529,6 +546,7 @@ fun ChatScreen(
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
+    val showOverlayPermissionDialog by viewModel.showOverlayPermissionDialog.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
     val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
     val isRefreshing by viewModel.isRefreshing.collectAsState() // For pull-to-refresh
@@ -894,6 +912,24 @@ fun ChatScreen(
         SnackbarHost(snackbarHostState)
     }
 
+    // Dialog for overlay permission
+    if (showOverlayPermissionDialog) {
+        OverlayPermissionDialog(
+            onDismiss = { viewModel.dismissOverlayPermissionDialog() },
+            onRequestPermission = {
+                // Open system settings for overlay permission
+                val appPackageName = context.packageName
+                Log.d("ChatScreen", "Requesting overlay permission for package: $appPackageName")
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                intent.data = Uri.parse("package:$appPackageName")
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Log.d("ChatScreen", "Starting activity with URI: ${intent.data}")
+                context.startActivity(intent)
+                viewModel.requestOverlayPermission()
+            }
+        )
+    }
+    
     // Dialog for missing Asana Token
     if (showAsanaSetupDialog) {
         AlertDialog(
@@ -1056,27 +1092,20 @@ fun MessageItem(
     val isUserMessage = message.type == MessageType.USER
     
     val backgroundColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
+        MessageType.USER -> MaterialTheme.colorScheme.surface  // White background for user messages
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer  // Light yellow from theme
     }
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.onPrimary
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer
+        MessageType.USER -> MaterialTheme.colorScheme.onSurface  // Black text for user messages
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer  // Black text from theme
     }
     val alignment = if (isUserMessage) Alignment.CenterEnd else Alignment.CenterStart
     
     // Custom selection colors for user messages to ensure visibility
-    val customSelectionColors = if (isUserMessage) {
-        TextSelectionColors(
-            handleColor = MaterialTheme.colorScheme.onPrimary,
-            backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.4f)
-        )
-    } else {
-        TextSelectionColors(
-            handleColor = MaterialTheme.colorScheme.primary,
-            backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-        )
-    }
+    val customSelectionColors = TextSelectionColors(
+        handleColor = MaterialTheme.colorScheme.primary,  // Yellow handle
+        backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)  // Semi-transparent yellow
+    )
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Card(

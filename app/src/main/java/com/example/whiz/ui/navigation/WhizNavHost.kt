@@ -26,6 +26,7 @@ import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
+import com.example.whiz.ui.viewmodels.registerForTestTranscription
 
 import kotlinx.coroutines.delay
 
@@ -262,7 +263,13 @@ fun WhizNavHost(
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController,
-                onViewModelReady = onChatViewModelReady
+                onViewModelReady = { viewModel ->
+                    // Call the test callback if provided
+                    onChatViewModelReady?.invoke(viewModel)
+
+                    // Register for test transcription (no-op in release builds)
+                    viewModel.registerForTestTranscription()
+                }
             )
         }
 
@@ -305,7 +312,13 @@ fun WhizNavHost(
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
                 navController = navController,
-                onViewModelReady = onChatViewModelReady
+                onViewModelReady = { viewModel ->
+                    // Call the test callback if provided
+                    onChatViewModelReady?.invoke(viewModel)
+
+                    // Register for test transcription (no-op in release builds)
+                    viewModel.registerForTestTranscription()
+                }
             )
         }
     }

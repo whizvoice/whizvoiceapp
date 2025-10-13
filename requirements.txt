@@ -1,0 +1,1 @@
+android-accessibility-tester @ file:///Users/ruthgracewong/android_screenshot_testing

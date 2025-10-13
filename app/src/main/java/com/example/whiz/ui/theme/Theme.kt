@@ -17,18 +17,18 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF2196F3),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFBBDEFB),
-    onPrimaryContainer = Color(0xFF0D47A1),
+    primary = Color(0xFFFFD700),  // Yellow (gold)
+    onPrimary = Color.Black,
+    primaryContainer = Color(0xFFFFF59D),  // Light yellow
+    onPrimaryContainer = Color.Black,
     secondary = Color(0xFF673AB7),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE1BEE7),
-    onSecondaryContainer = Color(0xFF4A148C),
-    tertiary = Color(0xFF4CAF50),
+    secondaryContainer = Color(0xFFFFF9C4),  // Light yellow for assistant messages
+    onSecondaryContainer = Color.Black,
+    tertiary = Color(0xFFFFD700),  // Yellow instead of green
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFC8E6C9),
-    onTertiaryContainer = Color(0xFF1B5E20),
+    tertiaryContainer = Color(0xFFFFF59D),  // Light yellow
+    onTertiaryContainer = Color.Black,
     background = Color(0xFFF5F5F5),
     onBackground = Color(0xFF212121),
     surface = Color.White,
@@ -36,18 +36,18 @@ private val LightColorScheme = lightColorScheme(
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFF90CAF9),
-    onPrimary = Color(0xFF0D47A1),
-    primaryContainer = Color(0xFF1976D2),
-    onPrimaryContainer = Color(0xFFBBDEFB),
+    primary = Color(0xFFFFD700),  // Yellow (gold)
+    onPrimary = Color.Black,
+    primaryContainer = Color(0xFFF9A825),  // Darker yellow
+    onPrimaryContainer = Color.Black,
     secondary = Color(0xFFCE93D8),
     onSecondary = Color(0xFF4A148C),
-    secondaryContainer = Color(0xFF7B1FA2),
-    onSecondaryContainer = Color(0xFFE1BEE7),
-    tertiary = Color(0xFFA5D6A7),
-    onTertiary = Color(0xFF1B5E20),
-    tertiaryContainer = Color(0xFF388E3C),
-    onTertiaryContainer = Color(0xFFC8E6C9),
+    secondaryContainer = Color(0xFFFFF176),  // Light yellow for assistant messages in dark mode
+    onSecondaryContainer = Color.Black,
+    tertiary = Color(0xFFFFEB3B),  // Bright yellow
+    onTertiary = Color.Black,
+    tertiaryContainer = Color(0xFFF9A825),  // Darker yellow
+    onTertiaryContainer = Color.Black,
     background = Color(0xFF121212),
     onBackground = Color(0xFFE0E0E0),
     surface = Color(0xFF1E1E1E),
@@ -63,7 +63,23 @@ fun WhizTheme(
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            // Get the dynamic color scheme but override with our yellow colors
+            val baseScheme = if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            // Override the dynamic colors with our yellow theme
+            baseScheme.copy(
+                primary = if (darkTheme) Color(0xFFFFD700) else Color(0xFFFFD700),  // Yellow
+                onPrimary = Color.Black,
+                primaryContainer = if (darkTheme) Color(0xFFF9A825) else Color(0xFFFFF59D),  // Light yellow
+                onPrimaryContainer = Color.Black,
+                secondary = if (darkTheme) Color(0xFF673AB7) else Color(0xFF673AB7),  // Keep secondary
+                onSecondary = Color.White,
+                secondaryContainer = if (darkTheme) Color(0xFFFFF176) else Color(0xFFFFF9C4),  // Light yellow for bot messages
+                onSecondaryContainer = Color.Black,
+                tertiary = Color(0xFFFFD700),  // Yellow
+                onTertiary = Color.Black,
+                surface = if (darkTheme) Color(0xFF1E1E1E) else Color.White,
+                onSurface = if (darkTheme) Color(0xFFE0E0E0) else Color.Black
+            )
         }
         darkTheme -> DarkColorScheme
         else -> LightColorScheme

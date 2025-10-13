@@ -212,12 +212,31 @@ jobs:
 
             # Cleanup
             echo "🧹 Cleaning up any existing app installations..."
+            adb uninstall com.example.whiz.debug || echo "No existing app to uninstall"
             adb uninstall com.example.whiz || echo "No existing app to uninstall"
             adb uninstall com.example.whiz.test || echo "No existing test app to uninstall"
 
             # Setup credentials
             echo "📁 Pushing test credentials to emulator..."
             adb push test_credentials.json /data/local/tmp/test_credentials.json
+
+            # Build and install the app first
+            echo "📦 Building and installing the app before running tests..."
+            ./gradlew installDebug --stacktrace > test-logs/install-output.log 2>&1
+            echo "✅ App installed successfully"
+            
+            # Grant necessary permissions AFTER app installation
+            echo "🔐 Granting permissions to prevent dialog popups during tests..."
+            # Grant overlay permission (Display over other apps)
+            adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow || echo "⚠️ Failed to grant overlay permission"
+            # Enable accessibility service
+            adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService || echo "⚠️ Failed to set accessibility service"
+            adb shell settings put secure accessibility_enabled 1 || echo "⚠️ Failed to enable accessibility"
+            # Additional permissions that might be needed
+            adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO || echo "⚠️ Failed to grant RECORD_AUDIO"
+            adb shell pm grant com.example.whiz.debug android.permission.POST_NOTIFICATIONS || echo "⚠️ Failed to grant POST_NOTIFICATIONS"
+            echo "✅ Permissions granted: overlay, accessibility, and runtime permissions"
+            sleep 2
 
             # Clear logcat before test execution to get clean test logs
             echo "🧹 Clearing logcat before test execution..."

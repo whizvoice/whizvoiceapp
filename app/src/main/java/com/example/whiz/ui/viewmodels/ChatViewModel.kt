@@ -8,6 +8,8 @@ import androidx.lifecycle.SavedStateHandle
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.ConnectionStateManager
 // SpeechRecognitionService is now accessed via VoiceManager
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.TTSManager
 
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -33,6 +35,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi // Import for OptIn
 import org.json.JSONObject // For basic JSON parsing
 import org.json.JSONException
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.tools.ToolExecutor
+import com.example.whiz.tools.ToolExecutionResult
 
 
 
@@ -49,6 +53,7 @@ class ChatViewModel @Inject constructor(
     private val ttsManager: TTSManager,
     private val appLifecycleService: com.example.whiz.services.AppLifecycleService,
     private val voiceManager: VoiceManager,
+    private val toolExecutor: ToolExecutor,
 ) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
     private val TAG = "ChatViewModel"
@@ -243,10 +248,17 @@ class ChatViewModel @Inject constructor(
     // New state for Asana specific setup dialog
     private val _showAsanaSetupDialog = MutableStateFlow(false)
     val showAsanaSetupDialog = _showAsanaSetupDialog.asStateFlow()
+    
+    // New state for overlay permission dialog
+    private val _showOverlayPermissionDialog = MutableStateFlow(false)
+    val showOverlayPermissionDialog = _showOverlayPermissionDialog.asStateFlow()
 
     // State to trigger navigation to Login screen
     private val _navigateToLogin = MutableStateFlow(false)
     val navigateToLogin: StateFlow<Boolean> = _navigateToLogin.asStateFlow()
+    
+    // Callback for requesting microphone permission from UI layer
+    var onRequestMicrophonePermission: (() -> Unit)? = null
 
     private var isDisconnectingForAuthError = false
     
@@ -545,6 +557,16 @@ class ChatViewModel @Inject constructor(
                         _isResponding.value = false
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                     }
+                    is WebSocketEvent.ToolExecution -> {
+                        Log.i(TAG, "🔧 TOOL EXECUTION EVENT RECEIVED IN CHATVIEWMODEL")
+                        Log.i(TAG, "🔧 Tool request: ${event.toolRequest}")
+                        Log.i(TAG, "🔧 Tool name: ${event.toolRequest.optString("tool", "unknown")}")
+                        Log.i(TAG, "🔧 Request ID: ${event.toolRequest.optString("request_id", "none")}")
+                        
+                        // Execute the tool
+                        Log.i(TAG, "🔧 Calling toolExecutor.executeToolFromJson")
+                        toolExecutor.executeToolFromJson(event.toolRequest)
+                    }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
                         
@@ -594,7 +616,9 @@ class ChatViewModel @Inject constructor(
                         try {
                             var isErrorHandled = false
                             var messageContentForChat = event.text
-                            var speakThisMessage = _isVoiceResponseEnabled.value
+                            // Check both voice response setting AND bubble TTS mode
+                            var speakThisMessage = _isVoiceResponseEnabled.value || 
+                                (BubbleOverlayService.isActive && BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING)
                             var effectiveConversationId: Long? = null // Declare outside try block
 
                             // 🔧 FIXED: Use conversation_id from WebSocketEvent (already parsed by WhizServerRepo)
@@ -944,6 +968,13 @@ class ChatViewModel @Inject constructor(
                                 } else {
                                     // For remote agent, we need to manually refresh to show the server-saved message
                                     
+                                    // Update bubble overlay if active
+                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}")
+                                    if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                                        Log.d(TAG, "[BUBBLE_DEBUG] Updating bubble with bot response: '$messageContentForChat'")
+                                        com.example.whiz.services.BubbleOverlayService.updateBotResponse(messageContentForChat)
+                                    }
+                                    
                                     try {
                                         viewModelScope.launch {
                                             // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
@@ -1006,7 +1037,9 @@ class ChatViewModel @Inject constructor(
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
-                                val shouldSpeak = _isVoiceResponseEnabled.value && 
+                                // Use VoiceManager's shouldEnableTTS which checks bubble mode properly
+                                val ttsEnabled = voiceManager.shouldEnableTTS()
+                                val shouldSpeak = ttsEnabled && 
                                                 _isTTSInitialized.value && 
                                                 speakThisMessage && 
                                                 messageContentForChat.isNotBlank() &&
@@ -1015,6 +1048,8 @@ class ChatViewModel @Inject constructor(
                                                 targetChatId == _chatId.value && // Double-check current chat
                                                 isMessageFresh // Only speak fresh messages
                                 
+                                Log.d(TAG, "TTS Decision: ttsEnabled=$ttsEnabled, ttsInit=${_isTTSInitialized.value}, " +
+                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
                                     if (isListening.value) {
@@ -1055,6 +1090,74 @@ class ChatViewModel @Inject constructor(
                             Log.e(TAG, "Error processing WebSocket message", e)
                             _errorState.value = "Error processing server message: ${e.message}"
                             updateRespondingStateForCurrentChat()
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Collect tool execution results and send them back to server
+        viewModelScope.launch {
+            Log.i(TAG, "[TOOL_COLLECTOR] Starting tool result collector")
+            toolExecutor.toolResults.collect { result ->
+                Log.i(TAG, "[TOOL_COLLECTOR] Received tool execution result: $result")
+                
+                val currentChatId = _chatId.value
+                if (currentChatId == -1L || currentChatId == 0L) {
+                    Log.w(TAG, "[TOOL_COLLECTOR] Cannot send tool result - no active chat (chatId=$currentChatId)")
+                    return@collect
+                }
+                
+                when (result) {
+                    is ToolExecutionResult.Success -> {
+                        // Check if overlay permission is required
+                        if (result.toolName == "launch_app" && 
+                            result.result.has("overlayPermissionRequired") && 
+                            result.result.getBoolean("overlayPermissionRequired")) {
+                            // Show overlay permission dialog
+                            _showOverlayPermissionDialog.value = true
+                        }
+                        
+                        // Add status field to the result
+                        val resultWithStatus = org.json.JSONObject().apply {
+                            put("status", "success")
+                            // Copy all fields from the original result
+                            val keys = result.result.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                put(key, result.result.get(key))
+                            }
+                        }
+                        
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Tool name: ${result.toolName}")
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Result: ${resultWithStatus.toString(2)}")
+                        
+                        val success = whizServerRepository.sendToolResult(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            result = resultWithStatus,
+                            chatId = currentChatId
+                        )
+                        if (!success) {
+                            Log.e(TAG, "❌ [TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
+                        } else {
+                            Log.i(TAG, "✅ [TOOL_COLLECTOR] Successfully sent tool result to server for requestId=${result.requestId}")
+                        }
+                    }
+                    is ToolExecutionResult.Error -> {
+                        val errorResult = org.json.JSONObject().apply {
+                            put("status", "error")
+                            put("error", result.error)
+                        }
+                        val success = whizServerRepository.sendToolResult(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            result = errorResult,
+                            chatId = currentChatId
+                        )
+                        if (!success) {
+                            Log.e(TAG, "Failed to send tool error result to server")
                         }
                     }
                 }
@@ -1379,8 +1482,9 @@ class ChatViewModel @Inject constructor(
     fun toggleSpeechRecognition() {
         Log.d(TAG, "[LOG] toggleSpeechRecognition called. isSpeaking=${isSpeaking.value}, isResponding=${_isResponding.value}, micPermissionGranted=${_micPermissionGranted.value}, isListening=${isListening.value}, continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
         if (!_micPermissionGranted.value) {
-            Log.w(TAG, "[LOG] Microphone permission not granted")
-            _errorState.value = "Microphone permission required" 
+            Log.w(TAG, "[LOG] Microphone permission not granted, requesting permission")
+            // Request permission instead of just showing an error
+            onRequestMicrophonePermission?.invoke()
             return
         }
         
@@ -1441,7 +1545,9 @@ class ChatViewModel @Inject constructor(
         }
         
         if (!_micPermissionGranted.value) {
-            Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission")
+            Log.w(TAG, "[LOG] Cannot ensure continuous listening - no microphone permission, requesting permission")
+            // Request permission instead of just returning
+            onRequestMicrophonePermission?.invoke()
             return
         }
         
@@ -1638,6 +1744,11 @@ class ChatViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text has changed ('${_inputText.value}' != '$trimmedText'), NOT clearing to avoid race condition")
             }
+            
+            // Update bubble overlay if active
+            if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                com.example.whiz.services.BubbleOverlayService.updateUserTranscription(trimmedText)
+            }
 
             // Send to agent (local or remote)
             // Note: Don't return early if not connected - let sendMessage handle retry queueing
@@ -1712,6 +1823,16 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun dismissOverlayPermissionDialog() {
+        _showOverlayPermissionDialog.value = false
+    }
+    
+    fun requestOverlayPermission() {
+        // This will be called from the UI to open the system settings
+        // The actual intent launching will be handled in the UI layer
+        _showOverlayPermissionDialog.value = false
+    }
+    
     fun toggleVoiceResponse() {
         _isVoiceResponseEnabled.update { !it }
         if (!_isVoiceResponseEnabled.value) {
@@ -1872,10 +1993,17 @@ class ChatViewModel @Inject constructor(
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
         
-        // Stop TTS when app goes to background
-        if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "[LOG] Stopping TTS as app is going to background")
+        // Check if bubble overlay is active and in TTS mode before stopping TTS
+        val bubbleActive = BubbleOverlayService.isActive
+        val bubbleMode = BubbleOverlayService.bubbleListeningMode
+        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
+        
+        // Stop TTS when app goes to background, UNLESS bubble is in Speaking Mode
+        if (ttsManager.isSpeaking.value && !shouldKeepTTS) {
+            Log.d(TAG, "[LOG] Stopping TTS as app is going to background (bubble not in TTS mode)")
             ttsManager.stop()
+        } else if (shouldKeepTTS) {
+            Log.d(TAG, "[LOG] Keeping TTS active - bubble overlay is in Speaking Mode")
         }
         
         // VoiceManager now handles stopping continuous listening on background

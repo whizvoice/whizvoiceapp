@@ -178,7 +178,10 @@ fun SettingsScreen(
             VoiceSettingsSection(
                 modifier = Modifier.semantics { contentDescription = "Voice Settings content" },
                 settings = localVoiceSettings,
-                onSettingsChange = { localVoiceSettings = it },
+                onSettingsChange = { 
+                    Log.d("SettingsScreen", "onSettingsChange callback: new settings = $it")
+                    localVoiceSettings = it 
+                },
                 onTestPlayback = { viewModel.testVoiceSettings(localVoiceSettings) },
                 isSaving = isSavingVoiceSettings,
                 onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
@@ -520,6 +523,7 @@ fun VoiceSettingsSection(
             Switch(
                 checked = settings.useSystemDefaults,
                 onCheckedChange = { useSystem ->
+                    Log.d("SettingsScreen", "Switch onCheckedChange called: useSystem=$useSystem, current settings.useSystemDefaults=${settings.useSystemDefaults}")
                     onSettingsChange(settings.copy(useSystemDefaults = useSystem))
                 },
                 enabled = !isSaving,

@@ -311,29 +311,34 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onEndOfSpeech() {
                 val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
-                Log.d(TAG, "🔄 RESTART_DEBUG: onEndOfSpeech - manualStopInProgress: $manualStopInProgress, continuousListeningEnabled: $continuousListeningEnabled, _isListening: ${_isListening.value}")
+                val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
+                
+                Log.d(TAG, "🔄 RESTART_DEBUG: onEndOfSpeech - manualStopInProgress: $manualStopInProgress, continuousListeningEnabled: $continuousListeningEnabled, shouldRestart: $shouldRestart, _isListening: ${_isListening.value}")
+                
                 // User stopped talking or recognizer hit a silence timeout.
-                if (manualStopInProgress || !continuousListeningEnabled) {
-                    Log.d(TAG, "🔄 RESTART_DEBUG: EndOfSpeech - not restarting (manual stop or continuous listening disabled)")
+                if (manualStopInProgress) {
+                    Log.d(TAG, "🔄 RESTART_DEBUG: EndOfSpeech - not restarting (manual stop in progress)")
                     _isListening.value = false
                     manualStopInProgress = false
                     return
                 }
                 
-                // If still in voice mode and continuous listening is enabled, restart listening
-                Log.d(TAG, "🔄 RESTART_DEBUG: Natural end of speech detected, checking if should restart...")
-                if(_isListening.value && continuousListeningEnabled) {
+                // For continuous listening, we need to restart REGARDLESS of _isListening state
+                // because onResults() may have already set it to false
+                if (shouldRestart) {
                     try {
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech")
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech (continuous mode)")
                         speechRecognizer?.startListening(recognizerIntent)
                         Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech")
+                        // Don't set _isListening to false when we're restarting!
                     } catch (e: Exception) {
                         Log.e(TAG, "🔄 RESTART_DEBUG: Error restarting listening after end of speech", e)
                         _isListening.value = false
                         _errorState.value = "Error restarting listening: ${e.message}"
                     }
                 } else {
-                    Log.d(TAG, "🔄 RESTART_DEBUG: Not restarting - _isListening=${_isListening.value}, continuousListeningEnabled=$continuousListeningEnabled")
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Not restarting - shouldRestart=$shouldRestart")
+                    _isListening.value = false
                 }
             }
 
@@ -398,6 +403,13 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
                 
+                // Send to bubble overlay if active
+                try {
+                    BubbleOverlayService.updateUserTranscription(finalText)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                }
+                
                 if (recognitionCallback != null) {
                     if (finalText.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
@@ -407,10 +419,19 @@ class SpeechRecognitionService @Inject constructor(
                     }
                 }
                 
-                _isListening.value = false
+                // Check if we're in continuous listening mode
+                val shouldRestart = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
                 
-                // 🔧 Clear callback after results are delivered (safe to clear now)
-                recognitionCallback = null
+                if (!shouldRestart) {
+                    // Only clear listening state if NOT in continuous mode
+                    _isListening.value = false
+                    // Clear callback after results are delivered (safe to clear now)
+                    recognitionCallback = null
+                } else {
+                    Log.d(TAG, "[DEBUG] Continuous listening mode - keeping callback and listening state")
+                    // Don't clear the callback or listening state in continuous mode
+                    // onEndOfSpeech will handle the restart
+                }
                 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
                 _transcriptionState.value = ""
@@ -423,6 +444,13 @@ class SpeechRecognitionService @Inject constructor(
                 val partialText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
                 _transcriptionState.value = partialText
+                
+                // Send to bubble overlay if active
+                try {
+                    BubbleOverlayService.updateUserTranscription(partialText)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                }
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {

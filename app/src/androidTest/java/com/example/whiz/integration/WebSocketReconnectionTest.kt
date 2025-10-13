@@ -260,7 +260,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Step 2: Create a new chat
                 Log.d(TAG, "📝 Creating new chat")
-                val userMessage = "Test message ${System.currentTimeMillis()}. Tell me the history of the major name brand stacking brick in 25 words exactly?"
+                val userMessage = "Test message ${System.currentTimeMillis()}. Tell me the history of the major name brand stacking brick in 20 words exactly?"
                 
                 // Send a message to create a chat
                 val messageSent = ComposeTestHelper.sendMessage(composeTestRule, userMessage)
