@@ -60,33 +60,77 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // CRITICAL: Always restore valid tokens to prevent test pollution
         // This ensures subsequent tests have valid API keys even if a test fails
         Log.d(TAG, "Test cleanup - restoring valid test account tokens")
-        
+
         try {
             // Get the actual test credentials
             val testCredentials = TestCredentialsManager.credentials
             val actualClaudeKey = testCredentials.testEnvironment.claudeApiKey
             val actualAsanaToken = testCredentials.testEnvironment.asanaToken
-            
+
             // Use runBlocking to ensure tokens are restored before next test
             runBlocking {
+                // Restore Claude API key
                 try {
-                    // Restore Claude API key
                     userPreferences.setClaudeToken(actualClaudeKey)
-                    Log.d(TAG, "Restored valid Claude API key in cleanup")
-                    
-                    // Restore Asana token  
-                    userPreferences.setAsanaToken(actualAsanaToken)
-                    Log.d(TAG, "Restored valid Asana token in cleanup")
+                    Log.d(TAG, "Called setClaudeToken, verifying it was actually set...")
+
+                    // Give it a moment to persist
+                    delay(500)
+
+                    // VERIFY: Read back the token to confirm it was set
+                    val tokenIsSet = withTimeout(2000) {
+                        userPreferences.hasClaudeToken.first()
+                    }
+
+                    if (tokenIsSet != true) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Claude token was not set! hasClaudeToken returned: $tokenIsSet"
+                        Log.e(TAG, errorMsg)
+                        fail(errorMsg)
+                    }
+
+                    Log.d(TAG, "✅ VERIFIED: Valid Claude API key restored successfully in cleanup")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restore tokens in cleanup: ${e.message}")
-                    // Even if this fails, we tried our best to restore
+                    val errorMsg = "❌ CRITICAL: Failed to restore Claude API key in cleanup: ${e.message}"
+                    Log.e(TAG, errorMsg)
+                    e.printStackTrace()
+                    fail(errorMsg)
+                }
+
+                // Restore Asana token
+                try {
+                    userPreferences.setAsanaToken(actualAsanaToken)
+                    Log.d(TAG, "Called setAsanaToken, verifying it was actually set...")
+
+                    // Give it a moment to persist
+                    delay(500)
+
+                    // VERIFY: Read back the token to confirm it was set
+                    val tokenIsSet = withTimeout(2000) {
+                        userPreferences.hasAsanaToken.first()
+                    }
+
+                    if (tokenIsSet != true) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Asana token was not set! hasAsanaToken returned: $tokenIsSet"
+                        Log.e(TAG, errorMsg)
+                        fail(errorMsg)
+                    }
+
+                    Log.d(TAG, "✅ VERIFIED: Valid Asana token restored successfully in cleanup")
+                } catch (e: Exception) {
+                    val errorMsg = "❌ CRITICAL: Failed to restore Asana token in cleanup: ${e.message}"
+                    Log.e(TAG, errorMsg)
+                    e.printStackTrace()
+                    fail(errorMsg)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error during token restoration: ${e.message}")
+            val errorMsg = "❌ CRITICAL: Error during token restoration in tearDown: ${e.message}"
+            Log.e(TAG, errorMsg)
+            e.printStackTrace()
+            fail(errorMsg)
         }
-        
-        Log.d(TAG, "Test cleanup complete - tokens restored for test account")
+
+        Log.d(TAG, "✅ Test cleanup complete - tokens verified and restored for test account")
     }
     
     private fun navigateToSettings(): Boolean {
@@ -686,12 +730,31 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         runBlocking {
             try {
                 userPreferences.setClaudeToken(actualClaudeKey)
-                Log.d(TAG, "✓ Programmatically restored Claude API key as safety measure")
+                Log.d(TAG, "Called setClaudeToken programmatically, verifying...")
+
+                // Give it a moment to persist
+                delay(500)
+
+                // VERIFY: Read back the token to confirm it was set
+                val tokenIsSet = withTimeout(2000) {
+                    userPreferences.hasClaudeToken.first()
+                }
+
+                if (tokenIsSet != true) {
+                    val errorMsg = "❌ VERIFICATION FAILED: Programmatic Claude token restore failed! hasClaudeToken returned: $tokenIsSet"
+                    Log.e(TAG, errorMsg)
+                    failWithScreenshot("programmatic_restore_failed", errorMsg)
+                }
+
+                Log.d(TAG, "✅ VERIFIED: Programmatically restored Claude API key successfully")
             } catch (e: Exception) {
-                Log.e(TAG, "ERROR: Failed to programmatically restore Claude token: ${e.message}")
+                val errorMsg = "❌ ERROR: Failed to programmatically restore Claude token: ${e.message}"
+                Log.e(TAG, errorMsg)
+                e.printStackTrace()
+                failWithScreenshot("programmatic_restore_exception", errorMsg)
             }
         }
-        
+
         // Wait for the UI to reflect the programmatically restored token
         val tokenRestoredInUI = ComposeTestHelper.waitForElement(
             composeTestRule = composeTestRule,
@@ -699,19 +762,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
             timeoutMs = 1500,
             description = "Token set confirmation after programmatic restore"
         )
-        
+
         if (tokenRestoredInUI) {
             Log.d(TAG, "✓ UI confirmed Claude token is set after programmatic restoration")
         } else {
-            // Still verify via preferences as a fallback
-            runBlocking {
-                val tokenSet = userPreferences.hasClaudeToken.first()
-                if (tokenSet != true) {
-                    Log.e(TAG, "WARNING: Claude token restoration may have failed!")
-                } else {
-                    Log.d(TAG, "✓ Verified Claude token is set via preferences (UI confirmation timed out)")
-                }
-            }
+            Log.d(TAG, "Warning: UI confirmation timed out, but programmatic verification already succeeded")
         }
         
         Log.d(TAG, "✓ TEST COMPLETE: Successfully tested Claude API key management and restored test account token")

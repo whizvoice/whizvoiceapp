@@ -18,6 +18,7 @@ test_gradle_output.log
 test_screenshots/
 testing
 .debug_apk_checksum
+.production_apk_checksum
 venv
 export_anthropic_key.sh
 current_screen.png
