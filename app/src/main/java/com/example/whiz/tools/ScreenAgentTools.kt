@@ -381,6 +381,13 @@ class ScreenAgentTools @Inject constructor(
                         initialRootNode.recycle()
                         // We'll handle this in the search logic below
                     }
+                    WhatsAppScreen.UNKNOWN -> {
+                        Log.i(TAG, "On unknown WhatsApp screen, trying to navigate back to chat list")
+                        initialRootNode.recycle()
+                        accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                        // Wait for navigation to complete
+                        waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
+                    }
                     else -> {
                         initialRootNode.recycle()
                     }
@@ -1045,7 +1052,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Search field is active")
                 return WhatsAppScreen.SEARCH_ACTIVE
             }
-            
+
             // Check if we're in settings
             val settingsTitle = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/settings")
             if (settingsTitle != null && settingsTitle.isNotEmpty()) {
