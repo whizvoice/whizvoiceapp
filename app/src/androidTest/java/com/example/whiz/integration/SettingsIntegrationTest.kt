@@ -69,26 +69,38 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
 
             // Use runBlocking to ensure tokens are restored before next test
             runBlocking {
-                // Restore Claude API key
+                // Restore Claude API key - call once and wait for it to persist
                 try {
                     userPreferences.setClaudeToken(actualClaudeKey)
-                    Log.d(TAG, "Called setClaudeToken, verifying it was actually set...")
+                    Log.d(TAG, "Called setClaudeToken, waiting for it to persist...")
 
-                    // Give it a moment to persist
-                    delay(500)
+                    // Poll until the token is confirmed set, with timeout
+                    val maxAttempts = 10
+                    var attempt = 0
+                    var tokenIsSet = false
 
-                    // VERIFY: Read back the token to confirm it was set
-                    val tokenIsSet = withTimeout(2000) {
-                        userPreferences.hasClaudeToken.first()
+                    while (attempt < maxAttempts && !tokenIsSet) {
+                        delay(300) // Wait between checks
+
+                        // Check if the token is now set
+                        tokenIsSet = withTimeout(2000) {
+                            userPreferences.hasClaudeToken.first()
+                        } == true
+
+                        attempt++
+
+                        if (!tokenIsSet && attempt < maxAttempts) {
+                            Log.d(TAG, "Token not yet persisted, checking again... (attempt $attempt/$maxAttempts)")
+                        }
                     }
 
-                    if (tokenIsSet != true) {
-                        val errorMsg = "❌ VERIFICATION FAILED: Claude token was not set! hasClaudeToken returned: $tokenIsSet"
+                    if (!tokenIsSet) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Claude token was not set after ${maxAttempts * 300}ms!"
                         Log.e(TAG, errorMsg)
                         fail(errorMsg)
                     }
 
-                    Log.d(TAG, "✅ VERIFIED: Valid Claude API key restored successfully in cleanup")
+                    Log.d(TAG, "✅ VERIFIED: Valid Claude API key restored successfully in cleanup after ${attempt * 300}ms")
                 } catch (e: Exception) {
                     val errorMsg = "❌ CRITICAL: Failed to restore Claude API key in cleanup: ${e.message}"
                     Log.e(TAG, errorMsg)
@@ -96,26 +108,38 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     fail(errorMsg)
                 }
 
-                // Restore Asana token
+                // Restore Asana token - call once and wait for it to persist
                 try {
                     userPreferences.setAsanaToken(actualAsanaToken)
-                    Log.d(TAG, "Called setAsanaToken, verifying it was actually set...")
+                    Log.d(TAG, "Called setAsanaToken, waiting for it to persist...")
 
-                    // Give it a moment to persist
-                    delay(500)
+                    // Poll until the token is confirmed set, with timeout
+                    val maxAttempts = 10
+                    var attempt = 0
+                    var tokenIsSet = false
 
-                    // VERIFY: Read back the token to confirm it was set
-                    val tokenIsSet = withTimeout(2000) {
-                        userPreferences.hasAsanaToken.first()
+                    while (attempt < maxAttempts && !tokenIsSet) {
+                        delay(300) // Wait between checks
+
+                        // Check if the token is now set
+                        tokenIsSet = withTimeout(2000) {
+                            userPreferences.hasAsanaToken.first()
+                        } == true
+
+                        attempt++
+
+                        if (!tokenIsSet && attempt < maxAttempts) {
+                            Log.d(TAG, "Token not yet persisted, checking again... (attempt $attempt/$maxAttempts)")
+                        }
                     }
 
-                    if (tokenIsSet != true) {
-                        val errorMsg = "❌ VERIFICATION FAILED: Asana token was not set! hasAsanaToken returned: $tokenIsSet"
+                    if (!tokenIsSet) {
+                        val errorMsg = "❌ VERIFICATION FAILED: Asana token was not set after ${maxAttempts * 300}ms!"
                         Log.e(TAG, errorMsg)
                         fail(errorMsg)
                     }
 
-                    Log.d(TAG, "✅ VERIFIED: Valid Asana token restored successfully in cleanup")
+                    Log.d(TAG, "✅ VERIFIED: Valid Asana token restored successfully in cleanup after ${attempt * 300}ms")
                 } catch (e: Exception) {
                     val errorMsg = "❌ CRITICAL: Failed to restore Asana token in cleanup: ${e.message}"
                     Log.e(TAG, errorMsg)
