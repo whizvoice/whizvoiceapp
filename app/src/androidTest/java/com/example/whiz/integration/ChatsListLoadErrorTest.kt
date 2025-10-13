@@ -131,7 +131,11 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             if (!chatListReady) {
                 Log.w(TAG, "Chat list may not be fully loaded, continuing with test")
             }
-            
+
+            // Wait for auto-refresh to complete (takes ~1-2 seconds, using 1.5s to be safe)
+            Log.d(TAG, "Waiting for auto-refresh to complete...")
+            delay(1500)
+
             // Disconnect to show offline snackbar
             Log.d(TAG, "Disconnecting WebSocket to trigger offline mode...")
             whizServerRepository.disconnect(setPersistentDisconnect = true)
