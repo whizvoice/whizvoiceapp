@@ -55,11 +55,8 @@ class MessageDraftOverlayService : Service() {
         
         fun show(context: Context, bounds: Rect, message: String, previousText: String? = null): Boolean {
             return try {
-                // Stop any existing instance
-                if (isActive) {
-                    stop(context)
-                }
-                
+                // Don't stop existing instance - just send new intent to update it
+                // This ensures the auto-dismiss timer gets properly reset
                 val intent = Intent(context, MessageDraftOverlayService::class.java).apply {
                     putExtra(EXTRA_BOUNDS, bounds)
                     putExtra(EXTRA_MESSAGE, message)
