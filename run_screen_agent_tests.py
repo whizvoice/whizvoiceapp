@@ -271,16 +271,19 @@ def test_whatsapp_draft_message(tester):
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "new_chat_screen")
     assert validation_result, "Failed to reach New Chat screen"
 
-    # Click to focus on the text input
-    tester.tap(500, 2250)
-    time.sleep(1)
-
-    # Input text
-    tester.input_text("Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice")
-    time.sleep(1)
-
-    # Click to send the message
-    tester.tap(1000, 1300)
+    # Send a voice transcription with the test message
+    # Note: The app is in continuous listening mode by default (voice app behavior),
+    # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
 
     # wait for draft overlay to appear over whatsapp input text bar
     result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0

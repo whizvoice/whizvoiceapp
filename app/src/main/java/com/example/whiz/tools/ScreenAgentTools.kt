@@ -312,95 +312,44 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
-            // Wait for WhatsApp UI to be ready
-            if (!waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)) {
-                Log.w(TAG, "WhatsApp UI not ready after waiting")
-            }
-            
-            // First detect what screen we're on and navigate accordingly
-            val initialRootNode = accessibilityService.getCurrentRootNode()
-            if (initialRootNode != null) {
-                val currentScreen = detectWhatsAppScreen(initialRootNode)
-                Log.i(TAG, "Current WhatsApp screen: $currentScreen")
-                
-                when (currentScreen) {
-                    WhatsAppScreen.INSIDE_CHAT -> {
-                        // Check if we're already in the correct chat
-                        val chatHeader = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
-                        var isCorrectChat = false
+            // Navigate to chat list by pressing back repeatedly
+            // Try up to 6 times to reach the chat list
+            var onChatList = false
+            val maxBackAttempts = 6
 
-                        if (chatHeader != null && chatHeader.isNotEmpty()) {
-                            val currentChatName = chatHeader[0].text?.toString()
-                            if (currentChatName != null && normalizeChatName(currentChatName) == normalizeChatName(chatName)) {
-                                Log.i(TAG, "Already in the correct chat: $currentChatName")
-                                isCorrectChat = true
-                            } else {
-                                Log.i(TAG, "Currently in different chat: $currentChatName, need to navigate to: $chatName")
-                            }
-                            chatHeader.forEach { it.recycle() }
-                        }
-                        
-                        if (isCorrectChat) {
-                            // We're already in the right chat, no need to search
-                            initialRootNode.recycle()
-                            return WhatsAppResult(
-                                success = true,
-                                action = "select_chat",
-                                chatName = chatName
-                            )
-                        } else {
-                            // Navigate back to find the correct chat
-                            Log.i(TAG, "Navigating back to chat list to find correct contact")
-                            initialRootNode.recycle()
-                            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                            // Wait for navigation to complete and return to chat list
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                        }
+            for (backAttempt in 1..maxBackAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    val currentScreen = detectWhatsAppScreen(rootNode)
+                    Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
+
+                    if (currentScreen == WhatsAppScreen.CHAT_LIST) {
+                        Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
+                        onChatList = true
+                        rootNode.recycle()
+                        break
                     }
-                    WhatsAppScreen.SETTINGS -> {
-                        Log.i(TAG, "In settings, navigating to Chats tab")
-                        // Try to click on the Chats tab (pressing back exits WhatsApp when Settings is root activity)
-                        val chatsTab = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
-                        if (chatsTab != null && chatsTab.isNotEmpty()) {
-                            accessibilityService.clickNode(chatsTab[0])
-                            chatsTab.forEach { it.recycle() }
-                            // Wait for tab switch to complete
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                        } else {
-                            Log.w(TAG, "Could not find Chats tab in Settings, trying back button")
-                            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                        }
-                        initialRootNode.recycle()
-                    }
-                    WhatsAppScreen.STATUS, WhatsAppScreen.CALLS -> {
-                        Log.i(TAG, "On $currentScreen tab, need to switch to Chats tab")
-                        // Try to click on the Chats tab
-                        val chatsTab = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
-                        if (chatsTab != null && chatsTab.isNotEmpty()) {
-                            accessibilityService.clickNode(chatsTab[0])
-                            chatsTab.forEach { it.recycle() }
-                            // Wait for tab switch to complete
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1000)
-                        }
-                        initialRootNode.recycle()
-                    }
-                    WhatsAppScreen.SEARCH_ACTIVE -> {
-                        Log.i(TAG, "Search is already active, will use existing search")
-                        initialRootNode.recycle()
-                        // We'll handle this in the search logic below
-                    }
-                    WhatsAppScreen.UNKNOWN -> {
-                        Log.i(TAG, "On unknown WhatsApp screen, trying to navigate back to chat list")
-                        initialRootNode.recycle()
-                        accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                        // Wait for navigation to complete
-                        waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                    }
-                    else -> {
-                        initialRootNode.recycle()
-                    }
+
+                    rootNode.recycle()
+
+                    // Not on chat list yet, press back
+                    Log.i(TAG, "Not on chat list, pressing back button")
+                    accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                    delay(500) // Wait for navigation to complete
+                } else {
+                    Log.w(TAG, "Could not get root node on back attempt $backAttempt")
+                    delay(500)
                 }
+            }
+
+            if (!onChatList) {
+                Log.e(TAG, "Failed to navigate to chat list after $maxBackAttempts back button presses")
+                return WhatsAppResult(
+                    success = false,
+                    action = "select_chat",
+                    chatName = chatName,
+                    error = "Could not navigate to WhatsApp chat list. Please ensure WhatsApp is open."
+                )
             }
             
             // Try to find and click on the chat
