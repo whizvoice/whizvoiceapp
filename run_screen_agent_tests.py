@@ -77,7 +77,7 @@ def stop_logcat():
 
 
 def save_failed_screenshot(screenshot_path, test_name, step_name):
-    """Save a screenshot to the test output directory when validation fails."""
+    """Save a screenshot and UI dump to the test output directory when validation fails."""
     import shutil
 
     output_dir = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
@@ -91,11 +91,40 @@ def save_failed_screenshot(screenshot_path, test_name, step_name):
         check=True
     ).stdout.strip()
 
-    dest_filename = f"{test_name}_{step_name}_{timestamp}.png"
-    dest_path = os.path.join(output_dir, dest_filename)
+    # Save screenshot
+    screenshot_filename = f"{test_name}_{step_name}_{timestamp}.png"
+    screenshot_dest = os.path.join(output_dir, screenshot_filename)
+    shutil.copy(screenshot_path, screenshot_dest)
+    print(f"📸 Saved failed screenshot to: {screenshot_dest}")
 
-    shutil.copy(screenshot_path, dest_path)
-    print(f"📸 Saved failed screenshot to: {dest_path}")
+    # Save UI dump
+    ui_dump_filename = f"{test_name}_{step_name}_{timestamp}_uidump.xml"
+    ui_dump_dest = os.path.join(output_dir, ui_dump_filename)
+
+    # Dump UI hierarchy to device first, then pull it
+    device_dump_path = '/sdcard/window_dump.xml'
+    dump_result = subprocess.run(
+        ['adb', 'shell', 'uiautomator', 'dump', device_dump_path],
+        capture_output=True,
+        text=True
+    )
+
+    if dump_result.returncode == 0:
+        # Pull the file from device
+        pull_result = subprocess.run(
+            ['adb', 'pull', device_dump_path, ui_dump_dest],
+            capture_output=True,
+            text=True
+        )
+
+        if pull_result.returncode == 0:
+            print(f"🔍 Saved UI dump to: {ui_dump_dest}")
+            # Clean up the file from device
+            subprocess.run(['adb', 'shell', 'rm', device_dump_path], check=False)
+        else:
+            print(f"⚠️  Failed to pull UI dump: {pull_result.stderr}")
+    else:
+        print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
 
 
 def navigate_to_my_chats(tester):

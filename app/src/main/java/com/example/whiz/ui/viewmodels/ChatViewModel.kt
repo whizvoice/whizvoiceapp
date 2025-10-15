@@ -352,6 +352,19 @@ class ChatViewModel @Inject constructor(
             }
         }
 
+        // Subscribe to bubble mode transcriptions and send them to the server
+        viewModelScope.launch {
+            Log.d(TAG, "Started collecting bubble transcriptions")
+            BubbleOverlayService.userTranscriptionFlow
+                .distinctUntilChanged() // Prevent duplicate consecutive emissions
+                .collect { transcription ->
+                    if (transcription.isNotBlank()) {
+                        Log.d(TAG, "Received transcription from bubble mode: '$transcription'")
+                        sendUserInput(transcription)
+                    }
+                }
+        }
+
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
             Log.d(TAG, "🧵 THREAD DEBUG: WebSocket collector starting on thread: ${Thread.currentThread().name}")

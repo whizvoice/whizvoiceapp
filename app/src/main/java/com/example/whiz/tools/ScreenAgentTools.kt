@@ -328,10 +328,10 @@ class ScreenAgentTools @Inject constructor(
                         // Check if we're already in the correct chat
                         val chatHeader = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
                         var isCorrectChat = false
-                        
+
                         if (chatHeader != null && chatHeader.isNotEmpty()) {
                             val currentChatName = chatHeader[0].text?.toString()
-                            if (currentChatName != null && currentChatName.lowercase().trim() == chatName.lowercase().trim()) {
+                            if (currentChatName != null && normalizeChatName(currentChatName) == normalizeChatName(chatName)) {
                                 Log.i(TAG, "Already in the correct chat: $currentChatName")
                                 isCorrectChat = true
                             } else {
@@ -901,7 +901,20 @@ class ScreenAgentTools @Inject constructor(
     }
     
     // ========== Helper Functions ==========
-    
+
+    /**
+     * Normalize a chat name for comparison by removing spaces, special characters, and suffixes.
+     * This helps match chat names that have different formatting (e.g., "+1(628)209-9005" vs "+1 (628) 209-9005 (You)")
+     */
+    private fun normalizeChatName(name: String): String {
+        return name
+            .lowercase()
+            .trim()
+            .replace(Regex("[\\s\\u200B-\\u200D\\uFEFF]"), "") // Remove all whitespace and invisible chars
+            .replace(Regex("\\(you\\)$"), "") // Remove "(You)" suffix
+            .replace(Regex("[()\\-]"), "") // Remove parentheses and hyphens from phone numbers
+    }
+
     /**
      * Poll for a specific condition with exponential backoff
      * @param condition The condition to check
@@ -1046,7 +1059,10 @@ class ScreenAgentTools @Inject constructor(
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
             // Check for search field first (highest priority as it could be active over other screens)
-            val searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
+            var searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchField == null || searchField.isEmpty()) {
+                searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
+            }
             if (searchField != null && searchField.isNotEmpty()) {
                 searchField.forEach { it.recycle() }
                 Log.d(TAG, "Search field is active")
@@ -1152,6 +1168,7 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Look for the search button/icon in WhatsApp
             val searchButtons = listOf(
+                "com.whatsapp:id/my_search_bar",
                 "com.whatsapp:id/menuitem_search",
                 "com.whatsapp:id/search_button",
                 "com.whatsapp:id/action_search"
@@ -1169,11 +1186,11 @@ class ScreenAgentTools @Inject constructor(
                         // Wait for search field to appear
                         val searchFieldAppeared = waitForElement(
                             accessibilityService,
-                            viewId = "com.whatsapp:id/search_src_text",
+                            viewId = "com.whatsapp:id/search_input",
                             maxWaitMs = 1500
                         )
                         searchFieldAppeared?.recycle()
-                        
+
                         // Now find the search input field and enter text
                         val searchRootNode = accessibilityService.getCurrentRootNode()
                         if (searchRootNode != null) {
@@ -1203,11 +1220,11 @@ class ScreenAgentTools @Inject constructor(
                             // Wait for search field to appear
                             val searchFieldAppeared = waitForElement(
                                 accessibilityService,
-                                viewId = "com.whatsapp:id/search_src_text",
+                                viewId = "com.whatsapp:id/search_input",
                                 maxWaitMs = 1500
                             )
                             searchFieldAppeared?.recycle()
-                            
+
                             // Enter search text
                             val searchRootNode = accessibilityService.getCurrentRootNode()
                             if (searchRootNode != null) {
@@ -1234,8 +1251,8 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Find the search input field that's already active
             val searchFields = listOf(
-                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_edit_text"
             )
             
@@ -1318,8 +1335,8 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Find the search input field
             val searchFields = listOf(
-                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_edit_text"
             )
             
@@ -1496,7 +1513,7 @@ class ScreenAgentTools @Inject constructor(
     
     private fun findChatNodes(node: AccessibilityNodeInfo, chatName: String): List<AccessibilityNodeInfo> {
         val results = mutableListOf<AccessibilityNodeInfo>()
-        val normalizedChatName = chatName.lowercase().trim()
+        val normalizedChatName = normalizeChatName(chatName)
 
         Log.d(TAG, "Searching for chat: '$chatName' (normalized: '$normalizedChatName')")
 
@@ -1516,10 +1533,10 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
 
-                // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-                val cleanedNodeText = nodeText?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-                val cleanedNodeDesc = nodeDesc?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-                val cleanedChatName = normalizedChatName.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
+                // Normalize the node text and description for comparison
+                val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
+                val cleanedNodeDesc = nodeDesc?.let { normalizeChatName(it) }
+                val cleanedChatName = normalizedChatName
 
                 // Handle truncated names with ellipsis (…)
                 val isEllipsisMatchText = cleanedNodeText?.let { text ->
@@ -1557,14 +1574,9 @@ class ScreenAgentTools @Inject constructor(
             for (item in chatListItems) {
                 val itemText = item.text?.toString()
                 if (itemText != null) {
-                    val normalizedItemText = itemText.lowercase().trim()
-                    // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-                    val cleanedItemText = normalizedItemText
-                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
-                        .replace(" ", "")
+                    // Normalize the item text for comparison
+                    val cleanedItemText = normalizeChatName(itemText)
                     val cleanedChatName = normalizedChatName
-                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
-                        .replace(" ", "")
 
                     Log.d(TAG, "Checking chat list item: original='$itemText', cleaned='$cleanedItemText' vs '$cleanedChatName'")
 
@@ -1694,10 +1706,10 @@ class ScreenAgentTools @Inject constructor(
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
 
-            // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-            val cleanedNodeText = nodeText?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-            val cleanedSearchText = searchText.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
-            val cleanedContentDesc = contentDesc?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+            // Normalize the node text and description for comparison
+            val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
+            val cleanedSearchText = searchText  // searchText is already normalized
+            val cleanedContentDesc = contentDesc?.let { normalizeChatName(it) }
 
             // Handle truncated names with ellipsis (…)
             val isEllipsisMatchText = cleanedNodeText?.let { text ->
