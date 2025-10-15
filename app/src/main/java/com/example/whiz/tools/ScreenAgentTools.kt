@@ -358,11 +358,20 @@ class ScreenAgentTools @Inject constructor(
                         }
                     }
                     WhatsAppScreen.SETTINGS -> {
-                        Log.i(TAG, "In settings, navigating back to main screen")
+                        Log.i(TAG, "In settings, navigating to Chats tab")
+                        // Try to click on the Chats tab (pressing back exits WhatsApp when Settings is root activity)
+                        val chatsTab = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
+                        if (chatsTab != null && chatsTab.isNotEmpty()) {
+                            accessibilityService.clickNode(chatsTab[0])
+                            chatsTab.forEach { it.recycle() }
+                            // Wait for tab switch to complete
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
+                        } else {
+                            Log.w(TAG, "Could not find Chats tab in Settings, trying back button")
+                            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
+                        }
                         initialRootNode.recycle()
-                        accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                        // Wait for navigation to complete
-                        waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
                     }
                     WhatsAppScreen.STATUS, WhatsAppScreen.CALLS -> {
                         Log.i(TAG, "On $currentScreen tab, need to switch to Chats tab")
@@ -519,6 +528,7 @@ class ScreenAgentTools @Inject constructor(
             }
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
+
             return WhatsAppResult(
                 success = false,
                 action = "select_chat",
@@ -913,6 +923,18 @@ class ScreenAgentTools @Inject constructor(
             .replace(Regex("[\\s\\u200B-\\u200D\\uFEFF]"), "") // Remove all whitespace and invisible chars
             .replace(Regex("\\(you\\)$"), "") // Remove "(You)" suffix
             .replace(Regex("[()\\-]"), "") // Remove parentheses and hyphens from phone numbers
+    }
+
+    /**
+     * Check if a string looks like a phone number
+     */
+    private fun isPhoneNumber(text: String): Boolean {
+        // Remove common phone number formatting characters
+        val digitsOnly = text.replace(Regex("[^0-9]"), "")
+        // Check if we have a reasonable number of digits (7-15 is typical for phone numbers)
+        // and that the original text contains mostly numbers and phone formatting chars
+        return digitsOnly.length >= 7 && digitsOnly.length <= 15 &&
+                text.replace(Regex("[0-9()\\-\\s+]"), "").isEmpty()
     }
 
     /**
