@@ -9,6 +9,15 @@ import os
 import pytest
 
 
+# Set up Android SDK paths
+ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
+PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
+
+# Add platform-tools to PATH for all subprocess calls
+os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
+os.environ['ANDROID_HOME'] = ANDROID_HOME
+
+
 # Global variable to store logcat process
 _logcat_process = None
 
@@ -68,7 +77,7 @@ def stop_logcat():
 
 
 def save_failed_screenshot(screenshot_path, test_name, step_name):
-    """Save a screenshot to the test output directory when validation fails."""
+    """Save a screenshot and UI dump to the test output directory when validation fails."""
     import shutil
 
     output_dir = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
@@ -82,11 +91,40 @@ def save_failed_screenshot(screenshot_path, test_name, step_name):
         check=True
     ).stdout.strip()
 
-    dest_filename = f"{test_name}_{step_name}_{timestamp}.png"
-    dest_path = os.path.join(output_dir, dest_filename)
+    # Save screenshot
+    screenshot_filename = f"{test_name}_{step_name}_{timestamp}.png"
+    screenshot_dest = os.path.join(output_dir, screenshot_filename)
+    shutil.copy(screenshot_path, screenshot_dest)
+    print(f"📸 Saved failed screenshot to: {screenshot_dest}")
 
-    shutil.copy(screenshot_path, dest_path)
-    print(f"📸 Saved failed screenshot to: {dest_path}")
+    # Save UI dump
+    ui_dump_filename = f"{test_name}_{step_name}_{timestamp}_uidump.xml"
+    ui_dump_dest = os.path.join(output_dir, ui_dump_filename)
+
+    # Dump UI hierarchy to device first, then pull it
+    device_dump_path = '/sdcard/window_dump.xml'
+    dump_result = subprocess.run(
+        ['adb', 'shell', 'uiautomator', 'dump', device_dump_path],
+        capture_output=True,
+        text=True
+    )
+
+    if dump_result.returncode == 0:
+        # Pull the file from device
+        pull_result = subprocess.run(
+            ['adb', 'pull', device_dump_path, ui_dump_dest],
+            capture_output=True,
+            text=True
+        )
+
+        if pull_result.returncode == 0:
+            print(f"🔍 Saved UI dump to: {ui_dump_dest}")
+            # Clean up the file from device
+            subprocess.run(['adb', 'shell', 'rm', device_dump_path], check=False)
+        else:
+            print(f"⚠️  Failed to pull UI dump: {pull_result.stderr}")
+    else:
+        print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
 
 
 def navigate_to_my_chats(tester):
@@ -233,16 +271,19 @@ def test_whatsapp_draft_message(tester):
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "new_chat_screen")
     assert validation_result, "Failed to reach New Chat screen"
 
-    # Click to focus on the text input
-    tester.tap(500, 2250)
-    time.sleep(1)
-
-    # Input text
-    tester.input_text("Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice")
-    time.sleep(1)
-
-    # Click to send the message
-    tester.tap(1000, 1300)
+    # Send a voice transcription with the test message
+    # Note: The app is in continuous listening mode by default (voice app behavior),
+    # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
 
     # wait for draft overlay to appear over whatsapp input text bar
     result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
@@ -326,10 +367,10 @@ def test_whatsapp_draft_message(tester):
 
     # Click delete button
     tester.tap(800, 200)
-    time.sleep(1)
+    time.sleep(2)
 
     # Click confirm delete
-    tester.tap(750, 1150)
+    tester.tap(750, 1290)
     time.sleep(2)
 
     # Validate that the message was deleted

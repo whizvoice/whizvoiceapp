@@ -60,5 +60,5 @@ export ANTHROPIC_API_KEY=your-key-here
 #### run
 
 ```
-./venv/bin/python run_screen_agent_tests.py
+./venv/bin/pytest run_screen_agent_tests.py
 ```

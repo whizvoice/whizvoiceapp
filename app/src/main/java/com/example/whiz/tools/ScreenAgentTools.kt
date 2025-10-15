@@ -312,79 +312,44 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             
-            // Wait for WhatsApp UI to be ready
-            if (!waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)) {
-                Log.w(TAG, "WhatsApp UI not ready after waiting")
-            }
-            
-            // First detect what screen we're on and navigate accordingly
-            val initialRootNode = accessibilityService.getCurrentRootNode()
-            if (initialRootNode != null) {
-                val currentScreen = detectWhatsAppScreen(initialRootNode)
-                Log.i(TAG, "Current WhatsApp screen: $currentScreen")
-                
-                when (currentScreen) {
-                    WhatsAppScreen.INSIDE_CHAT -> {
-                        // Check if we're already in the correct chat
-                        val chatHeader = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
-                        var isCorrectChat = false
-                        
-                        if (chatHeader != null && chatHeader.isNotEmpty()) {
-                            val currentChatName = chatHeader[0].text?.toString()
-                            if (currentChatName != null && currentChatName.lowercase().trim() == chatName.lowercase().trim()) {
-                                Log.i(TAG, "Already in the correct chat: $currentChatName")
-                                isCorrectChat = true
-                            } else {
-                                Log.i(TAG, "Currently in different chat: $currentChatName, need to navigate to: $chatName")
-                            }
-                            chatHeader.forEach { it.recycle() }
-                        }
-                        
-                        if (isCorrectChat) {
-                            // We're already in the right chat, no need to search
-                            initialRootNode.recycle()
-                            return WhatsAppResult(
-                                success = true,
-                                action = "select_chat",
-                                chatName = chatName
-                            )
-                        } else {
-                            // Navigate back to find the correct chat
-                            Log.i(TAG, "Navigating back to chat list to find correct contact")
-                            initialRootNode.recycle()
-                            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                            // Wait for navigation to complete and return to chat list
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                        }
+            // Navigate to chat list by pressing back repeatedly
+            // Try up to 6 times to reach the chat list
+            var onChatList = false
+            val maxBackAttempts = 6
+
+            for (backAttempt in 1..maxBackAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    val currentScreen = detectWhatsAppScreen(rootNode)
+                    Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
+
+                    if (currentScreen == WhatsAppScreen.CHAT_LIST) {
+                        Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
+                        onChatList = true
+                        rootNode.recycle()
+                        break
                     }
-                    WhatsAppScreen.SETTINGS -> {
-                        Log.i(TAG, "In settings, navigating back to main screen")
-                        initialRootNode.recycle()
-                        accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                        // Wait for navigation to complete
-                        waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
-                    }
-                    WhatsAppScreen.STATUS, WhatsAppScreen.CALLS -> {
-                        Log.i(TAG, "On $currentScreen tab, need to switch to Chats tab")
-                        // Try to click on the Chats tab
-                        val chatsTab = initialRootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
-                        if (chatsTab != null && chatsTab.isNotEmpty()) {
-                            accessibilityService.clickNode(chatsTab[0])
-                            chatsTab.forEach { it.recycle() }
-                            // Wait for tab switch to complete
-                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1000)
-                        }
-                        initialRootNode.recycle()
-                    }
-                    WhatsAppScreen.SEARCH_ACTIVE -> {
-                        Log.i(TAG, "Search is already active, will use existing search")
-                        initialRootNode.recycle()
-                        // We'll handle this in the search logic below
-                    }
-                    else -> {
-                        initialRootNode.recycle()
-                    }
+
+                    rootNode.recycle()
+
+                    // Not on chat list yet, press back
+                    Log.i(TAG, "Not on chat list, pressing back button")
+                    accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                    delay(500) // Wait for navigation to complete
+                } else {
+                    Log.w(TAG, "Could not get root node on back attempt $backAttempt")
+                    delay(500)
                 }
+            }
+
+            if (!onChatList) {
+                Log.e(TAG, "Failed to navigate to chat list after $maxBackAttempts back button presses")
+                return WhatsAppResult(
+                    success = false,
+                    action = "select_chat",
+                    chatName = chatName,
+                    error = "Could not navigate to WhatsApp chat list. Please ensure WhatsApp is open."
+                )
             }
             
             // Try to find and click on the chat
@@ -512,6 +477,7 @@ class ScreenAgentTools @Inject constructor(
             }
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
+
             return WhatsAppResult(
                 success = false,
                 action = "select_chat",
@@ -894,7 +860,32 @@ class ScreenAgentTools @Inject constructor(
     }
     
     // ========== Helper Functions ==========
-    
+
+    /**
+     * Normalize a chat name for comparison by removing spaces, special characters, and suffixes.
+     * This helps match chat names that have different formatting (e.g., "+1(628)209-9005" vs "+1 (628) 209-9005 (You)")
+     */
+    private fun normalizeChatName(name: String): String {
+        return name
+            .lowercase()
+            .trim()
+            .replace(Regex("[\\s\\u200B-\\u200D\\uFEFF]"), "") // Remove all whitespace and invisible chars
+            .replace(Regex("\\(you\\)$"), "") // Remove "(You)" suffix
+            .replace(Regex("[()\\-]"), "") // Remove parentheses and hyphens from phone numbers
+    }
+
+    /**
+     * Check if a string looks like a phone number
+     */
+    private fun isPhoneNumber(text: String): Boolean {
+        // Remove common phone number formatting characters
+        val digitsOnly = text.replace(Regex("[^0-9]"), "")
+        // Check if we have a reasonable number of digits (7-15 is typical for phone numbers)
+        // and that the original text contains mostly numbers and phone formatting chars
+        return digitsOnly.length >= 7 && digitsOnly.length <= 15 &&
+                text.replace(Regex("[0-9()\\-\\s+]"), "").isEmpty()
+    }
+
     /**
      * Poll for a specific condition with exponential backoff
      * @param condition The condition to check
@@ -1039,13 +1030,16 @@ class ScreenAgentTools @Inject constructor(
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
             // Check for search field first (highest priority as it could be active over other screens)
-            val searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
+            var searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchField == null || searchField.isEmpty()) {
+                searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
+            }
             if (searchField != null && searchField.isNotEmpty()) {
                 searchField.forEach { it.recycle() }
                 Log.d(TAG, "Search field is active")
                 return WhatsAppScreen.SEARCH_ACTIVE
             }
-            
+
             // Check if we're in settings
             val settingsTitle = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/settings")
             if (settingsTitle != null && settingsTitle.isNotEmpty()) {
@@ -1145,6 +1139,7 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Look for the search button/icon in WhatsApp
             val searchButtons = listOf(
+                "com.whatsapp:id/my_search_bar",
                 "com.whatsapp:id/menuitem_search",
                 "com.whatsapp:id/search_button",
                 "com.whatsapp:id/action_search"
@@ -1162,11 +1157,11 @@ class ScreenAgentTools @Inject constructor(
                         // Wait for search field to appear
                         val searchFieldAppeared = waitForElement(
                             accessibilityService,
-                            viewId = "com.whatsapp:id/search_src_text",
+                            viewId = "com.whatsapp:id/search_input",
                             maxWaitMs = 1500
                         )
                         searchFieldAppeared?.recycle()
-                        
+
                         // Now find the search input field and enter text
                         val searchRootNode = accessibilityService.getCurrentRootNode()
                         if (searchRootNode != null) {
@@ -1196,11 +1191,11 @@ class ScreenAgentTools @Inject constructor(
                             // Wait for search field to appear
                             val searchFieldAppeared = waitForElement(
                                 accessibilityService,
-                                viewId = "com.whatsapp:id/search_src_text",
+                                viewId = "com.whatsapp:id/search_input",
                                 maxWaitMs = 1500
                             )
                             searchFieldAppeared?.recycle()
-                            
+
                             // Enter search text
                             val searchRootNode = accessibilityService.getCurrentRootNode()
                             if (searchRootNode != null) {
@@ -1227,8 +1222,8 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Find the search input field that's already active
             val searchFields = listOf(
-                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_edit_text"
             )
             
@@ -1311,8 +1306,8 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Find the search input field
             val searchFields = listOf(
-                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text",
                 "com.whatsapp:id/search_edit_text"
             )
             
@@ -1489,7 +1484,7 @@ class ScreenAgentTools @Inject constructor(
     
     private fun findChatNodes(node: AccessibilityNodeInfo, chatName: String): List<AccessibilityNodeInfo> {
         val results = mutableListOf<AccessibilityNodeInfo>()
-        val normalizedChatName = chatName.lowercase().trim()
+        val normalizedChatName = normalizeChatName(chatName)
 
         Log.d(TAG, "Searching for chat: '$chatName' (normalized: '$normalizedChatName')")
 
@@ -1509,10 +1504,10 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
 
-                // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-                val cleanedNodeText = nodeText?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-                val cleanedNodeDesc = nodeDesc?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-                val cleanedChatName = normalizedChatName.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
+                // Normalize the node text and description for comparison
+                val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
+                val cleanedNodeDesc = nodeDesc?.let { normalizeChatName(it) }
+                val cleanedChatName = normalizedChatName
 
                 // Handle truncated names with ellipsis (…)
                 val isEllipsisMatchText = cleanedNodeText?.let { text ->
@@ -1550,14 +1545,9 @@ class ScreenAgentTools @Inject constructor(
             for (item in chatListItems) {
                 val itemText = item.text?.toString()
                 if (itemText != null) {
-                    val normalizedItemText = itemText.lowercase().trim()
-                    // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-                    val cleanedItemText = normalizedItemText
-                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
-                        .replace(" ", "")
+                    // Normalize the item text for comparison
+                    val cleanedItemText = normalizeChatName(itemText)
                     val cleanedChatName = normalizedChatName
-                        .replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")
-                        .replace(" ", "")
 
                     Log.d(TAG, "Checking chat list item: original='$itemText', cleaned='$cleanedItemText' vs '$cleanedChatName'")
 
@@ -1687,10 +1677,10 @@ class ScreenAgentTools @Inject constructor(
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
 
-            // Remove zero-width spaces, other invisible characters, and regular spaces for comparison
-            val cleanedNodeText = nodeText?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
-            val cleanedSearchText = searchText.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "").replace(" ", "")
-            val cleanedContentDesc = contentDesc?.lowercase()?.trim()?.replace(Regex("[\\u200B-\\u200D\\uFEFF]"), "")?.replace(" ", "")
+            // Normalize the node text and description for comparison
+            val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
+            val cleanedSearchText = searchText  // searchText is already normalized
+            val cleanedContentDesc = contentDesc?.let { normalizeChatName(it) }
 
             // Handle truncated names with ellipsis (…)
             val isEllipsisMatchText = cleanedNodeText?.let { text ->
