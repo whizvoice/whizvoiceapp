@@ -1697,8 +1697,70 @@ object ComposeTestHelper {
      */
     private data class MessageInfo(
         val index: Int,
-        val type: String, // "user" or "assistant"  
+        val type: String, // "user" or "assistant"
         val content: String
     )
+
+    /**
+     * Send a voice message using VoiceManager's transcription callback.
+     * This properly simulates voice input without disabling continuous listening.
+     *
+     * @param message The message text to send
+     * @param voiceManager The VoiceManager instance
+     * @param composeTestRule The compose test rule for UI verification
+     * @return true if message was sent and appeared in UI, false otherwise
+     */
+    fun sendVoiceMessage(
+        message: String,
+        voiceManager: com.example.whiz.ui.viewmodels.VoiceManager,
+        composeTestRule: ComposeTestRule
+    ): Boolean {
+        return try {
+            Log.d(TAG, "🎤 Sending voice message: '$message'")
+
+            // Use reflection to access the transcriptionCallback like TestTranscriptionReceiver does
+            try {
+                val transcriptionCallbackField = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
+                transcriptionCallbackField.isAccessible = true
+                val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+
+                if (callback != null) {
+                    // Invoke the callback on main thread
+                    val instrumentation = InstrumentationRegistry.getInstrumentation()
+                    instrumentation.runOnMainSync {
+                        Log.d(TAG, "🎤 Invoking transcription callback with: '$message'")
+                        callback.invoke(message)
+                        Log.d(TAG, "✅ Transcription callback invoked")
+                    }
+
+                    // Wait for message to appear in UI
+                    val messageAppeared = waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithText(message) },
+                        timeoutMs = 5000L,
+                        description = "voice message '$message'"
+                    )
+
+                    if (messageAppeared) {
+                        Log.d(TAG, "✅ Voice message sent and displayed: '$message'")
+                        return true
+                    } else {
+                        Log.e(TAG, "❌ Voice message sent but did not appear in UI: '$message'")
+                        return false
+                    }
+                } else {
+                    Log.e(TAG, "❌ VoiceManager transcription callback is not set")
+                    return false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error accessing VoiceManager transcription callback", e)
+                return false
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Exception sending voice message", e)
+            false
+        }
+    }
 
 } 
