@@ -2,20 +2,19 @@
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/dismiss_target"
-    android:layout_width="80dp"
-    android:layout_height="80dp"
-    app:cardBackgroundColor="#FF424242"
-    app:cardCornerRadius="40dp"
+    android:layout_width="120dp"
+    android:layout_height="120dp"
+    app:cardBackgroundColor="#80424242"
+    app:cardCornerRadius="60dp"
     app:cardElevation="0dp"
     android:contentDescription="Dismiss bubble target">
 
     <ImageView
         android:id="@+id/dismiss_icon"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
         android:layout_gravity="center"
-        android:src="@android:drawable/ic_menu_close_clear_cancel"
-        android:tint="#FFFFFFFF"
+        android:src="@drawable/ic_close_thin"
         android:contentDescription="Dismiss icon" />
 
 </androidx.cardview.widget.CardView>
