@@ -547,25 +547,25 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 2a: Wait for bubble mode to be set to CONTINUOUS_LISTENING
-            Log.d(TAG, "🔍 step 2a: waiting for bubble mode to be CONTINUOUS_LISTENING...")
+            // Step 2a: Wait for bubble mode to be set (should be TTS_WITH_LISTENING since voice launch enabled TTS)
+            Log.d(TAG, "🔍 step 2a: waiting for bubble mode to be set (expecting TTS_WITH_LISTENING from voice launch)...")
             var modeSet = false
             val modeStartTime = System.currentTimeMillis()
             val modeTimeout = 2000L
 
             while (System.currentTimeMillis() - modeStartTime < modeTimeout) {
-                if (BubbleOverlayService.bubbleListeningMode == com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING) {
+                if (BubbleOverlayService.bubbleListeningMode == com.example.whiz.services.ListeningMode.TTS_WITH_LISTENING) {
                     modeSet = true
                     val elapsed = System.currentTimeMillis() - modeStartTime
-                    Log.d(TAG, "✅ Bubble mode set to CONTINUOUS_LISTENING after ${elapsed}ms")
+                    Log.d(TAG, "✅ Bubble mode set to TTS_WITH_LISTENING after ${elapsed}ms (preserved from voice launch)")
                     break
                 }
                 delay(100)
             }
 
             if (!modeSet) {
-                Log.e(TAG, "❌ FAILURE: bubble mode not set to CONTINUOUS_LISTENING (mode: ${BubbleOverlayService.bubbleListeningMode})")
-                failWithScreenshot("voice_control_bubble_mode_not_set", "bubble mode not CONTINUOUS_LISTENING")
+                Log.e(TAG, "❌ FAILURE: bubble mode not set to TTS_WITH_LISTENING (mode: ${BubbleOverlayService.bubbleListeningMode})")
+                failWithScreenshot("voice_control_bubble_mode_not_tts", "bubble mode not TTS_WITH_LISTENING")
                 return@runBlocking
             }
 
@@ -577,33 +577,57 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
             Log.d(TAG, "✅ Continuous listening is ON: $enabledState")
 
-            // Step 2b: Wait for TTS to be disabled after bubble mode initializes
-            Log.d(TAG, "🔍 step 2b: waiting for TTS to be disabled (bubble mode default)...")
-            var ttsDisabled = false
-            val ttsCheckStartTime = System.currentTimeMillis()
-            val ttsCheckTimeout = 2000L // 2 seconds should be enough for async mode change
-
-            while (System.currentTimeMillis() - ttsCheckStartTime < ttsCheckTimeout) {
-                val currentTTSState = capturedViewModel?.isVoiceResponseEnabled?.value ?: false
-                if (!currentTTSState) {
-                    ttsDisabled = true
-                    val elapsed = System.currentTimeMillis() - ttsCheckStartTime
-                    Log.d(TAG, "✅ TTS disabled after ${elapsed}ms")
-                    break
-                }
-                delay(100)
-            }
-
-            if (!ttsDisabled) {
-                val finalTTSState = capturedViewModel?.isVoiceResponseEnabled?.value ?: false
-                Log.e(TAG, "❌ FAILURE: TTS should be OFF by default after ${ttsCheckTimeout}ms (still: $finalTTSState)")
-                failWithScreenshot("voice_control_tts_on_by_default", "TTS on by default (should be off)")
+            // Step 2b: Verify TTS is enabled (preserved from voice launch)
+            Log.d(TAG, "🔍 step 2b: verifying TTS is enabled (preserved from voice launch)...")
+            val ttsState = capturedViewModel?.isVoiceResponseEnabled?.value ?: false
+            if (!ttsState) {
+                Log.e(TAG, "❌ FAILURE: TTS should be ON (preserved from voice launch)")
+                failWithScreenshot("voice_control_tts_not_preserved", "TTS not preserved from voice launch")
                 return@runBlocking
             }
-            Log.d(TAG, "✅ TTS is OFF by default (bubble mode initialized correctly)")
+            Log.d(TAG, "✅ TTS is ON (bubble mode preserved TTS state from voice launch)")
 
-            // Step 6: Send voice message to enable TTS
-            Log.d(TAG, "🔊 step 6: sending voice message to enable TTS...")
+            // Step 6: Send voice message to disable TTS (since it's currently ON from voice launch)
+            Log.d(TAG, "🔇 step 6: sending voice message to disable TTS...")
+            val disableTTSMessage = "Please turn off text to speech - ${System.currentTimeMillis()}"
+
+            val disableTTSMessageSent = ComposeTestHelper.sendVoiceMessage(
+                message = disableTTSMessage,
+                voiceManager = voiceManager,
+                composeTestRule = composeTestRule
+            )
+
+            if (!disableTTSMessageSent) {
+                Log.e(TAG, "❌ Disable TTS voice message not sent or displayed")
+                failWithScreenshot("voice_control_disable_tts_message_not_displayed", "voice message not sent")
+                return@runBlocking
+            }
+
+            // Step 7: Wait for bubble to switch to CONTINUOUS_LISTENING mode
+            Log.d(TAG, "⏳ step 7: waiting for bubble to switch to CONTINUOUS_LISTENING mode...")
+            var ttsDisableModeSwitched = false
+            val disableTTSStartTime = System.currentTimeMillis()
+            val disableTTSTimeout = 15000L
+
+            while (System.currentTimeMillis() - disableTTSStartTime < disableTTSTimeout) {
+                val currentBubbleMode = BubbleOverlayService.bubbleListeningMode
+                if (currentBubbleMode == com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING) {
+                    ttsDisableModeSwitched = true
+                    val elapsed = System.currentTimeMillis() - disableTTSStartTime
+                    Log.d(TAG, "✅ Bubble switched to CONTINUOUS_LISTENING mode after ${elapsed}ms")
+                    break
+                }
+                delay(200)
+            }
+
+            if (!ttsDisableModeSwitched) {
+                Log.e(TAG, "❌ FAILURE: bubble did not switch to CONTINUOUS_LISTENING mode")
+                failWithScreenshot("voice_control_bubble_not_continuous_mode", "bubble not in CONTINUOUS_LISTENING mode")
+                return@runBlocking
+            }
+
+            // Step 8: Send voice message to re-enable TTS
+            Log.d(TAG, "🔊 step 8: sending voice message to re-enable TTS...")
             val enableTTSMessage = "Please turn on text to speech - ${System.currentTimeMillis()}"
 
             val enableTTSMessageSent = ComposeTestHelper.sendVoiceMessage(
@@ -618,8 +642,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 7: Wait for bubble to switch to TTS_WITH_LISTENING mode
-            Log.d(TAG, "⏳ step 7: waiting for bubble to switch to TTS_WITH_LISTENING mode...")
+            // Step 9: Wait for bubble to switch back to TTS_WITH_LISTENING mode
+            Log.d(TAG, "⏳ step 9: waiting for bubble to switch back to TTS_WITH_LISTENING mode...")
             var ttsModeSwitched = false
             val enableTTSStartTime = System.currentTimeMillis()
             val enableTTSTimeout = 15000L
@@ -641,47 +665,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 8: Send voice message to disable TTS
-            Log.d(TAG, "🔇 step 8: sending voice message to disable TTS...")
-            val disableTTSMessage = "Please turn off text to speech - ${System.currentTimeMillis()}"
-
-            val disableTTSMessageSent = ComposeTestHelper.sendVoiceMessage(
-                message = disableTTSMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
-            )
-
-            if (!disableTTSMessageSent) {
-                Log.e(TAG, "❌ Disable TTS voice message not sent or displayed")
-                failWithScreenshot("voice_control_disable_tts_message_not_displayed", "voice message not sent")
-                return@runBlocking
-            }
-
-            // Step 9: Wait for bubble to switch back to CONTINUOUS_LISTENING mode
-            Log.d(TAG, "⏳ step 9: waiting for bubble to switch back to CONTINUOUS_LISTENING mode...")
-            var backToListening = false
-            val disableTTSStartTime = System.currentTimeMillis()
-            val disableTTSTimeout = 15000L
-
-            while (System.currentTimeMillis() - disableTTSStartTime < disableTTSTimeout) {
-                val currentBubbleMode = BubbleOverlayService.bubbleListeningMode
-                if (currentBubbleMode == com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING) {
-                    backToListening = true
-                    val elapsed = System.currentTimeMillis() - disableTTSStartTime
-                    Log.d(TAG, "✅ Bubble switched back to CONTINUOUS_LISTENING mode after ${elapsed}ms")
-                    break
-                }
-                delay(200)
-            }
-
-            if (!backToListening) {
-                Log.e(TAG, "❌ FAILURE: bubble did not switch back to CONTINUOUS_LISTENING mode")
-                failWithScreenshot("voice_control_bubble_not_back_to_listening", "bubble not in CONTINUOUS_LISTENING mode")
-                return@runBlocking
-            }
-
-            // Step 3: Send voice message to disable continuous listening
-            Log.d(TAG, "💬 step 3: sending voice message to disable continuous listening...")
+            // Step 10: Send voice message to disable continuous listening
+            Log.d(TAG, "💬 step 10: sending voice message to disable continuous listening...")
             val disableMessage = "Please turn off continuous listening - ${System.currentTimeMillis()}"
 
             val disableMessageSent = ComposeTestHelper.sendVoiceMessage(
@@ -696,8 +681,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 4: Wait for bubble to switch to MIC_OFF mode
-            Log.d(TAG, "⏳ step 4: waiting for bubble to switch to MIC_OFF mode...")
+            // Step 11: Wait for bubble to switch to MIC_OFF mode
+            Log.d(TAG, "⏳ step 11: waiting for bubble to switch to MIC_OFF mode...")
             var modeSwitched = false
             val disableStartTime = System.currentTimeMillis()
             val disableTimeout = 15000L
@@ -720,7 +705,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             Log.d(TAG, "🎉 voice control tools test (voice mode) PASSED!")
-            Log.d(TAG, "✅ Test validated: voice mode, disable listening, enable/disable TTS")
+            Log.d(TAG, "✅ Test validated: voice mode with TTS preservation, disable/enable TTS, disable continuous listening")
 
             // Track final chat ID
             try {

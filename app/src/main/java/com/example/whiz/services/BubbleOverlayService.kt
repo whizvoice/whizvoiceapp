@@ -155,6 +155,17 @@ class BubbleOverlayService : Service() {
         isActive = true
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        // Determine initial mode based on whether TTS was already enabled
+        val wasTTSEnabled = voiceManager.isVoiceResponseEnabled.value
+        currentMode = if (wasTTSEnabled) {
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was enabled ($wasTTSEnabled), starting in TTS_WITH_LISTENING mode")
+            ListeningMode.TTS_WITH_LISTENING
+        } else {
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was disabled ($wasTTSEnabled), starting in CONTINUOUS_LISTENING mode")
+            ListeningMode.CONTINUOUS_LISTENING
+        }
+
         createChatHead()
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
