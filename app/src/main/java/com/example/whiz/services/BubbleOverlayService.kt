@@ -75,7 +75,7 @@ class BubbleOverlayService : Service() {
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
-        private const val DISMISS_TARGET_THRESHOLD = 100 // Distance in pixels to consider "over" the target
+        private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
         
         // Track if the bubble overlay is active
         @Volatile
@@ -404,13 +404,21 @@ class BubbleOverlayService : Service() {
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
 
-        // Calculate bubble position
-        val bubbleX = screenWidth - bubbleParams.x - 60
-        val bubbleY = bubbleParams.y + 30
+        // Get the actual chat head view position on screen (same as in updateDismissTargetProximity)
+        val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
+        val location = IntArray(2)
+        chatHead?.getLocationOnScreen(location)
+
+        // Calculate center of the actual chat head circle
+        val chatHeadWidth = chatHead?.width ?: 0
+        val chatHeadHeight = chatHead?.height ?: 0
+        val bubbleX = location[0] + (chatHeadWidth / 2)
+        val bubbleY = location[1] + (chatHeadHeight / 2)
 
         // Dismiss target position
+        val dismissTargetHeightPx = (120 * displayMetrics.density).toInt()
         val targetX = screenWidth / 2
-        val targetY = screenHeight - 100 - 40
+        val targetY = screenHeight - 100 - (dismissTargetHeightPx / 2)
 
         // Calculate distance
         val distance = kotlin.math.sqrt(
