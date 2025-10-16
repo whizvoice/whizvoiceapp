@@ -326,7 +326,16 @@ class ScreenAgentTools @Inject constructor(
                     if (currentScreen == WhatsAppScreen.CHAT_LIST) {
                         Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
                         onChatList = true
-                        rootNode.recycle()
+
+                        // Check if search bar is visible, if not scroll to top
+                        if (!isSearchBarVisible(rootNode)) {
+                            Log.i(TAG, "Search bar not visible, scrolling to top")
+                            rootNode.recycle()
+                            scrollToTopOfChatList(accessibilityService)
+                        } else {
+                            Log.i(TAG, "Search bar is visible")
+                            rootNode.recycle()
+                        }
                         break
                     }
 
@@ -388,44 +397,17 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Click result: $success")
                             
                             if (success) {
-                                // Wait to see if we're in a chat or profile view
+                                // Wait to verify we're in the chat
                                 waitForCondition(maxWaitMs = 2000) {
                                     val rootNode = accessibilityService.getCurrentRootNode()
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
-                                        val isReady = screen == WhatsAppScreen.INSIDE_CHAT ||
-                                                     // Check for profile view (has Message button)
-                                                     rootNode.findAccessibilityNodeInfosByText("Message").let { nodes ->
-                                                         val hasMessageButton = nodes != null && nodes.isNotEmpty()
-                                                         nodes?.forEach { it.recycle() }
-                                                         hasMessageButton
-                                                     }
+                                        val isInChat = screen == WhatsAppScreen.INSIDE_CHAT
                                         rootNode.recycle()
-                                        isReady
+                                        isInChat
                                     } else {
                                         false
                                     }
-                                }
-
-                                // Check if we need to click a "Message" button (profile view)
-                                val newRootNode = accessibilityService.getCurrentRootNode()
-                                if (newRootNode != null) {
-                                    val screen = detectWhatsAppScreen(newRootNode)
-
-                                    // Only click Message button if we're NOT already in a chat
-                                    if (screen != WhatsAppScreen.INSIDE_CHAT) {
-                                        val messageButtonClicked = clickMessageButton(newRootNode, accessibilityService)
-
-                                        if (messageButtonClicked) {
-                                            Log.d(TAG, "Successfully clicked Message button after opening profile")
-                                        } else {
-                                            Log.d(TAG, "No Message button found - might already be in chat")
-                                        }
-                                    } else {
-                                        Log.d(TAG, "Already in chat, no need to click Message button")
-                                    }
-
-                                    newRootNode.recycle()
                                 }
                                 
                                 // Clean up
@@ -1029,83 +1011,23 @@ class ScreenAgentTools @Inject constructor(
     
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
-            // Check for search field first (highest priority as it could be active over other screens)
-            var searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
-            if (searchField == null || searchField.isEmpty()) {
-                searchField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_src_text")
-            }
-            if (searchField != null && searchField.isNotEmpty()) {
-                searchField.forEach { it.recycle() }
-                Log.d(TAG, "Search field is active")
-                return WhatsAppScreen.SEARCH_ACTIVE
+            // Check if we're inside a chat first (most specific screen)
+            // A chat screen has the message input field and/or conversation elements
+            val messageInputField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
+            if (messageInputField != null && messageInputField.isNotEmpty()) {
+                messageInputField.forEach { it.recycle() }
+                Log.d(TAG, "Inside WhatsApp chat (found message input field)")
+                return WhatsAppScreen.INSIDE_CHAT
             }
 
-            // Check if we're in settings
-            val settingsTitle = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/settings")
-            if (settingsTitle != null && settingsTitle.isNotEmpty()) {
-                settingsTitle.forEach { it.recycle() }
-                Log.d(TAG, "In WhatsApp Settings")
-                return WhatsAppScreen.SETTINGS
-            }
-            
-            // Check for settings indicators by text
-            val settingsText = rootNode.findAccessibilityNodeInfosByText("Settings")
-            if (settingsText != null && settingsText.isNotEmpty()) {
-                // Verify it's actually the settings screen header
-                for (node in settingsText) {
-                    if (node.className == "android.widget.TextView") {
-                        settingsText.forEach { it.recycle() }
-                        Log.d(TAG, "In WhatsApp Settings (detected by text)")
-                        return WhatsAppScreen.SETTINGS
-                    }
-                }
-                settingsText.forEach { it.recycle() }
-            }
-            
-            // Check if we're inside a specific chat
-            val chatHeader = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
-            if (chatHeader != null && chatHeader.isNotEmpty()) {
-                chatHeader.forEach { it.recycle() }
-                Log.d(TAG, "Inside a WhatsApp chat")
+            // Alternative: Check for conversation contact name in the action bar (indicates we're in a chat)
+            val conversationContactName = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
+            if (conversationContactName != null && conversationContactName.isNotEmpty()) {
+                conversationContactName.forEach { it.recycle() }
+                Log.d(TAG, "Inside WhatsApp chat (found conversation contact name)")
                 return WhatsAppScreen.INSIDE_CHAT
             }
-            
-            // Check for message input field (also indicates chat view)
-            val messageInput = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
-            if (messageInput != null && messageInput.isNotEmpty()) {
-                messageInput.forEach { it.recycle() }
-                Log.d(TAG, "Inside a WhatsApp chat (found message input)")
-                return WhatsAppScreen.INSIDE_CHAT
-            }
-            
-            // Check if we're on the Status tab
-            val statusTab = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_status")
-            if (statusTab != null && statusTab.isNotEmpty()) {
-                // Check if it's selected
-                for (node in statusTab) {
-                    if (node.isSelected) {
-                        statusTab.forEach { it.recycle() }
-                        Log.d(TAG, "On WhatsApp Status tab")
-                        return WhatsAppScreen.STATUS
-                    }
-                }
-                statusTab.forEach { it.recycle() }
-            }
-            
-            // Check if we're on the Calls tab
-            val callsTab = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_calls")
-            if (callsTab != null && callsTab.isNotEmpty()) {
-                // Check if it's selected
-                for (node in callsTab) {
-                    if (node.isSelected) {
-                        callsTab.forEach { it.recycle() }
-                        Log.d(TAG, "On WhatsApp Calls tab")
-                        return WhatsAppScreen.CALLS
-                    }
-                }
-                callsTab.forEach { it.recycle() }
-            }
-            
+
             // Check for chat list elements
             val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
             if (chatList != null && chatList.isNotEmpty()) {
@@ -1113,21 +1035,123 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "On WhatsApp chat list")
                 return WhatsAppScreen.CHAT_LIST
             }
-            
-            // Default assumption - if we see any tab layout, we're probably on the main screen
+
+            // Check for the tab layout which indicates we're on the main screen with tabs
             val tabLayout = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_layout")
             if (tabLayout != null && tabLayout.isNotEmpty()) {
                 tabLayout.forEach { it.recycle() }
-                Log.d(TAG, "On WhatsApp main screen (likely chat list)")
+                Log.d(TAG, "On WhatsApp main screen with tabs (chat list)")
                 return WhatsAppScreen.CHAT_LIST
             }
-            
-            Log.d(TAG, "Could not determine WhatsApp screen")
+
+            // Check for the "Chats" tab specifically
+            val chatsTab = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/tab_chats")
+            if (chatsTab != null && chatsTab.isNotEmpty()) {
+                chatsTab.forEach { it.recycle() }
+                Log.d(TAG, "Found Chats tab (on chat list)")
+                return WhatsAppScreen.CHAT_LIST
+            }
+
+            Log.d(TAG, "Not on WhatsApp chat list or inside chat")
             return WhatsAppScreen.UNKNOWN
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error detecting WhatsApp screen", e)
             return WhatsAppScreen.UNKNOWN
+        }
+    }
+
+    private fun isSearchBarVisible(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            // Check for search bar elements
+            val searchBarIds = listOf(
+                "com.whatsapp:id/my_search_bar",
+                "com.whatsapp:id/menuitem_search",
+                "com.whatsapp:id/search_button",
+                "com.whatsapp:id/action_search"
+            )
+
+            for (searchId in searchBarIds) {
+                val searchNodes = rootNode.findAccessibilityNodeInfosByViewId(searchId)
+                if (searchNodes != null && searchNodes.isNotEmpty()) {
+                    searchNodes.forEach { it.recycle() }
+                    Log.d(TAG, "Search bar is visible (found $searchId)")
+                    return true
+                }
+            }
+
+            // Also try to find by text
+            val searchByText = rootNode.findAccessibilityNodeInfosByText("Search")
+            if (searchByText != null && searchByText.isNotEmpty()) {
+                searchByText.forEach { it.recycle() }
+                Log.d(TAG, "Search bar is visible (found by text)")
+                return true
+            }
+
+            Log.d(TAG, "Search bar is NOT visible")
+            return false
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking if search bar is visible", e)
+            return false
+        }
+    }
+
+    private suspend fun scrollToTopOfChatList(accessibilityService: WhizAccessibilityService) {
+        try {
+            val maxScrollAttempts = 10
+            var scrollAttempt = 0
+
+            // Get screen dimensions for gesture coordinates
+            val displayMetrics = context.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            // Calculate swipe coordinates (swipe down from top to bottom to scroll UP and reveal search bar)
+            val centerX = screenWidth / 2f
+            val startY = screenHeight * 0.3f  // Start at 30% down the screen (near top)
+            val endY = screenHeight * 0.7f    // End at 70% down the screen (swipe downward to scroll up)
+
+            while (scrollAttempt < maxScrollAttempts) {
+                scrollAttempt++
+
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode == null) {
+                    Log.w(TAG, "Could not get root node for scrolling")
+                    delay(200)
+                    continue
+                }
+
+                // Check if search bar is now visible
+                if (isSearchBarVisible(rootNode)) {
+                    Log.i(TAG, "Search bar is now visible after $scrollAttempt scroll(s)")
+                    rootNode.recycle()
+                    break
+                }
+
+                rootNode.recycle()
+
+                // Perform swipe gesture to scroll up
+                Log.d(TAG, "Performing scroll gesture attempt $scrollAttempt (swipe from $startY to $endY)")
+                val scrolled = accessibilityService.performScrollGesture(
+                    centerX, startY, centerX, endY, duration = 300
+                )
+                Log.d(TAG, "Scroll attempt $scrollAttempt: $scrolled")
+
+                if (!scrolled) {
+                    Log.w(TAG, "Scroll gesture failed on attempt $scrollAttempt")
+                    // Continue trying anyway - maybe the next one will work
+                }
+
+                delay(400) // Wait for scroll animation to complete
+            }
+
+            if (scrollAttempt >= maxScrollAttempts) {
+                Log.w(TAG, "Max scroll attempts reached, search bar may still not be visible")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error scrolling to top of chat list", e)
         }
     }
     

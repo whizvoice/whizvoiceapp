@@ -444,13 +444,10 @@ class SpeechRecognitionService @Inject constructor(
                 val partialText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
                 _transcriptionState.value = partialText
-                
-                // Send to bubble overlay if active
-                try {
-                    BubbleOverlayService.updateUserTranscription(partialText)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not update bubble overlay: ${e.message}")
-                }
+
+                // Note: We only update the transcription state for UI display.
+                // We do NOT send partial results to bubble overlay to avoid creating
+                // duplicate messages. Only onResults() should trigger message sends.
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {

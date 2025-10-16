@@ -2,8 +2,10 @@ package com.example.whiz.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -16,6 +18,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class WhizAccessibilityService : AccessibilityService() {
     
@@ -159,7 +163,72 @@ class WhizAccessibilityService : AccessibilityService() {
             false
         }
     }
-    
+
+    /**
+     * Performs a scroll gesture (swipe) on the screen
+     * @param startX Starting X coordinate
+     * @param startY Starting Y coordinate
+     * @param endX Ending X coordinate
+     * @param endY Ending Y coordinate
+     * @param duration Duration of the swipe in milliseconds
+     * @return true if gesture was successfully dispatched
+     */
+    suspend fun performScrollGesture(
+        startX: Float,
+        startY: Float,
+        endX: Float,
+        endY: Float,
+        duration: Long = 300
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.w(TAG, "Gesture dispatching requires API 24+")
+            return false
+        }
+
+        return suspendCancellableCoroutine { continuation ->
+            try {
+                val path = Path().apply {
+                    moveTo(startX, startY)
+                    lineTo(endX, endY)
+                }
+
+                val gestureBuilder = GestureDescription.Builder()
+                val strokeDescription = GestureDescription.StrokeDescription(path, 0, duration)
+                gestureBuilder.addStroke(strokeDescription)
+                val gesture = gestureBuilder.build()
+
+                val callback = object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d(TAG, "Scroll gesture completed successfully")
+                        if (continuation.isActive) {
+                            continuation.resume(true)
+                        }
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.w(TAG, "Scroll gesture was cancelled")
+                        if (continuation.isActive) {
+                            continuation.resume(false)
+                        }
+                    }
+                }
+
+                val dispatched = dispatchGesture(gesture, callback, null)
+                if (!dispatched) {
+                    Log.e(TAG, "Failed to dispatch scroll gesture")
+                    if (continuation.isActive) {
+                        continuation.resume(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error performing scroll gesture", e)
+                if (continuation.isActive) {
+                    continuation.resume(false)
+                }
+            }
+        }
+    }
+
     /**
      * Checks if an app is installed
      */
