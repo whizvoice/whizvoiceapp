@@ -352,14 +352,18 @@ class BubbleOverlayService : Service() {
         val screenHeight = displayMetrics.heightPixels
 
         // Convert dp to pixels
-        val bubbleWidthPx = (60 * displayMetrics.density).toInt()
         val dismissTargetHeightPx = (120 * displayMetrics.density).toInt() // 120dp circle
 
-        // Calculate bubble position in screen coordinates
-        // bubbleParams.x is offset from right edge (because of Gravity.END)
-        // bubbleParams.y is offset from top edge (because of Gravity.TOP)
-        val bubbleX = screenWidth - bubbleParams.x - (bubbleWidthPx / 2)
-        val bubbleY = bubbleParams.y + (bubbleWidthPx / 2)
+        // Get the actual chat head view position on screen
+        val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
+        val location = IntArray(2)
+        chatHead?.getLocationOnScreen(location)
+
+        // Calculate center of the actual chat head circle
+        val chatHeadWidth = chatHead?.width ?: 0
+        val chatHeadHeight = chatHead?.height ?: 0
+        val bubbleX = location[0] + (chatHeadWidth / 2)
+        val bubbleY = location[1] + (chatHeadHeight / 2)
 
         // Dismiss target is at bottom center
         val targetX = screenWidth / 2
