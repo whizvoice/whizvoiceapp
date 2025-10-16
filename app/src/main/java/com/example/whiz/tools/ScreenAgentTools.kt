@@ -1102,6 +1102,16 @@ class ScreenAgentTools @Inject constructor(
             val maxScrollAttempts = 10
             var scrollAttempt = 0
 
+            // Get screen dimensions for gesture coordinates
+            val displayMetrics = context.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            // Calculate swipe coordinates (swipe down from top to bottom to scroll UP and reveal search bar)
+            val centerX = screenWidth / 2f
+            val startY = screenHeight * 0.3f  // Start at 30% down the screen (near top)
+            val endY = screenHeight * 0.7f    // End at 70% down the screen (swipe downward to scroll up)
+
             while (scrollAttempt < maxScrollAttempts) {
                 scrollAttempt++
 
@@ -1119,28 +1129,21 @@ class ScreenAgentTools @Inject constructor(
                     break
                 }
 
-                // Find a scrollable node (the chat list)
-                val scrollableNode = findScrollableNode(rootNode)
-                if (scrollableNode != null) {
-                    // Scroll backward (up)
-                    val scrolled = scrollableNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
-                    Log.d(TAG, "Scroll attempt $scrollAttempt: $scrolled")
-                    scrollableNode.recycle()
+                rootNode.recycle()
 
-                    if (!scrolled) {
-                        // If scroll failed, we might already be at the top
-                        Log.i(TAG, "Scroll failed, might already be at top")
-                        rootNode.recycle()
-                        break
-                    }
-                } else {
-                    Log.w(TAG, "Could not find scrollable node")
-                    rootNode.recycle()
-                    break
+                // Perform swipe gesture to scroll up
+                Log.d(TAG, "Performing scroll gesture attempt $scrollAttempt (swipe from $startY to $endY)")
+                val scrolled = accessibilityService.performScrollGesture(
+                    centerX, startY, centerX, endY, duration = 300
+                )
+                Log.d(TAG, "Scroll attempt $scrollAttempt: $scrolled")
+
+                if (!scrolled) {
+                    Log.w(TAG, "Scroll gesture failed on attempt $scrollAttempt")
+                    // Continue trying anyway - maybe the next one will work
                 }
 
-                rootNode.recycle()
-                delay(300) // Wait for scroll animation
+                delay(400) // Wait for scroll animation to complete
             }
 
             if (scrollAttempt >= maxScrollAttempts) {
@@ -1149,33 +1152,6 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error scrolling to top of chat list", e)
-        }
-    }
-
-    private fun findScrollableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        try {
-            // Check if this node is scrollable
-            if (node.isScrollable) {
-                return AccessibilityNodeInfo.obtain(node)
-            }
-
-            // Recursively search children
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i)
-                if (child != null) {
-                    val scrollableChild = findScrollableNode(child)
-                    child.recycle()
-                    if (scrollableChild != null) {
-                        return scrollableChild
-                    }
-                }
-            }
-
-            return null
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error finding scrollable node", e)
-            return null
         }
     }
     
