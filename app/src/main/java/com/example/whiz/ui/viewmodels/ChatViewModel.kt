@@ -578,7 +578,11 @@ class ChatViewModel @Inject constructor(
                         
                         // Execute the tool
                         Log.i(TAG, "🔧 Calling toolExecutor.executeToolFromJson")
-                        toolExecutor.executeToolFromJson(event.toolRequest)
+                        toolExecutor.executeToolFromJson(
+                            toolRequest = event.toolRequest,
+                            voiceManager = voiceManager,
+                            chatViewModel = this@ChatViewModel
+                        )
                     }
                     is WebSocketEvent.Cancelled -> {
                         Log.d(TAG, "Request ${event.cancelledRequestId} was cancelled successfully")
@@ -1850,7 +1854,7 @@ class ChatViewModel @Inject constructor(
         _isVoiceResponseEnabled.update { !it }
         if (!_isVoiceResponseEnabled.value) {
             ttsManager.stop() // Stop speaking if toggled off
-            
+
             // If continuous listening is enabled, restart it immediately when TTS is stopped
             if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
@@ -1863,6 +1867,25 @@ class ChatViewModel @Inject constructor(
             }
         }
         Log.d(TAG, "Voice Response Enabled: ${_isVoiceResponseEnabled.value}")
+    }
+
+    fun setVoiceResponseEnabled(enabled: Boolean) {
+        _isVoiceResponseEnabled.value = enabled
+        if (!enabled) {
+            ttsManager.stop() // Stop speaking if disabled
+
+            // If continuous listening is enabled, restart it immediately when TTS is stopped
+            if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
+                Log.d(TAG, "[LOG] Voice response disabled via setter, restarting continuous listening immediately")
+                viewModelScope.launch {
+                    delay(50L) // Very short delay to ensure TTS stop is processed
+                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                        startContinuousListening()
+                    }
+                }
+            }
+        }
+        Log.d(TAG, "Voice Response Enabled set to: $enabled")
     }
 
     // --- Internal Helper Functions ---
