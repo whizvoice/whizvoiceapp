@@ -42,7 +42,7 @@
             android:layout_width="60dp"
             android:layout_height="60dp"
             app:cardCornerRadius="30dp"
-            app:cardElevation="6dp">
+            app:cardElevation="0dp">
 
             <FrameLayout
                 android:layout_width="match_parent"
