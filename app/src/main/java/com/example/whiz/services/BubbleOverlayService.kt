@@ -74,7 +74,7 @@ class BubbleOverlayService : Service() {
         private const val CLICK_THRESHOLD = 10
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
-        private const val DISMISS_TARGET_PROXIMITY = 150 // Distance in pixels to trigger dismiss target growth
+        private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 100 // Distance in pixels to consider "over" the target
         
         // Track if the bubble overlay is active
@@ -152,6 +152,14 @@ class BubbleOverlayService : Service() {
     @SuppressLint("InflateParams")
     private fun createDismissTarget() {
         dismissTargetView = LayoutInflater.from(this).inflate(R.layout.bubble_dismiss_target, null)
+
+        // Force circular clipping
+        dismissTargetView?.clipToOutline = true
+        dismissTargetView?.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+
+        // Start scaled down (180dp * 0.667 = 120dp visual size)
+        dismissTargetView?.scaleX = 0.667f
+        dismissTargetView?.scaleY = 0.667f
 
         val displayMetrics = resources.displayMetrics
         val screenHeight = displayMetrics.heightPixels
@@ -335,6 +343,7 @@ class BubbleOverlayService : Service() {
                 isDismissTargetVisible = false
             }
         }
+
     }
 
     private fun updateDismissTargetProximity(bubbleParams: WindowManager.LayoutParams) {
@@ -342,35 +351,47 @@ class BubbleOverlayService : Service() {
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
 
+        // Convert dp to pixels
+        val bubbleWidthPx = (60 * displayMetrics.density).toInt()
+        val dismissTargetHeightPx = (120 * displayMetrics.density).toInt() // 120dp circle
+
         // Calculate bubble position in screen coordinates
         // bubbleParams.x is offset from right edge (because of Gravity.END)
         // bubbleParams.y is offset from top edge (because of Gravity.TOP)
-        val bubbleX = screenWidth - bubbleParams.x - 60 // 60dp is approximate bubble width
-        val bubbleY = bubbleParams.y + 30 // Center of bubble (approximate)
+        val bubbleX = screenWidth - bubbleParams.x - (bubbleWidthPx / 2)
+        val bubbleY = bubbleParams.y + (bubbleWidthPx / 2)
 
         // Dismiss target is at bottom center
         val targetX = screenWidth / 2
-        val targetY = screenHeight - 100 - 40 // 100px from bottom + half of target height
+        val targetY = screenHeight - 100 - (dismissTargetHeightPx / 2)
 
         // Calculate distance
         val distance = kotlin.math.sqrt(
             ((bubbleX - targetX).toDouble().pow(2.0) + (bubbleY - targetY).toDouble().pow(2.0))
         ).toFloat()
 
-        // Scale the dismiss target based on proximity
+        Log.d(TAG, "[DISMISS_TARGET] Bubble: ($bubbleX, $bubbleY), Target: ($targetX, $targetY), Distance: $distance, Threshold: $DISMISS_TARGET_PROXIMITY")
+
+        // Scale the dismiss target based on proximity - snap to full size when within range
         dismissTargetView?.let { target ->
             val scale = if (distance < DISMISS_TARGET_PROXIMITY) {
-                // Gradually scale from 1.0 to 1.5 as distance decreases
-                1.0f + (0.5f * (1 - distance / DISMISS_TARGET_PROXIMITY))
+                Log.d(TAG, "[DISMISS_TARGET] Scaling to 1.0x (within range)")
+                1.0f // Full size (180dp)
             } else {
-                1.0f
+                0.667f // Small size (120dp equivalent)
             }
 
-            target.animate()
-                .scaleX(scale)
-                .scaleY(scale)
-                .setDuration(100)
-                .start()
+            // Use transform scaling for the target
+            target.scaleX = scale
+            target.scaleY = scale
+
+            // Counter-scale the X icon to keep absolute size constant
+            // When circle is small (0.667), icon should be 1.0 (appears 52dp)
+            // When circle is big (1.0), icon should be 0.667 (appears 52dp)
+            val icon = target.findViewById<ImageView>(R.id.dismiss_icon)
+            val iconScale = 0.667f / scale  // Maintains constant absolute size
+            icon?.scaleX = iconScale
+            icon?.scaleY = iconScale
         }
     }
 
