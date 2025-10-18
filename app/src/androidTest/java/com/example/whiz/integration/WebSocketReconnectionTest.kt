@@ -1496,7 +1496,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Verify bot responses are present and correct for Italy questions
                 Log.d(TAG, "🔍 Verifying Italy-specific bot responses...")
-                
+
                 // Expected responses for Italy chat (bot should respond with 1 word as requested)
                 val expectedItalyResponses = listOf(
                     "Rome",      // Capital of Italy
@@ -1504,7 +1504,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     "2.8",       // Rome population (might be "2.8million" or just "3")
                     "Pizza"      // Pie-like food
                 )
-                
+
+                // Trigger recomposition to ensure messages are rendered
+                Log.d(TAG, "🔄 Triggering recomposition...")
+                composeTestRule.onRoot().performClick()
+
                 // Check for Rome response (should NOT contain Paris/France)
                 val romeResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
