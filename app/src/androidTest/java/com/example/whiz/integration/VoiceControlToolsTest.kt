@@ -587,21 +587,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
             Log.d(TAG, "✅ TTS is ON (bubble mode preserved TTS state from voice launch)")
 
-            // Step 6: Send voice message to disable TTS (since it's currently ON from voice launch)
-            Log.d(TAG, "🔇 step 6: sending voice message to disable TTS...")
+            // Step 6: Send voice transcription to disable TTS (app is backgrounded in bubble mode, use broadcast)
+            Log.d(TAG, "🔇 step 6: sending voice transcription to disable TTS...")
             val disableTTSMessage = "Please turn off text to speech - ${System.currentTimeMillis()}"
 
-            val disableTTSMessageSent = ComposeTestHelper.sendVoiceMessage(
-                message = disableTTSMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
-            )
-
-            if (!disableTTSMessageSent) {
-                Log.e(TAG, "❌ Disable TTS voice message not sent or displayed")
-                failWithScreenshot("voice_control_disable_tts_message_not_displayed", "voice message not sent")
-                return@runBlocking
+            val intent = Intent("com.example.whiz.TEST_TRANSCRIPTION").apply {
+                putExtra("text", disableTTSMessage)
+                putExtra("fromVoice", true)
+                putExtra("autoSend", true)
             }
+            instrumentation.targetContext.sendBroadcast(intent)
+            Log.d(TAG, "✅ Sent transcription broadcast: '$disableTTSMessage'")
 
             // Step 7: Wait for bubble to switch to CONTINUOUS_LISTENING mode
             Log.d(TAG, "⏳ step 7: waiting for bubble to switch to CONTINUOUS_LISTENING mode...")
@@ -626,21 +622,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 8: Send voice message to re-enable TTS
-            Log.d(TAG, "🔊 step 8: sending voice message to re-enable TTS...")
+            // Step 8: Send voice transcription to re-enable TTS (app is backgrounded in bubble mode, use broadcast)
+            Log.d(TAG, "🔊 step 8: sending voice transcription to re-enable TTS...")
             val enableTTSMessage = "Please turn on text to speech - ${System.currentTimeMillis()}"
 
-            val enableTTSMessageSent = ComposeTestHelper.sendVoiceMessage(
-                message = enableTTSMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
-            )
-
-            if (!enableTTSMessageSent) {
-                Log.e(TAG, "❌ Enable TTS voice message not sent or displayed")
-                failWithScreenshot("voice_control_enable_tts_message_not_displayed", "voice message not sent")
-                return@runBlocking
+            val enableIntent = Intent("com.example.whiz.TEST_TRANSCRIPTION").apply {
+                putExtra("text", enableTTSMessage)
+                putExtra("fromVoice", true)
+                putExtra("autoSend", true)
             }
+            instrumentation.targetContext.sendBroadcast(enableIntent)
+            Log.d(TAG, "✅ Sent transcription broadcast: '$enableTTSMessage'")
 
             // Step 9: Wait for bubble to switch back to TTS_WITH_LISTENING mode
             Log.d(TAG, "⏳ step 9: waiting for bubble to switch back to TTS_WITH_LISTENING mode...")
@@ -665,21 +657,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            // Step 10: Send voice message to disable continuous listening
-            Log.d(TAG, "💬 step 10: sending voice message to disable continuous listening...")
+            // Step 10: Send voice transcription to disable continuous listening (app is backgrounded in bubble mode, use broadcast)
+            Log.d(TAG, "💬 step 10: sending voice transcription to disable continuous listening...")
             val disableMessage = "Please turn off continuous listening - ${System.currentTimeMillis()}"
 
-            val disableMessageSent = ComposeTestHelper.sendVoiceMessage(
-                message = disableMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
-            )
-
-            if (!disableMessageSent) {
-                Log.e(TAG, "❌ Voice message not sent or displayed")
-                failWithScreenshot("voice_control_message_not_displayed", "voice message not sent")
-                return@runBlocking
+            val disableIntent = Intent("com.example.whiz.TEST_TRANSCRIPTION").apply {
+                putExtra("text", disableMessage)
+                putExtra("fromVoice", true)
+                putExtra("autoSend", true)
             }
+            instrumentation.targetContext.sendBroadcast(disableIntent)
+            Log.d(TAG, "✅ Sent transcription broadcast: '$disableMessage'")
 
             // Step 11: Wait for bubble to switch to MIC_OFF mode
             Log.d(TAG, "⏳ step 11: waiting for bubble to switch to MIC_OFF mode...")
