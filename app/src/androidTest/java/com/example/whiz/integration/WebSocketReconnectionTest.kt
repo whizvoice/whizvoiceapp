@@ -420,6 +420,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
 
                 // Step 7: Wait for bot response to appear after reconnection
                 Log.d(TAG, "⏳ Waiting for bot response to sync after reconnection...")
+
+                // Trigger recomposition to ensure messages are rendered
+                Log.d(TAG, "🔄 Triggering recomposition...")
+                composeTestRule.onRoot().performClick()
+
                 val botResponseAfterReconnect = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
