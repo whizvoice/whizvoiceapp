@@ -435,6 +435,15 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
         Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
 
         try {
+            // Step 0: Ensure app is initialized with mocked accessibility first
+            Log.d(TAG, "📱 step 0: ensuring app initialized with mocked accessibility...")
+            if (!ComposeTestHelper.isAppReady(composeTestRule)) {
+                Log.e(TAG, "❌ FAILURE: app not ready")
+                failWithScreenshot("voice_control_app_not_ready", "app not ready")
+                return@runBlocking
+            }
+            Log.d(TAG, "✅ App initialized with mocked accessibility")
+
             // Capture initial chats before voice launch
             val initialChats = try {
                 repository.getAllChats()
