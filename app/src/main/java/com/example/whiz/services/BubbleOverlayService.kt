@@ -91,14 +91,15 @@ class BubbleOverlayService : Service() {
         private var serviceInstance: BubbleOverlayService? = null
 
         // Flows for displaying text in bubble
-        private val _botResponseFlow = MutableSharedFlow<String>(replay = 1)
+        // NOTE: replay = 0 to prevent test isolation issues - we don't want cached values replaying to new subscribers
+        private val _botResponseFlow = MutableSharedFlow<String>(replay = 0)
         val botResponseFlow: SharedFlow<String> = _botResponseFlow
 
-        private val _userTranscriptionFlow = MutableSharedFlow<String>(replay = 1)
+        private val _userTranscriptionFlow = MutableSharedFlow<String>(replay = 0)
         val userTranscriptionFlow: SharedFlow<String> = _userTranscriptionFlow
 
         // Flow for mode change notifications
-        private val _modeChangeFlow = MutableSharedFlow<ListeningMode>(replay = 1)
+        private val _modeChangeFlow = MutableSharedFlow<ListeningMode>(replay = 0)
         val modeChangeFlow: SharedFlow<ListeningMode> = _modeChangeFlow
 
         fun start(context: Context) {
@@ -738,5 +739,9 @@ class BubbleOverlayService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error removing views", e)
         }
+
+        // Cancel the service scope to clean up all coroutines and prevent test isolation issues
+        // This ensures that the SharedFlows are properly cleaned up even though they now have replay = 0
+        serviceScope.coroutineContext[Job]?.cancel()
     }
 }

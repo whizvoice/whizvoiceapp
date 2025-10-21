@@ -2619,14 +2619,17 @@ abstract class BaseIntegrationTest {
             // Optional fallback: Pattern matching (only if enabled)
             if (enablePatternFallback && additionalPatterns.isNotEmpty()) {
                 android.util.Log.d("BaseIntegrationTest", "🔍 Checking for pattern-matched chats as fallback")
+                android.util.Log.d("BaseIntegrationTest", "   Patterns: $additionalPatterns")
                 val allChats = repository.getAllChats()
+                android.util.Log.d("BaseIntegrationTest", "   Total chats: ${allChats.size}")
                 val testChats = allChats.filter { chat ->
-                    !trackedChatIds.contains(chat.id) && 
-                    additionalPatterns.any { pattern -> 
-                        chat.title.contains(pattern, ignoreCase = true) 
+                    !trackedChatIds.contains(chat.id) &&
+                    additionalPatterns.any { pattern ->
+                        chat.title.contains(pattern, ignoreCase = true)
                     }
                 }
-                
+                android.util.Log.d("BaseIntegrationTest", "   Pattern-matched chats: ${testChats.size}")
+
                 if (testChats.isNotEmpty()) {
                     android.util.Log.w("BaseIntegrationTest", "⚠️ FALLBACK ACTIVATED: Found ${testChats.size} untracked test chats")
                     testChats.forEach { chat ->

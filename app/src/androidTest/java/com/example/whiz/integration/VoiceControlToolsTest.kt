@@ -105,13 +105,18 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                     }
                 }
 
+                Log.d(TAG, "🔍 About to cleanup. Tracked chat IDs: $createdChatIds")
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
                     additionalPatterns = listOf(
                         "turn off continuous listening",
-                        "turn on tts",
-                        "turn off tts",
+                        "Please turn off continuous listening", // Full pattern with "Please"
+                        "turn on text to speech",
+                        "Please turn on text to speech", // Full pattern with "Please"
+                        "turn off text to speech",
+                        "Please turn off text to speech", // Full pattern with "Please"
+                        "Open the Clock app",
                         "voice control",
                         uniqueTestId.toString()
                     ),
@@ -420,6 +425,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "🎉 voice control tools test (chat mode) PASSED!")
             Log.d(TAG, "✅ Test validated: disable continuous listening, enable/disable TTS (typed), enable/disable TTS (voice)")
 
+            // Track final chat ID for cleanup
+            try {
+                val finalChatId = chatViewModel.chatId.value
+                if (finalChatId != null && finalChatId != -1L && finalChatId != 0L && !createdChatIds.contains(finalChatId)) {
+                    createdChatIds.add(finalChatId)
+                    Log.d(TAG, "📝 Tracked final chat ID: $finalChatId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track final chat ID: ${e.message}")
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Test failed with exception: ${e.message}", e)
             failWithScreenshot("voice_control_test_exception", "Test failed: ${e.message}")
@@ -498,7 +514,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Track chat for cleanup
             try {
                 val currentChatId = capturedViewModel?.chatId?.value
-                if (currentChatId != null && currentChatId != 0L) {
+                if (currentChatId != null && currentChatId != -1L && currentChatId != 0L) {
                     if (!createdChatIds.contains(currentChatId)) {
                         createdChatIds.add(currentChatId)
                         Log.d(TAG, "📝 Tracked chat: $currentChatId")

@@ -1870,32 +1870,11 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "Settings persisted successfully across navigation")
-        
-        // Clean up - clear the token
-        try {
-            // First check if Clear button is visible (token set and not in edit mode)
-            val clearButtonVisible = ComposeTestHelper.waitForElement(
-                composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithContentDescription("Clear Claude token") },
-                timeoutMs = 1000,
-                description = "Clear Claude token button"
-            )
-            
-            if (clearButtonVisible) {
-                composeTestRule.onNodeWithContentDescription("Clear Claude token")
-                    .performClick()
-                Log.d(TAG, "Cleaned up test token using Clear button")
-            } else {
-                // Maybe we're in edit mode, try to clear the input field and save empty
-                val inputField = composeTestRule.onNodeWithContentDescription("Claude API Key input field")
-                inputField.performTextClearance()
-                composeTestRule.onNodeWithContentDescription("Save Claude API Key button")
-                    .performClick()
-                Log.d(TAG, "Cleaned up test token by saving empty value")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not clean up test token: ${e.message}")
-        }
+
+        // Note: Cleanup is handled by @After tearDown() to avoid race conditions
+        // Previously, this test would try to clear the token here, which would race with
+        // tearDown()'s restoration, causing the database SET and CLEAR operations to interleave
+        Log.d(TAG, "Test complete - tearDown() will restore the original token")
     }
     
     @Test

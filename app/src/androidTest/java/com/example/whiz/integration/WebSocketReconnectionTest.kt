@@ -150,6 +150,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     repository = repository,
                     trackedChatIds = createdChatIds,
                     additionalPatterns = listOf(
+                        "Please turn off continuous listening", // Orphaned test chat
                         "Please tell me the history", // Truncated version
                         "Tell me the history", // Common prefix for all test messages
                         "caffeinated drink", // Specific keywords
@@ -176,6 +177,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     repository = repository,
                     trackedChatIds = emptyList(),
                     additionalPatterns = listOf(
+                        "Please turn off continuous listening", // Orphaned test chat
                         "Please tell me the history", // Truncated version
                         "Tell me the history", // Common prefix for all test messages
                         "caffeinated drink", // Specific keywords
@@ -275,10 +277,16 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     withTimeout(5000) {
                         while (true) {
                             val currentChats = repository.getAllChats()
-                            val newChats = currentChats.filter { chat -> 
-                                !initialChats.map { it.id }.contains(chat.id) 
+                            val newChats = currentChats.filter { chat ->
+                                !initialChats.map { it.id }.contains(chat.id)
                             }
                             if (newChats.isNotEmpty()) {
+                                if (newChats.size > 1) {
+                                    Log.w(TAG, "⚠️ WARNING: Multiple new chats detected (${newChats.size}), possible pollution from previous tests")
+                                    newChats.forEach { chat ->
+                                        Log.w(TAG, "   - Chat ${chat.id}: '${chat.title}'")
+                                    }
+                                }
                                 chatId = newChats.first().id
                                 Log.d(TAG, "✅ Chat created with ID: $chatId")
                                 break
@@ -634,6 +642,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                                 !initialChats.map { it.id }.contains(chat.id)
                             }
                             if (newChats.isNotEmpty()) {
+                                if (newChats.size > 1) {
+                                    Log.w(TAG, "⚠️ WARNING: Multiple new chats detected (${newChats.size}), possible pollution")
+                                    newChats.forEach { chat ->
+                                        Log.w(TAG, "   - Chat ${chat.id}: '${chat.title}'")
+                                    }
+                                }
                                 chatId1 = newChats.firstOrNull()?.id
                                 Log.d(TAG, "First chat created with ID: $chatId1")
                                 break
@@ -1081,6 +1095,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             !initialChats.map { it.id }.contains(chat.id)
                         }
                         if (newChats.isNotEmpty()) {
+                            if (newChats.size > 1) {
+                                Log.w(TAG, "⚠️ WARNING: Multiple new chats detected (${newChats.size}), possible pollution")
+                                newChats.forEach { chat ->
+                                    Log.w(TAG, "   - Chat ${chat.id}: '${chat.title}'")
+                                }
+                            }
                             chatId1 = newChats.first().id
                             Log.d(TAG, "✅ First chat created with ID: $chatId1")
                             break
