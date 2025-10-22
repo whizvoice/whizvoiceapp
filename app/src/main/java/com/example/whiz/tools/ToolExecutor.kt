@@ -77,6 +77,12 @@ class ToolExecutor @Inject constructor(
                     "set_tts_enabled" -> {
                         executeSetTTSEnabled(requestId, params, chatViewModel)
                     }
+                    "play_youtube_music" -> {
+                        executePlayYouTubeMusic(requestId, params)
+                    }
+                    "queue_youtube_music" -> {
+                        executeQueueYouTubeMusic(requestId, params)
+                    }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
                         _toolResults.emit(
@@ -396,9 +402,83 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
+        try {
+            val query = params.getString("query")
+            Log.i(TAG, "Playing YouTube Music song: $query")
+
+            val result = screenAgentTools.playYouTubeMusicSong(query)
+            Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.query?.let { put("query", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] YouTube Music play result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "play_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing YouTube Music play", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "play_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to play YouTube Music song: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeQueueYouTubeMusic(requestId: String, params: JSONObject) {
+        try {
+            val query = params.getString("query")
+            Log.i(TAG, "Queueing YouTube Music song: $query")
+
+            val result = screenAgentTools.queueYouTubeMusicSong(query)
+            Log.i(TAG, "YouTube Music queue result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.query?.let { put("query", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] YouTube Music queue result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "queue_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing YouTube Music queue", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "queue_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to queue YouTube Music song: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
