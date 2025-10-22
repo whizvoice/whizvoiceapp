@@ -406,59 +406,18 @@ class ToolExecutor @Inject constructor(
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            val musicAppPreference = userPreferences.musicAppPreference.value
-            Log.i(TAG, "Playing song: $query (user music app preference: $musicAppPreference)")
+            Log.i(TAG, "Playing song on YouTube Music: $query")
 
-            // Check if user has a preference set
-            if (musicAppPreference.isNullOrBlank()) {
-                // No preference set - return error asking server to prompt user
-                Log.w(TAG, "No music app preference set - requesting server to ask user")
-                val resultJson = JSONObject().apply {
-                    put("success", false)
-                    put("error", "No music app preference set. Please ask the user which music app they prefer to use (YouTube Music or Spotify).")
-                    put("requires_preference_selection", true)
-                    put("available_options", org.json.JSONArray(listOf("youtube_music", "spotify")))
-                }
+            // The server has already decided to use YouTube Music by calling this tool
+            // No need to check preferences here - just execute the action
+            val result = screenAgentTools.playYouTubeMusicSong(query)
 
-                _toolResults.emit(
-                    ToolExecutionResult.Success(
-                        toolName = "play_youtube_music",
-                        requestId = requestId,
-                        result = resultJson
-                    )
-                )
-                return
-            }
-
-            // Determine which app to use based on preference
-            val appToUse = when (musicAppPreference.lowercase()) {
-                "youtube_music", "youtubemusic", "youtube music" -> "youtube_music"
-                "spotify" -> "spotify"
-                else -> "youtube_music" // default fallback
-            }
-
-            Log.i(TAG, "Using music app: $appToUse for query: $query")
-
-            val result = if (appToUse == "youtube_music") {
-                screenAgentTools.playYouTubeMusicSong(query)
-            } else {
-                // For Spotify, use launch_app with a search intent
-                // TODO: Implement Spotify-specific play functionality
-                screenAgentTools.launchApp("Spotify")
-                ScreenAgentTools.MusicActionResult(
-                    success = true,
-                    action = "play_song",
-                    query = query,
-                    error = "Launched Spotify. Please search for '$query' manually for now."
-                )
-            }
-
-            Log.i(TAG, "Music play result: success=${result.success}, error=${result.error}")
+            Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("action", result.action)
-                put("music_app_used", appToUse)
+                put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
             }
@@ -488,58 +447,18 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeQueueYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            val musicAppPreference = userPreferences.musicAppPreference.value
-            Log.i(TAG, "Queueing song: $query (user music app preference: $musicAppPreference)")
+            Log.i(TAG, "Queueing song on YouTube Music: $query")
 
-            // Check if user has a preference set
-            if (musicAppPreference.isNullOrBlank()) {
-                // No preference set - return error asking server to prompt user
-                Log.w(TAG, "No music app preference set - requesting server to ask user")
-                val resultJson = JSONObject().apply {
-                    put("success", false)
-                    put("error", "No music app preference set. Please ask the user which music app they prefer to use (YouTube Music or Spotify).")
-                    put("requires_preference_selection", true)
-                    put("available_options", org.json.JSONArray(listOf("youtube_music", "spotify")))
-                }
+            // The server has already decided to use YouTube Music by calling this tool
+            // No need to check preferences here - just execute the action
+            val result = screenAgentTools.queueYouTubeMusicSong(query)
 
-                _toolResults.emit(
-                    ToolExecutionResult.Success(
-                        toolName = "queue_youtube_music",
-                        requestId = requestId,
-                        result = resultJson
-                    )
-                )
-                return
-            }
-
-            // Determine which app to use based on preference
-            val appToUse = when (musicAppPreference.lowercase()) {
-                "youtube_music", "youtubemusic", "youtube music" -> "youtube_music"
-                "spotify" -> "spotify"
-                else -> "youtube_music" // default fallback
-            }
-
-            Log.i(TAG, "Using music app: $appToUse for query: $query")
-
-            val result = if (appToUse == "youtube_music") {
-                screenAgentTools.queueYouTubeMusicSong(query)
-            } else {
-                // For Spotify, queuing is not yet implemented
-                // TODO: Implement Spotify-specific queue functionality
-                ScreenAgentTools.MusicActionResult(
-                    success = false,
-                    action = "queue_song",
-                    query = query,
-                    error = "Queueing songs in Spotify is not yet supported. Only YouTube Music supports queueing."
-                )
-            }
-
-            Log.i(TAG, "Music queue result: success=${result.success}, error=${result.error}")
+            Log.i(TAG, "YouTube Music queue result: success=${result.success}, error=${result.error}")
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("action", result.action)
-                put("music_app_used", appToUse)
+                put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
             }

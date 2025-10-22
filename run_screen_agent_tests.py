@@ -17,6 +17,33 @@ PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
 os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
 os.environ['ANDROID_HOME'] = ANDROID_HOME
 
+# Load Anthropic API key from export_anthropic_key.sh
+def load_anthropic_api_key():
+    """Load ANTHROPIC_API_KEY from export_anthropic_key.sh file."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    key_file = os.path.join(script_dir, 'export_anthropic_key.sh')
+
+    if os.path.exists(key_file):
+        # Read the file and extract the API key
+        with open(key_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('export ANTHROPIC_API_KEY='):
+                    # Extract the value after the =
+                    api_key = line.split('=', 1)[1]
+                    # Remove quotes if present
+                    api_key = api_key.strip('"').strip("'")
+                    os.environ['ANTHROPIC_API_KEY'] = api_key
+                    print(f"✅ Loaded ANTHROPIC_API_KEY from {key_file}")
+                    return
+        print(f"⚠️  Could not find ANTHROPIC_API_KEY in {key_file}")
+    else:
+        print(f"⚠️  API key file not found: {key_file}")
+        print("   Please create export_anthropic_key.sh with: export ANTHROPIC_API_KEY='your-key-here'")
+
+# Load the API key when the module is imported
+load_anthropic_api_key()
+
 
 # Global variable to store logcat process
 _logcat_process = None
@@ -384,3 +411,60 @@ def test_whatsapp_draft_message(tester):
     if not validation_result:
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
     assert validation_result, "Failed to delete the sent message"
+
+
+def test_youtube_music_integration(tester):
+    """Test that we can play and queue songs on YouTube Music."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # Navigate to My Chats page
+    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+
+    # Click on coordinates to open a new chat
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "youtube_music", "new_chat_screen")
+    assert validation_result, "Failed to reach New Chat screen"
+
+    # Send a voice transcription to play songs on YouTube Music
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Hey can you play Golden from Kpop Demon Hunters on YouTube Music?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait for YouTube Music to open and song to start playing
+    # The bot should launch YouTube Music, search for the song, and play it
+    time.sleep(15)
+
+    # Validate YouTube Music is open and showing the song
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "YouTube Music app is open and showing a song. "
+        "The screen may show a song playing with album art, song title, and artist information. "
+        "It could be showing 'Golden' by 'Kpop Demon Hunters' or search results for this song. "
+        "There may be a yellow notification bubble with a robot head icon visible on the screen."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
+    assert validation_result, "Failed to open YouTube Music and play song"
