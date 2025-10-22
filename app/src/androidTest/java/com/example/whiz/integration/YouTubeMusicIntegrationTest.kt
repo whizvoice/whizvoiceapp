@@ -185,7 +185,7 @@ class YouTubeMusicIntegrationTest : BaseIntegrationTest() {
 
             // Step 3: Send message to play two songs on YouTube Music
             Log.d(TAG, "🎵 step 3: sending message to play songs on YouTube Music...")
-            val playMessage = "Hey can you play Golden from Kpop Demon Hunters and then How it's done from Kpop Demon Hunters? - $uniqueTestId"
+            val playMessage = "Hey can you play Golden from Kpop Demon Hunters and then How it's done from Kpop Demon Hunters on YouTube Music? - $uniqueTestId"
 
             val playMessageSent = ComposeTestHelper.sendMessage(
                 composeTestRule = composeTestRule,
@@ -289,7 +289,7 @@ class YouTubeMusicIntegrationTest : BaseIntegrationTest() {
 
             // Step 6: Send voice transcription to queue a song while in bubble mode
             Log.d(TAG, "🎵 step 6: sending voice transcription to queue a song...")
-            val queueMessage = "can you add What it sounds like by Huntrix to the music queue?"
+            val queueMessage = "can you add What it sounds like by Huntrix to the YouTube Music queue?"
 
             val queueIntent = Intent("com.example.whiz.TEST_TRANSCRIPTION").apply {
                 putExtra("text", queueMessage)

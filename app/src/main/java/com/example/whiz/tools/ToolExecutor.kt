@@ -28,7 +28,8 @@ sealed class ToolExecutionResult {
 
 @Singleton
 class ToolExecutor @Inject constructor(
-    private val screenAgentTools: ScreenAgentTools
+    private val screenAgentTools: ScreenAgentTools,
+    private val userPreferences: com.example.whiz.data.preferences.UserPreferences
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -405,19 +406,64 @@ class ToolExecutor @Inject constructor(
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            Log.i(TAG, "Playing YouTube Music song: $query")
+            val musicAppPreference = userPreferences.musicAppPreference.value
+            Log.i(TAG, "Playing song: $query (user music app preference: $musicAppPreference)")
 
-            val result = screenAgentTools.playYouTubeMusicSong(query)
-            Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
+            // Check if user has a preference set
+            if (musicAppPreference.isNullOrBlank()) {
+                // No preference set - return error asking server to prompt user
+                Log.w(TAG, "No music app preference set - requesting server to ask user")
+                val resultJson = JSONObject().apply {
+                    put("success", false)
+                    put("error", "No music app preference set. Please ask the user which music app they prefer to use (YouTube Music or Spotify).")
+                    put("requires_preference_selection", true)
+                    put("available_options", org.json.JSONArray(listOf("youtube_music", "spotify")))
+                }
+
+                _toolResults.emit(
+                    ToolExecutionResult.Success(
+                        toolName = "play_youtube_music",
+                        requestId = requestId,
+                        result = resultJson
+                    )
+                )
+                return
+            }
+
+            // Determine which app to use based on preference
+            val appToUse = when (musicAppPreference.lowercase()) {
+                "youtube_music", "youtubemusic", "youtube music" -> "youtube_music"
+                "spotify" -> "spotify"
+                else -> "youtube_music" // default fallback
+            }
+
+            Log.i(TAG, "Using music app: $appToUse for query: $query")
+
+            val result = if (appToUse == "youtube_music") {
+                screenAgentTools.playYouTubeMusicSong(query)
+            } else {
+                // For Spotify, use launch_app with a search intent
+                // TODO: Implement Spotify-specific play functionality
+                screenAgentTools.launchApp("Spotify")
+                ScreenAgentTools.MusicActionResult(
+                    success = true,
+                    action = "play_song",
+                    query = query,
+                    error = "Launched Spotify. Please search for '$query' manually for now."
+                )
+            }
+
+            Log.i(TAG, "Music play result: success=${result.success}, error=${result.error}")
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("action", result.action)
+                put("music_app_used", appToUse)
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
             }
 
-            Log.i(TAG, "[TOOL_RESULT] YouTube Music play result for requestId=$requestId: ${resultJson.toString(2)}")
+            Log.i(TAG, "[TOOL_RESULT] Music play result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
@@ -428,12 +474,12 @@ class ToolExecutor @Inject constructor(
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing YouTube Music play", e)
+            Log.e(TAG, "Error executing music play", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
                     toolName = "play_youtube_music",
                     requestId = requestId,
-                    error = "Failed to play YouTube Music song: ${e.message}"
+                    error = "Failed to play song: ${e.message}"
                 )
             )
         }
@@ -442,19 +488,63 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeQueueYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            Log.i(TAG, "Queueing YouTube Music song: $query")
+            val musicAppPreference = userPreferences.musicAppPreference.value
+            Log.i(TAG, "Queueing song: $query (user music app preference: $musicAppPreference)")
 
-            val result = screenAgentTools.queueYouTubeMusicSong(query)
-            Log.i(TAG, "YouTube Music queue result: success=${result.success}, error=${result.error}")
+            // Check if user has a preference set
+            if (musicAppPreference.isNullOrBlank()) {
+                // No preference set - return error asking server to prompt user
+                Log.w(TAG, "No music app preference set - requesting server to ask user")
+                val resultJson = JSONObject().apply {
+                    put("success", false)
+                    put("error", "No music app preference set. Please ask the user which music app they prefer to use (YouTube Music or Spotify).")
+                    put("requires_preference_selection", true)
+                    put("available_options", org.json.JSONArray(listOf("youtube_music", "spotify")))
+                }
+
+                _toolResults.emit(
+                    ToolExecutionResult.Success(
+                        toolName = "queue_youtube_music",
+                        requestId = requestId,
+                        result = resultJson
+                    )
+                )
+                return
+            }
+
+            // Determine which app to use based on preference
+            val appToUse = when (musicAppPreference.lowercase()) {
+                "youtube_music", "youtubemusic", "youtube music" -> "youtube_music"
+                "spotify" -> "spotify"
+                else -> "youtube_music" // default fallback
+            }
+
+            Log.i(TAG, "Using music app: $appToUse for query: $query")
+
+            val result = if (appToUse == "youtube_music") {
+                screenAgentTools.queueYouTubeMusicSong(query)
+            } else {
+                // For Spotify, queuing is not yet implemented
+                // TODO: Implement Spotify-specific queue functionality
+                ScreenAgentTools.MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Queueing songs in Spotify is not yet supported. Only YouTube Music supports queueing."
+                )
+            }
+
+            Log.i(TAG, "Music queue result: success=${result.success}, error=${result.error}")
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("action", result.action)
+                put("music_app_used", appToUse)
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
             }
 
-            Log.i(TAG, "[TOOL_RESULT] YouTube Music queue result for requestId=$requestId: ${resultJson.toString(2)}")
+            Log.i(TAG, "[TOOL_RESULT] Music queue result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
@@ -465,12 +555,12 @@ class ToolExecutor @Inject constructor(
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing YouTube Music queue", e)
+            Log.e(TAG, "Error executing music queue", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
                     toolName = "queue_youtube_music",
                     requestId = requestId,
-                    error = "Failed to queue YouTube Music song: ${e.message}"
+                    error = "Failed to queue song: ${e.message}"
                 )
             )
         }

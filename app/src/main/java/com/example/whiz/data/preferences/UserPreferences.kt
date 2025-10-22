@@ -35,10 +35,14 @@ class UserPreferences @Inject constructor(
     // Voice settings state
     private val _voiceSettings = MutableStateFlow(VoiceSettings())
 
+    // Music app preference state (default: youtube_music, options: youtube_music, spotify)
+    private val _musicAppPreference = MutableStateFlow<String?>(null)
+
     // Publicly exposed StateFlow
     val hasClaudeToken: StateFlow<Boolean?> = _hasClaudeToken
     val hasAsanaToken: StateFlow<Boolean?> = _hasAsanaToken
     val voiceSettings: StateFlow<VoiceSettings> = _voiceSettings
+    val musicAppPreference: StateFlow<String?> = _musicAppPreference
 
     suspend fun initializeTokenStatus() {
         // Call this when the app starts or user logs in
@@ -49,6 +53,7 @@ class UserPreferences @Inject constructor(
         // ViewModel will call this, and it can be called again if needed (e.g. after login)
         refreshApiTokenStatus()
         loadVoiceSettings()
+        loadMusicAppPreference()
     }
 
     suspend fun refreshApiTokenStatus() {
@@ -211,4 +216,60 @@ class UserPreferences @Inject constructor(
             throw e
         }
     }
-} 
+
+    // Music app preference methods
+    suspend fun loadMusicAppPreference() {
+        try {
+            // Wait for a valid server token
+            val serverToken = authRepository.serverToken.first { it != null }
+            Log.d(TAG, "Loading music app preference from server")
+
+            val response = apiService.getUserPreference("music_app_preference")
+            Log.d(TAG, "Music app preference response: $response")
+
+            response?.let { prefValue ->
+                // Remove quotes if the value is wrapped in quotes
+                val cleanValue = if (prefValue.startsWith("\"") && prefValue.endsWith("\"")) {
+                    prefValue.substring(1, prefValue.length - 1)
+                } else {
+                    prefValue
+                }
+
+                _musicAppPreference.value = cleanValue
+                Log.d(TAG, "Loaded music app preference: $cleanValue")
+            } ?: run {
+                Log.d(TAG, "No music app preference found on server, using null")
+                _musicAppPreference.value = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading music app preference", e)
+            _musicAppPreference.value = null
+            if (e is HttpException && e.code() == 401) {
+                throw AuthenticationRequiredException(cause = e)
+            }
+        }
+    }
+
+    suspend fun saveMusicAppPreference(appPreference: String?) {
+        try {
+            Log.d(TAG, "Saving music app preference: $appPreference")
+
+            if (appPreference.isNullOrBlank()) {
+                // Clear the preference
+                apiService.setUserPreference("music_app_preference", "")
+                _musicAppPreference.value = null
+                Log.d(TAG, "Music app preference cleared")
+            } else {
+                apiService.setUserPreference("music_app_preference", appPreference)
+                _musicAppPreference.value = appPreference
+                Log.d(TAG, "Music app preference saved successfully: $appPreference")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving music app preference", e)
+            if (e is HttpException && e.code() == 401) {
+                throw AuthenticationRequiredException(cause = e)
+            }
+            throw e
+        }
+    }
+}
