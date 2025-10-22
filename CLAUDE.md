@@ -15,6 +15,9 @@ On my phone, which is what I use for testing as well as running the production a
 
 ## Testing
 
+### code analysis
+Use Recurse MCP for code analysis: call init() before starting, sync() after changes, then check() for results.
+
 ### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.

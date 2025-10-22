@@ -374,19 +374,26 @@ class VoiceManager @Inject constructor(
      * Check if TTS should be enabled based on bubble mode
      */
     fun shouldEnableTTS(): Boolean {
-        // If bubble is active and in TTS mode, enable TTS
         val bubbleActive = BubbleOverlayService.isActive
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
         val voiceEnabled = _isVoiceResponseEnabled.value
-        
+
         Log.d(TAG, "shouldEnableTTS: bubbleActive=$bubbleActive, bubbleMode=$bubbleMode, voiceEnabled=$voiceEnabled")
-        
-        if (bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING) {
-            Log.d(TAG, "shouldEnableTTS: Returning true due to bubble TTS mode")
-            return true
+
+        // If bubble is active, use bubble mode to determine TTS state
+        if (bubbleActive) {
+            if (bubbleMode == ListeningMode.TTS_WITH_LISTENING) {
+                Log.d(TAG, "shouldEnableTTS: Returning true due to bubble TTS_WITH_LISTENING mode")
+                return true
+            } else {
+                // CONTINUOUS_LISTENING or MIC_OFF modes should have TTS off
+                Log.d(TAG, "shouldEnableTTS: Returning false due to bubble mode $bubbleMode (not TTS mode)")
+                return false
+            }
         }
-        // Otherwise use the normal voice response setting
-        Log.d(TAG, "shouldEnableTTS: Returning $voiceEnabled from voice response setting")
+
+        // Bubble not active, use the normal voice response setting
+        Log.d(TAG, "shouldEnableTTS: Returning $voiceEnabled from voice response setting (bubble not active)")
         return voiceEnabled
     }
 

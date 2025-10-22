@@ -400,3 +400,55 @@ COMMENT ON FUNCTION clear_and_verify_encrypted_token IS
 Returns JSON with success status and confirmation that token was cleared.
 This ensures read-after-write consistency by performing both operations in a single transaction.
 Requires the encryption key used for the user preferences.';
+
+
+-- Create a trigger to hard delete messages when a conversation is soft-deleted
+-- This ensures messages are cleaned up even with soft deletes
+
+-- Create the trigger function
+CREATE OR REPLACE FUNCTION delete_messages_on_conversation_soft_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- If deleted_at is being set (was NULL, now has a value)
+    IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
+        -- Delete all messages for this conversation
+        DELETE FROM messages WHERE conversation_id = NEW.id;
+        RAISE NOTICE 'Deleted messages for soft-deleted conversation %', NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create the trigger
+DROP TRIGGER IF EXISTS soft_delete_conversation_messages ON conversations;
+CREATE TRIGGER soft_delete_conversation_messages
+    AFTER UPDATE ON conversations
+    FOR EACH ROW
+    EXECUTE FUNCTION delete_messages_on_conversation_soft_delete();
+
+-- Function to prevent inserting messages into soft-deleted conversations
+CREATE OR REPLACE FUNCTION
+prevent_messages_to_deleted_conversations()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+    -- Check if the conversation is soft-deleted
+    IF EXISTS (
+        SELECT 1 FROM conversations
+        WHERE id = NEW.conversation_id
+        AND deleted_at IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'Cannot insert message into soft-deleted conversation %', NEW.conversation_id;
+    END IF;
+    RETURN NEW;
+END;
+$function$;
+
+-- Create trigger to run before inserting messages
+DROP TRIGGER IF EXISTS prevent_insert_to_deleted_conversation ON
+messages;
+CREATE TRIGGER prevent_insert_to_deleted_conversation
+    BEFORE INSERT ON messages
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_messages_to_deleted_conversations();

@@ -76,37 +76,42 @@ class BubbleOverlayService : Service() {
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
-        
+
         // Track if the bubble overlay is active
         @Volatile
         var isActive: Boolean = false
             private set
-        
+
         // Track the current listening mode
         @Volatile
         var bubbleListeningMode: ListeningMode = ListeningMode.CONTINUOUS_LISTENING
-        
+
+        // Store service instance for programmatic mode changes
+        @Volatile
+        private var serviceInstance: BubbleOverlayService? = null
+
         // Flows for displaying text in bubble
-        private val _botResponseFlow = MutableSharedFlow<String>(replay = 1)
+        // NOTE: replay = 0 to prevent test isolation issues - we don't want cached values replaying to new subscribers
+        private val _botResponseFlow = MutableSharedFlow<String>(replay = 0)
         val botResponseFlow: SharedFlow<String> = _botResponseFlow
-        
-        private val _userTranscriptionFlow = MutableSharedFlow<String>(replay = 1)
+
+        private val _userTranscriptionFlow = MutableSharedFlow<String>(replay = 0)
         val userTranscriptionFlow: SharedFlow<String> = _userTranscriptionFlow
-        
+
         // Flow for mode change notifications
-        private val _modeChangeFlow = MutableSharedFlow<ListeningMode>(replay = 1)
+        private val _modeChangeFlow = MutableSharedFlow<ListeningMode>(replay = 0)
         val modeChangeFlow: SharedFlow<ListeningMode> = _modeChangeFlow
-        
+
         fun start(context: Context) {
             val intent = Intent(context, BubbleOverlayService::class.java)
             context.startService(intent)
         }
-        
+
         fun stop(context: Context) {
             val intent = Intent(context, BubbleOverlayService::class.java)
             context.stopService(intent)
         }
-        
+
         fun updateBotResponse(text: String) {
             Log.d(TAG, "[BUBBLE_UPDATE] updateBotResponse called with text: '$text'")
             GlobalScope.launch {
@@ -114,10 +119,31 @@ class BubbleOverlayService : Service() {
                 _botResponseFlow.emit(text)
             }
         }
-        
+
         fun updateUserTranscription(text: String) {
             GlobalScope.launch {
                 _userTranscriptionFlow.emit(text)
+            }
+        }
+
+        /**
+         * Programmatically set the bubble listening mode.
+         * This is used by voice control tools to change bubble mode based on server commands.
+         *
+         * @param mode The desired listening mode
+         */
+        fun setMode(mode: ListeningMode) {
+            Log.d(TAG, "[SET_MODE] Programmatically setting mode to: $mode")
+            serviceInstance?.let { service ->
+                service.handler.post {
+                    val previousMode = service.currentMode
+                    service.currentMode = mode
+                    Log.d(TAG, "[SET_MODE] Mode changed from $previousMode to $mode")
+                    service.updateModeVisual()
+                    service.applyCurrentMode()
+                }
+            } ?: run {
+                Log.w(TAG, "[SET_MODE] Cannot set mode - service instance is null")
             }
         }
     }
@@ -128,7 +154,19 @@ class BubbleOverlayService : Service() {
         super.onCreate()
         Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
         isActive = true
+        serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        // Determine initial mode based on whether TTS was already enabled
+        val wasTTSEnabled = voiceManager.isVoiceResponseEnabled.value
+        currentMode = if (wasTTSEnabled) {
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was enabled ($wasTTSEnabled), starting in TTS_WITH_LISTENING mode")
+            ListeningMode.TTS_WITH_LISTENING
+        } else {
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was disabled ($wasTTSEnabled), starting in CONTINUOUS_LISTENING mode")
+            ListeningMode.CONTINUOUS_LISTENING
+        }
+
         createChatHead()
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
@@ -678,6 +716,7 @@ class BubbleOverlayService : Service() {
         super.onDestroy()
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
         isActive = false
+        serviceInstance = null
 
         // Clear transcription callback
         voiceManager.setTranscriptionCallback { }
@@ -700,5 +739,9 @@ class BubbleOverlayService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error removing views", e)
         }
+
+        // Cancel the service scope to clean up all coroutines and prevent test isolation issues
+        // This ensures that the SharedFlows are properly cleaned up even though they now have replay = 0
+        serviceScope.coroutineContext[Job]?.cancel()
     }
 }

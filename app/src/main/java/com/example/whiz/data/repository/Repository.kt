@@ -1449,7 +1449,11 @@ class WhizRepository @Inject constructor(
                 }
                 chatDao.deleteAllChats()
                 newConversations.forEach { chat ->
-                    chatDao.insertChat(chat)
+                    if (chat.id == -1L) {
+                        Log.e(TAG, "❌ BLOCKED: Server returned chat with sentinel ID -1, skipping insert: ${chat.title}")
+                    } else {
+                        chatDao.insertChat(chat)
+                    }
                 }
                 
                 // Update sync timestamp
@@ -1469,7 +1473,11 @@ class WhizRepository @Inject constructor(
                     Log.d(TAG, "🔍 getAllChatsIncremental INCREMENTAL: Processing ${updates.size} updates")
                     updates.forEach { chat ->
                         Log.d(TAG, "  - Update chat from API: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
-                        chatDao.insertChat(chat)
+                        if (chat.id == -1L) {
+                            Log.e(TAG, "❌ BLOCKED: Server returned chat with sentinel ID -1, skipping insert: ${chat.title}")
+                        } else {
+                            chatDao.insertChat(chat)
+                        }
                     }
                     Log.d("Repository", "Incremental sync: upserted ${updates.size} conversations")
                 }

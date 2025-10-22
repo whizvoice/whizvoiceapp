@@ -36,12 +36,16 @@ class ToolExecutor @Inject constructor(
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
     
-    fun executeToolFromJson(toolRequest: JSONObject) {
+    fun executeToolFromJson(
+        toolRequest: JSONObject,
+        voiceManager: com.example.whiz.ui.viewmodels.VoiceManager? = null,
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+    ) {
         scope.launch {
             try {
                 Log.i(TAG, "🎯 TOOL EXECUTOR: Starting execution")
                 Log.i(TAG, "🎯 Full request: ${toolRequest.toString(2)}")
-                
+
                 val toolName = toolRequest.getString("tool")
                 val requestId = toolRequest.getString("request_id")
                 val params = if (toolRequest.has("params")) {
@@ -49,10 +53,10 @@ class ToolExecutor @Inject constructor(
                 } else {
                     JSONObject()
                 }
-                
+
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
-                
+
                 when (toolName) {
                     "launch_app" -> {
                         Log.i(TAG, "🎯 Matched launch_app tool, calling executeAppLauncher")
@@ -66,6 +70,12 @@ class ToolExecutor @Inject constructor(
                     }
                     "whatsapp_draft_message" -> {
                         executeWhatsAppDraftMessage(requestId, params)
+                    }
+                    "disable_continuous_listening" -> {
+                        executeDisableContinuousListening(requestId, voiceManager)
+                    }
+                    "set_tts_enabled" -> {
+                        executeSetTTSEnabled(requestId, params, chatViewModel)
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -230,17 +240,17 @@ class ToolExecutor @Inject constructor(
         try {
             val message = params.getString("message")
             Log.d(TAG, "Sending WhatsApp message: $message")
-            
+
             val result = screenAgentTools.sendWhatsAppMessage(message)
-            
+
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("action", result.action)
                 result.error?.let { put("error", it) }
             }
-            
+
             Log.i(TAG, "[TOOL_RESULT] WhatsApp send message result for requestId=$requestId: ${resultJson.toString(2)}")
-            
+
             _toolResults.emit(
                 ToolExecutionResult.Success(
                     toolName = "whatsapp_send_message",
@@ -248,7 +258,7 @@ class ToolExecutor @Inject constructor(
                     result = resultJson
                 )
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp send message", e)
             _toolResults.emit(
@@ -260,10 +270,135 @@ class ToolExecutor @Inject constructor(
             )
         }
     }
+
+    private suspend fun executeDisableContinuousListening(
+        requestId: String,
+        voiceManager: com.example.whiz.ui.viewmodels.VoiceManager?
+    ) {
+        try {
+            if (voiceManager == null) {
+                Log.e(TAG, "VoiceManager not provided for disable_continuous_listening")
+                _toolResults.emit(
+                    ToolExecutionResult.Error(
+                        toolName = "disable_continuous_listening",
+                        requestId = requestId,
+                        error = "VoiceManager not available"
+                    )
+                )
+                return
+            }
+
+            // Check if bubble mode is active
+            val isBubbleActive = com.example.whiz.services.BubbleOverlayService.isActive
+            Log.i(TAG, "Disabling continuous listening (bubble active: $isBubbleActive)")
+
+            if (isBubbleActive) {
+                // In bubble mode, switch to MIC_OFF mode
+                Log.i(TAG, "Bubble mode active - switching to MIC_OFF mode")
+                com.example.whiz.services.BubbleOverlayService.setMode(com.example.whiz.services.ListeningMode.MIC_OFF)
+            } else {
+                // Not in bubble mode, use normal voiceManager
+                voiceManager.updateContinuousListeningEnabled(false)
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "Continuous listening disabled")
+                put("bubble_mode_active", isBubbleActive)
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Disable continuous listening result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "disable_continuous_listening",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error disabling continuous listening", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "disable_continuous_listening",
+                    requestId = requestId,
+                    error = "Failed to disable continuous listening: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSetTTSEnabled(
+        requestId: String,
+        params: JSONObject,
+        chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel?
+    ) {
+        try {
+            if (chatViewModel == null) {
+                Log.e(TAG, "ChatViewModel not provided for set_tts_enabled")
+                _toolResults.emit(
+                    ToolExecutionResult.Error(
+                        toolName = "set_tts_enabled",
+                        requestId = requestId,
+                        error = "ChatViewModel not available"
+                    )
+                )
+                return
+            }
+
+            val enabled = params.getBoolean("enabled")
+
+            // Check if bubble mode is active
+            val isBubbleActive = com.example.whiz.services.BubbleOverlayService.isActive
+            Log.i(TAG, "Setting TTS enabled to: $enabled (bubble active: $isBubbleActive)")
+
+            if (isBubbleActive) {
+                // In bubble mode, switch modes based on TTS enabled state
+                if (enabled) {
+                    Log.i(TAG, "Bubble mode active - switching to TTS_WITH_LISTENING mode")
+                    com.example.whiz.services.BubbleOverlayService.setMode(com.example.whiz.services.ListeningMode.TTS_WITH_LISTENING)
+                } else {
+                    Log.i(TAG, "Bubble mode active - switching to CONTINUOUS_LISTENING mode")
+                    com.example.whiz.services.BubbleOverlayService.setMode(com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING)
+                }
+            } else {
+                // Not in bubble mode, use normal chatViewModel
+                chatViewModel.setVoiceResponseEnabled(enabled)
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("enabled", enabled)
+                put("message", if (enabled) "TTS enabled" else "TTS disabled")
+                put("bubble_mode_active", isBubbleActive)
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Set TTS enabled result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "set_tts_enabled",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting TTS enabled", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "set_tts_enabled",
+                    requestId = requestId,
+                    error = "Failed to set TTS enabled: ${e.message}"
+                )
+            )
+        }
+    }
     
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
