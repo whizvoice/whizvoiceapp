@@ -181,7 +181,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         // Step 2: Send a voice message (simulate transcription but send as voice)
         Log.d(TAG, "🎤 Step 2: Sending voice message...")
         
-        val testMessage = "Tell me about space in 50 words"
+        val testMessage = "Tell me about space in in LESS than 30 words"
         
         // Wait for ChatViewModel to be captured (it should have been set up before navigation)
         runBlocking {
