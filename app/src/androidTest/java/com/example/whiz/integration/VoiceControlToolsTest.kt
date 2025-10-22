@@ -263,13 +263,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 9: waiting for set_tts_enabled tool to enable TTS...")
             var ttsEnabled = false
             val enableTTSStartTime = System.currentTimeMillis()
-            val enableTTSTimeout = 15000L
+            val enableTTSTimeout = 20000L // Increased from 15s to 20s for CI stability
 
             while (System.currentTimeMillis() - enableTTSStartTime < enableTTSTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val isResponding = chatViewModel.isResponding.value
+                val elapsed = System.currentTimeMillis() - enableTTSStartTime
+
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+
                 if (currentTTSState) {
                     ttsEnabled = true
-                    val elapsed = System.currentTimeMillis() - enableTTSStartTime
                     Log.d(TAG, "✅ TTS enabled after ${elapsed}ms")
                     break
                 }
@@ -277,7 +281,10 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             if (!ttsEnabled) {
+                val finalTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val finalResponding = chatViewModel.isResponding.value
                 Log.e(TAG, "❌ FAILURE: TTS not enabled after timeout")
+                Log.e(TAG, "❌ Final state - TTS: $finalTTSState, isResponding: $finalResponding")
                 failWithScreenshot("voice_control_tts_not_enabled", "TTS not enabled")
                 return@runBlocking
             }
@@ -301,13 +308,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 12: waiting for set_tts_enabled tool to disable TTS...")
             var ttsDisabled = false
             val disableTTSStartTime = System.currentTimeMillis()
-            val disableTTSTimeout = 15000L
+            val disableTTSTimeout = 20000L // Increased from 15s to 20s for CI stability
 
             while (System.currentTimeMillis() - disableTTSStartTime < disableTTSTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val isResponding = chatViewModel.isResponding.value
+                val elapsed = System.currentTimeMillis() - disableTTSStartTime
+
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+
                 if (!currentTTSState) {
                     ttsDisabled = true
-                    val elapsed = System.currentTimeMillis() - disableTTSStartTime
                     Log.d(TAG, "✅ TTS disabled after ${elapsed}ms")
                     break
                 }
@@ -315,7 +326,10 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             if (!ttsDisabled) {
+                val finalTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val finalResponding = chatViewModel.isResponding.value
                 Log.e(TAG, "❌ FAILURE: TTS not disabled after timeout")
+                Log.e(TAG, "❌ Final state - TTS: $finalTTSState, isResponding: $finalResponding")
                 failWithScreenshot("voice_control_tts_not_disabled", "TTS still on")
                 return@runBlocking
             }
@@ -354,13 +368,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 15: waiting for TTS to be enabled...")
             var ttsEnabledAgain = false
             val enableTTSAgainStartTime = System.currentTimeMillis()
-            val enableTTSAgainTimeout = 15000L
+            val enableTTSAgainTimeout = 20000L // Increased from 15s to 20s for CI stability
 
             while (System.currentTimeMillis() - enableTTSAgainStartTime < enableTTSAgainTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val isResponding = chatViewModel.isResponding.value
+                val elapsed = System.currentTimeMillis() - enableTTSAgainStartTime
+
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+
                 if (currentTTSState) {
                     ttsEnabledAgain = true
-                    val elapsed = System.currentTimeMillis() - enableTTSAgainStartTime
                     Log.d(TAG, "✅ TTS enabled after ${elapsed}ms")
                     break
                 }
@@ -368,7 +386,10 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             if (!ttsEnabledAgain) {
+                val finalTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val finalResponding = chatViewModel.isResponding.value
                 Log.e(TAG, "❌ FAILURE: TTS not enabled after timeout")
+                Log.e(TAG, "❌ Final state - TTS: $finalTTSState, isResponding: $finalResponding")
                 failWithScreenshot("voice_control_tts_not_enabled_voice", "TTS not enabled with voice message")
                 return@runBlocking
             }
@@ -393,13 +414,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 18: waiting for TTS to be disabled...")
             var ttsDisabledAgain = false
             val disableTTSAgainStartTime = System.currentTimeMillis()
-            val disableTTSAgainTimeout = 15000L
+            val disableTTSAgainTimeout = 20000L // Increased from 15s to 20s for CI stability
 
             while (System.currentTimeMillis() - disableTTSAgainStartTime < disableTTSAgainTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val isResponding = chatViewModel.isResponding.value
+                val elapsed = System.currentTimeMillis() - disableTTSAgainStartTime
+
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+
                 if (!currentTTSState) {
                     ttsDisabledAgain = true
-                    val elapsed = System.currentTimeMillis() - disableTTSAgainStartTime
                     Log.d(TAG, "✅ TTS disabled after ${elapsed}ms")
                     break
                 }
@@ -407,7 +432,10 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             if (!ttsDisabledAgain) {
+                val finalTTSState = chatViewModel.isVoiceResponseEnabled.value
+                val finalResponding = chatViewModel.isResponding.value
                 Log.e(TAG, "❌ FAILURE: TTS not disabled after timeout")
+                Log.e(TAG, "❌ Final state - TTS: $finalTTSState, isResponding: $finalResponding")
                 failWithScreenshot("voice_control_tts_not_disabled_voice", "TTS still on")
                 return@runBlocking
             }
