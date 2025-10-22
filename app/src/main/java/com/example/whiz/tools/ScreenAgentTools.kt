@@ -865,8 +865,21 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait a bit for YouTube Music to be ready
-            delay(1000)
+            // Wait for YouTube Music to be ready (max 3 seconds)
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.google.android.apps.youtube.music",
+                maxWaitMs = 3000
+            )
+
+            if (!appReady) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "YouTube Music did not become ready in time"
+                )
+            }
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -978,8 +991,21 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait a bit for YouTube Music to be ready
-            delay(1000)
+            // Wait for YouTube Music to be ready (max 3 seconds)
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.google.android.apps.youtube.music",
+                maxWaitMs = 3000
+            )
+
+            if (!appReady) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "YouTube Music did not become ready in time"
+                )
+            }
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -1389,22 +1415,46 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         val startTime = System.currentTimeMillis()
         var currentDelay = initialDelayMs
-        
+
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             if (condition()) {
                 Log.d(TAG, "Condition met after ${System.currentTimeMillis() - startTime}ms")
                 return true
             }
-            
+
             val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
             if (remainingTime > 0) {
                 delay(minOf(currentDelay, remainingTime))
                 currentDelay = minOf(currentDelay * 2, maxIntervalMs)
             }
         }
-        
+
         Log.d(TAG, "Condition not met after ${maxWaitMs}ms timeout")
         return false
+    }
+
+    /**
+     * Wait for a specific app to be in the foreground by checking the package name
+     */
+    private suspend fun waitForAppReady(
+        accessibilityService: WhizAccessibilityService,
+        packageName: String,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        Log.d(TAG, "Waiting for app $packageName to be ready...")
+        return waitForCondition(maxWaitMs = maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val isReady = rootNode.packageName?.toString() == packageName
+                rootNode.recycle()
+                if (isReady) {
+                    Log.d(TAG, "App $packageName is now in foreground")
+                }
+                isReady
+            } else {
+                false
+            }
+        }
     }
     
     /**
