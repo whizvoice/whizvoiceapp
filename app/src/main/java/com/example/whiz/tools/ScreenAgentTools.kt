@@ -1136,19 +1136,16 @@ class ScreenAgentTools @Inject constructor(
     private fun clickYouTubeMusicSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
         try {
             // Look for search button - try various possible IDs and descriptions
-            val searchIdentifiers = listOf(
-                "Search" to null,
-                null to "com.google.android.apps.youtube.music:id/action_bar_search"
+            val searchViewIds = listOf(
+                "com.google.android.apps.youtube.music:id/action_search_button",
+                "com.google.android.apps.youtube.music:id/action_bar_search"
             )
 
-            for ((text, viewId) in searchIdentifiers) {
-                val nodes = if (viewId != null) {
-                    rootNode.findAccessibilityNodeInfosByViewId(viewId)
-                } else {
-                    rootNode.findAccessibilityNodeInfosByText(text!!)
-                }
-
+            // Try by view ID first
+            for (viewId in searchViewIds) {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId)
                 if (nodes != null && nodes.isNotEmpty()) {
+                    Log.d(TAG, "Found YouTube Music search button with ID: $viewId")
                     for (node in nodes) {
                         val clickableNode = if (node.isClickable) node else findClickableParent(node)
                         if (clickableNode != null) {
@@ -1157,6 +1154,7 @@ class ScreenAgentTools @Inject constructor(
                                 clickableNode.recycle()
                             }
                             if (clicked) {
+                                Log.d(TAG, "Successfully clicked YouTube Music search button")
                                 nodes.forEach { it.recycle() }
                                 return true
                             }
@@ -1166,6 +1164,31 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Try by content description if view ID didn't work
+            val searchNodes = rootNode.findAccessibilityNodeInfosByText("Search")
+            if (searchNodes != null && searchNodes.isNotEmpty()) {
+                Log.d(TAG, "Found YouTube Music search button by text/description")
+                for (node in searchNodes) {
+                    // Make sure this is actually a search button (ImageButton), not just any text containing "Search"
+                    if (node.className == "android.widget.ImageButton") {
+                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                        if (clickableNode != null) {
+                            val clicked = accessibilityService.clickNode(clickableNode)
+                            if (clickableNode != node) {
+                                clickableNode.recycle()
+                            }
+                            if (clicked) {
+                                Log.d(TAG, "Successfully clicked YouTube Music search ImageButton")
+                                searchNodes.forEach { it.recycle() }
+                                return true
+                            }
+                        }
+                    }
+                }
+                searchNodes.forEach { it.recycle() }
+            }
+
+            Log.w(TAG, "Could not find YouTube Music search button")
             return false
         } catch (e: Exception) {
             Log.e(TAG, "Error clicking YouTube Music search", e)
