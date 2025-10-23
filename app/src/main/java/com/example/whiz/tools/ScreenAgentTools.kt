@@ -50,6 +50,13 @@ class ScreenAgentTools @Inject constructor(
         val error: String? = null,
         val overlayShown: Boolean = false
     )
+
+    data class MusicActionResult(
+        val success: Boolean,
+        val action: String,
+        val query: String? = null,
+        val error: String? = null
+    )
     
     // ========== App Launch Functions ==========
     
@@ -139,6 +146,7 @@ class ScreenAgentTools @Inject constructor(
                 "chrome" to "com.android.chrome",
                 "gmail" to "com.google.android.gm",
                 "youtube" to "com.google.android.youtube",
+                "youtube music" to "com.google.android.apps.youtube.music",
                 "maps" to "com.google.android.apps.maps",
                 "play store" to "com.android.vending",
                 "camera" to "com.android.camera2",
@@ -841,6 +849,1161 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    // ========== YouTube Music Specific Functions ==========
+
+    suspend fun playYouTubeMusicSong(query: String): MusicActionResult {
+        Log.d(TAG, "Attempting to play song on YouTube Music: $query")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            // Wait for YouTube Music to be ready (max 3 seconds)
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.google.android.apps.youtube.music",
+                maxWaitMs = 3000
+            )
+
+            if (!appReady) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "YouTube Music did not become ready in time"
+                )
+            }
+
+            // Navigate to a searchable screen (speed dial or search screen)
+            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
+            if (!navigationSuccess) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not navigate to searchable screen in YouTube Music"
+                )
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not get root node"
+                )
+            }
+
+            // Check if search field is already visible (may already be on search screen)
+            val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/search_edit_text"
+            )
+            val searchFieldAlreadyVisible = searchFieldNodes != null && searchFieldNodes.isNotEmpty()
+            searchFieldNodes?.forEach { it.recycle() }
+
+            if (!searchFieldAlreadyVisible) {
+                // Try to find and click the search button
+                val searchSuccess = clickYouTubeMusicSearch(rootNode, accessibilityService)
+
+                if (!searchSuccess) {
+                    rootNode.recycle()
+                    return MusicActionResult(
+                        success = false,
+                        action = "play_song",
+                        query = query,
+                        error = "Could not find search button in YouTube Music"
+                    )
+                }
+
+                // Wait for search field to appear
+                delay(500)
+            } else {
+                Log.d(TAG, "Search field already visible, skipping search button click")
+            }
+
+            // Enter search query
+            val searchRootNode = accessibilityService.getCurrentRootNode()
+            if (searchRootNode == null) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not get root node after opening search"
+                )
+            }
+
+            val queryEntered = enterYouTubeMusicSearchQuery(searchRootNode, query)
+            searchRootNode.recycle()
+
+            if (!queryEntered) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not enter search query"
+                )
+            }
+
+            // Wait for suggestions to appear or search results to load
+            delay(500)
+
+            // Try to click first suggestion (autocomplete dropdown)
+            val suggestionRootNode = accessibilityService.getCurrentRootNode()
+            if (suggestionRootNode == null) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not get root node after entering query"
+                )
+            }
+
+            val suggestionClicked = clickFirstYouTubeMusicSuggestion(suggestionRootNode, accessibilityService)
+            suggestionRootNode.recycle()
+            rootNode.recycle()
+
+            if (suggestionClicked) {
+                Log.d(TAG, "Successfully clicked autocomplete suggestion, polling for play button")
+            } else {
+                Log.d(TAG, "No autocomplete suggestions found, polling for play button")
+            }
+
+            // Poll for the play button to appear (max 3 seconds)
+            val playClicked = waitForAndClickPlayButton(accessibilityService, maxWaitMs = 3000)
+
+            return if (playClicked) {
+                Log.d(TAG, "Successfully clicked play button on search result")
+                MusicActionResult(
+                    success = true,
+                    action = "play_song",
+                    query = query
+                )
+            } else {
+                MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not find play button after waiting for search results"
+                )
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing YouTube Music song", e)
+            return MusicActionResult(
+                success = false,
+                action = "play_song",
+                query = query,
+                error = "Error playing song: ${e.message}"
+            )
+        }
+    }
+
+    suspend fun queueYouTubeMusicSong(query: String): MusicActionResult {
+        Log.d(TAG, "Attempting to queue song on YouTube Music: $query")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            // Wait for YouTube Music to be ready (max 3 seconds)
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.google.android.apps.youtube.music",
+                maxWaitMs = 3000
+            )
+
+            if (!appReady) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "YouTube Music did not become ready in time"
+                )
+            }
+
+            // Navigate to a searchable screen (speed dial or search screen)
+            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
+            if (!navigationSuccess) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not navigate to searchable screen in YouTube Music"
+                )
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not get root node"
+                )
+            }
+
+            // Check if search field is already visible (may already be on search screen)
+            val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/search_edit_text"
+            )
+            val searchFieldAlreadyVisible = searchFieldNodes != null && searchFieldNodes.isNotEmpty()
+            searchFieldNodes?.forEach { it.recycle() }
+
+            if (!searchFieldAlreadyVisible) {
+                // Try to find and click the search button
+                val searchSuccess = clickYouTubeMusicSearch(rootNode, accessibilityService)
+
+                if (!searchSuccess) {
+                    rootNode.recycle()
+                    return MusicActionResult(
+                        success = false,
+                        action = "queue_song",
+                        query = query,
+                        error = "Could not find search button in YouTube Music"
+                    )
+                }
+
+                // Wait for search field to appear
+                delay(500)
+            } else {
+                Log.d(TAG, "Search field already visible, skipping search button click")
+            }
+
+            // Enter search query
+            val searchRootNode = accessibilityService.getCurrentRootNode()
+            if (searchRootNode == null) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not get root node after opening search"
+                )
+            }
+
+            val queryEntered = enterYouTubeMusicSearchQuery(searchRootNode, query)
+            searchRootNode.recycle()
+
+            if (!queryEntered) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not enter search query"
+                )
+            }
+
+            // Wait for suggestions to appear or search results to load
+            delay(500)
+
+            // Try to click first suggestion (autocomplete dropdown)
+            val suggestionRootNode = accessibilityService.getCurrentRootNode()
+            if (suggestionRootNode == null) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not get root node after entering query"
+                )
+            }
+
+            val suggestionClicked = clickFirstYouTubeMusicSuggestion(suggestionRootNode, accessibilityService)
+            suggestionRootNode.recycle()
+
+            if (suggestionClicked) {
+                Log.d(TAG, "Successfully clicked autocomplete suggestion, polling for context menu")
+            } else {
+                Log.d(TAG, "No autocomplete suggestions found, polling for context menu")
+            }
+
+            // Make sure we're on the "YT Music" tab (not Library or Downloads)
+            val tabRootNode = accessibilityService.getCurrentRootNode()
+            if (tabRootNode != null) {
+                val ytMusicTabClicked = ensureYTMusicTabSelected(tabRootNode, accessibilityService)
+                if (ytMusicTabClicked) {
+                    Log.d(TAG, "Switched to YT Music tab for queueing")
+                    delay(500) // Wait for tab content to load
+                }
+                tabRootNode.recycle()
+            }
+
+            // Poll for context menu button to appear and open it (max 3 seconds)
+            val menuSuccess = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 3000)
+
+            if (!menuSuccess) {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not find or open context menu after waiting for search results"
+                )
+            }
+
+            // Poll for "Add to queue" option to appear and click it (max 1.5 seconds)
+            val queueSuccess = waitForAndClickAddToQueue(accessibilityService, maxWaitMs = 1500)
+            rootNode.recycle()
+
+            return if (queueSuccess) {
+                MusicActionResult(
+                    success = true,
+                    action = "queue_song",
+                    query = query
+                )
+            } else {
+                MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not find 'Add to queue' option in menu"
+                )
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error queueing YouTube Music song", e)
+            return MusicActionResult(
+                success = false,
+                action = "queue_song",
+                query = query,
+                error = "Error queueing song: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * Wait for a specific element to appear in the UI hierarchy with a timeout.
+     * Returns true if the element was found within the timeout, false otherwise.
+     */
+    private suspend fun waitForElement(
+        accessibilityService: WhizAccessibilityService,
+        checkElement: (AccessibilityNodeInfo) -> Boolean,
+        timeoutMs: Long = 3000,
+        pollIntervalMs: Long = 200
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                try {
+                    if (checkElement(rootNode)) {
+                        rootNode.recycle()
+                        return true
+                    }
+                } finally {
+                    rootNode.recycle()
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        return false
+    }
+
+    /**
+     * Detect and dismiss YouTube Music promotional pop-ups (e.g., Family Plan, Premium).
+     * Returns true if a pop-up was detected and dismissed, false otherwise.
+     */
+    private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            // Look for common pop-up text indicators
+            val popupIndicators = listOf(
+                "Save with family plan",
+                "family plan",
+                "Premium",
+                "Music Premium",
+                "Free trial"
+            )
+
+            var hasPopup = false
+            for (indicator in popupIndicators) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(indicator)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    Log.d(TAG, "Detected YouTube Music pop-up with text: $indicator")
+                    hasPopup = true
+                    nodes.forEach { it.recycle() }
+                    break
+                }
+            }
+
+            if (!hasPopup) {
+                return false
+            }
+
+            // Look for "No thanks" button
+            val noThanksNodes = rootNode.findAccessibilityNodeInfosByText("No thanks")
+            if (noThanksNodes != null && noThanksNodes.isNotEmpty()) {
+                for (node in noThanksNodes) {
+                    // Find the clickable parent (the Button element)
+                    val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                    if (clickableNode != null) {
+                        Log.d(TAG, "Found 'No thanks' button, clicking to dismiss pop-up")
+                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickableNode.recycle()
+                        noThanksNodes.forEach { it.recycle() }
+
+                        if (clicked) {
+                            Log.d(TAG, "Successfully dismissed YouTube Music pop-up")
+                            return true
+                        } else {
+                            Log.w(TAG, "Failed to click 'No thanks' button")
+                        }
+                    }
+                }
+                noThanksNodes.forEach { it.recycle() }
+            }
+
+            // Alternative: Look for dismiss/close buttons by content description
+            val dismissDescriptions = listOf("No thanks", "Dismiss", "Close", "Not now")
+            for (desc in dismissDescriptions) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(desc)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    for (node in nodes) {
+                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                        if (clickableNode != null && clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            Log.d(TAG, "Dismissed pop-up using button: $desc")
+                            clickableNode.recycle()
+                            nodes.forEach { it.recycle() }
+                            return true
+                        }
+                    }
+                    nodes.forEach { it.recycle() }
+                }
+            }
+
+            Log.w(TAG, "Detected pop-up but could not find dismiss button")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error dismissing YouTube Music pop-up", e)
+            return false
+        }
+    }
+
+    /**
+     * Navigate to either the speed dial screen (with search button visible) or the search screen.
+     * If we're not on either screen, press back until we are.
+     * Returns true if successful, false otherwise.
+     */
+    private suspend fun navigateToYouTubeMusicSearchableScreen(accessibilityService: WhizAccessibilityService): Boolean {
+        Log.d(TAG, "Attempting to navigate to YouTube Music searchable screen")
+
+        // Wait for the search button to be clickable (indicates screen is ready)
+        Log.d(TAG, "Waiting for YouTube Music search button to be ready...")
+        val searchButtonReady = waitForElement(accessibilityService, { rootNode ->
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/action_search_button"
+            )
+            var isReady = false
+            if (nodes != null && nodes.isNotEmpty()) {
+                // Check if the button is actually clickable and enabled
+                for (node in nodes) {
+                    if (node.isClickable && node.isEnabled && node.isVisibleToUser) {
+                        isReady = true
+                        break
+                    }
+                }
+            }
+            nodes?.forEach { it.recycle() }
+            isReady
+        }, timeoutMs = 3000)
+
+        if (!searchButtonReady) {
+            Log.w(TAG, "YouTube Music search button did not become ready within timeout - will try navigation anyway")
+            // Don't return false - the navigation loop will press back to find a searchable screen
+            // This is common when a song is already playing and we're on the Now Playing screen
+        } else {
+            Log.d(TAG, "Search button is ready, proceeding with navigation")
+        }
+
+        val maxAttempts = 5
+        for (attempt in 1..maxAttempts) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                Log.w(TAG, "Could not get root node during navigation attempt $attempt")
+                delay(500)
+                continue
+            }
+
+            try {
+                // Check if we're still in YouTube Music
+                val packageName = rootNode.packageName?.toString() ?: ""
+                Log.d(TAG, "Navigation attempt $attempt: Current package = $packageName")
+
+                if (packageName != "com.google.android.apps.youtube.music") {
+                    Log.w(TAG, "Not in YouTube Music app anymore (package: $packageName), navigation failed")
+                    rootNode.recycle()
+                    return false
+                }
+
+                // Check for and dismiss promotional pop-ups
+                if (dismissYouTubeMusicPopup(rootNode)) {
+                    Log.d(TAG, "Dismissed a pop-up, waiting for UI to stabilize")
+                    rootNode.recycle()
+
+                    // Wait for the pop-up to be gone and search button to be clickable again
+                    val uiStabilized = waitForElement(accessibilityService, { node ->
+                        val searchNodes = node.findAccessibilityNodeInfosByViewId(
+                            "com.google.android.apps.youtube.music:id/action_search_button"
+                        )
+                        var isClickable = false
+                        if (searchNodes != null && searchNodes.isNotEmpty()) {
+                            for (searchNode in searchNodes) {
+                                if (searchNode.isClickable && searchNode.isEnabled) {
+                                    isClickable = true
+                                    break
+                                }
+                            }
+                        }
+                        searchNodes?.forEach { it.recycle() }
+                        isClickable
+                    }, timeoutMs = 2000)
+
+                    if (!uiStabilized) {
+                        Log.w(TAG, "UI did not stabilize after dismissing pop-up")
+                    }
+
+                    continue  // Retry navigation after dismissing pop-up
+                }
+
+                // Check if we're on the speed dial screen (has "Speed dial" text and search button)
+                val speedDialNodes = rootNode.findAccessibilityNodeInfosByText("Speed dial")
+                val isOnSpeedDial = speedDialNodes != null && speedDialNodes.isNotEmpty()
+                speedDialNodes?.forEach { it.recycle() }
+
+                // Check if search button is visible
+                val searchButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.youtube.music:id/action_search_button"
+                )
+                val hasSearchButton = searchButtonNodes != null && searchButtonNodes.isNotEmpty()
+                searchButtonNodes?.forEach { it.recycle() }
+
+                // Check if we're on the Now Playing screen (which we should navigate away from)
+                val playerPageNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.youtube.music:id/player_page"
+                )
+                val isOnNowPlayingScreen = playerPageNodes != null && playerPageNodes.isNotEmpty()
+                playerPageNodes?.forEach { it.recycle() }
+
+                // Check if we're on the search screen (has search edit text that is visible and enabled)
+                // BUT reject if we're on the Now Playing screen (search field might be underneath)
+                val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.youtube.music:id/search_edit_text"
+                )
+                var isOnSearchScreen = false
+                if (searchFieldNodes != null && searchFieldNodes.isNotEmpty() && !isOnNowPlayingScreen) {
+                    // Check if at least one search field is actually visible and enabled
+                    for (node in searchFieldNodes) {
+                        if (node.isVisibleToUser && node.isEnabled) {
+                            Log.d(TAG, "Found valid search field")
+                            isOnSearchScreen = true
+                            break
+                        }
+                    }
+                } else if (searchFieldNodes != null && searchFieldNodes.isNotEmpty() && isOnNowPlayingScreen) {
+                    Log.d(TAG, "Found search field but we're on Now Playing screen - search field likely underneath")
+                }
+                searchFieldNodes?.forEach { it.recycle() }
+
+                Log.d(TAG, "Navigation check: speedDial=$isOnSpeedDial, searchButton=$hasSearchButton, searchScreen=$isOnSearchScreen, attempt=$attempt")
+
+                // If we're on either the speed dial page OR the search screen, we're good
+                // The search button being clickable is what matters, not the "Speed dial" text
+                if (hasSearchButton || isOnSearchScreen) {
+                    Log.d(TAG, "On searchable screen (has search button: $hasSearchButton, search screen: $isOnSearchScreen)")
+                    rootNode.recycle()
+                    return true
+                }
+
+                // Not on the right screen, press back
+                Log.d(TAG, "Not on searchable screen (attempt $attempt/$maxAttempts), pressing back...")
+                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                rootNode.recycle()
+
+                // Wait for navigation to complete
+                delay(1000)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during navigation attempt $attempt", e)
+                rootNode.recycle()
+                delay(500)
+            }
+        }
+
+        Log.w(TAG, "Failed to navigate to YouTube Music searchable screen after $maxAttempts attempts")
+        return false
+    }
+
+    private fun clickYouTubeMusicSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // Look for search button - try various possible IDs and descriptions
+            val searchViewIds = listOf(
+                "com.google.android.apps.youtube.music:id/action_search_button",
+                "com.google.android.apps.youtube.music:id/action_bar_search"
+            )
+
+            // Try by view ID first
+            for (viewId in searchViewIds) {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    Log.d(TAG, "Found YouTube Music search button with ID: $viewId")
+                    for (node in nodes) {
+                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                        if (clickableNode != null) {
+                            val clicked = accessibilityService.clickNode(clickableNode)
+                            if (clickableNode != node) {
+                                clickableNode.recycle()
+                            }
+                            if (clicked) {
+                                Log.d(TAG, "Successfully clicked YouTube Music search button")
+                                nodes.forEach { it.recycle() }
+                                return true
+                            }
+                        }
+                    }
+                    nodes.forEach { it.recycle() }
+                }
+            }
+
+            // Try by content description if view ID didn't work
+            val searchNodes = rootNode.findAccessibilityNodeInfosByText("Search")
+            if (searchNodes != null && searchNodes.isNotEmpty()) {
+                Log.d(TAG, "Found YouTube Music search button by text/description")
+                for (node in searchNodes) {
+                    // Make sure this is actually a search button (ImageButton), not just any text containing "Search"
+                    if (node.className == "android.widget.ImageButton") {
+                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                        if (clickableNode != null) {
+                            val clicked = accessibilityService.clickNode(clickableNode)
+                            if (clickableNode != node) {
+                                clickableNode.recycle()
+                            }
+                            if (clicked) {
+                                Log.d(TAG, "Successfully clicked YouTube Music search ImageButton")
+                                searchNodes.forEach { it.recycle() }
+                                return true
+                            }
+                        }
+                    }
+                }
+                searchNodes.forEach { it.recycle() }
+            }
+
+            Log.w(TAG, "Could not find YouTube Music search button")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking YouTube Music search", e)
+            return false
+        }
+    }
+
+    private fun enterYouTubeMusicSearchQuery(rootNode: AccessibilityNodeInfo, query: String): Boolean {
+        try {
+            // Check if there's a clear button (meaning there's existing text)
+            val clearButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/search_clear"
+            )
+            if (clearButtonNodes != null && clearButtonNodes.isNotEmpty()) {
+                Log.d(TAG, "Found clear button, clicking to clear existing search text")
+                val clearButton = clearButtonNodes[0]
+                if (clearButton.isClickable) {
+                    clearButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                clearButtonNodes.forEach { it.recycle() }
+            }
+
+            // Find EditText for search input
+            val editTextNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, editTextNodes)
+
+            if (editTextNodes.isNotEmpty()) {
+                val searchField = editTextNodes[0]
+
+                // Focus on the search field first
+                searchField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+                // Now set the search text
+                val setBundle = Bundle()
+                setBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    query
+                )
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setBundle)
+
+                editTextNodes.forEach { it.recycle() }
+
+                Log.d(TAG, "Entered search query: $query")
+                return textSet
+            }
+
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error entering YouTube Music search query", e)
+            return false
+        }
+    }
+
+    private fun clickFirstYouTubeMusicSuggestion(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // After entering text, YouTube Music shows autocomplete suggestions
+            // These are clickable LinearLayouts that contain TextViews with the suggestion text
+            // Look for the first clickable LinearLayout after the search toolbar
+
+            val allNodes = mutableListOf<AccessibilityNodeInfo>()
+            collectAllNodes(rootNode, allNodes)
+
+            // Helper function to check if a node or its children have suggestion text
+            fun hasValidSuggestionText(node: AccessibilityNodeInfo): Boolean {
+                // Check current node
+                val text = node.text?.toString() ?: ""
+                if (text.isNotEmpty() && !text.equals("Recent searches", ignoreCase = true)) {
+                    return true
+                }
+
+                // Check children
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i)
+                    if (child != null) {
+                        val childText = child.text?.toString() ?: ""
+                        val isValid = childText.isNotEmpty() &&
+                                     !childText.equals("Recent searches", ignoreCase = true) &&
+                                     child.className?.toString()?.contains("TextView") == true
+                        child.recycle()
+                        if (isValid) return true
+                    }
+                }
+                return false
+            }
+
+            // Look for clickable LinearLayouts that are likely autocomplete suggestions
+            for (node in allNodes) {
+                val className = node.className?.toString() ?: ""
+                val contentDesc = node.contentDescription?.toString() ?: ""
+
+                // Skip "Edit suggestion" buttons and other non-suggestion items
+                if (contentDesc.contains("Edit suggestion", ignoreCase = true) ||
+                    contentDesc.contains("Recent searches", ignoreCase = true)) {
+                    continue
+                }
+
+                // Look for clickable LinearLayouts with valid suggestion text in children
+                if (node.isClickable &&
+                    className == "android.widget.LinearLayout" &&
+                    hasValidSuggestionText(node)) {
+
+                    // Get text from children for logging
+                    var suggestionText = ""
+                    for (i in 0 until node.childCount) {
+                        val child = node.getChild(i)
+                        if (child != null) {
+                            val childText = child.text?.toString() ?: ""
+                            if (childText.isNotEmpty()) {
+                                suggestionText = childText
+                                child.recycle()
+                                break
+                            }
+                            child.recycle()
+                        }
+                    }
+
+                    Log.d(TAG, "Clicking search suggestion: $suggestionText")
+                    val clicked = accessibilityService.clickNode(node)
+                    allNodes.forEach { it.recycle() }
+                    return clicked
+                }
+            }
+
+            allNodes.forEach { it.recycle() }
+            Log.w(TAG, "Could not find search suggestions")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking first YouTube Music suggestion", e)
+            return false
+        }
+    }
+
+    private fun ensureYTMusicTabSelected(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // After search, YouTube Music shows tabs: YT MUSIC, LIBRARY, DOWNLOADS
+            // We need to ensure we're on the YT MUSIC tab to see actual song results
+
+            // Look for text "YT MUSIC" - find the clickable tab and click it
+            // Note: We always click it because the selected state isn't reliable
+            val ytMusicTextNodes = rootNode.findAccessibilityNodeInfosByText("YT MUSIC")
+
+            if (ytMusicTextNodes != null && ytMusicTextNodes.isNotEmpty()) {
+                Log.d(TAG, "Found ${ytMusicTextNodes.size} nodes with 'YT MUSIC' text")
+
+                // Try to find a clickable node directly by looking for the tab container
+                // The tab is a LinearLayout with content-desc "YT Music"
+                val allNodes = mutableListOf<AccessibilityNodeInfo>()
+                collectAllNodes(rootNode, allNodes)
+
+                for (node in allNodes) {
+                    if (node.contentDescription?.toString()?.equals("YT Music", ignoreCase = true) == true && node.isClickable) {
+                        Log.d(TAG, "Found clickable YT Music tab by content-desc, clicking it")
+                        val clicked = accessibilityService.clickNode(node)
+                        allNodes.forEach { it.recycle() }
+                        ytMusicTextNodes.forEach { it.recycle() }
+                        return clicked
+                    }
+                }
+
+                allNodes.forEach { it.recycle() }
+                ytMusicTextNodes.forEach { it.recycle() }
+                Log.w(TAG, "Found 'YT MUSIC' text but could not find clickable tab")
+            } else {
+                Log.w(TAG, "Could not find any nodes with 'YT MUSIC' text")
+            }
+
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error ensuring YT Music tab selected", e)
+            return false
+        }
+    }
+
+    private fun collectAllNodes(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>) {
+        results.add(AccessibilityNodeInfo.obtain(node))
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                collectAllNodes(child, results)
+            }
+        }
+    }
+
+    /**
+     * Poll for the play button to appear in search results, checking every 200ms up to maxWaitMs.
+     * Returns true if play button is found and clicked (or song is already playing), false otherwise.
+     */
+    private suspend fun waitForAndClickPlayButton(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Play button found and clicked after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Play button not found after waiting ${maxWaitMs}ms")
+        return false
+    }
+
+    /**
+     * Poll for the context menu button to appear in search results, checking every 200ms up to maxWaitMs.
+     * Returns true if context menu is found and opened, false otherwise.
+     */
+    private suspend fun waitForAndOpenContextMenu(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms")
+        return false
+    }
+
+    /**
+     * Poll for the "Add to queue" button to appear in the context menu, checking every 200ms up to maxWaitMs.
+     * Returns true if "Add to queue" is found and clicked, false otherwise.
+     */
+    private suspend fun waitForAndClickAddToQueue(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 1500
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = clickAddToQueue(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Add to queue clicked after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Add to queue not found after waiting ${maxWaitMs}ms")
+        return false
+    }
+
+    private fun clickFirstYouTubeMusicResult(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // Look for the "Play" or "Resume" button in the featured search result
+            // The button's content-desc is like "Play Golden" or "Resume Golden"
+            // But DON'T click if we find a "Pause" button, which means it's already playing
+            val allNodes = mutableListOf<AccessibilityNodeInfo>()
+            collectAllNodes(rootNode, allNodes)
+
+            // First check if there's a Pause button, which means the song is already playing
+            for (node in allNodes) {
+                val contentDesc = node.contentDescription?.toString() ?: ""
+                if (contentDesc.startsWith("Pause ", ignoreCase = true) &&
+                    node.className?.toString()?.contains("Button") == true) {
+                    Log.d(TAG, "Found Pause button - song is already playing, not clicking")
+                    allNodes.forEach { it.recycle() }
+                    return true // Return true because the song is already playing (success)
+                }
+            }
+
+            // No Pause button found, look for Play/Resume button
+            for (node in allNodes) {
+                val contentDesc = node.contentDescription?.toString() ?: ""
+                // Match "Play <song>" or "Resume <song>" buttons only (not just "Play" alone to avoid child text nodes)
+                if ((contentDesc.startsWith("Play ", ignoreCase = true) || contentDesc.startsWith("Resume ", ignoreCase = true)) &&
+                    node.className?.toString()?.contains("Button") == true &&
+                    node.isClickable) {
+                    Log.d(TAG, "Found Play/Resume button with content-desc: $contentDesc, clicking it")
+                    val clicked = accessibilityService.clickNode(node)
+                    allNodes.forEach { it.recycle() }
+                    return clicked
+                }
+            }
+
+            allNodes.forEach { it.recycle() }
+            Log.w(TAG, "Could not find Play/Resume button in search results")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking first YouTube Music result", e)
+            return false
+        }
+    }
+
+    private fun openYouTubeMusicContextMenu(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // Look for "Action menu" button (three-dot menu on each result) by content description
+            val actionMenuNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByContentDescription(rootNode, "Action menu", actionMenuNodes)
+
+            if (actionMenuNodes.isNotEmpty()) {
+                val firstMenuButton = actionMenuNodes[0]
+                val clickableNode = if (firstMenuButton.isClickable) firstMenuButton else findClickableParent(firstMenuButton)
+
+                if (clickableNode != null) {
+                    val clicked = accessibilityService.clickNode(clickableNode)
+                    Log.d(TAG, "Clicked Action menu button for first result: $clicked")
+                    clickableNode.recycle()
+                    actionMenuNodes.forEach { it.recycle() }
+                    return clicked
+                }
+
+                actionMenuNodes.forEach { it.recycle() }
+            }
+
+            // Fallback: Try to long-press on the first search result
+            val resultNodes = findYouTubeMusicResults(rootNode)
+
+            if (resultNodes.isNotEmpty()) {
+                val firstResult = resultNodes[0]
+
+                // Long-press on the first search result to open context menu
+                val longPressed = firstResult.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
+
+                Log.d(TAG, "Long-pressed on first search result (fallback): $longPressed")
+
+                resultNodes.forEach { it.recycle() }
+                return longPressed
+            }
+
+            resultNodes.forEach { it.recycle() }
+            Log.w(TAG, "No search results or action menu found")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening YouTube Music context menu", e)
+            return false
+        }
+    }
+
+    private fun clickAddToQueue(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            // Look for "Add to queue" or "Play next" text
+            val queueTexts = listOf("Add to queue", "Play next", "add to queue", "play next")
+
+            for (text in queueTexts) {
+                val nodes = rootNode.findAccessibilityNodeInfosByText(text)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    for (node in nodes) {
+                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                        if (clickableNode != null) {
+                            val clicked = accessibilityService.clickNode(clickableNode)
+                            if (clickableNode != node) {
+                                clickableNode.recycle()
+                            }
+                            if (clicked) {
+                                nodes.forEach { it.recycle() }
+                                return true
+                            }
+                        }
+                    }
+                    nodes.forEach { it.recycle() }
+                }
+            }
+
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking add to queue", e)
+            return false
+        }
+    }
+
+    private fun findYouTubeMusicResults(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+        val results = mutableListOf<AccessibilityNodeInfo>()
+
+        // Look for ViewGroup items that are likely search results
+        // They typically contain song title and artist information
+        searchForMusicResults(node, results, depth = 0)
+
+        return results
+    }
+
+    private fun searchForMusicResults(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>, depth: Int) {
+        if (depth > 10) return // Limit recursion depth
+
+        try {
+            // Check if this node looks like a music result item
+            // It should have text content and be part of a list
+            val hasText = node.text != null || node.contentDescription != null
+            val isListItem = node.className?.contains("ViewGroup") == true ||
+                           node.className?.contains("LinearLayout") == true ||
+                           node.className?.contains("FrameLayout") == true
+
+            if (hasText && isListItem && node.isClickable && depth >= 3) {
+                // This might be a result item - add it
+                results.add(AccessibilityNodeInfo.obtain(node))
+
+                // Don't search children of results we've already found
+                return
+            }
+
+            // Continue searching children
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    searchForMusicResults(child, results, depth + 1)
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching for music results", e)
+        }
+    }
+
+    private fun findNodesByContentDescription(node: AccessibilityNodeInfo, contentDesc: String, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
+        if (depth > 15) return // Limit recursion depth
+
+        try {
+            // Check if this node matches the content description
+            val nodeContentDesc = node.contentDescription?.toString()
+            if (nodeContentDesc != null && nodeContentDesc.equals(contentDesc, ignoreCase = true)) {
+                results.add(AccessibilityNodeInfo.obtain(node))
+            }
+
+            // Continue searching children
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    findNodesByContentDescription(child, contentDesc, results, depth + 1)
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding nodes by content description", e)
+        }
+    }
+
+    private fun findMoreOptionsButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        try {
+            // Look for ImageButton or ImageView with "More options" or similar description
+            return searchForMoreButton(node)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding more options button", e)
+            return null
+        }
+    }
+
+    private fun searchForMoreButton(node: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > 10) return null
+
+        try {
+            // Check if this is a more options button
+            val contentDesc = node.contentDescription?.toString()?.lowercase()
+            val isButton = node.className == "android.widget.ImageButton" ||
+                          node.className == "android.widget.ImageView"
+
+            if (isButton && contentDesc != null &&
+                (contentDesc.contains("more") || contentDesc.contains("options") || contentDesc.contains("menu"))) {
+                return AccessibilityNodeInfo.obtain(node)
+            }
+
+            // Search children
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val result = searchForMoreButton(child, depth + 1)
+                    child.recycle()
+                    if (result != null) {
+                        return result
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in searchForMoreButton", e)
+        }
+
+        return null
+    }
+
     // ========== Helper Functions ==========
 
     /**
@@ -884,22 +2047,46 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         val startTime = System.currentTimeMillis()
         var currentDelay = initialDelayMs
-        
+
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             if (condition()) {
                 Log.d(TAG, "Condition met after ${System.currentTimeMillis() - startTime}ms")
                 return true
             }
-            
+
             val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
             if (remainingTime > 0) {
                 delay(minOf(currentDelay, remainingTime))
                 currentDelay = minOf(currentDelay * 2, maxIntervalMs)
             }
         }
-        
+
         Log.d(TAG, "Condition not met after ${maxWaitMs}ms timeout")
         return false
+    }
+
+    /**
+     * Wait for a specific app to be in the foreground by checking the package name
+     */
+    private suspend fun waitForAppReady(
+        accessibilityService: WhizAccessibilityService,
+        packageName: String,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        Log.d(TAG, "Waiting for app $packageName to be ready...")
+        return waitForCondition(maxWaitMs = maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val isReady = rootNode.packageName?.toString() == packageName
+                rootNode.recycle()
+                if (isReady) {
+                    Log.d(TAG, "App $packageName is now in foreground")
+                }
+                isReady
+            } else {
+                false
+            }
+        }
     }
     
     /**

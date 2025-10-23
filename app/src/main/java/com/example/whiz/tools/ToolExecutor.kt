@@ -28,7 +28,8 @@ sealed class ToolExecutionResult {
 
 @Singleton
 class ToolExecutor @Inject constructor(
-    private val screenAgentTools: ScreenAgentTools
+    private val screenAgentTools: ScreenAgentTools,
+    private val userPreferences: com.example.whiz.data.preferences.UserPreferences
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -76,6 +77,12 @@ class ToolExecutor @Inject constructor(
                     }
                     "set_tts_enabled" -> {
                         executeSetTTSEnabled(requestId, params, chatViewModel)
+                    }
+                    "play_youtube_music" -> {
+                        executePlayYouTubeMusic(requestId, params)
+                    }
+                    "queue_youtube_music" -> {
+                        executeQueueYouTubeMusic(requestId, params)
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -396,9 +403,91 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
+        try {
+            val query = params.getString("query")
+            Log.i(TAG, "Playing song on YouTube Music: $query")
+
+            // The server has already decided to use YouTube Music by calling this tool
+            // No need to check preferences here - just execute the action
+            val result = screenAgentTools.playYouTubeMusicSong(query)
+
+            Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                put("music_app_used", "youtube_music")
+                result.query?.let { put("query", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Music play result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "play_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing music play", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "play_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to play song: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeQueueYouTubeMusic(requestId: String, params: JSONObject) {
+        try {
+            val query = params.getString("query")
+            Log.i(TAG, "Queueing song on YouTube Music: $query")
+
+            // The server has already decided to use YouTube Music by calling this tool
+            // No need to check preferences here - just execute the action
+            val result = screenAgentTools.queueYouTubeMusicSong(query)
+
+            Log.i(TAG, "YouTube Music queue result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                put("music_app_used", "youtube_music")
+                result.query?.let { put("query", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Music queue result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "queue_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing music queue", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "queue_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to queue song: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

@@ -70,26 +70,26 @@ fun OverlayPermissionDialog(
     onRequestPermission: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.semantics { 
+        onDismissRequest = {}, // Make dialog non-dismissible
+        modifier = Modifier.semantics {
             contentDescription = "Overlay permission dialog"
         },
-        title = { 
+        title = {
             Text(
                 "Display Over Other Apps Permission Required",
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Overlay permission required title"
                 }
-            ) 
+            )
         },
-        text = { 
+        text = {
             Text(
                 "Whiz needs permission to display over other apps, so you can use voice commands on other apps.",
                 textAlign = TextAlign.Start,
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Overlay permission explanation"
                 }
-            ) 
+            )
         },
         confirmButton = {
             Button(
@@ -97,26 +97,14 @@ fun OverlayPermissionDialog(
                     onRequestPermission()
                     // Don't dismiss here - let onResume handle it when returning from Settings
                 },
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Grant overlay permission button"
                 }
             ) {
                 Text("Grant Permission")
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.semantics { 
-                    contentDescription = "Dismiss overlay permission dialog button"
-                }
-            ) {
-                Text("Not Now")
-            }
-        }
+        dismissButton = null // Remove the dismiss button entirely
     )
 }
 
