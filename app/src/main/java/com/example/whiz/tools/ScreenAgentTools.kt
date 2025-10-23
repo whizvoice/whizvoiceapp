@@ -881,6 +881,17 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Navigate to a searchable screen (speed dial or search screen)
+            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
+            if (!navigationSuccess) {
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not navigate to searchable screen in YouTube Music"
+                )
+            }
+
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return MusicActionResult(
@@ -943,10 +954,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for suggestions to appear
+            // Wait for suggestions to appear or search results to load
             delay(500)
 
-            // Click first suggestion to execute the search
+            // Try to click first suggestion (autocomplete dropdown)
             val suggestionRootNode = accessibilityService.getCurrentRootNode()
             if (suggestionRootNode == null) {
                 rootNode.recycle()
@@ -961,20 +972,25 @@ class ScreenAgentTools @Inject constructor(
             val suggestionClicked = clickFirstYouTubeMusicSuggestion(suggestionRootNode, accessibilityService)
             suggestionRootNode.recycle()
 
-            if (!suggestionClicked) {
+            if (suggestionClicked) {
+                // Clicked autocomplete suggestion - this will start playing
+                Log.d(TAG, "Successfully clicked autocomplete suggestion")
                 rootNode.recycle()
                 return MusicActionResult(
-                    success = false,
+                    success = true,
                     action = "play_song",
-                    query = query,
-                    error = "Could not click search suggestion"
+                    query = query
                 )
             }
 
-            // Wait for search results page to load after clicking suggestion
-            delay(2500)
+            // No autocomplete suggestions - YouTube Music went directly to search results
+            // In this case, the first result is already showing, we just need to click it
+            Log.d(TAG, "No autocomplete suggestions found, assuming direct search results page")
 
-            // Click on the Play button in the first result
+            // Wait a bit more for search results to fully load
+            delay(1500)
+
+            // Try to click the play button on the first search result
             val resultsRootNode = accessibilityService.getCurrentRootNode()
             if (resultsRootNode == null) {
                 rootNode.recycle()
@@ -982,15 +998,16 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "play_song",
                     query = query,
-                    error = "Could not get root node after search"
+                    error = "Could not get root node for search results"
                 )
             }
 
-            val clickSuccess = clickFirstYouTubeMusicResult(resultsRootNode, accessibilityService)
+            val playClicked = clickFirstYouTubeMusicResult(resultsRootNode, accessibilityService)
             resultsRootNode.recycle()
             rootNode.recycle()
 
-            return if (clickSuccess) {
+            return if (playClicked) {
+                Log.d(TAG, "Successfully clicked play button on search result")
                 MusicActionResult(
                     success = true,
                     action = "play_song",
@@ -1001,7 +1018,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "play_song",
                     query = query,
-                    error = "Could not click on Play button"
+                    error = "Could not find autocomplete suggestions or play button"
                 )
             }
 
@@ -1043,6 +1060,17 @@ class ScreenAgentTools @Inject constructor(
                     action = "queue_song",
                     query = query,
                     error = "YouTube Music did not become ready in time"
+                )
+            }
+
+            // Navigate to a searchable screen (speed dial or search screen)
+            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
+            if (!navigationSuccess) {
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Could not navigate to searchable screen in YouTube Music"
                 )
             }
 
@@ -1183,6 +1211,80 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    /**
+     * Navigate to either the speed dial screen (with search button visible) or the search screen.
+     * If we're not on either screen, press back until we are.
+     * Returns true if successful, false otherwise.
+     */
+    private suspend fun navigateToYouTubeMusicSearchableScreen(accessibilityService: WhizAccessibilityService): Boolean {
+        Log.d(TAG, "Attempting to navigate to YouTube Music searchable screen")
+
+        val maxAttempts = 5
+        for (attempt in 1..maxAttempts) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                Log.w(TAG, "Could not get root node during navigation attempt $attempt")
+                delay(500)
+                continue
+            }
+
+            try {
+                // Check if we're still in YouTube Music
+                val packageName = rootNode.packageName?.toString() ?: ""
+                Log.d(TAG, "Navigation attempt $attempt: Current package = $packageName")
+
+                if (packageName != "com.google.android.apps.youtube.music") {
+                    Log.w(TAG, "Not in YouTube Music app anymore (package: $packageName), navigation failed")
+                    rootNode.recycle()
+                    return false
+                }
+
+                // Check if we're on the speed dial screen (has "Speed dial" text and search button)
+                val speedDialNodes = rootNode.findAccessibilityNodeInfosByText("Speed dial")
+                val isOnSpeedDial = speedDialNodes != null && speedDialNodes.isNotEmpty()
+                speedDialNodes?.forEach { it.recycle() }
+
+                // Check if search button is visible
+                val searchButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.youtube.music:id/action_search_button"
+                )
+                val hasSearchButton = searchButtonNodes != null && searchButtonNodes.isNotEmpty()
+                searchButtonNodes?.forEach { it.recycle() }
+
+                // Check if we're on the search screen (has search edit text)
+                val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.youtube.music:id/search_edit_text"
+                )
+                val isOnSearchScreen = searchFieldNodes != null && searchFieldNodes.isNotEmpty()
+                searchFieldNodes?.forEach { it.recycle() }
+
+                Log.d(TAG, "Navigation check: speedDial=$isOnSpeedDial, searchButton=$hasSearchButton, searchScreen=$isOnSearchScreen")
+
+                // If we're on either the speed dial page with search button OR the search screen, we're good
+                if ((isOnSpeedDial && hasSearchButton) || isOnSearchScreen || hasSearchButton) {
+                    Log.d(TAG, "On correct screen (speed dial: $isOnSpeedDial, has search button: $hasSearchButton, search screen: $isOnSearchScreen)")
+                    rootNode.recycle()
+                    return true
+                }
+
+                // Not on the right screen, press back
+                Log.d(TAG, "Not on searchable screen (attempt $attempt/$maxAttempts), pressing back...")
+                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                rootNode.recycle()
+
+                // Wait for navigation to complete
+                delay(1000)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during navigation attempt $attempt", e)
+                rootNode.recycle()
+                delay(500)
+            }
+        }
+
+        Log.w(TAG, "Failed to navigate to YouTube Music searchable screen after $maxAttempts attempts")
+        return false
+    }
+
     private fun clickYouTubeMusicSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
         try {
             // Look for search button - try various possible IDs and descriptions
@@ -1255,13 +1357,24 @@ class ScreenAgentTools @Inject constructor(
             if (editTextNodes.isNotEmpty()) {
                 val searchField = editTextNodes[0]
 
-                // Set the search text
-                val bundle = Bundle()
-                bundle.putCharSequence(
+                // Focus on the search field first
+                searchField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+                // Clear any existing text first
+                val clearBundle = Bundle()
+                clearBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    ""
+                )
+                searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+
+                // Now set the search text
+                val setBundle = Bundle()
+                setBundle.putCharSequence(
                     AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                     query
                 )
-                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setBundle)
 
                 editTextNodes.forEach { it.recycle() }
 
