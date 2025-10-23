@@ -973,29 +973,14 @@ class ScreenAgentTools @Inject constructor(
             suggestionRootNode.recycle()
             rootNode.recycle()
 
-            // Whether we clicked a suggestion or not, we need to wait for search results
-            // and then try to click the play button (but only if it's not already playing)
             if (suggestionClicked) {
-                Log.d(TAG, "Successfully clicked autocomplete suggestion, waiting for search results")
-                delay(2000) // Wait for search results to load
+                Log.d(TAG, "Successfully clicked autocomplete suggestion, polling for play button")
             } else {
-                Log.d(TAG, "No autocomplete suggestions found, waiting for search results")
-                delay(1500)
+                Log.d(TAG, "No autocomplete suggestions found, polling for play button")
             }
 
-            // Try to click the play button on the first search result
-            val resultsRootNode = accessibilityService.getCurrentRootNode()
-            if (resultsRootNode == null) {
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Could not get root node for search results"
-                )
-            }
-
-            val playClicked = clickFirstYouTubeMusicResult(resultsRootNode, accessibilityService)
-            resultsRootNode.recycle()
+            // Poll for the play button to appear (max 3 seconds)
+            val playClicked = waitForAndClickPlayButton(accessibilityService, maxWaitMs = 3000)
 
             return if (playClicked) {
                 Log.d(TAG, "Successfully clicked play button on search result")
@@ -1009,7 +994,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "play_song",
                     query = query,
-                    error = "Could not find autocomplete suggestions or play button"
+                    error = "Could not find play button after waiting for search results"
                 )
             }
 
@@ -1145,13 +1130,10 @@ class ScreenAgentTools @Inject constructor(
             val suggestionClicked = clickFirstYouTubeMusicSuggestion(suggestionRootNode, accessibilityService)
             suggestionRootNode.recycle()
 
-            // Whether we clicked a suggestion or not, we need to wait for search results
             if (suggestionClicked) {
-                Log.d(TAG, "Successfully clicked autocomplete suggestion, waiting for search results")
-                delay(2000) // Wait for search results to load
+                Log.d(TAG, "Successfully clicked autocomplete suggestion, polling for context menu")
             } else {
-                Log.d(TAG, "No autocomplete suggestions found, waiting for search results")
-                delay(1500)
+                Log.d(TAG, "No autocomplete suggestions found, polling for context menu")
             }
 
             // Make sure we're on the "YT Music" tab (not Library or Downloads)
@@ -1165,50 +1147,21 @@ class ScreenAgentTools @Inject constructor(
                 tabRootNode.recycle()
             }
 
-            // Long-press on first result to bring up menu, then select "Add to queue"
-            val resultsRootNode = accessibilityService.getCurrentRootNode()
-            if (resultsRootNode == null) {
-                rootNode.recycle()
-                return MusicActionResult(
-                    success = false,
-                    action = "queue_song",
-                    query = query,
-                    error = "Could not get root node after search"
-                )
-            }
-
-            val menuSuccess = openYouTubeMusicContextMenu(resultsRootNode, accessibilityService)
+            // Poll for context menu button to appear and open it (max 3 seconds)
+            val menuSuccess = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 3000)
 
             if (!menuSuccess) {
-                resultsRootNode.recycle()
                 rootNode.recycle()
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
                     query = query,
-                    error = "Could not open context menu for result"
+                    error = "Could not find or open context menu after waiting for search results"
                 )
             }
 
-            // Wait for menu to appear
-            delay(500)
-
-            // Click "Add to queue" option
-            val menuRootNode = accessibilityService.getCurrentRootNode()
-            if (menuRootNode == null) {
-                resultsRootNode.recycle()
-                rootNode.recycle()
-                return MusicActionResult(
-                    success = false,
-                    action = "queue_song",
-                    query = query,
-                    error = "Could not get root node after opening menu"
-                )
-            }
-
-            val queueSuccess = clickAddToQueue(menuRootNode, accessibilityService)
-            menuRootNode.recycle()
-            resultsRootNode.recycle()
+            // Poll for "Add to queue" option to appear and click it (max 1.5 seconds)
+            val queueSuccess = waitForAndClickAddToQueue(accessibilityService, maxWaitMs = 1500)
             rootNode.recycle()
 
             return if (queueSuccess) {
@@ -1736,6 +1689,93 @@ class ScreenAgentTools @Inject constructor(
                 collectAllNodes(child, results)
             }
         }
+    }
+
+    /**
+     * Poll for the play button to appear in search results, checking every 200ms up to maxWaitMs.
+     * Returns true if play button is found and clicked (or song is already playing), false otherwise.
+     */
+    private suspend fun waitForAndClickPlayButton(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Play button found and clicked after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Play button not found after waiting ${maxWaitMs}ms")
+        return false
+    }
+
+    /**
+     * Poll for the context menu button to appear in search results, checking every 200ms up to maxWaitMs.
+     * Returns true if context menu is found and opened, false otherwise.
+     */
+    private suspend fun waitForAndOpenContextMenu(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 3000
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms")
+        return false
+    }
+
+    /**
+     * Poll for the "Add to queue" button to appear in the context menu, checking every 200ms up to maxWaitMs.
+     * Returns true if "Add to queue" is found and clicked, false otherwise.
+     */
+    private suspend fun waitForAndClickAddToQueue(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 1500
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 200L
+
+        while (System.currentTimeMillis() - startTime < maxWaitMs) {
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode != null) {
+                val result = clickAddToQueue(rootNode, accessibilityService)
+                rootNode.recycle()
+
+                if (result) {
+                    Log.d(TAG, "Add to queue clicked after ${System.currentTimeMillis() - startTime}ms")
+                    return true
+                }
+            }
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Add to queue not found after waiting ${maxWaitMs}ms")
+        return false
     }
 
     private fun clickFirstYouTubeMusicResult(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
