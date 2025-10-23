@@ -460,9 +460,8 @@ def test_youtube_music_integration(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "YouTube Music app is open and showing a song. "
-        "The screen may show a song playing with album art, song title, and artist information. "
-        "It could be showing 'Golden' by 'Kpop Demon Hunters' or search results for this song. "
+        "YouTube Music app is open and showing the song 'Golden'."
+        "The song should be playing, so you should see the pause button and not the play button. "
         "There may be a yellow notification bubble with a robot head icon visible on the screen."
     )
     if not validation_result:
