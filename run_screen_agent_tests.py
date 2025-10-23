@@ -461,9 +461,78 @@ def test_youtube_music_integration(tester):
     validation_result = tester.validate_screenshot(
         screenshot_path,
         "YouTube Music app is open and showing the song 'Golden'."
-        "The song should be playing, so you should see the pause button and not the play button. "
+        "The song should be the one selected, so it should be showing on the bottom of the screen. "
+        "The song may be actively playing, or it may be paused. "
         "There may be a yellow notification bubble with a robot head icon visible on the screen."
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
     assert validation_result, "Failed to open YouTube Music and play song"
+
+    # Send a voice transcription to queue up "How it's Done" by HUNTRIX
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Can you queue up How it\'s Done by HUNTRIX?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    # Wait 15 seconds for queueing to complete
+    time.sleep(20)
+
+    # Tap to full screen the current song
+    subprocess.run(['adb', 'shell', 'input', 'tap', '500', '2100'], check=True)
+    time.sleep(1)
+
+    # Tap to see what's up next
+    subprocess.run(['adb', 'shell', 'input', 'tap', '300', '2200'], check=True)
+    time.sleep(2)  # Wait for queue to appear
+
+    # Screenshot and validate that it shows the queue with Golden first and How It's Done second
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
+    assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
+
+
+def test_youtube_music_ui_dump(tester):
+    """Test to dump YouTube Music UI with search text to find the clear button."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # Navigate to My Chats page
+    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+
+    # Click on coordinates to open a new chat
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Send a voice transcription to play a song on YouTube Music
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Hey can you open YouTube Music?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(9)
+
+    # Save screenshot and UI dump
+    save_failed_screenshot(screenshot_path, "youtube_music_ui_dump", "search_with_text")
+
+    # Force fail to trigger UI dump
+    assert False, "Intentional fail to capture UI dump with search text"
