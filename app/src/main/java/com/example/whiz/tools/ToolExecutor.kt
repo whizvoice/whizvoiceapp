@@ -84,6 +84,18 @@ class ToolExecutor @Inject constructor(
                     "queue_youtube_music" -> {
                         executeQueueYouTubeMusic(requestId, params)
                     }
+                    "search_google_maps_location" -> {
+                        executeSearchGoogleMapsLocation(requestId, params)
+                    }
+                    "get_google_maps_directions" -> {
+                        executeGetGoogleMapsDirections(requestId, params)
+                    }
+                    "recenter_google_maps" -> {
+                        executeRecenterGoogleMaps(requestId, params)
+                    }
+                    "select_location_from_list" -> {
+                        executeSelectLocationFromList(requestId, params)
+                    }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
                         _toolResults.emit(
@@ -485,9 +497,159 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    private suspend fun executeSearchGoogleMapsLocation(requestId: String, params: JSONObject) {
+        try {
+            val address = params.getString("address")
+            Log.i(TAG, "Searching Google Maps for location: $address")
+
+            val result = screenAgentTools.searchGoogleMapsLocation(address)
+
+            Log.i(TAG, "Google Maps search result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.location?.let { put("location", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps search result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "search_google_maps_location",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps search", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "search_google_maps_location",
+                    requestId = requestId,
+                    error = "Failed to search location: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
+        try {
+            val mode = if (params.has("mode")) params.getString("mode") else "drive"
+            Log.i(TAG, "Getting Google Maps directions with mode: $mode")
+
+            val result = screenAgentTools.getGoogleMapsDirections(mode)
+
+            Log.i(TAG, "Google Maps directions result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.mode?.let { put("mode", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps directions result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "get_google_maps_directions",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps directions", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "get_google_maps_directions",
+                    requestId = requestId,
+                    error = "Failed to get directions: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeRecenterGoogleMaps(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Re-centering Google Maps")
+
+            val result = screenAgentTools.recenterGoogleMaps()
+
+            Log.i(TAG, "Google Maps recenter result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps recenter result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "recenter_google_maps",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps recenter", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "recenter_google_maps",
+                    requestId = requestId,
+                    error = "Failed to recenter map: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSelectLocationFromList(requestId: String, params: JSONObject) {
+        try {
+            val selection = params.optString("selection", "first")
+            Log.i(TAG, "Selecting location from list: $selection")
+
+            val result = screenAgentTools.selectLocationFromList(selection)
+
+            Log.i(TAG, "Select location result: success=${result.success}, location=${result.location}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.location?.let { put("location", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Select location result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "select_location_from_list",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing select location from list", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "select_location_from_list",
+                    requestId = requestId,
+                    error = "Failed to select location: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

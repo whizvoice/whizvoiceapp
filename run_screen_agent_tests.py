@@ -502,8 +502,28 @@ def test_youtube_music_integration(tester):
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
 
-def test_youtube_music_ui_dump(tester):
-    """Test to dump YouTube Music UI with search text to find the clear button."""
+def test_google_maps_ui_dump(tester):
+    """Test to dump Google Maps UI to understand the interface."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open Google Maps directly using tester
+    tester.open_app("com.google.android.apps.maps")
+    time.sleep(5)
+
+    # Take screenshot
+    tester.screenshot(screenshot_path)
+
+    # Save screenshot and UI dump
+    save_failed_screenshot(screenshot_path, "google_maps_ui_dump", "main_screen")
+
+    # Force fail to trigger UI dump
+    assert False, "Intentional fail to capture Google Maps UI dump"
+
+
+def test_google_maps_directions(tester):
+    """Test that we can get directions to multiple locations using Google Maps."""
     import time
 
     screenshot_path = "/tmp/whiz_screen.png"
@@ -519,20 +539,143 @@ def test_youtube_music_ui_dump(tester):
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice transcription to play a song on YouTube Music
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "new_chat_screen")
+    assert validation_result, "Failed to reach New Chat screen"
+
+    # Send a voice transcription to ask for directions to Trader Joe's
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hey can you open YouTube Music?"',
+        '--es', 'text', '"Can you get me directions to Trader Joes?"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    time.sleep(9)
+    time.sleep(3)  # Give time for message to be processed
 
-    # Save screenshot and UI dump
-    save_failed_screenshot(screenshot_path, "youtube_music_ui_dump", "search_with_text")
+    # Wait 15 seconds for the search to complete and "See locations" to appear
+    time.sleep(15)
 
-    # Force fail to trigger UI dump
-    assert False, "Intentional fail to capture UI dump with search text"
+    # Validate that Google Maps is showing the "See locations" list for Trader Joe's
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing a list of Trader Joe's locations. "
+        "The screen should show multiple Trader Joe's results with addresses visible."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
+    assert validation_result, "Failed to show Trader Joe's location list"
+
+    # Send a voice transcription to select the one on Fulton Street
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"The one on Fulton Street"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait 15 seconds for the location to be selected and directions to appear
+    time.sleep(15)
+
+    # Validate that Google Maps is showing directions or navigation screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing the directions or navigation screen to Trader Joe's on Fulton Street. "
+        "The screen may show the directions screen with transport mode options, or the navigation screen with the route."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
+    assert validation_result, "Failed to show Trader Joe's directions"
+
+    # Send a voice transcription to change destination to office at 1885 Mission Street
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Actually, I need to go to my office first at 1885 Mission Street. Can you get directions to there instead?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait 15 seconds for the new location to be searched
+    time.sleep(15)
+
+    # Validate that Google Maps is showing the search result for 1885 Mission Street
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing search results for 1885 Mission Street or the location card. "
+        "The screen should show the address or nearby location information."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
+    assert validation_result, "Failed to show 1885 Mission Street search results"
+
+    # Send a voice transcription to confirm this is the correct location
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Yes, that\'s the correct location"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait 15 seconds for directions to be displayed
+    time.sleep(15)
+
+    # Validate that Google Maps is showing directions to 1885 Mission Street
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing directions to 1885 Mission Street. "
+        "The screen should show the directions screen with transport mode options."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_directions")
+    assert validation_result, "Failed to show directions to 1885 Mission Street"
+
+    # Send a voice transcription to request driving directions specifically
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Actually, just this time can you get driving directions for me?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait 15 seconds for driving directions to be displayed
+    time.sleep(15)
+
+    # Validate that Google Maps is showing driving directions to 1885 Mission Street
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing driving directions to 1885 Mission Street. "
+        "The screen should show the navigation screen with the driving route active, "
+        "or the directions screen with the car/drive mode selected."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
+    assert validation_result, "Failed to show driving directions to 1885 Mission Street"
