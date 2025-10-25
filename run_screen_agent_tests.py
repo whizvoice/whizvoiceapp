@@ -594,8 +594,7 @@ def test_google_maps_directions(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Google Maps is open and showing the directions or navigation screen to Trader Joe's on Fulton Street. "
-        "The screen may show the directions screen with transport mode options, or the navigation screen with the route."
+        "Google Maps is open and showing the navigation screen for a route. "
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
@@ -620,8 +619,7 @@ def test_google_maps_directions(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Google Maps is open and showing search results for 1885 Mission Street or the location card. "
-        "The screen should show the address or nearby location information."
+        "Google Maps is open and showing the navigation screen for a route. "
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")

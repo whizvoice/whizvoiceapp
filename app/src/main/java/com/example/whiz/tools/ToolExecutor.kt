@@ -138,27 +138,86 @@ class ToolExecutor @Inject constructor(
         }
     }
     
+    private fun getToolsForPackage(packageName: String): List<JSONObject> {
+        return when (packageName) {
+            "com.google.android.apps.maps" -> listOf(
+                JSONObject().apply {
+                    put("name", "search_google_maps_location")
+                    put("description", "Search for a specific address or place name in Google Maps and show results")
+                },
+                JSONObject().apply {
+                    put("name", "search_google_maps_phrase")
+                    put("description", "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps")
+                },
+                JSONObject().apply {
+                    put("name", "get_google_maps_directions")
+                    put("description", "Get directions to the currently selected location. Must call search first.")
+                },
+                JSONObject().apply {
+                    put("name", "select_location_from_list")
+                    put("description", "Select a specific location from search results by position or name fragment")
+                },
+                JSONObject().apply {
+                    put("name", "recenter_google_maps")
+                    put("description", "Re-center the map to your current location")
+                }
+            )
+            "com.google.android.apps.youtube.music" -> listOf(
+                JSONObject().apply {
+                    put("name", "play_youtube_music")
+                    put("description", "Play a song or artist in YouTube Music")
+                },
+                JSONObject().apply {
+                    put("name", "queue_youtube_music")
+                    put("description", "Add a song or artist to the YouTube Music queue")
+                }
+            )
+            "com.whatsapp" -> listOf(
+                JSONObject().apply {
+                    put("name", "whatsapp_select_chat")
+                    put("description", "Select a specific chat in WhatsApp by contact/group name")
+                },
+                JSONObject().apply {
+                    put("name", "whatsapp_draft_message")
+                    put("description", "Draft a message for user review before sending")
+                },
+                JSONObject().apply {
+                    put("name", "whatsapp_send_message")
+                    put("description", "Send the drafted message (must draft first)")
+                }
+            )
+            else -> emptyList()
+        }
+    }
+
     private suspend fun executeAppLauncher(requestId: String, params: JSONObject) {
         try {
             Log.i(TAG, "🚀 EXECUTE APP LAUNCHER STARTED")
             val appName = params.getString("app_name")
             Log.i(TAG, "🚀 Launching app: $appName")
-            
+
             val result = screenAgentTools.launchApp(appName)
             Log.i(TAG, "🚀 Launch result: success=${result.success}, error=${result.error}")
-            
+
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 put("app_name", result.appName)
-                result.packageName?.let { put("package_name", it) }
+                result.packageName?.let {
+                    put("package_name", it)
+                    // Add available tools for this app
+                    val availableTools = getToolsForPackage(it)
+                    if (availableTools.isNotEmpty()) {
+                        put("available_tools", org.json.JSONArray(availableTools))
+                    }
+                }
                 result.error?.let { put("error", it) }
                 put("overlay_started", result.overlayStarted)
                 put("overlayPermissionRequired", result.overlayPermissionRequired)
             }
-            
+
             Log.i(TAG, "📤 [TOOL_RESULT] About to emit tool result for requestId=$requestId")
             Log.i(TAG, "📤 [TOOL_RESULT] Result JSON: ${resultJson.toString(2)}")
-            
+
             _toolResults.emit(
                 ToolExecutionResult.Success(
                     toolName = "launch_app",
@@ -166,9 +225,9 @@ class ToolExecutor @Inject constructor(
                     result = resultJson
                 )
             )
-            
+
             Log.i(TAG, "📤 [TOOL_RESULT] Successfully emitted tool result for requestId=$requestId")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error executing app launcher", e)
             _toolResults.emit(
@@ -578,8 +637,8 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
-            val mode = if (params.has("mode")) params.getString("mode") else "drive"
-            Log.i(TAG, "Getting Google Maps directions with mode: $mode")
+            val mode = if (params.has("mode")) params.getString("mode") else null
+            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}")
 
             val result = screenAgentTools.getGoogleMapsDirections(mode)
 
@@ -652,10 +711,17 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeSelectLocationFromList(requestId: String, params: JSONObject) {
         try {
-            val selection = params.optString("selection", "first")
-            Log.i(TAG, "Selecting location from list: $selection")
+            val position = if (params.has("position")) params.getInt("position") else null
+            val fragment = if (params.has("fragment")) params.getString("fragment") else null
 
-            val result = screenAgentTools.selectLocationFromList(selection)
+            // Default to position 1 if neither provided
+            val finalPosition = position ?: if (fragment == null) 1 else null
+            val finalFragment = if (finalPosition == null) fragment else null
+
+            val selectionDesc = if (finalPosition != null) "position $finalPosition" else "fragment '$finalFragment'"
+            Log.i(TAG, "Selecting location from list: $selectionDesc")
+
+            val result = screenAgentTools.selectLocationFromList(finalPosition, finalFragment)
 
             Log.i(TAG, "Select location result: success=${result.success}, location=${result.location}, error=${result.error}")
 
@@ -699,7 +765,7 @@ class ToolExecutor @Inject constructor(
             "launch_app" -> {
                 JSONObject().apply {
                     put("name", "launch_app")
-                    put("description", "Launch an application by its name")
+                    put("description", "Launch an application by its name. The return value includes an 'available_tools' array listing specialized tools that can control the launched app (e.g., for Maps, YouTube Music, WhatsApp). Check the return value and use those tools to complete the user's request.")
                     put("parameters", JSONObject().apply {
                         put("app_name", JSONObject().apply {
                             put("type", "string")

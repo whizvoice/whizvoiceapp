@@ -1277,6 +1277,48 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Navigate to main screen with search box (similar to YouTube Music/WhatsApp)
+            var searchBoxFound = false
+            var attempts = 0
+            val maxAttempts = 5
+
+            while (!searchBoxFound && attempts < maxAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode == null) {
+                    return MapsActionResult(
+                        success = false,
+                        action = "search_location",
+                        location = address,
+                        error = "Could not get root node"
+                    )
+                }
+
+                // Check if search box is visible
+                val searchBoxNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+                if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
+                    searchBoxNodes.forEach { it.recycle() }
+                    searchBoxFound = true
+                    Log.d(TAG, "Found search box on attempt ${attempts + 1}")
+                } else {
+                    // Search box not found, press back and try again
+                    Log.d(TAG, "Search box not found, pressing back (attempt ${attempts + 1}/$maxAttempts)")
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    attempts++
+                    delay(500) // Wait for UI to update
+                }
+                rootNode.recycle()
+            }
+
+            if (!searchBoxFound) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_location",
+                    location = address,
+                    error = "Could not find search box in Google Maps after $maxAttempts back presses"
+                )
+            }
+
+            // Now find and click the search box
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return MapsActionResult(
@@ -1287,7 +1329,6 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Find and click the search box
             val searchBoxClicked = clickGoogleMapsSearch(rootNode, accessibilityService)
             rootNode.recycle()
 
@@ -1340,7 +1381,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            val suggestionClicked = clickFirstGoogleMapsSuggestion(suggestionRootNode, accessibilityService)
+            val (suggestionClicked, isSeeLocations) = clickFirstGoogleMapsSuggestionAndCheck(suggestionRootNode, accessibilityService)
             suggestionRootNode.recycle()
 
             if (!suggestionClicked) {
@@ -1352,8 +1393,31 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for location to load
+            // Wait for results to load
             delay(1000)
+
+            // If it was a "See locations" result, automatically select the first location
+            if (isSeeLocations) {
+                Log.d(TAG, "Clicked 'See locations', now selecting first location from list")
+
+                val listRootNode = accessibilityService.getCurrentRootNode()
+                if (listRootNode != null) {
+                    val locationClicked = clickLocationFromList(listRootNode, 1, null, accessibilityService)
+                    listRootNode.recycle()
+
+                    if (!locationClicked) {
+                        return MapsActionResult(
+                            success = false,
+                            action = "search_location",
+                            location = address,
+                            error = "Found 'See locations' but could not select first location from list"
+                        )
+                    }
+
+                    // Wait for location to load
+                    delay(1000)
+                }
+            }
 
             return MapsActionResult(
                 success = true,
@@ -1372,8 +1436,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun getGoogleMapsDirections(mode: String = "drive"): MapsActionResult {
-        Log.d(TAG, "Attempting to get directions in Google Maps with mode: $mode")
+    suspend fun getGoogleMapsDirections(mode: String? = null): MapsActionResult {
+        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1535,8 +1599,9 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun selectLocationFromList(selection: String = "first"): MapsActionResult {
-        Log.d(TAG, "Attempting to select location from list: $selection")
+    suspend fun selectLocationFromList(position: Int? = null, fragment: String? = null): MapsActionResult {
+        val selectionDesc = if (position != null) "position $position" else "fragment '$fragment'"
+        Log.d(TAG, "Attempting to select location from list: $selectionDesc")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1573,14 +1638,14 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Find and click the location from the list
-            val locationClicked = clickLocationFromList(rootNode, selection, accessibilityService)
+            val locationClicked = clickLocationFromList(rootNode, position, fragment, accessibilityService)
             rootNode.recycle()
 
             if (!locationClicked) {
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
-                    error = "Could not find or click location '$selection' in list"
+                    error = "Could not find or click location: $selectionDesc"
                 )
             }
 
@@ -1590,7 +1655,7 @@ class ScreenAgentTools @Inject constructor(
             return MapsActionResult(
                 success = true,
                 action = "select_location",
-                location = selection
+                location = selectionDesc
             )
 
         } catch (e: Exception) {
@@ -1633,6 +1698,48 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Navigate to main screen with search box (similar to YouTube Music/WhatsApp)
+            var searchBoxFound = false
+            var attempts = 0
+            val maxAttempts = 5
+
+            while (!searchBoxFound && attempts < maxAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode == null) {
+                    return MapsActionResult(
+                        success = false,
+                        action = "search_phrase",
+                        location = searchPhrase,
+                        error = "Could not get root node"
+                    )
+                }
+
+                // Check if search box is visible
+                val searchBoxNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+                if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
+                    searchBoxNodes.forEach { it.recycle() }
+                    searchBoxFound = true
+                    Log.d(TAG, "Found search box on attempt ${attempts + 1}")
+                } else {
+                    // Search box not found, press back and try again
+                    Log.d(TAG, "Search box not found, pressing back (attempt ${attempts + 1}/$maxAttempts)")
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    attempts++
+                    delay(500) // Wait for UI to update
+                }
+                rootNode.recycle()
+            }
+
+            if (!searchBoxFound) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Could not find search box in Google Maps after $maxAttempts back presses"
+                )
+            }
+
+            // Now find and click the search box
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return MapsActionResult(
@@ -1643,7 +1750,6 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Find and click the search box
             val searchBoxClicked = clickGoogleMapsSearch(rootNode, accessibilityService)
             rootNode.recycle()
 
@@ -1743,21 +1849,27 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun enterGoogleMapsSearchQuery(rootNode: AccessibilityNodeInfo, query: String): Boolean {
-        // The search_omnibox_text_box itself is the editable field - we already clicked it
-        // So we can just use ACTION_SET_TEXT or paste directly
-        val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
-        if (searchFieldNodes != null && searchFieldNodes.isNotEmpty()) {
-            for (node in searchFieldNodes) {
-                val arguments = Bundle()
-                arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, query)
-                val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-                node.recycle()
-                if (success) {
-                    Log.d(TAG, "Entered search query in Google Maps")
-                    searchFieldNodes.forEach { it.recycle() }
-                    return true
+        // Try both resource IDs - the search box changes ID when focused/keyboard is open
+        val resourceIds = listOf(
+            "com.google.android.apps.maps:id/search_omnibox_edit_text",  // When keyboard is open
+            "com.google.android.apps.maps:id/search_omnibox_text_box"   // When not focused
+        )
+
+        for (resourceId in resourceIds) {
+            val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+            if (searchFieldNodes != null && searchFieldNodes.isNotEmpty()) {
+                for (node in searchFieldNodes) {
+                    val arguments = Bundle()
+                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, query)
+                    val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                    if (success) {
+                        Log.d(TAG, "Entered search query in Google Maps via resource ID: $resourceId")
+                        searchFieldNodes.forEach { it.recycle() }
+                        return true
+                    }
+                    node.recycle()
                 }
-                node.recycle()
+                searchFieldNodes.forEach { it.recycle() }
             }
         }
 
@@ -1765,7 +1877,7 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickFirstGoogleMapsSuggestion(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+    private fun clickFirstGoogleMapsSuggestionAndCheck(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Pair<Boolean, Boolean> {
         // Look for the typed_suggest_container RecyclerView
         val suggestContainerNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/typed_suggest_container")
 
@@ -1788,7 +1900,7 @@ class ScreenAgentTools @Inject constructor(
                         suggestContainerNodes.forEach { it.recycle() }
                         if (clicked) {
                             Log.d(TAG, "Clicked first Google Maps suggestion${if (hasSeeLocations) " (See locations)" else ""}")
-                            return true
+                            return Pair(true, hasSeeLocations)
                         }
                     }
                     firstChild?.recycle()
@@ -1800,7 +1912,7 @@ class ScreenAgentTools @Inject constructor(
         // If no suggestions found, the search will auto-submit or we can look for a search button
         // For now, just return true as the search query is already entered
         Log.i(TAG, "No suggestions container found, search query should auto-submit or be ready")
-        return true
+        return Pair(true, false)
     }
 
     private fun checkForSeeLocations(node: AccessibilityNodeInfo): Boolean {
@@ -1845,52 +1957,64 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String, accessibilityService: WhizAccessibilityService): Boolean {
-        // Map mode to content description pattern
-        val modeText = when (mode.lowercase()) {
-            "drive" -> "Driving mode"
-            "walk" -> "Walking mode"
-            "bike" -> "Bicycling mode"
-            "transit" -> "Transit mode"
-            else -> "Driving mode"
-        }
-
-        // First, check if the desired mode is already selected
-        val currentlySelected = findSelectedTransportMode(rootNode)
-        Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
-
-        // If the mode is not already selected, click it
-        if (currentlySelected != modeText) {
-            val modeNodes = mutableListOf<AccessibilityNodeInfo>()
-            findNodesByContentDesc(rootNode, modeText, modeNodes)
-
-            var modeChanged = false
-            for (node in modeNodes) {
-                // The parent LinearLayout is clickable
-                var clickableNode = node
-                if (!node.isClickable && node.parent != null) {
-                    clickableNode = node.parent
+    private fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String?, accessibilityService: WhizAccessibilityService): Boolean {
+        // If no mode specified, just click Start without changing the mode
+        if (mode == null) {
+            Log.d(TAG, "No mode specified, using currently selected mode")
+            // Skip to clicking Start button at the end
+        } else {
+            // Map mode to content description pattern
+            val modeText = when (mode.lowercase()) {
+                "drive" -> "Driving mode"
+                "walk" -> "Walking mode"
+                "bike" -> "Bicycling mode"
+                "transit" -> "Transit mode"
+                else -> {
+                    Log.w(TAG, "Unknown mode: $mode, using currently selected mode")
+                    null
                 }
+            }
 
-                if (clickableNode.isClickable) {
-                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (clicked) {
-                        Log.d(TAG, "Selected transport mode: $modeText")
-                        modeChanged = true
-                        break
+            // Only change mode if we have a valid modeText
+            if (modeText != null) {
+                // First, check if the desired mode is already selected
+                val currentlySelected = findSelectedTransportMode(rootNode)
+                Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
+
+                // If the mode is not already selected, click it
+                if (currentlySelected != modeText) {
+                    val modeNodes = mutableListOf<AccessibilityNodeInfo>()
+                    findNodesByContentDesc(rootNode, modeText, modeNodes)
+
+                    var modeChanged = false
+                    for (node in modeNodes) {
+                        // The parent LinearLayout is clickable
+                        var clickableNode = node
+                        if (!node.isClickable && node.parent != null) {
+                            clickableNode = node.parent
+                        }
+
+                        if (clickableNode.isClickable) {
+                            val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            if (clicked) {
+                                Log.d(TAG, "Selected transport mode: $modeText")
+                                modeChanged = true
+                                break
+                            }
+                        }
+                    }
+                    modeNodes.forEach { it.recycle() }
+
+                    if (!modeChanged && currentlySelected != modeText) {
+                        Log.w(TAG, "Could not change transport mode to: $modeText")
+                        // Continue anyway - might already be on correct mode
+                    }
+
+                    // Wait for mode change to complete
+                    if (modeChanged) {
+                        Thread.sleep(500)
                     }
                 }
-            }
-            modeNodes.forEach { it.recycle() }
-
-            if (!modeChanged && currentlySelected != modeText) {
-                Log.w(TAG, "Could not change transport mode to: $modeText")
-                // Continue anyway - might already be on correct mode
-            }
-
-            // Wait for mode change to complete
-            if (modeChanged) {
-                Thread.sleep(500)
             }
         }
 
@@ -1985,7 +2109,7 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickLocationFromList(rootNode: AccessibilityNodeInfo, selection: String, accessibilityService: WhizAccessibilityService): Boolean {
+    private fun clickLocationFromList(rootNode: AccessibilityNodeInfo, position: Int?, fragment: String?, accessibilityService: WhizAccessibilityService): Boolean {
         // Find the RecyclerView containing the location list
         val listNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_list_layout")
 
@@ -1996,20 +2120,12 @@ class ScreenAgentTools @Inject constructor(
 
         val listNode = listNodes[0]
 
-        // Determine if selection is an ordinal (first, second, third) or an address fragment
-        val ordinalMap = mapOf(
-            "first" to 0,
-            "second" to 1,
-            "third" to 2,
-            "fourth" to 3,
-            "fifth" to 4
-        )
+        // Position takes precedence over fragment
+        if (position != null) {
+            // Select by position (1-indexed, convert to 0-indexed)
+            val targetIndex = position - 1
 
-        val targetIndex = ordinalMap[selection.lowercase()]
-
-        if (targetIndex != null) {
-            // Select by ordinal position
-            if (targetIndex < listNode.childCount) {
+            if (targetIndex >= 0 && targetIndex < listNode.childCount) {
                 val child = listNode.getChild(targetIndex)
                 if (child != null) {
                     // Find the clickable parent (RelativeLayout)
@@ -2023,22 +2139,22 @@ class ScreenAgentTools @Inject constructor(
                     listNodes.forEach { it.recycle() }
 
                     if (clicked) {
-                        Log.d(TAG, "Clicked location at position $targetIndex")
+                        Log.d(TAG, "Clicked location at position $position (index $targetIndex)")
                         return true
                     }
                 }
             } else {
-                Log.w(TAG, "List has only ${listNode.childCount} items, cannot select position $targetIndex")
+                Log.w(TAG, "Invalid position $position (list has ${listNode.childCount} items)")
                 listNodes.forEach { it.recycle() }
                 return false
             }
-        } else {
-            // Select by address fragment match
+        } else if (fragment != null) {
+            // Select by fragment match
             for (i in 0 until listNode.childCount) {
                 val child = listNode.getChild(i)
                 if (child != null) {
-                    // Check if this item contains the selection text
-                    if (containsText(child, selection)) {
+                    // Check if this item contains the fragment text
+                    if (containsText(child, fragment)) {
                         // Find the clickable parent (RelativeLayout)
                         var clickableNode = child
                         if (!child.isClickable && child.parent != null) {
@@ -2050,7 +2166,7 @@ class ScreenAgentTools @Inject constructor(
                         listNodes.forEach { it.recycle() }
 
                         if (clicked) {
-                            Log.d(TAG, "Clicked location matching '$selection'")
+                            Log.d(TAG, "Clicked location matching fragment '$fragment'")
                             return true
                         }
                     }
@@ -2058,7 +2174,7 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            Log.w(TAG, "Could not find location matching '$selection'")
+            Log.w(TAG, "Could not find location matching fragment '$fragment'")
             listNodes.forEach { it.recycle() }
             return false
         }
