@@ -1603,6 +1603,106 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    suspend fun searchGoogleMapsPhrase(searchPhrase: String): MapsActionResult {
+        Log.d(TAG, "Attempting to search Google Maps with phrase: $searchPhrase")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            // Wait for Google Maps to be ready (max 3 seconds)
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.google.android.apps.maps",
+                maxWaitMs = 3000
+            )
+
+            if (!appReady) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Google Maps did not become ready in time"
+                )
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Could not get root node"
+                )
+            }
+
+            // Find and click the search box
+            val searchBoxClicked = clickGoogleMapsSearch(rootNode, accessibilityService)
+            rootNode.recycle()
+
+            if (!searchBoxClicked) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Could not find search box in Google Maps"
+                )
+            }
+
+            // Wait for search field to appear
+            delay(500)
+
+            // Enter search query
+            val searchRootNode = accessibilityService.getCurrentRootNode()
+            if (searchRootNode == null) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Could not get root node after opening search"
+                )
+            }
+
+            val queryEntered = enterGoogleMapsSearchQuery(searchRootNode, searchPhrase)
+            searchRootNode.recycle()
+
+            if (!queryEntered) {
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Could not enter search query"
+                )
+            }
+
+            // Wait for search results to appear
+            // Google Maps auto-searches as you type, so we just need to wait
+            delay(2000)
+
+            return MapsActionResult(
+                success = true,
+                action = "search_phrase",
+                location = searchPhrase
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching Google Maps with phrase", e)
+            return MapsActionResult(
+                success = false,
+                action = "search_phrase",
+                location = searchPhrase,
+                error = "Error searching with phrase: ${e.message}"
+            )
+        }
+    }
+
     // ========== Google Maps Helper Functions ==========
 
     private fun clickGoogleMapsSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {

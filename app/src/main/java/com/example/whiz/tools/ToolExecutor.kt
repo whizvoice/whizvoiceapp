@@ -87,6 +87,9 @@ class ToolExecutor @Inject constructor(
                     "search_google_maps_location" -> {
                         executeSearchGoogleMapsLocation(requestId, params)
                     }
+                    "search_google_maps_phrase" -> {
+                        executeSearchGoogleMapsPhrase(requestId, params)
+                    }
                     "get_google_maps_directions" -> {
                         executeGetGoogleMapsDirections(requestId, params)
                     }
@@ -535,6 +538,44 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    private suspend fun executeSearchGoogleMapsPhrase(requestId: String, params: JSONObject) {
+        try {
+            val searchPhrase = params.getString("search_phrase")
+            Log.i(TAG, "Searching Google Maps with phrase: $searchPhrase")
+
+            val result = screenAgentTools.searchGoogleMapsPhrase(searchPhrase)
+
+            Log.i(TAG, "Google Maps phrase search result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.location?.let { put("search_phrase", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps phrase search result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "search_google_maps_phrase",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps phrase search", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "search_google_maps_phrase",
+                    requestId = requestId,
+                    error = "Failed to search phrase: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
             val mode = if (params.has("mode")) params.getString("mode") else "drive"
@@ -649,7 +690,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
