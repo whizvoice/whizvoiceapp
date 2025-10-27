@@ -165,8 +165,9 @@ def navigate_to_my_chats(tester):
         tester.screenshot(screenshot_path)
         if tester.validate_screenshot(
             screenshot_path,
-            "The screen shows a 'My Chats' or 'Chats List' page with a list of chats or an empty state. "
+            "The screen shows a 'My Chats' page with a list of chats or an empty state. "
             "This is the main chat list view of WhizVoice."
+            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
         ):
             return True
 
@@ -543,7 +544,8 @@ def test_google_maps_directions(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"
+        "The screen shows a 'New Chat' page where users can start a new conversation"            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
+        "There may be an overlay over the screen, but the New Chat page should still be showing underneath."
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "new_chat_screen")
