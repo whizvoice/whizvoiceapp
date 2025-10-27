@@ -1368,9 +1368,9 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Wait for suggestions to appear
-            delay(500)
+            delay(800)
 
-            // Click first suggestion
+            // Click matching suggestion (or first suggestion if no match)
             val suggestionRootNode = accessibilityService.getCurrentRootNode()
             if (suggestionRootNode == null) {
                 return MapsActionResult(
@@ -1381,7 +1381,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            val (suggestionClicked, isSeeLocations) = clickFirstGoogleMapsSuggestionAndCheck(suggestionRootNode, accessibilityService)
+            val (suggestionClicked, isSeeLocations) = clickMatchingSuggestion(suggestionRootNode, address, accessibilityService)
             suggestionRootNode.recycle()
 
             if (!suggestionClicked) {
@@ -1808,20 +1808,20 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for autocomplete suggestions to appear
-            delay(1000)
+            // Wait for suggestions to appear
+            delay(800)
 
-            // Submit the search by clicking the first suggestion
-            Log.d(TAG, "Attempting to click first suggestion to submit search")
+            // Click matching suggestion (or first suggestion if no match)
+            Log.d(TAG, "Attempting to click matching suggestion for phrase: $searchPhrase")
             val rootNodeAfterType = accessibilityService.getCurrentRootNode()
             if (rootNodeAfterType != null) {
-                val (suggestionClicked, wasSeeLocations) = clickFirstGoogleMapsSuggestionAndCheck(rootNodeAfterType, accessibilityService)
+                val (suggestionClicked, wasSeeLocations) = clickMatchingSuggestion(rootNodeAfterType, searchPhrase, accessibilityService)
                 rootNodeAfterType.recycle()
 
                 if (suggestionClicked) {
-                    Log.d(TAG, "Successfully clicked first suggestion${if (wasSeeLocations) " (See locations)" else ""}")
+                    Log.d(TAG, "Successfully clicked suggestion${if (wasSeeLocations) " (See locations)" else ""}")
                 } else {
-                    Log.w(TAG, "Could not click first suggestion, search may not have submitted")
+                    Log.w(TAG, "Could not click suggestion, search may not have submitted")
                 }
             }
 
@@ -1949,23 +1949,39 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickFirstGoogleMapsSuggestionAndCheck(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Pair<Boolean, Boolean> {
+    private fun clickMatchingSuggestion(rootNode: AccessibilityNodeInfo, query: String, accessibilityService: WhizAccessibilityService): Pair<Boolean, Boolean> {
         // Look for the typed_suggest_container RecyclerView
         val suggestContainerNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/typed_suggest_container")
 
         if (suggestContainerNodes != null && suggestContainerNodes.isNotEmpty()) {
             for (containerNode in suggestContainerNodes) {
-                // Get the first clickable child (first suggestion)
                 if (containerNode.childCount > 0) {
+                    // First pass: try to find exact match (case-insensitive)
+                    for (i in 0 until containerNode.childCount) {
+                        val child = containerNode.getChild(i)
+                        if (child != null && child.isClickable) {
+                            val suggestionText = getSuggestionText(child)
+                            if (suggestionText != null && suggestionText.equals(query, ignoreCase = true)) {
+                                Log.d(TAG, "Found exact matching suggestion: '$suggestionText'")
+                                val hasSeeLocations = checkForSeeLocations(child)
+                                val clicked = child.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                child.recycle()
+                                containerNode.recycle()
+                                suggestContainerNodes.forEach { it.recycle() }
+                                if (clicked) {
+                                    Log.d(TAG, "Clicked matching suggestion${if (hasSeeLocations) " (See locations)" else ""}")
+                                    return Pair(true, hasSeeLocations)
+                                }
+                            }
+                            child.recycle()
+                        }
+                    }
+
+                    // Second pass: no exact match, click first suggestion
+                    Log.d(TAG, "No exact match found, clicking first suggestion")
                     val firstChild = containerNode.getChild(0)
                     if (firstChild != null && firstChild.isClickable) {
-                        // Check if this is a "See locations" suggestion
                         val hasSeeLocations = checkForSeeLocations(firstChild)
-
-                        if (hasSeeLocations) {
-                            Log.d(TAG, "Found 'See locations' suggestion, clicking it")
-                        }
-
                         val clicked = firstChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         firstChild.recycle()
                         containerNode.recycle()
@@ -1982,9 +1998,29 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // If no suggestions found, the search will auto-submit or we can look for a search button
-        // For now, just return true as the search query is already entered
         Log.i(TAG, "No suggestions container found, search query should auto-submit or be ready")
         return Pair(true, false)
+    }
+
+    private fun getSuggestionText(node: AccessibilityNodeInfo): String? {
+        // Try to get text from TextViews in the suggestion node
+        if (node.className == "android.widget.TextView" && node.text != null) {
+            return node.text.toString()
+        }
+
+        // Search children for TextView
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                val text = getSuggestionText(child)
+                child.recycle()
+                if (text != null) {
+                    return text
+                }
+            }
+        }
+
+        return null
     }
 
     private fun checkForSeeLocations(node: AccessibilityNodeInfo): Boolean {
