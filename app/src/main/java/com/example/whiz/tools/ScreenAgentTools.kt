@@ -1446,8 +1446,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun getGoogleMapsDirections(mode: String? = null): MapsActionResult {
-        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}")
+    suspend fun getGoogleMapsDirections(mode: String? = null, alreadyInDirections: Boolean = false): MapsActionResult {
+        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1474,6 +1474,18 @@ class ScreenAgentTools @Inject constructor(
                     mode = mode,
                     error = "Google Maps did not become ready in time"
                 )
+            }
+
+            // If already in directions screen, press back button to go back to location details
+            if (alreadyInDirections) {
+                Log.d(TAG, "Already in directions screen, pressing back to return to location details")
+                val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                if (backPressed) {
+                    Log.d(TAG, "Successfully pressed back button")
+                    delay(1000) // Wait for UI to update
+                } else {
+                    Log.w(TAG, "Failed to press back button, continuing anyway")
+                }
             }
 
             val rootNode = accessibilityService.getCurrentRootNode()
