@@ -585,10 +585,9 @@ def test_google_maps_directions(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    time.sleep(3)  # Give time for message to be processed
 
     # Wait 15 seconds for the location to be selected and directions to appear
-    time.sleep(15)
+    time.sleep(20)
 
     # Validate that Google Maps is showing directions or navigation screen
     tester.screenshot(screenshot_path)
