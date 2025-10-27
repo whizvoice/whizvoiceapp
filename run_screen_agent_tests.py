@@ -568,8 +568,8 @@ def test_google_maps_directions(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Google Maps is open and showing a list of Trader Joe's locations. "
-        "The screen should show multiple Trader Joe's results with addresses visible."
+        "Google Maps is open and showing more than one Trader Joe's locations. "
+        "The screen should show more than one Trader Joe's results with addresses at least partially visible."
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
