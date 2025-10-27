@@ -1419,10 +1419,20 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Extract the actual address from the place details
+            val finalRootNode = accessibilityService.getCurrentRootNode()
+            val actualAddress = if (finalRootNode != null) {
+                val extracted = extractAddressFromMaps(finalRootNode)
+                finalRootNode.recycle()
+                extracted ?: address // Fallback to search query if extraction fails
+            } else {
+                address
+            }
+
             return MapsActionResult(
                 success = true,
                 action = "search_location",
-                location = address
+                location = actualAddress
             )
 
         } catch (e: Exception) {
@@ -1652,10 +1662,20 @@ class ScreenAgentTools @Inject constructor(
             // Wait for location to load
             delay(1000)
 
+            // Extract the actual address from the place details
+            val finalRootNode = accessibilityService.getCurrentRootNode()
+            val actualAddress = if (finalRootNode != null) {
+                val extracted = extractAddressFromMaps(finalRootNode)
+                finalRootNode.recycle()
+                extracted ?: selectionDesc // Fallback to selection description if extraction fails
+            } else {
+                selectionDesc
+            }
+
             return MapsActionResult(
                 success = true,
                 action = "select_location",
-                location = selectionDesc
+                location = actualAddress
             )
 
         } catch (e: Exception) {
@@ -1788,8 +1808,24 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Wait for autocomplete suggestions to appear
+            delay(1000)
+
+            // Submit the search by clicking the first suggestion
+            Log.d(TAG, "Attempting to click first suggestion to submit search")
+            val rootNodeAfterType = accessibilityService.getCurrentRootNode()
+            if (rootNodeAfterType != null) {
+                val (suggestionClicked, wasSeeLocations) = clickFirstGoogleMapsSuggestionAndCheck(rootNodeAfterType, accessibilityService)
+                rootNodeAfterType.recycle()
+
+                if (suggestionClicked) {
+                    Log.d(TAG, "Successfully clicked first suggestion${if (wasSeeLocations) " (See locations)" else ""}")
+                } else {
+                    Log.w(TAG, "Could not click first suggestion, search may not have submitted")
+                }
+            }
+
             // Wait for search results to appear
-            // Google Maps auto-searches as you type, so we just need to wait
             delay(2000)
 
             return MapsActionResult(
@@ -1810,6 +1846,42 @@ class ScreenAgentTools @Inject constructor(
     }
 
     // ========== Google Maps Helper Functions ==========
+
+    private fun extractAddressFromMaps(rootNode: AccessibilityNodeInfo): String? {
+        // Try to extract the place name and address from the place details screen
+        // Look for the title (place name) and subtitle (address)
+
+        // First try to find the title TextView (place name)
+        val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/title")
+        val placeName = if (titleNodes != null && titleNodes.isNotEmpty()) {
+            val name = titleNodes[0].text?.toString()
+            titleNodes.forEach { it.recycle() }
+            name
+        } else {
+            null
+        }
+
+        // Then try to find the subtitle TextView (address)
+        val subtitleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/subtitle")
+        val address = if (subtitleNodes != null && subtitleNodes.isNotEmpty()) {
+            val addr = subtitleNodes[0].text?.toString()
+            subtitleNodes.forEach { it.recycle() }
+            addr
+        } else {
+            null
+        }
+
+        // Combine place name and address
+        return when {
+            placeName != null && address != null -> "$placeName, $address"
+            address != null -> address
+            placeName != null -> placeName
+            else -> {
+                Log.w(TAG, "Could not extract address from Maps place details")
+                null
+            }
+        }
+    }
 
     private fun clickGoogleMapsSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
         // Try to find search box by resource ID
@@ -2111,10 +2183,15 @@ class ScreenAgentTools @Inject constructor(
 
     private fun clickLocationFromList(rootNode: AccessibilityNodeInfo, position: Int?, fragment: String?, accessibilityService: WhizAccessibilityService): Boolean {
         // Find the RecyclerView containing the location list
-        val listNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_list_layout")
+        // Try typed_suggest_container first (search results), then search_list_layout (other views)
+        var listNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/typed_suggest_container")
 
         if (listNodes == null || listNodes.isEmpty()) {
-            Log.w(TAG, "Could not find location list RecyclerView")
+            listNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_list_layout")
+        }
+
+        if (listNodes == null || listNodes.isEmpty()) {
+            Log.w(TAG, "Could not find location list RecyclerView (tried typed_suggest_container and search_list_layout)")
             return false
         }
 

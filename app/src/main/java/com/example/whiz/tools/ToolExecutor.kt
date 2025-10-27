@@ -143,7 +143,7 @@ class ToolExecutor @Inject constructor(
             "com.google.android.apps.maps" -> listOf(
                 JSONObject().apply {
                     put("name", "search_google_maps_location")
-                    put("description", "Search for a specific address or place name in Google Maps and show results")
+                    put("description", "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.")
                 },
                 JSONObject().apply {
                     put("name", "search_google_maps_phrase")
@@ -155,7 +155,7 @@ class ToolExecutor @Inject constructor(
                 },
                 JSONObject().apply {
                     put("name", "select_location_from_list")
-                    put("description", "Select a specific location from search results by position or name fragment")
+                    put("description", "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.")
                 },
                 JSONObject().apply {
                     put("name", "recenter_google_maps")

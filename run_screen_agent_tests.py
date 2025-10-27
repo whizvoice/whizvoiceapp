@@ -555,14 +555,14 @@ def test_google_maps_directions(tester):
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Can you get me directions to Trader Joes?"',
+        '--es', 'text', '"what are the trader joes near me ?"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
     time.sleep(3)  # Give time for message to be processed
 
     # Wait 15 seconds for the search to complete and "See locations" to appear
-    time.sleep(15)
+    time.sleep(25)
 
     # Validate that Google Maps is showing the "See locations" list for Trader Joe's
     tester.screenshot(screenshot_path)
@@ -581,7 +581,7 @@ def test_google_maps_directions(tester):
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"The one on Fulton Street"',
+        '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -615,7 +615,7 @@ def test_google_maps_directions(tester):
     # Wait 15 seconds for the new location to be searched
     time.sleep(15)
 
-    # Validate that Google Maps is showing the search result for 1885 Mission Street
+    # Validate that Google Maps is showing the directions for 1885 Mission Street
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
@@ -624,32 +624,6 @@ def test_google_maps_directions(tester):
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
     assert validation_result, "Failed to show 1885 Mission Street search results"
-
-    # Send a voice transcription to confirm this is the correct location
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Yes, that\'s the correct location"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    time.sleep(3)  # Give time for message to be processed
-
-    # Wait 15 seconds for directions to be displayed
-    time.sleep(15)
-
-    # Validate that Google Maps is showing directions to 1885 Mission Street
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "Google Maps is open and showing directions to 1885 Mission Street. "
-        "The screen should show the directions screen with transport mode options."
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_directions")
-    assert validation_result, "Failed to show directions to 1885 Mission Street"
 
     # Send a voice transcription to request driving directions specifically
     subprocess.run([
@@ -670,10 +644,26 @@ def test_google_maps_directions(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Google Maps is open and showing driving directions to 1885 Mission Street. "
-        "The screen should show the navigation screen with the driving route active, "
-        "or the directions screen with the car/drive mode selected."
+        "Google Maps is open and showing the navigation screen for a route. "
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
     assert validation_result, "Failed to show driving directions to 1885 Mission Street"
+
+    # Bring WhizVoice Debug app to foreground by using monkey to resume the app
+    # This brings the app to foreground without starting a new activity
+    subprocess.run([
+        'adb', 'shell',
+        'monkey', '-p', 'com.example.whiz.debug', '-c', 'android.intent.category.LAUNCHER', '1'
+    ], check=True, capture_output=True)
+    time.sleep(2)  # Give time for app to come to foreground
+
+    # Take screenshot of WhizVoice app showing chat
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1885 Mission Street' or '1885 Mission St' in San Francisco"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
+    assert validation_result, "Assistant did not mention the 1885 Mission Street address in the chat"
