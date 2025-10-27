@@ -154,14 +154,22 @@ def save_failed_screenshot(screenshot_path, test_name, step_name):
         print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
 
 
-def navigate_to_my_chats(tester):
-    """Navigate to the My Chats page by pressing back until we reach it."""
+def navigate_to_my_chats(tester, test_name="unknown"):
+    """Navigate to the My Chats page by pressing back until we reach it.
+
+    Args:
+        tester: The AndroidAccessibilityTester instance
+        test_name: Name of the test calling this function, for screenshot naming
+
+    Returns:
+        tuple: (success: bool, error_message: str)
+    """
     import time
 
     screenshot_path = "/tmp/whiz_screen.png"
     max_attempts = 5
 
-    for _ in range(max_attempts):
+    for attempt in range(max_attempts):
         tester.screenshot(screenshot_path)
         if tester.validate_screenshot(
             screenshot_path,
@@ -169,13 +177,16 @@ def navigate_to_my_chats(tester):
             "This is the main chat list view of WhizVoice."
             "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
         ):
-            return True
+            return (True, "")
 
         # Press back button and try again
         tester.press_back()
         time.sleep(1)
 
-    return False
+    # Failed to reach My Chats after all attempts - save screenshot for debugging
+    save_failed_screenshot(screenshot_path, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
+    error_msg = f"Failed to reach My Chats page after {max_attempts} attempts. Screenshot saved to screen_agent_test_output directory."
+    return (False, error_msg)
 
 
 def enable_accessibility_service_if_needed(tester):
@@ -233,11 +244,14 @@ def login_if_needed(tester):
 
         # Verify we reached My Chats page
         tester.screenshot(screenshot_path)
-        assert tester.validate_screenshot(
+        validation_result = tester.validate_screenshot(
             screenshot_path,
             "The screen shows a 'My Chats' or 'Chats List' page with a list of chats or an empty state. "
             "This is the main chat list view of WhizVoice after logging in."
-        ), "Failed to log in and reach My Chats page"
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "login_if_needed", "failed_to_reach_my_chats_after_login")
+        assert validation_result, "Failed to log in and reach My Chats page. Screenshot saved to screen_agent_test_output directory."
 
 
 @pytest.fixture(scope="session")
@@ -283,7 +297,8 @@ def test_whatsapp_draft_message(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "whatsapp_draft_message")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
@@ -425,7 +440,8 @@ def test_youtube_music_integration(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "youtube_music_integration")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
@@ -534,7 +550,8 @@ def test_google_maps_directions(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "google_maps_directions")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
@@ -588,8 +605,8 @@ def test_google_maps_directions(tester):
         '--ez', 'autoSend', 'true'
     ], check=True)
 
-    # Wait 15 seconds for the location to be selected and directions to appear
-    time.sleep(20)
+    # Wait for the location to be selected and directions to appear
+    time.sleep(25)
 
     # Validate that Google Maps is showing directions or navigation screen
     tester.screenshot(screenshot_path)
@@ -638,8 +655,8 @@ def test_google_maps_directions(tester):
     ], check=True)
     time.sleep(3)  # Give time for message to be processed
 
-    # Wait 15 seconds for driving directions to be displayed
-    time.sleep(15)
+    # Wait for driving directions to be displayed
+    time.sleep(20)
 
     # Validate that Google Maps is showing driving directions to 1885 Mission Street
     tester.screenshot(screenshot_path)
