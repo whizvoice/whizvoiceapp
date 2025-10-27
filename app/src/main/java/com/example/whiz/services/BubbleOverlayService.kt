@@ -171,11 +171,11 @@ class BubbleOverlayService : Service() {
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
 
-        // Set up transcription callback for test broadcasts and voice input
-        voiceManager.setTranscriptionCallback { transcription ->
-            if (transcription.isNotBlank()) {
-                Log.d(TAG, "Transcription callback triggered in bubble mode: '$transcription'")
-                serviceScope.launch {
+        // Collect transcriptions from VoiceManager flow and forward to bubble UI when active
+        serviceScope.launch {
+            voiceManager.transcriptionFlow.collect { transcription ->
+                if (transcription.isNotBlank() && isActive) {
+                    Log.d(TAG, "Transcription received from flow in bubble mode: '$transcription'")
                     _userTranscriptionFlow.emit(transcription)
                 }
             }
@@ -717,9 +717,6 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
         isActive = false
         serviceInstance = null
-
-        // Clear transcription callback
-        voiceManager.setTranscriptionCallback { }
 
         // Unregister test receiver
         testTranscriptionReceiver?.let {

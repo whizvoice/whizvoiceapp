@@ -518,27 +518,6 @@ def test_youtube_music_integration(tester):
         save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
-
-def test_google_maps_ui_dump(tester):
-    """Test to dump Google Maps UI to understand the interface."""
-    import time
-
-    screenshot_path = "/tmp/whiz_screen.png"
-
-    # Open Google Maps directly using tester
-    tester.open_app("com.google.android.apps.maps")
-    time.sleep(5)
-
-    # Take screenshot
-    tester.screenshot(screenshot_path)
-
-    # Save screenshot and UI dump
-    save_failed_screenshot(screenshot_path, "google_maps_ui_dump", "main_screen")
-
-    # Force fail to trigger UI dump
-    assert False, "Intentional fail to capture Google Maps UI dump"
-
-
 def test_google_maps_directions(tester):
     """Test that we can get directions to multiple locations using Google Maps."""
     import time
@@ -581,7 +560,7 @@ def test_google_maps_directions(tester):
     time.sleep(3)  # Give time for message to be processed
 
     # Wait 15 seconds for the search to complete and "See locations" to appear
-    time.sleep(25)
+    time.sleep(30)
 
     # Validate that Google Maps is showing the "See locations" list for Trader Joe's
     tester.screenshot(screenshot_path)

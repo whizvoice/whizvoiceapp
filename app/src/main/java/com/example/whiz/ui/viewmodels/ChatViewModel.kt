@@ -353,14 +353,17 @@ class ChatViewModel @Inject constructor(
         }
 
         // Subscribe to bubble mode transcriptions and send them to the server
+        // Only process when bubble service is actually active (app in background)
         viewModelScope.launch {
             Log.d(TAG, "Started collecting bubble transcriptions")
             BubbleOverlayService.userTranscriptionFlow
                 .distinctUntilChanged() // Prevent duplicate consecutive emissions
                 .collect { transcription ->
-                    if (transcription.isNotBlank()) {
-                        Log.d(TAG, "Received transcription from bubble mode: '$transcription'")
+                    if (transcription.isNotBlank() && BubbleOverlayService.isActive) {
+                        Log.d(TAG, "Received transcription from bubble mode (bubble active): '$transcription'")
                         sendUserInput(transcription)
+                    } else if (transcription.isNotBlank()) {
+                        Log.d(TAG, "Ignoring bubble transcription - bubble not active (main app handling it): '$transcription'")
                     }
                 }
         }
@@ -1761,11 +1764,9 @@ class ChatViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "[RACE_DEBUG] sendUserInput: Input text has changed ('${_inputText.value}' != '$trimmedText'), NOT clearing to avoid race condition")
             }
-            
-            // Update bubble overlay if active
-            if (com.example.whiz.services.BubbleOverlayService.isActive) {
-                com.example.whiz.services.BubbleOverlayService.updateUserTranscription(trimmedText)
-            }
+
+            // Note: We don't update bubble transcription here to avoid circular loop
+            // The bubble flow is for incoming transcriptions only, not for messages being sent
 
             // Send to agent (local or remote)
             // Note: Don't return early if not connected - let sendMessage handle retry queueing
