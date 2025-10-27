@@ -385,7 +385,7 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    time.sleep(10)
+    time.sleep(15)
 
     # Validate that the message was sent
     tester.screenshot(screenshot_path)
@@ -401,12 +401,12 @@ def test_whatsapp_draft_message(tester):
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
-    assert validation_result, "Failed to draft WhatsApp message correctly"
+    assert validation_result, "Failed to send WhatsApp message correctly"
 
     # Cleanup: Delete the sent message
     # Long press on the newly sent message
     tester.long_press(500, 1280)
-    time.sleep(1)
+    time.sleep(2)
 
     # Click delete button
     tester.tap(800, 200)
@@ -606,7 +606,7 @@ def test_google_maps_directions(tester):
     ], check=True)
 
     # Wait for the location to be selected and directions to appear
-    time.sleep(25)
+    time.sleep(30)
 
     # Validate that Google Maps is showing directions or navigation screen
     tester.screenshot(screenshot_path)
