@@ -26,6 +26,7 @@ import javax.inject.Inject
 import com.example.whiz.di.AppModule
 import com.example.whiz.di.TestAppModule
 import com.example.whiz.services.BubbleOverlayService
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
  * Integration tests for voice control tools (disable continuous listening, set TTS enabled/disabled).
@@ -557,18 +558,16 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             val openClockMessage = "Open the Clock app"
 
             try {
-                val transcriptionCallbackField = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
-                transcriptionCallbackField.isAccessible = true
-                val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+                val transcriptionFlowField = voiceManager.javaClass.getDeclaredField("_transcriptionFlow")
+                transcriptionFlowField.isAccessible = true
+                val transcriptionFlow = transcriptionFlowField.get(voiceManager) as? MutableSharedFlow<String>
 
-                if (callback != null) {
-                    instrumentation.runOnMainSync {
-                        Log.d(TAG, "🎤 Invoking transcription callback with: '$openClockMessage'")
-                        callback.invoke(openClockMessage)
-                        Log.d(TAG, "✅ Transcription callback invoked - should trigger notification bubble mode")
-                    }
+                if (transcriptionFlow != null) {
+                    Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$openClockMessage'")
+                    transcriptionFlow.emit(openClockMessage)
+                    Log.d(TAG, "✅ Transcription flow emission completed - should trigger notification bubble mode")
                 } else {
-                    Log.w(TAG, "⚠️ Transcription callback not available")
+                    Log.w(TAG, "⚠️ Transcription flow not available")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not send voice transcription: ${e.message}")
