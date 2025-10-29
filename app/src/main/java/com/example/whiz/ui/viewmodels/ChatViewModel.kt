@@ -2025,16 +2025,16 @@ class ChatViewModel @Inject constructor(
     // Called when app goes to background
     fun onAppBackgrounded() {
         Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
-        
+
         // Record when we're backgrounding to prevent TTS replay of old messages
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
-        
+
         // Check if bubble overlay is active and in TTS mode before stopping TTS
         val bubbleActive = BubbleOverlayService.isActive
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
         val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
-        
+
         // Stop TTS when app goes to background, UNLESS bubble is in Speaking Mode
         if (ttsManager.isSpeaking.value && !shouldKeepTTS) {
             Log.d(TAG, "[LOG] Stopping TTS as app is going to background (bubble not in TTS mode)")
@@ -2042,7 +2042,14 @@ class ChatViewModel @Inject constructor(
         } else if (shouldKeepTTS) {
             Log.d(TAG, "[LOG] Keeping TTS active - bubble overlay is in Speaking Mode")
         }
-        
+
+        // Disable voice response when backgrounding, UNLESS bubble is active
+        // This prevents TTS from restarting when app returns to foreground
+        if (!shouldKeepTTS) {
+            Log.d(TAG, "[LOG] Disabling voice response - app backgrounded without bubble")
+            _isVoiceResponseEnabled.value = false
+        }
+
         // VoiceManager now handles stopping continuous listening on background
     }
 
