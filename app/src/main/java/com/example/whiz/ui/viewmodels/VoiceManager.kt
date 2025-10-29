@@ -73,9 +73,14 @@ class VoiceManager @Inject constructor(
 
     // Track if user was listening before TTS started
     private var wasListeningBeforeTTS = false
-    
+
     // Track current voice settings to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
+
+    // Track TTS state before backgrounding so bubble service can restore it if needed
+    // Package-private so BubbleOverlayService can clear it when bubble session ends
+    @Volatile
+    var ttsStateBeforeBackground: Boolean? = null
 
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
@@ -314,14 +319,15 @@ class VoiceManager @Inject constructor(
     
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
-        
+
+        // Note: TTS state is saved by ChatViewModel before disabling
         // Check if bubble overlay is running - if so, don't stop listening
         if (com.example.whiz.services.BubbleOverlayService.isActive) {
             Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
-        
+
         // Stop listening but preserve the setting
         if (isListening.value) {
             Log.d(TAG, "Stopping speech recognition due to app backgrounded (preserving continuous listening setting)")

@@ -211,8 +211,9 @@ class ChatViewModel @Inject constructor(
     val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
 
     // --- Voice Response Setting ---
-    private val _isVoiceResponseEnabled = MutableStateFlow(false) // Default to off
-    val isVoiceResponseEnabled = _isVoiceResponseEnabled.asStateFlow()
+    // Use VoiceManager as single source of truth for voice response state
+    // This prevents race conditions when bubble service updates the state
+    val isVoiceResponseEnabled: StateFlow<Boolean> = voiceManager.isVoiceResponseEnabled
 
     // Chat persistence jobs
     private var persistenceJob: Job? = null
@@ -637,7 +638,7 @@ class ChatViewModel @Inject constructor(
                             var isErrorHandled = false
                             var messageContentForChat = event.text
                             // Check both voice response setting AND bubble TTS mode
-                            var speakThisMessage = _isVoiceResponseEnabled.value || 
+                            var speakThisMessage = isVoiceResponseEnabled.value ||
                                 (BubbleOverlayService.isActive && BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING)
                             var effectiveConversationId: Long? = null // Declare outside try block
 
@@ -1214,7 +1215,7 @@ class ChatViewModel @Inject constructor(
         // Note: Input text clearing is handled when optimistic message appears in UI
 
         // Speak the response if enabled
-        if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
+        if (isVoiceResponseEnabled.value && _isTTSInitialized.value) {
             speakAgentResponse(responseText)
         }
     }
@@ -1327,14 +1328,14 @@ class ChatViewModel @Inject constructor(
                 // This prevents voice responses from staying on from previous sessions
                 // Voice mode will explicitly re-enable it if needed
                 if (!isVoiceModeActivation) {
-                    if (_isVoiceResponseEnabled.value) {
+                    if (isVoiceResponseEnabled.value) {
                         Log.d(TAG, "[LOG] loadChat: Resetting voice responses to OFF (was ON)")
-                        _isVoiceResponseEnabled.value = false
+                        voiceManager.setVoiceResponseEnabled(false)
                     } else {
                         Log.d(TAG, "[LOG] loadChat: Voice responses already OFF")
                     }
                 } else {
-                    Log.d(TAG, "[LOG] loadChat: Voice mode activation - preserving voice response state (current: ${_isVoiceResponseEnabled.value})")
+                    Log.d(TAG, "[LOG] loadChat: Voice mode activation - preserving voice response state (current: ${isVoiceResponseEnabled.value})")
                 }
                 
                 try {
@@ -1852,8 +1853,9 @@ class ChatViewModel @Inject constructor(
     }
     
     fun toggleVoiceResponse() {
-        _isVoiceResponseEnabled.update { !it }
-        if (!_isVoiceResponseEnabled.value) {
+        val newValue = !isVoiceResponseEnabled.value
+        voiceManager.setVoiceResponseEnabled(newValue)
+        if (!newValue) {
             ttsManager.stop() // Stop speaking if toggled off
 
             // If continuous listening is enabled, restart it immediately when TTS is stopped
@@ -1867,11 +1869,11 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
-        Log.d(TAG, "Voice Response Enabled: ${_isVoiceResponseEnabled.value}")
+        Log.d(TAG, "Voice Response Enabled: ${isVoiceResponseEnabled.value}")
     }
 
     fun setVoiceResponseEnabled(enabled: Boolean) {
-        _isVoiceResponseEnabled.value = enabled
+        voiceManager.setVoiceResponseEnabled(enabled)
         if (!enabled) {
             ttsManager.stop() // Stop speaking if disabled
 
@@ -1917,7 +1919,7 @@ class ChatViewModel @Inject constructor(
         updateRespondingStateForCurrentChat() // Update based on remaining requests
 
         // Speak the response if enabled
-        if (_isVoiceResponseEnabled.value && _isTTSInitialized.value) {
+        if (isVoiceResponseEnabled.value && _isTTSInitialized.value) {
             speakAgentResponse(responseText)
         }
     }
@@ -2026,31 +2028,27 @@ class ChatViewModel @Inject constructor(
     fun onAppBackgrounded() {
         Log.d(TAG, "[LOG] onAppBackgrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}")
 
+        // IMPORTANT: Save TTS state FIRST before we disable it
+        // BubbleOverlayService will use this to decide whether to enable TTS mode
+        voiceManager.ttsStateBeforeBackground = isVoiceResponseEnabled.value
+        Log.d(TAG, "[LOG] Saved TTS state before background: ${voiceManager.ttsStateBeforeBackground}")
+
         // Record when we're backgrounding to prevent TTS replay of old messages
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
 
-        // Check if bubble overlay is active and in TTS mode before stopping TTS
-        val bubbleActive = BubbleOverlayService.isActive
-        val bubbleMode = BubbleOverlayService.bubbleListeningMode
-        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
-
-        // Stop TTS when app goes to background, UNLESS bubble is in Speaking Mode
-        if (ttsManager.isSpeaking.value && !shouldKeepTTS) {
-            Log.d(TAG, "[LOG] Stopping TTS as app is going to background (bubble not in TTS mode)")
+        // Stop TTS audio if currently speaking
+        if (ttsManager.isSpeaking.value) {
+            Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
             ttsManager.stop()
-        } else if (shouldKeepTTS) {
-            Log.d(TAG, "[LOG] Keeping TTS active - bubble overlay is in Speaking Mode")
         }
 
-        // Disable voice response when backgrounding, UNLESS bubble is active
-        // This prevents TTS from restarting when app returns to foreground
-        if (!shouldKeepTTS) {
-            Log.d(TAG, "[LOG] Disabling voice response - app backgrounded without bubble")
-            _isVoiceResponseEnabled.value = false
-        }
+        // Always disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
+        // Exception: If bubble service starts, it will restore TTS from saved state (ttsStateBeforeBackground)
+        Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
+        voiceManager.setVoiceResponseEnabled(false)
 
-        // VoiceManager now handles stopping continuous listening on background
+        // VoiceManager handles stopping continuous listening on background
     }
 
     // Called when app comes back to foreground - restart continuous listening if it was enabled

@@ -157,13 +157,15 @@ class BubbleOverlayService : Service() {
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-        // Determine initial mode based on whether TTS was already enabled
-        val wasTTSEnabled = voiceManager.isVoiceResponseEnabled.value
+        // Determine initial mode based on TTS state BEFORE backgrounding
+        // ChatViewModel disables TTS on background, but we check the saved state
+        // to see if user had TTS enabled before backgrounding
+        val wasTTSEnabled = voiceManager.ttsStateBeforeBackground ?: voiceManager.isVoiceResponseEnabled.value
         currentMode = if (wasTTSEnabled) {
-            Log.d(TAG, "BubbleOverlayService onCreate - TTS was enabled ($wasTTSEnabled), starting in TTS_WITH_LISTENING mode")
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was enabled before background ($wasTTSEnabled), starting in TTS_WITH_LISTENING mode")
             ListeningMode.TTS_WITH_LISTENING
         } else {
-            Log.d(TAG, "BubbleOverlayService onCreate - TTS was disabled ($wasTTSEnabled), starting in CONTINUOUS_LISTENING mode")
+            Log.d(TAG, "BubbleOverlayService onCreate - TTS was disabled before background ($wasTTSEnabled), starting in CONTINUOUS_LISTENING mode")
             ListeningMode.CONTINUOUS_LISTENING
         }
 
@@ -601,7 +603,9 @@ class BubbleOverlayService : Service() {
                 Log.d(TAG, "[APPLY_MODE] Enabling continuous listening with TTS (mic on, TTS on)")
                 voiceManager.updateContinuousListeningEnabled(true)
                 Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(true) for TTS mode")
-                // TTS will be enabled through shouldEnableTTS() check
+                // Re-enable voice response (it may have been disabled when app backgrounded)
+                voiceManager.setVoiceResponseEnabled(true)
+                Log.d(TAG, "[APPLY_MODE] Re-enabled voice response for TTS mode")
             }
         }
         
@@ -717,6 +721,10 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
         isActive = false
         serviceInstance = null
+
+        // Clear saved TTS state since bubble session is ending
+        voiceManager.ttsStateBeforeBackground = null
+        Log.d(TAG, "Cleared saved TTS state on bubble service destroy")
 
         // Unregister test receiver
         testTranscriptionReceiver?.let {
