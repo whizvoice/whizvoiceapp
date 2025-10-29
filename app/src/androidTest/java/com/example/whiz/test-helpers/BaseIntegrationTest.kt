@@ -2501,80 +2501,11 @@ abstract class BaseIntegrationTest {
     protected fun bringAppToForeground() {
         android.util.Log.d("BaseIntegrationTest", "🔄 Bringing app to foreground...")
         try {
-            // Method 1: Use recent apps and click on our app (preferred - no new launch)
-            device.pressRecentApps()
-            
-            // Wait for recent apps screen to appear - try multiple indicators
-            val recentAppsLoaded = device.wait(Until.hasObject(
-                // Pixel launcher recent apps indicators
-                By.res("com.google.android.apps.nexuslauncher", "overview_panel")
-            ), 3000) || device.wait(Until.hasObject(
-                By.res("com.google.android.apps.nexuslauncher", "task_view_single")
-            ), 3000) || device.wait(Until.hasObject(
-                // Legacy systemui indicators  
-                By.res("com.android.systemui", "task_view_bar")
-            ), 3000) || device.wait(Until.hasObject(
-                By.textContains("Whiz Voice")
-            ), 3000)
-            
-            if (recentAppsLoaded) {
-                
-                // First try to find our app by looking for the WhizVoice content description
-                // and then clicking its parent task_view_single
-                try {
-                    val whizVoiceSnapshot = device.findObject(UiSelector().descriptionContains("WhizVoice"))
-                    if (whizVoiceSnapshot.exists()) {
-                        android.util.Log.d("BaseIntegrationTest", "🔍 Found WhizVoice snapshot, clicking parent task view...")
-                        // Click on the task view that contains this snapshot
-                        val taskViews = device.findObjects(By.res("com.google.android.apps.nexuslauncher", "task_view_single"))
-                        for (taskView in taskViews) {
-                            // Check if this task view contains our WhizVoice snapshot
-                            if (taskView.hasObject(By.descContains("WhizVoice"))) {
-                                taskView.click()
-                                android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked WhizVoice task view in recent apps")
-                                return
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("BaseIntegrationTest", "⚠️ WhizVoice-specific approach failed: ${e.message}")
-                }
-                
-                // Fallback to trying other selectors
-                val selectors = listOf(
-                    UiSelector().descriptionContains("WhizVoice DEBUG"),
-                    UiSelector().descriptionContains("WhizVoice"),
-                    UiSelector().descriptionContains("Whiz"),
-                    UiSelector().textContains("Whiz Voice"),
-                    UiSelector().textContains("Whiz"),
-                    UiSelector().packageName(packageName),
-                    // Try to find the first clickable task view in recent apps (often our app)
-                    UiSelector().resourceId("com.google.android.apps.nexuslauncher:id/task_view_single").clickable(true).index(0)
-                )
-                
-                for ((index, selector) in selectors.withIndex()) {
-                    val appCard = device.findObject(selector)
-                    if (appCard.exists()) {
-                        try {
-                            appCard.click()
-                            android.util.Log.d("BaseIntegrationTest", "✅ Found and clicked app using selector $index in recent apps")
-                            return
-                        } catch (e: Exception) {
-                            android.util.Log.w("BaseIntegrationTest", "⚠️ Failed to click app with selector $index: ${e.message}")
-                        }
-                    }
-                }
-                
-                android.util.Log.w("BaseIntegrationTest", "⚠️ Could not find app with any selector in recent apps")
-            }
-            
-            android.util.Log.w("BaseIntegrationTest", "⚠️ App not found in recent apps, trying alternative methods")
-            
-            // Method 2: Try to use task switching to return to existing instance
-            // This avoids creating a new activity instance
+            // Use am start to programmatically bring app to foreground
+            // This is more reliable than clicking in recent apps UI
             device.executeShellCommand("am start -n $packageName/com.example.whiz.MainActivity -f 0x20000000") // FLAG_ACTIVITY_SINGLE_TOP
             android.util.Log.d("BaseIntegrationTest", "✅ Attempted to return to existing activity instance")
-            
+
             // Wait for app to come to foreground
             val appReturned = device.wait(Until.hasObject(By.pkg(packageName)), 5000)
             if (appReturned) {
