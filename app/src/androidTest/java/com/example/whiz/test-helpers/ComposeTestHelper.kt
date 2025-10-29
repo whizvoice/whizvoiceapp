@@ -27,6 +27,8 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import com.example.whiz.MainActivity
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
  * Compose helper functions for UI testing
@@ -1702,7 +1704,7 @@ object ComposeTestHelper {
     )
 
     /**
-     * Send a voice message using VoiceManager's transcription callback.
+     * Send a voice message using VoiceManager's transcription flow.
      * This properly simulates voice input without disabling continuous listening.
      *
      * @param message The message text to send
@@ -1718,19 +1720,18 @@ object ComposeTestHelper {
         return try {
             Log.d(TAG, "🎤 Sending voice message: '$message'")
 
-            // Use reflection to access the transcriptionCallback like TestTranscriptionReceiver does
+            // Use reflection to access the _transcriptionFlow and emit to it
             try {
-                val transcriptionCallbackField = voiceManager.javaClass.getDeclaredField("transcriptionCallback")
-                transcriptionCallbackField.isAccessible = true
-                val callback = transcriptionCallbackField.get(voiceManager) as? ((String) -> Unit)
+                val transcriptionFlowField = voiceManager.javaClass.getDeclaredField("_transcriptionFlow")
+                transcriptionFlowField.isAccessible = true
+                val transcriptionFlow = transcriptionFlowField.get(voiceManager) as? MutableSharedFlow<String>
 
-                if (callback != null) {
-                    // Invoke the callback on main thread
-                    val instrumentation = InstrumentationRegistry.getInstrumentation()
-                    instrumentation.runOnMainSync {
-                        Log.d(TAG, "🎤 Invoking transcription callback with: '$message'")
-                        callback.invoke(message)
-                        Log.d(TAG, "✅ Transcription callback invoked")
+                if (transcriptionFlow != null) {
+                    // Emit to the flow (this is a blocking operation that needs to run on a coroutine)
+                    runBlocking {
+                        Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$message'")
+                        transcriptionFlow.emit(message)
+                        Log.d(TAG, "✅ Transcription flow emission completed")
                     }
 
                     // Wait for message to appear in UI
@@ -1749,11 +1750,11 @@ object ComposeTestHelper {
                         return false
                     }
                 } else {
-                    Log.e(TAG, "❌ VoiceManager transcription callback is not set")
+                    Log.e(TAG, "❌ VoiceManager transcription flow is not available")
                     return false
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Error accessing VoiceManager transcription callback", e)
+                Log.e(TAG, "❌ Error accessing VoiceManager transcription flow", e)
                 return false
             }
 

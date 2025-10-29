@@ -769,16 +769,7 @@ fun ChatScreen(
                 // Ensure ChatViewModel starts listening
                 viewModel.ensureContinuousListeningEnabled()
             }
-            
-            // Set up transcription callback for chat integration
-            voiceManager.setTranscriptionCallback { transcription ->
-                if (transcription.isNotBlank()) {
-                    Log.d("ChatScreen", "[LOG] Voice transcription received: '$transcription'")
-                    viewModel.updateInputText(transcription, fromVoice = true)
-                    viewModel.sendUserInput(transcription)
-                }
-            }
-            
+
             Log.d("ChatScreen", "[LOG] Continuous listening enabled for chat (voice app default)")
         } else {
             Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
@@ -786,6 +777,17 @@ fun ChatScreen(
         
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
+    }
+
+    // Collect transcriptions from VoiceManager flow
+    LaunchedEffect(Unit) {
+        voiceManager.transcriptionFlow.collect { transcription ->
+            if (transcription.isNotBlank()) {
+                Log.d("ChatScreen", "[LOG] Voice transcription received from flow: '$transcription'")
+                viewModel.updateInputText(transcription, fromVoice = true)
+                viewModel.sendUserInput(transcription)
+            }
+        }
     }
 
     // 🔧 PRODUCTION BUG FIX: Eliminate Scaffold completely to prevent touch interception

@@ -15,8 +15,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -70,9 +73,14 @@ class VoiceManager @Inject constructor(
 
     // Track if user was listening before TTS started
     private var wasListeningBeforeTTS = false
-    
+
     // Track current voice settings to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
+
+    // Track TTS state before backgrounding so bubble service can restore it if needed
+    // Package-private so BubbleOverlayService can clear it when bubble session ends
+    @Volatile
+    var ttsStateBeforeBackground: Boolean? = null
 
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
@@ -311,14 +319,15 @@ class VoiceManager @Inject constructor(
     
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
-        
+
+        // Note: TTS state is saved by ChatViewModel before disabling
         // Check if bubble overlay is running - if so, don't stop listening
         if (com.example.whiz.services.BubbleOverlayService.isActive) {
             Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
-        
+
         // Stop listening but preserve the setting
         if (isListening.value) {
             Log.d(TAG, "Stopping speech recognition due to app backgrounded (preserving continuous listening setting)")
@@ -405,7 +414,12 @@ class VoiceManager @Inject constructor(
         speechRecognitionService.stopListening()
     }
 
+    // Transcription flow for continuous listening - consumers can collect from this
+    private val _transcriptionFlow = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1)
+    val transcriptionFlow: SharedFlow<String> = _transcriptionFlow.asSharedFlow()
+
     // Transcription callback for continuous listening (set by consumers like ChatViewModel)
+    // TODO: This can be deprecated once all consumers move to using transcriptionFlow
     private var transcriptionCallback: ((String) -> Unit)? = null
     
     fun startContinuousListening() {
@@ -418,11 +432,17 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "[DEBUG] About to call startListening()")
         startListening { finalText ->
             Log.d(TAG, "startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
-            
+
             // Call the transcription callback if set (for chat integration)
             if (finalText.isNotBlank()) {
+                // Emit to flow for all consumers (ChatScreen, BubbleOverlayService, etc.)
+                coroutineScope.launch {
+                    _transcriptionFlow.emit(finalText)
+                }
+
+                // Also call legacy callback if set (for backward compatibility)
                 transcriptionCallback?.invoke(finalText)
-                
+
                 // Auto-restart continuous listening if still enabled
                 if (continuousListeningEnabled) {
                     Log.d(TAG, "Continuous listening: restarting after result")

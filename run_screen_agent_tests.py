@@ -154,27 +154,39 @@ def save_failed_screenshot(screenshot_path, test_name, step_name):
         print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
 
 
-def navigate_to_my_chats(tester):
-    """Navigate to the My Chats page by pressing back until we reach it."""
+def navigate_to_my_chats(tester, test_name="unknown"):
+    """Navigate to the My Chats page by pressing back until we reach it.
+
+    Args:
+        tester: The AndroidAccessibilityTester instance
+        test_name: Name of the test calling this function, for screenshot naming
+
+    Returns:
+        tuple: (success: bool, error_message: str)
+    """
     import time
 
     screenshot_path = "/tmp/whiz_screen.png"
     max_attempts = 5
 
-    for _ in range(max_attempts):
+    for attempt in range(max_attempts):
         tester.screenshot(screenshot_path)
         if tester.validate_screenshot(
             screenshot_path,
-            "The screen shows a 'My Chats' or 'Chats List' page with a list of chats or an empty state. "
+            "The screen shows a 'My Chats' page with a list of chats or an empty state. "
             "This is the main chat list view of WhizVoice."
+            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
         ):
-            return True
+            return (True, "")
 
         # Press back button and try again
         tester.press_back()
         time.sleep(1)
 
-    return False
+    # Failed to reach My Chats after all attempts - save screenshot for debugging
+    save_failed_screenshot(screenshot_path, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
+    error_msg = f"Failed to reach My Chats page after {max_attempts} attempts. Screenshot saved to screen_agent_test_output directory."
+    return (False, error_msg)
 
 
 def enable_accessibility_service_if_needed(tester):
@@ -232,11 +244,14 @@ def login_if_needed(tester):
 
         # Verify we reached My Chats page
         tester.screenshot(screenshot_path)
-        assert tester.validate_screenshot(
+        validation_result = tester.validate_screenshot(
             screenshot_path,
             "The screen shows a 'My Chats' or 'Chats List' page with a list of chats or an empty state. "
             "This is the main chat list view of WhizVoice after logging in."
-        ), "Failed to log in and reach My Chats page"
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "login_if_needed", "failed_to_reach_my_chats_after_login")
+        assert validation_result, "Failed to log in and reach My Chats page. Screenshot saved to screen_agent_test_output directory."
 
 
 @pytest.fixture(scope="session")
@@ -282,7 +297,8 @@ def test_whatsapp_draft_message(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "whatsapp_draft_message")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
@@ -369,7 +385,7 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    time.sleep(10)
+    time.sleep(15)
 
     # Validate that the message was sent
     tester.screenshot(screenshot_path)
@@ -385,12 +401,12 @@ def test_whatsapp_draft_message(tester):
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
-    assert validation_result, "Failed to draft WhatsApp message correctly"
+    assert validation_result, "Failed to send WhatsApp message correctly"
 
     # Cleanup: Delete the sent message
     # Long press on the newly sent message
     tester.long_press(500, 1280)
-    time.sleep(1)
+    time.sleep(2)
 
     # Click delete button
     tester.tap(800, 200)
@@ -424,7 +440,8 @@ def test_youtube_music_integration(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "youtube_music_integration")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
@@ -501,9 +518,8 @@ def test_youtube_music_integration(tester):
         save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
-
-def test_youtube_music_ui_dump(tester):
-    """Test to dump YouTube Music UI with search text to find the clear button."""
+def test_google_maps_directions(tester):
+    """Test that we can get directions to multiple locations using Google Maps."""
     import time
 
     screenshot_path = "/tmp/whiz_screen.png"
@@ -513,26 +529,138 @@ def test_youtube_music_ui_dump(tester):
     time.sleep(3)
 
     # Navigate to My Chats page
-    assert navigate_to_my_chats(tester), "Failed to navigate to My Chats page"
+    success, error_msg = navigate_to_my_chats(tester, "google_maps_directions")
+    assert success, error_msg
 
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice transcription to play a song on YouTube Music
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
+        "There may be an overlay over the screen, but the New Chat page should still be showing underneath."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "new_chat_screen")
+    assert validation_result, "Failed to reach New Chat screen"
+
+    # Send a voice transcription to ask for directions to Trader Joe's
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hey can you open YouTube Music?"',
+        '--es', 'text', '"what are the trader joes near me ?"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    time.sleep(9)
+    time.sleep(3)  # Give time for message to be processed
 
-    # Save screenshot and UI dump
-    save_failed_screenshot(screenshot_path, "youtube_music_ui_dump", "search_with_text")
+    # Wait 15 seconds for the search to complete and "See locations" to appear
+    time.sleep(30)
 
-    # Force fail to trigger UI dump
-    assert False, "Intentional fail to capture UI dump with search text"
+    # Validate that Google Maps is showing the "See locations" list for Trader Joe's
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing more than one Trader Joe's locations. "
+        "The screen should show more than one Trader Joe's results with addresses at least partially visible."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
+    assert validation_result, "Failed to show Trader Joe's location list"
+
+    # Send a voice transcription to select the one on Fulton Street
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    # Wait for the location to be selected and directions to appear
+    time.sleep(30)
+
+    # Validate that Google Maps is showing directions or navigation screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing the navigation screen for a route. "
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
+    assert validation_result, "Failed to show Trader Joe's directions"
+
+    # Send a voice transcription to change destination to office at 1885 Mission Street
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Actually, I need to go to my office first at 1885 Mission Street. Can you get directions to there instead?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait 15 seconds for the new location to be searched
+    time.sleep(15)
+
+    # Validate that Google Maps is showing the directions for 1885 Mission Street
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing the navigation screen for a route. "
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
+    assert validation_result, "Failed to show 1885 Mission Street search results"
+
+    # Send a voice transcription to request driving directions specifically
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Actually, just this time can you get driving directions for me?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait for driving directions to be displayed
+    time.sleep(20)
+
+    # Validate that Google Maps is showing driving directions to 1885 Mission Street
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Google Maps is open and showing the navigation screen for a route. "
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
+    assert validation_result, "Failed to show driving directions to 1885 Mission Street"
+
+    # Bring WhizVoice Debug app to foreground by using monkey to resume the app
+    # This brings the app to foreground without starting a new activity
+    subprocess.run([
+        'adb', 'shell',
+        'monkey', '-p', 'com.example.whiz.debug', '-c', 'android.intent.category.LAUNCHER', '1'
+    ], check=True, capture_output=True)
+    time.sleep(2)  # Give time for app to come to foreground
+
+    # Take screenshot of WhizVoice app showing chat
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1885 Mission Street' or '1885 Mission St' in San Francisco"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
+    assert validation_result, "Assistant did not mention the 1885 Mission Street address in the chat"

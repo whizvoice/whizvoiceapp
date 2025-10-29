@@ -42,17 +42,8 @@ class TestTranscriptionReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "Received test transcription: text='$text', fromVoice=$fromVoice, autoSend=$autoSend")
 
-        // Send a local broadcast that BubbleOverlayService can listen to
-        // This works across process boundaries
-        val localIntent = Intent("com.example.whiz.TEST_TRANSCRIPTION_LOCAL")
-        localIntent.putExtra("text", text)
-        localIntent.putExtra("fromVoice", fromVoice)
-        localIntent.putExtra("autoSend", autoSend)
-        localIntent.setPackage(context.packageName) // Keep it local to our app
-        context.sendBroadcast(localIntent)
-        Log.d(TAG, "Sent local broadcast for transcription: '$text'")
-
-        // Also try to use VoiceManager if available (for when app is in foreground)
+        // Use VoiceManager if available - this mimics real voice input behavior
+        // VoiceManager ensures only one path is active (main app OR bubble, not both)
         val voiceManager = VoiceManager.instance
 
         if (voiceManager != null && fromVoice) {
