@@ -572,7 +572,7 @@ fun ChatScreen(
     val effectiveHasPermission = hasPermissionReactive
     
     // Compute microphone button state based on all conditions
-    val shouldShowMuteButton = isListening || isContinuousListeningEnabled || (enableTTSMode && effectiveHasPermission)
+    val shouldShowMuteButton = isListening || isContinuousListeningEnabled
     
     // Compute TTS state - should be enabled for voice launches
     val shouldEnableTTS = enableTTSMode && effectiveHasPermission
@@ -743,36 +743,40 @@ fun ChatScreen(
         }
     }
 
-    // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
+    // Voice app behavior: enable microphone for all chats on FIRST launch only
+    // Don't override user's preference if they've manually toggled it
     LaunchedEffect(viewModelChatId, enableTTSMode, effectiveHasPermission) {
         Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
-        
-        // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
-        if (effectiveHasPermission) {
-            Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
-            
+
+        // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
+        // For existing chats, respect the user's current continuous listening state
+        if (effectiveHasPermission && viewModelChatId < 0) {
+            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening for first time")
+
             // For voice launches with TTS mode, set up continuous listening immediately
             if (enableTTSMode) {
                 Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
                 // Enable continuous listening via VoiceManager (single source of truth)
                 voiceManager.updateContinuousListeningEnabled(true)
-                
+
                 // Ensure ChatViewModel starts listening
                 viewModel.ensureContinuousListeningEnabled()
             } else {
                 // For non-voice launches, use delay
                 kotlinx.coroutines.delay(500L) // Wait for UI to be ready
-                
+
                 // Enable continuous listening via VoiceManager (single source of truth)
                 voiceManager.updateContinuousListeningEnabled(true)
-                
+
                 // Ensure ChatViewModel starts listening
                 viewModel.ensureContinuousListeningEnabled()
             }
 
-            Log.d("ChatScreen", "[LOG] Continuous listening enabled for chat (voice app default)")
-        } else {
+            Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
+        } else if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
+        } else {
+            Log.d("ChatScreen", "[LOG] Existing chat (ID=$viewModelChatId) - preserving user's continuous listening preference (currently: $isContinuousListeningEnabled)")
         }
         
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
