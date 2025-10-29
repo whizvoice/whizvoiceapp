@@ -43,6 +43,12 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
+    @Inject
+    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+
+    @Inject
+    lateinit var ttsManager: com.example.whiz.services.TTSManager
+
     private val createdChatIds = mutableListOf<Long>()
     private var createdNewChatThisTest = false
 
@@ -320,78 +326,98 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
-            Log.d(TAG, "Bot response detected (Whiz label found), now testing mic button during response")
+            Log.d(TAG, "Bot response detected (Whiz label found), now waiting for TTS to start speaking")
 
-            // During bot response, try to click the mic button
-            // The button should be available and clickable
-            Log.d(TAG, "Attempting to click microphone button during bot response")
+            // Wait for TTS to actually start speaking (check ttsManager.isSpeaking)
+            var ttsStarted = false
+            var attempts = 0
+            while (attempts < 50 && !ttsStarted) { // Wait up to 10 seconds
+                val ttsManagerSpeaking = ttsManager.isSpeaking.value
+                val voiceManagerSpeaking = voiceManager.isSpeaking.value
 
-            // Try to wait for either "Turn on continuous listening" or "Turn off continuous listening"
-            // Try "Turn on continuous listening" first
-            var micButtonFound = false
-            var buttonDescription = ""
-
-            val turnOnButton = ComposeTestHelper.waitForElement(
-                composeTestRule,
-                { composeTestRule.onNodeWithContentDescription("Turn on continuous listening") },
-                3000,  // Shorter timeout for first attempt
-                "turn on continuous listening"
-            )
-
-            if (turnOnButton) {
-                micButtonFound = true
-                buttonDescription = "Turn on continuous listening"
-            } else {
-                // Try "Turn off continuous listening"
-                val turnOffButton = ComposeTestHelper.waitForElement(
-                    composeTestRule,
-                    { composeTestRule.onNodeWithContentDescription("Turn off continuous listening") },
-                    3000,
-                    "turn off continuous listening"
-                )
-
-                if (turnOffButton) {
-                    micButtonFound = true
-                    buttonDescription = "Turn off continuous listening"
+                if (ttsManagerSpeaking || voiceManagerSpeaking) {
+                    ttsStarted = true
+                    Log.d(TAG, "TTS confirmed speaking (TTSManager.isSpeaking=$ttsManagerSpeaking, VoiceManager.isSpeaking=$voiceManagerSpeaking)")
+                } else {
+                    Thread.sleep(200)
+                    attempts++
                 }
             }
 
-            if (!micButtonFound) {
-                failWithScreenshot("mic_button_not_available_during_response", "Neither 'Turn on' nor 'Turn off continuous listening' button found during bot response")
+            if (!ttsStarted) {
+                val finalTTSManagerSpeaking = ttsManager.isSpeaking.value
+                val finalVoiceManagerSpeaking = voiceManager.isSpeaking.value
+                Log.e(TAG, "❌ TEST FAILED: TTS did not start speaking after bot response (waited ${attempts * 200}ms). TTSManager.isSpeaking=$finalTTSManagerSpeaking, VoiceManager.isSpeaking=$finalVoiceManagerSpeaking")
+                failWithScreenshot("tts_not_speaking", "TTS did not start speaking after bot response")
                 return@runBlocking
             }
 
-            // Click the button we found
-            Log.d(TAG, "Found '$buttonDescription' button, attempting to click")
-            try {
-                composeTestRule.onNodeWithContentDescription(buttonDescription).performClick()
-                Log.d(TAG, "Successfully clicked '$buttonDescription' during bot response")
-            } catch (e: Exception) {
-                failWithScreenshot("mic_button_click_failed_during_response", "Failed to click '$buttonDescription' button during bot response: ${e.message}")
-                return@runBlocking
-            }
+            Log.d(TAG, "TTS is speaking, now waiting for 'Interrupt and speak' button to be available during TTS")
 
-            // Verify the button state changed after clicking
-            Log.d(TAG, "Verifying mic button state changed after click")
-            val expectedNewState = if (buttonDescription == "Turn on continuous listening") {
-                "Turn off continuous listening"
-            } else {
-                "Turn on continuous listening"
-            }
-
-            val stateChanged = ComposeTestHelper.waitForElement(
+            // During TTS, the mic button shows "Interrupt and speak" instead of "Start/Stop listening"
+            val interruptButton = ComposeTestHelper.waitForElement(
                 composeTestRule,
-                { composeTestRule.onNodeWithContentDescription(expectedNewState) },
-                3000,
-                "new mic button state"
+                { composeTestRule.onNodeWithContentDescription("Interrupt and speak") },
+                TEST_TIMEOUT,
+                "interrupt and speak button during TTS"
             )
 
-            if (!stateChanged) {
-                failWithScreenshot("mic_button_state_not_changed", "Mic button state did not change to '$expectedNewState' after clicking")
+            if (!interruptButton) {
+                Log.e(TAG, "❌ TEST FAILED: 'Interrupt and speak' button not found during TTS (waited ${TEST_TIMEOUT}ms)")
+                failWithScreenshot("mic_button_not_available_during_response", "'Interrupt and speak' button not found during TTS")
                 return@runBlocking
             }
 
-            Log.d(TAG, "Microphone button is clickable during bot response and state changed successfully")
+            Log.d(TAG, "Mic button found during TTS: 'Interrupt and speak'")
+
+            // Click the "Interrupt and speak" button to verify it's clickable during TTS
+            Log.d(TAG, "Attempting to click 'Interrupt and speak' button during TTS")
+            try {
+                composeTestRule.onNodeWithContentDescription("Interrupt and speak").performClick()
+                Log.d(TAG, "Successfully clicked 'Interrupt and speak' button during TTS")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ TEST FAILED: Failed to click 'Interrupt and speak' button during TTS: ${e.message}")
+                failWithScreenshot("mic_button_click_failed_during_response", "Failed to click 'Interrupt and speak' button during TTS: ${e.message}")
+                return@runBlocking
+            }
+
+            // After clicking "Interrupt and speak", TTS should stop and listening should start
+            // Verify TTS stopped
+            Log.d(TAG, "Verifying TTS stopped after interrupting")
+            var ttsStoppedAttempts = 0
+            var ttsStopped = false
+            while (ttsStoppedAttempts < 25 && !ttsStopped) { // Wait up to 5 seconds
+                if (!ttsManager.isSpeaking.value && !voiceManager.isSpeaking.value) {
+                    ttsStopped = true
+                    Log.d(TAG, "TTS stopped after interrupt")
+                } else {
+                    Thread.sleep(200)
+                    ttsStoppedAttempts++
+                }
+            }
+
+            if (!ttsStopped) {
+                Log.e(TAG, "❌ TEST FAILED: TTS did not stop after clicking 'Interrupt and speak' (waited ${ttsStoppedAttempts * 200}ms)")
+                failWithScreenshot("tts_did_not_stop_after_interrupt", "TTS did not stop after clicking 'Interrupt and speak'")
+                return@runBlocking
+            }
+
+            // Verify listening started (should show "Stop listening" button)
+            Log.d(TAG, "Verifying listening started after interrupt")
+            val listeningStarted = ComposeTestHelper.waitForElement(
+                composeTestRule,
+                { composeTestRule.onNodeWithContentDescription("Stop listening") },
+                TEST_TIMEOUT,
+                "stop listening button after interrupt"
+            )
+
+            if (!listeningStarted) {
+                Log.e(TAG, "❌ TEST FAILED: 'Stop listening' button not found after interrupt (waited ${TEST_TIMEOUT}ms)")
+                failWithScreenshot("listening_not_started_after_interrupt", "'Stop listening' button not found after interrupt")
+                return@runBlocking
+            }
+
+            Log.d(TAG, "Microphone button is clickable during TTS - successfully interrupted TTS and started listening")
         }
     }
 }
