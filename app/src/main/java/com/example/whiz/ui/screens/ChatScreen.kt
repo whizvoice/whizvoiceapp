@@ -313,15 +313,25 @@ fun ChatInputBar(
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
+                    // Button logic with seamless interrupt support and TTS interrupt behavior
                     val (icon, description, action, tint) = when {
                         hasTypedText -> {
-                            // PRIORITY: Show send button for typed text (always needs manual send)
+                            // PRIORITY 1: Show send button for typed text (always needs manual send)
                             // This must come first to override listening/responding states
                             Tuple4(
                                 Icons.Filled.Send,
                                 "Send typed message",
                                 onSendClick,
+                                MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        isSpeaking -> {
+                            // PRIORITY 2: When TTS is speaking, always show Mic button to allow interrupt
+                            // This allows user to interrupt TTS and start speaking
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Interrupt and speak",
+                                onMicClickDuringTTS,
                                 MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -331,15 +341,6 @@ fun ChatInputBar(
                                 "Stop listening",
                                 onMicClick,
                                 MaterialTheme.colorScheme.error
-                            )
-                        }
-                        shouldShowMicDuringTTS -> {
-                            // Show mic button during TTS when headphones not connected (allows manual override)
-                            Tuple4(
-                                Icons.Filled.Mic,
-                                "Start listening during response",
-                                onMicClickDuringTTS,
-                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         isResponding && shouldShowMuteButton -> {
@@ -395,9 +396,9 @@ fun ChatInputBar(
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled
-                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
+                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled
+                        isSpeaking -> true    // Mic button during TTS is ALWAYS enabled (allows interrupt)
                         isListening -> !isMicDisabled
-                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled
                         else -> !isMicDisabled
                     }

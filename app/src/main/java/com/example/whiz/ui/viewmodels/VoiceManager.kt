@@ -71,8 +71,8 @@ class VoiceManager @Inject constructor(
     private val _isContinuousListeningEnabled = MutableStateFlow(false)
     val isContinuousListeningEnabled: StateFlow<Boolean> = _isContinuousListeningEnabled.asStateFlow()
 
-    // Track if user was listening before TTS started
-    private var wasListeningBeforeTTS = false
+    // Track continuous listening state before TTS started (to restore after TTS finishes)
+    private var continuousListeningBeforeTTS: Boolean? = null
 
     // Track current voice settings to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
@@ -147,17 +147,23 @@ class VoiceManager @Inject constructor(
     private fun setupTTSCallbacks() {
         ttsManager.setAudioEventCallbacks(
             onStarted = {
-                Log.d(TAG, "TTS started - was listening before: $wasListeningBeforeTTS")
+                Log.d(TAG, "TTS started - continuous listening state before TTS: $continuousListeningBeforeTTS")
                 // No need to set _isSpeaking - TTSManager handles it
             },
             onCompleted = {
-                Log.d(TAG, "TTS completed - continuous listening enabled: $continuousListeningEnabled")
+                Log.d(TAG, "TTS completed - restoring continuous listening state to: $continuousListeningBeforeTTS")
                 // No need to set _isSpeaking - TTSManager handles it
-                
-                // Auto-restart continuous listening after TTS completes if it was enabled
-                // Use state observation instead of delay - the TTS callback guarantees TTS is done
-                if (continuousListeningEnabled) {
+
+                // Restore continuous listening to whatever it was before TTS started
+                // This preserves the user's preference (on or off)
+                val shouldRestoreContinuousListening = continuousListeningBeforeTTS ?: false
+                continuousListeningBeforeTTS = null // Clear the saved state
+
+                if (shouldRestoreContinuousListening) {
+                    Log.d(TAG, "TTS completed - restarting continuous listening as it was enabled before TTS")
                     startContinuousListening()
+                } else {
+                    Log.d(TAG, "TTS completed - not restarting continuous listening as it was disabled before TTS")
                 }
             },
             onError = {
@@ -351,14 +357,15 @@ class VoiceManager @Inject constructor(
 
     fun speak(text: String) {
         if (_isTTSInitialized.value && text.isNotBlank()) {
-            // Remember if we were listening before TTS starts
-            wasListeningBeforeTTS = isListening.value || continuousListeningEnabled
-            
+            // Remember continuous listening state before TTS starts so we can restore it later
+            continuousListeningBeforeTTS = continuousListeningEnabled
+            Log.d(TAG, "speak: Saved continuous listening state before TTS: $continuousListeningBeforeTTS")
+
             // Stop any ongoing speech recognition before speaking
             if (isListening.value) {
                 speechRecognitionService.stopListening()
             }
-            
+
             ttsManager.speak(text)
         }
     }
@@ -494,24 +501,22 @@ class VoiceManager @Inject constructor(
         return ttsManager.shouldShowMicButtonDuringTTS()
     }
 
-    // Handle mic button click during TTS - pause TTS and start listening
+    // Handle mic button click during TTS - interrupt TTS and start listening
     fun handleMicClickDuringTTS() {
-        if (ttsManager.isSpeaking.value && !ttsManager.areHeadphonesConnected()) {
-            Log.d(TAG, "handleMicClickDuringTTS: Pausing TTS and starting listening")
-            
-            // Pause/stop TTS (but keep voice response enabled for future messages)
+        if (ttsManager.isSpeaking.value) {
+            Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - starting listening")
+
+            // Stop TTS immediately (user wants to speak)
             stopSpeaking()
-            
-            // Enable continuous listening and start immediately
-            continuousListeningEnabled = true
-            
-            // Use reactive state observation instead of delay
-            // Observe when TTS actually stops speaking, but only check once
+
+            // Start listening immediately for this one interaction
+            // The continuous listening state will be restored when TTS completes (via callback)
             coroutineScope.launch {
-                ttsManager.isSpeaking.first { !it } // Wait for first emission where isSpeaking is false
-                if (continuousListeningEnabled) {
-                    startContinuousListening()
-                }
+                // Wait for TTS to actually stop
+                ttsManager.isSpeaking.first { !it }
+                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, starting listening for user input")
+                // Start a one-time listening session (continuous mode will be restored by TTS callback)
+                startContinuousListening()
             }
         }
     }
