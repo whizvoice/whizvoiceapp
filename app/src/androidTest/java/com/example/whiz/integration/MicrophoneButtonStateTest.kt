@@ -94,6 +94,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
         if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
             Log.d(TAG, "App launched to chat screen, navigating back to chat list")
             if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                Log.e(TAG, "❌ TEST FAILED: Failed to navigate back to chat list")
                 failWithScreenshot("nav_to_chat_list_failed", "Failed to navigate back to chat list")
                 return
             }
@@ -108,6 +109,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
         )
 
         if (!chatListReady) {
+            Log.e(TAG, "❌ TEST FAILED: Chat list not ready")
             failWithScreenshot("chat_list_not_ready", "Chat list not ready")
             return
         }
@@ -115,6 +117,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
         // Navigate to new chat
         Log.d(TAG, "Navigating to new chat")
         if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
+            Log.e(TAG, "❌ TEST FAILED: Failed to navigate to new chat")
             failWithScreenshot("new_chat_navigation_failed", "Failed to navigate to new chat")
             return
         }
@@ -302,21 +305,22 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
                 Log.w(TAG, "Could not track newly created chat: ${e.message}")
             }
 
-            // Wait for bot response to start appearing (wait for an assistant message)
+            // Wait for bot response to start appearing (look for "Whiz" label which appears on all assistant messages)
             Log.d(TAG, "Waiting for bot response to appear...")
             val botResponseAppeared = ComposeTestHelper.waitForElement(
                 composeTestRule,
-                { composeTestRule.onNode(ComposeTestHelper.hasContentDescriptionMatching("Assistant message:.*")) },
+                { composeTestRule.onNodeWithText("Whiz") },
                 TEST_TIMEOUT,
-                "bot response message"
+                "Whiz label on assistant message"
             )
 
             if (!botResponseAppeared) {
-                failWithScreenshot("bot_response_not_appeared", "Bot response did not appear after sending message")
+                Log.e(TAG, "❌ TEST FAILED: Bot response with 'Whiz' label did not appear after sending message (waited ${TEST_TIMEOUT}ms)")
+                failWithScreenshot("bot_response_not_appeared", "Bot response with 'Whiz' label did not appear after sending message")
                 return@runBlocking
             }
 
-            Log.d(TAG, "Bot response detected, now testing mic button during response")
+            Log.d(TAG, "Bot response detected (Whiz label found), now testing mic button during response")
 
             // During bot response, try to click the mic button
             // The button should be available and clickable
