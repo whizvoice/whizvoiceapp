@@ -400,7 +400,6 @@ class MainActivity : ComponentActivity() {
         
         val createNewChatOnStart = currentIntent?.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false) ?: false
         val fromAssistant = currentIntent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
-        val fromPowerButton = currentIntent?.getBooleanExtra("FROM_POWER_BUTTON", false) ?: false
         val enableVoiceMode = currentIntent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
         val initialTranscription = currentIntent?.getStringExtra("INITIAL_TRANSCRIPTION")
         
@@ -504,44 +503,6 @@ class MainActivity : ComponentActivity() {
             } else {
                 Log.e(TAG, "navController not initialized when trying to navigate to chat ID: $chatId")
             }
-        } ?: run {
-            // Handle power button transcription
-            val transcription = currentIntent?.getStringExtra("TRANSCRIPTION")
-            
-            Log.d(TAG, "Power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, enableVoiceMode: $enableVoiceMode")
-            
-            if (fromPowerButton && transcription != null && ::navController.isInitialized) {
-                Log.d(TAG, "Handling power button transcription: $transcription")
-                // Create a new chat and navigate to it
-                lifecycleScope.launch {
-                    try {
-                        Log.d(TAG, "Creating new chat from power button transcription")
-                        val newChatId = chatsListViewModel.createNewChat("Assistant Chat")
-                        Log.d(TAG, "New chat created with ID: $newChatId")
-                        if (newChatId > 0) {
-                            navigateWhenReady("chat/$newChatId", clearBackStack = true) {
-                                // Pass the voice mode flag and transcription to the ChatScreen
-                                if (enableVoiceMode) {
-                                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
-                                    navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
-                                }
-                                Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $transcription")
-                                navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", transcription)
-                                // Clear the extras
-                                getIntent().removeExtra("FROM_POWER_BUTTON")
-                                getIntent().removeExtra("TRANSCRIPTION")
-                                getIntent().removeExtra("ENABLE_VOICE_MODE")
-                            }
-                        } else {
-                            Log.e(TAG, "Failed to create new chat from power button transcription")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error creating new chat from power button", e)
-                    }
-                }
-                            } else {
-                    Log.d(TAG, "Skipping power button handling - fromPowerButton: $fromPowerButton, transcription: $transcription, navController initialized: ${::navController.isInitialized}")
-                }
             }
         }
     }
