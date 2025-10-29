@@ -249,13 +249,69 @@ fun SettingsScreen(
                 }
             }
 
-            // Logout Section
+            // Clear All Conversations Section
             Spacer(modifier = Modifier.height(32.dp))
             HorizontalDivider(thickness = Dp.Hairline)
+
+            val isClearingHistory by viewModel.isClearingHistory.collectAsState()
+            val showClearConfirmation by viewModel.showClearConfirmation.collectAsState()
+
+            Button(
+                onClick = { viewModel.showClearHistoryConfirmation() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Clear all conversations button" },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                ),
+                enabled = !isClearingHistory
+            ) {
+                if (isClearingHistory) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Clearing...")
+                } else {
+                    Text("Clear All Conversations")
+                }
+            }
+
+            // Confirmation dialog
+            if (showClearConfirmation) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { viewModel.dismissClearHistoryConfirmation() },
+                    title = { Text("Clear All Conversations?") },
+                    text = { Text("This will permanently delete all your conversations. This action cannot be undone.") },
+                    confirmButton = {
+                        Button(
+                            onClick = { viewModel.clearAllChatHistory() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                            )
+                        ) {
+                            Text("Clear All")
+                        }
+                    },
+                    dismissButton = {
+                        Button(
+                            onClick = { viewModel.dismissClearHistoryConfirmation() },
+                            colors = ButtonDefaults.textButtonColors()
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            // Logout Section
+            Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = { viewModel.logout() },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text("Logout")
             }
