@@ -1141,17 +1141,21 @@ fun MessageItem(
                         modifier = Modifier.padding(bottom = 2.dp)
                     )
                 }
-                MarkdownText(
-                    markdown = message.content,
-                    style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
-                    modifier = Modifier.semantics {
-                        contentDescription = if (message.type == MessageType.USER) {
-                            "User message: ${message.content}"
-                        } else {
-                            "Assistant message: ${message.content}"
-                        }
+                CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
+                    SelectionContainer {
+                        MarkdownText(
+                            markdown = message.content,
+                            style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
+                            modifier = Modifier.semantics {
+                                contentDescription = if (message.type == MessageType.USER) {
+                                    "User message: ${message.content}"
+                                } else {
+                                    "Assistant message: ${message.content}"
+                                }
+                            }
+                        )
                     }
-                )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = DateFormatter.formatMessageTime(message.timestamp),
