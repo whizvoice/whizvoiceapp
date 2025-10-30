@@ -71,7 +71,8 @@ interface ApiService {
         val content: String,
         val message_type: String,
         val timestamp: String,
-        val request_id: String? = null  // Request ID for tracking request/response pairs
+        val request_id: String? = null,  // Request ID for tracking request/response pairs
+        val cancelled: String? = null  // Timestamp when message was cancelled (null if not cancelled)
     )
 
     data class MessageCountResponse(

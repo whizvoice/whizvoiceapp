@@ -47,6 +47,7 @@ sealed class WebSocketEvent {
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
     data class Interrupted(val message: String, val requestId: String? = null) : WebSocketEvent()
+    data class DeleteMessage(val messageId: Long, val conversationId: Long, val requestId: String?, val reason: String?) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
     object Reconnecting : WebSocketEvent()
@@ -138,8 +139,8 @@ class WhizServerRepository @Inject constructor(
         }
         
         when (event) {
-            is WebSocketEvent.Connected, 
-            is WebSocketEvent.Closed, 
+            is WebSocketEvent.Connected,
+            is WebSocketEvent.Closed,
             is WebSocketEvent.Reconnecting -> {
                 _connectionStateEvents.emit(event)
             }
@@ -148,7 +149,8 @@ class WhizServerRepository @Inject constructor(
             is WebSocketEvent.Error,
             is WebSocketEvent.AuthError,
             is WebSocketEvent.Cancelled,
-            is WebSocketEvent.Interrupted -> {
+            is WebSocketEvent.Interrupted,
+            is WebSocketEvent.DeleteMessage -> {
                 _messageEvents.emit(event)
             }
         }
@@ -183,6 +185,7 @@ class WhizServerRepository @Inject constructor(
                 is WebSocketEvent.ToolExecution -> "TOOL_EXECUTION(requestId=${e.requestId}): ${e.toolRequest.optString("tool")}"
                 is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
                 is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
+                is WebSocketEvent.DeleteMessage -> "DELETE_MESSAGE(requestId=${e.requestId}, messageId=${e.messageId})"
             }
             Log.d(tag, "[$time] $eventStr")
         }
@@ -494,8 +497,31 @@ class WhizServerRepository @Inject constructor(
                                 val interruptedMessage = if (jsonObject.has("message")) {
                                     jsonObject.getString("message")
                                 } else "Request was interrupted"
-                                
+
                                 scope.launch { emitEvent(WebSocketEvent.Interrupted(interruptedMessage, requestId)) }
+                                messageHandled = true
+                            }
+                            // Handle delete_message notifications
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "delete_message") {
+                                val messageId = if (jsonObject.has("message_id")) {
+                                    jsonObject.getLong("message_id")
+                                } else null
+                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                    jsonObject.getLong("conversation_id")
+                                } else null
+                                val deleteRequestId = if (jsonObject.has("request_id")) {
+                                    jsonObject.getString("request_id")
+                                } else null
+                                val reason = if (jsonObject.has("reason")) {
+                                    jsonObject.getString("reason")
+                                } else null
+
+                                if (messageId != null && conversationId != null) {
+                                    Log.d(TAG, "📥 Delete message notification: messageId=$messageId, conversationId=$conversationId, requestId=$deleteRequestId, reason=$reason")
+                                    scope.launch { emitEvent(WebSocketEvent.DeleteMessage(messageId, conversationId, deleteRequestId, reason)) }
+                                } else {
+                                    Log.w(TAG, "Received delete_message without message_id or conversation_id")
+                                }
                                 messageHandled = true
                             }
                             // Handle streaming chunk messages
@@ -1115,12 +1141,21 @@ class WhizServerRepository @Inject constructor(
                 // Don't reset to false - preserve existing value
                 Log.d(TAG, "Preserving existing persistentDisconnectForTest value: $persistentDisconnectForTest")
             }
-            
+
             // Cancel any pending jobs
             connectionTimeoutJob?.cancel()
-            reconnectJob?.cancel() // Cancel any pending reconnect attempts
-            retryJob?.cancel() // Cancel any pending retry attempts
-            currentReconnectAttempts = 0 // Reset attempts
+
+            // Only cancel reconnect attempts and reset counter when NOT simulating network loss
+            // When setPersistentDisconnect=true (test simulating network down), keep reconnect attempts running
+            // This allows the retry mechanism to continue in the background (blocked at connection level by the flag)
+            if (!setPersistentDisconnect) {
+                Log.d(TAG, "Cancelling reconnect job and resetting attempts (production disconnect)")
+                reconnectJob?.cancel() // Cancel any pending reconnect attempts
+                retryJob?.cancel() // Cancel any pending retry attempts
+                currentReconnectAttempts = 0 // Reset attempts
+            } else {
+                Log.d(TAG, "Preserving reconnect job and attempts (simulating network loss)")
+            }
             
             // Don't clear retry queue on manual disconnect - messages should be retried when reconnecting
             // This allows queued messages to be sent when the connection is re-established

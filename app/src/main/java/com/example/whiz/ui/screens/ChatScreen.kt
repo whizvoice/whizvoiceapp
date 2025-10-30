@@ -313,15 +313,25 @@ fun ChatInputBar(
                     disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 ),
                 trailingIcon = { // Place the icon back inside the TextField
-                    // Button logic with seamless interrupt support and headphone-aware TTS behavior
+                    // Button logic with seamless interrupt support and TTS interrupt behavior
                     val (icon, description, action, tint) = when {
                         hasTypedText -> {
-                            // PRIORITY: Show send button for typed text (always needs manual send)
+                            // PRIORITY 1: Show send button for typed text (always needs manual send)
                             // This must come first to override listening/responding states
                             Tuple4(
                                 Icons.Filled.Send,
                                 "Send typed message",
                                 onSendClick,
+                                MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        isSpeaking -> {
+                            // PRIORITY 2: When TTS is speaking, always show Mic button to allow interrupt
+                            // This allows user to interrupt TTS and start speaking
+                            Tuple4(
+                                Icons.Filled.Mic,
+                                "Interrupt and speak",
+                                onMicClickDuringTTS,
                                 MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -331,15 +341,6 @@ fun ChatInputBar(
                                 "Stop listening",
                                 onMicClick,
                                 MaterialTheme.colorScheme.error
-                            )
-                        }
-                        shouldShowMicDuringTTS -> {
-                            // Show mic button during TTS when headphones not connected (allows manual override)
-                            Tuple4(
-                                Icons.Filled.Mic,
-                                "Start listening during response",
-                                onMicClickDuringTTS,
-                                MaterialTheme.colorScheme.onSurface
                             )
                         }
                         isResponding && shouldShowMuteButton -> {
@@ -395,9 +396,9 @@ fun ChatInputBar(
 
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled
-                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled  
+                        hasVoiceText -> true  // Send button for voice text is ALWAYS enabled
+                        isSpeaking -> true    // Mic button during TTS is ALWAYS enabled (allows interrupt)
                         isListening -> !isMicDisabled
-                        shouldShowMicDuringTTS -> !isMicDisabled // Allow mic during TTS override
                         isResponding -> !isMicDisabled
                         else -> !isMicDisabled
                     }
@@ -572,7 +573,7 @@ fun ChatScreen(
     val effectiveHasPermission = hasPermissionReactive
     
     // Compute microphone button state based on all conditions
-    val shouldShowMuteButton = isListening || isContinuousListeningEnabled || (enableTTSMode && effectiveHasPermission)
+    val shouldShowMuteButton = isListening || isContinuousListeningEnabled
     
     // Compute TTS state - should be enabled for voice launches
     val shouldEnableTTS = enableTTSMode && effectiveHasPermission
@@ -743,36 +744,40 @@ fun ChatScreen(
         }
     }
 
-    // Voice app behavior: enable microphone for all chats, plus TTS for Assistant launches
+    // Voice app behavior: enable microphone for all chats on FIRST launch only
+    // Don't override user's preference if they've manually toggled it
     LaunchedEffect(viewModelChatId, enableTTSMode, effectiveHasPermission) {
         Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
-        
-        // 🎙️ VOICE APP BEHAVIOR: Always enable microphone for ALL chats (this is a voice app!)
-        if (effectiveHasPermission) {
-            Log.d("ChatScreen", "[LOG] Permission available - enabling continuous listening (voice app default behavior)")
-            
+
+        // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
+        // For existing chats, respect the user's current continuous listening state
+        if (effectiveHasPermission && viewModelChatId < 0) {
+            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening for first time")
+
             // For voice launches with TTS mode, set up continuous listening immediately
             if (enableTTSMode) {
                 Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
                 // Enable continuous listening via VoiceManager (single source of truth)
                 voiceManager.updateContinuousListeningEnabled(true)
-                
+
                 // Ensure ChatViewModel starts listening
                 viewModel.ensureContinuousListeningEnabled()
             } else {
                 // For non-voice launches, use delay
                 kotlinx.coroutines.delay(500L) // Wait for UI to be ready
-                
+
                 // Enable continuous listening via VoiceManager (single source of truth)
                 voiceManager.updateContinuousListeningEnabled(true)
-                
+
                 // Ensure ChatViewModel starts listening
                 viewModel.ensureContinuousListeningEnabled()
             }
 
-            Log.d("ChatScreen", "[LOG] Continuous listening enabled for chat (voice app default)")
-        } else {
+            Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
+        } else if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
+        } else {
+            Log.d("ChatScreen", "[LOG] Existing chat (ID=$viewModelChatId) - preserving user's continuous listening preference (currently: $isContinuousListeningEnabled)")
         }
         
         // Note: TTS enabling is now handled by the separate LaunchedEffect above

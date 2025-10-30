@@ -605,7 +605,7 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.Interrupted -> {
                         Log.d(TAG, "Previous request was interrupted: ${event.message}")
-                        
+
                         // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
                         // When multiple requests are sent rapidly, the server cancels previous ones
                         // All user messages stay in chat but only the latest gets a response
@@ -614,7 +614,7 @@ class ChatViewModel @Inject constructor(
                         interruptedRequests.forEach { requestId ->
                             Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
                         }
-                        
+
                         // The backend has cancelled previous requests automatically
                         // Clear all pending requests since they were cancelled
                         Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
@@ -623,6 +623,33 @@ class ChatViewModel @Inject constructor(
                         // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
                         updateRespondingStateForCurrentChat()
                         Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
+                    }
+                    is WebSocketEvent.DeleteMessage -> {
+                        Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
+
+                        // Only delete if this message is for the current chat
+                        if (event.conversationId == _chatId.value) {
+                            viewModelScope.launch {
+                                try {
+                                    if (event.requestId != null) {
+                                        // Delete the assistant message by request_id
+                                        Log.d(TAG, "🗑️ Deleting assistant message with requestId=${event.requestId} from chat ${event.conversationId}")
+                                        val deletedCount = withContext(Dispatchers.IO) {
+                                            repository.deleteAssistantMessageByRequestId(event.conversationId, event.requestId)
+                                        }
+                                        Log.d(TAG, "🗑️ Deleted $deletedCount assistant message(s) for request ${event.requestId}")
+                                    } else {
+                                        // Fallback: if no request_id, trigger a refresh to sync with server
+                                        Log.w(TAG, "🗑️ No request_id in delete notification, falling back to message refresh")
+                                        repository.fetchMessagesWithDeduplication(event.conversationId)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error handling delete message event", e)
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "🗑️ Ignoring delete message for different conversation: ${event.conversationId} (current: ${_chatId.value})")
+                        }
                     }
                     is WebSocketEvent.Message -> {
                         val processingStartTime = System.currentTimeMillis()

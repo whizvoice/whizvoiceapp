@@ -548,6 +548,22 @@ class WhizRepository @Inject constructor(
     }
 
     /**
+     * Delete assistant message by request ID.
+     * Used when server notifies that a message has been cancelled/superseded.
+     */
+    suspend fun deleteAssistantMessageByRequestId(chatId: Long, requestId: String): Int {
+        return try {
+            val actualChatId = getActualChatId(chatId)
+            val deletedCount = messageDao.deleteAssistantMessageByRequestId(actualChatId, requestId)
+            Log.d(TAG, "deleteAssistantMessageByRequestId: Deleted $deletedCount message(s) for requestId $requestId in chat $actualChatId")
+            deletedCount
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting assistant message by requestId $requestId in chat $chatId: ${e.message}", e)
+            0
+        }
+    }
+
+    /**
      * Migrate messages from one chat to another (used when server assigns different conversation_id)
      * This ensures optimistic local messages appear in the correct server conversation
      */
@@ -908,8 +924,10 @@ class WhizRepository @Inject constructor(
                 
                 Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId with since=$sinceString")
                 val response = apiService.getMessagesIncremental(chatId, since = sinceString)
-                val serverMessages = response.messages.map { it.toMessageEntity() }
-                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages for chat $chatId")
+                // Filter out cancelled messages before converting to entities
+                val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
+                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${response.messages.size} messages (${nonCancelledMessages.size} non-cancelled) for chat $chatId")
                 // Debug: Log the conversation IDs of the messages
                 serverMessages.forEach { msg ->
                     Log.d(TAG, "fetchMessagesWithDeduplication: Message ${msg.id} has chatId=${msg.chatId}")
@@ -933,8 +951,9 @@ class WhizRepository @Inject constructor(
                             // We already know this chat was migrated, fetch from the server chat
                             Log.d(TAG, "fetchMessagesWithDeduplication: Found existing migration $chatId → $migratedChatId, fetching from server chat")
                             val response = apiService.getMessagesIncremental(migratedChatId, since = null)
-                            val serverMessages = response.messages.map { it.toMessageEntity() }
-                            Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages from migrated chat $migratedChatId")
+                            val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                            val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
+                            Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${response.messages.size} messages (${nonCancelledMessages.size} non-cancelled) from migrated chat $migratedChatId")
                             serverMessages
                         } else {
                             // No known migration, check if server has a chat that references this optimistic ID
@@ -956,7 +975,8 @@ class WhizRepository @Inject constructor(
                                 
                                 // Fetch messages from the server chat
                                 val response = apiService.getMessagesIncremental(serverChatWithOptimisticId.id, since = null)
-                                val serverMessages = response.messages.map { it.toMessageEntity() }
+                                val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                                val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
                                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages from server chat ${serverChatWithOptimisticId.id}")
                                 
                                 // Trigger message migration asynchronously
