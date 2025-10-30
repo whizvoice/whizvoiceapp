@@ -170,6 +170,9 @@ dependencies {
     // Text diffing library (Google's diff-match-patch)
     implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
 
+    // Markdown parsing (CommonMark)
+    implementation("org.commonmark:commonmark:0.24.0")
+
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
