@@ -669,7 +669,7 @@ class ScreenAgentTools @Inject constructor(
                 findWhatsAppMessageInput(updatedRootNode, updatedInputNodes, 0)
 
                 if (updatedInputNodes.isEmpty()) {
-                    inputNodes.forEach { it.recycle() }
+                    inputNode.recycle()
                     rootNode.recycle()
                     updatedRootNode.recycle()
                     return DraftResult(
@@ -719,7 +719,7 @@ class ScreenAgentTools @Inject constructor(
                 )
 
                 // Clean up
-                inputNodes.forEach { it.recycle() }
+                inputNode.recycle()
                 updatedInputNodes.forEach { it.recycle() }
                 rootNode.recycle()
                 updatedRootNode.recycle()
@@ -732,7 +732,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Clean up
+            // Clean up - no input field found
             inputNodes.forEach { it.recycle() }
             rootNode.recycle()
 
@@ -937,6 +937,7 @@ class ScreenAgentTools @Inject constructor(
             var success = false
             var attempts = 0
             val maxAttempts = 3
+            var searchAttempted = false
 
             while (!success && attempts < maxAttempts) {
                 attempts++
@@ -964,8 +965,52 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Click result: $success")
 
                             if (success) {
-                                // Wait a bit for the conversation to open
+                                // Wait a bit for the screen to update
                                 delay(1000)
+
+                                // Check if we're on secondary search results screen
+                                // (Google Messages shows this when there are multiple conversations)
+                                val updatedRootNode = accessibilityService.getCurrentRootNode()
+                                if (updatedRootNode != null) {
+                                    // Look for "Conversations" header indicating secondary results
+                                    val conversationsHeader = updatedRootNode.findAccessibilityNodeInfosByViewId(
+                                        "com.google.android.apps.messaging:id/zero_state_search_chat_header"
+                                    )
+
+                                    if (conversationsHeader != null && conversationsHeader.isNotEmpty()) {
+                                        Log.i(TAG, "On secondary search results screen, clicking first conversation...")
+                                        conversationsHeader.forEach { it.recycle() }
+
+                                        // Find the conversations RecyclerView
+                                        val conversationsResults = updatedRootNode.findAccessibilityNodeInfosByViewId(
+                                            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                        )
+
+                                        if (conversationsResults != null && conversationsResults.isNotEmpty()) {
+                                            // Find clickable conversation items
+                                            val swipeableContainers = conversationsResults[0].findAccessibilityNodeInfosByViewId(
+                                                "com.google.android.apps.messaging:id/swipeableContainer"
+                                            )
+
+                                            if (swipeableContainers != null && swipeableContainers.isNotEmpty()) {
+                                                val firstConversation = swipeableContainers[0]
+                                                val clicked = accessibilityService.clickNode(firstConversation)
+
+                                                swipeableContainers.forEach { it.recycle() }
+                                                conversationsResults.forEach { it.recycle() }
+
+                                                if (clicked) {
+                                                    Log.i(TAG, "Successfully clicked first conversation in secondary results")
+                                                    delay(1000) // Wait for conversation to open
+                                                }
+                                            } else {
+                                                conversationsResults.forEach { it.recycle() }
+                                            }
+                                        }
+                                    }
+
+                                    updatedRootNode.recycle()
+                                }
 
                                 // Clean up
                                 contactNodes.forEach { it.recycle() }
@@ -983,6 +1028,17 @@ class ScreenAgentTools @Inject constructor(
 
                     // Recycle nodes
                     contactNodes.forEach { it.recycle() }
+                } else if (!searchAttempted && attempts == 1) {
+                    // If we couldn't find the contact on the first attempt, try searching
+                    Log.i(TAG, "Contact not visible, attempting to search for: $contactName")
+
+                    val searchSuccess = performSMSSearch(rootNode, contactName, accessibilityService)
+                    searchAttempted = true
+
+                    if (searchSuccess) {
+                        Log.d(TAG, "Search performed, waiting for results...")
+                        delay(1500) // Wait for search results to appear
+                    }
                 }
 
                 // Recycle root node
@@ -1037,21 +1093,42 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Get screen height for later use
+            val screenHeight = context.resources.displayMetrics.heightPixels
+
             // Find the SMS message input field
-            // Common hints: "Text message", "Message", "iMessage", "Type a message"
-            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-            findEditTextNodes(rootNode, inputNodes)
+            // Try by resource ID first (Google Messages)
+            var inputNode: AccessibilityNodeInfo? = null
+            val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
+            val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
 
-            if (inputNodes.isNotEmpty()) {
-                Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
+            if (composeMessageNodes != null && composeMessageNodes.isNotEmpty()) {
+                Log.d(TAG, "Found message input field by resource ID: $composeMessageId")
+                inputNode = composeMessageNodes[0]
+                composeMessageNodes.drop(1).forEach { it.recycle() }
+            } else {
+                // Fallback: Find any EditText nodes
+                Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
+                val inputNodes = mutableListOf<AccessibilityNodeInfo>()
+                findEditTextNodes(rootNode, inputNodes)
 
-                // Pick the best candidate input field (usually near bottom of screen)
-                val screenHeight = context.resources.displayMetrics.heightPixels
-                val inputNode = inputNodes.maxByOrNull { node ->
-                    val rect = android.graphics.Rect()
-                    node.getBoundsInScreen(rect)
-                    rect.top // Prefer input fields lower on screen
-                } ?: inputNodes[0]
+                if (inputNodes.isNotEmpty()) {
+                    Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
+
+                    // Pick the best candidate input field (usually near bottom of screen)
+                    inputNode = inputNodes.maxByOrNull { node ->
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        rect.top // Prefer input fields lower on screen
+                    } ?: inputNodes[0]
+
+                    // Recycle unused nodes
+                    inputNodes.filter { it != inputNode }.forEach { it.recycle() }
+                }
+            }
+
+            if (inputNode != null) {
+                Log.d(TAG, "Using input node for drafting")
 
                 // Get the initial bounds of the input field
                 val initialRect = android.graphics.Rect()
@@ -1109,7 +1186,7 @@ class ScreenAgentTools @Inject constructor(
                 // Get the updated root node and input field after keyboard opened
                 val updatedRootNode = accessibilityService.getCurrentRootNode()
                 if (updatedRootNode == null) {
-                    inputNodes.forEach { it.recycle() }
+                    inputNode?.recycle()
                     rootNode.recycle()
                     return DraftResult(
                         success = false,
@@ -1123,7 +1200,7 @@ class ScreenAgentTools @Inject constructor(
                 findEditTextNodes(updatedRootNode, updatedInputNodes)
 
                 if (updatedInputNodes.isEmpty()) {
-                    inputNodes.forEach { it.recycle() }
+                    inputNode.recycle()
                     rootNode.recycle()
                     updatedRootNode.recycle()
                     return DraftResult(
@@ -1168,7 +1245,7 @@ class ScreenAgentTools @Inject constructor(
                 )
 
                 // Clean up
-                inputNodes.forEach { it.recycle() }
+                inputNode.recycle()
                 updatedInputNodes.forEach { it.recycle() }
                 rootNode.recycle()
                 updatedRootNode.recycle()
@@ -1181,8 +1258,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Clean up
-            inputNodes.forEach { it.recycle() }
+            // Clean up - inputNode is null
+            if (inputNode != null) {
+                inputNode.recycle()
+            }
             rootNode.recycle()
 
             return DraftResult(
@@ -1227,11 +1306,28 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Find the message input field
-            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-            findEditTextNodes(rootNode, inputNodes)
+            // Try by resource ID first (Google Messages)
+            var inputNode: AccessibilityNodeInfo? = null
+            val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
+            val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
 
-            if (inputNodes.isNotEmpty()) {
-                val inputNode = inputNodes[0]
+            if (composeMessageNodes != null && composeMessageNodes.isNotEmpty()) {
+                Log.d(TAG, "Found message input field by resource ID: $composeMessageId")
+                inputNode = composeMessageNodes[0]
+                composeMessageNodes.drop(1).forEach { it.recycle() }
+            } else {
+                // Fallback: Find any EditText nodes
+                Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
+                val inputNodes = mutableListOf<AccessibilityNodeInfo>()
+                findEditTextNodes(rootNode, inputNodes)
+
+                if (inputNodes.isNotEmpty()) {
+                    inputNode = inputNodes[0]
+                    inputNodes.drop(1).forEach { it.recycle() }
+                }
+            }
+
+            if (inputNode != null) {
 
                 // Set the text
                 val bundle = Bundle()
@@ -1281,7 +1377,7 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                     // Clean up
-                    inputNodes.forEach { it.recycle() }
+                    inputNode.recycle()
                     rootNode.recycle()
 
                     return if (sendSuccess) {
@@ -1299,8 +1395,10 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            // Clean up
-            inputNodes.forEach { it.recycle() }
+            // Clean up - inputNode is null
+            if (inputNode != null) {
+                inputNode.recycle()
+            }
             rootNode.recycle()
 
             return SMSResult(
@@ -1316,6 +1414,143 @@ class ScreenAgentTools @Inject constructor(
                 action = "send_message",
                 error = "Error sending message: ${e.message}"
             )
+        }
+    }
+
+    // ========== SMS Helper Functions ==========
+
+    private suspend fun performSMSSearch(rootNode: AccessibilityNodeInfo, searchQuery: String, accessibilityService: WhizAccessibilityService): Boolean {
+        try {
+            Log.i(TAG, "Attempting to open SMS search and search for: $searchQuery")
+
+            // Look for the search button in Google Messages
+            val searchButtonId = "com.google.android.apps.messaging:id/action_zero_state_search"
+
+            // Try to find search button by ID
+            val searchNodes = rootNode.findAccessibilityNodeInfosByViewId(searchButtonId)
+            if (searchNodes != null && searchNodes.isNotEmpty()) {
+                Log.d(TAG, "Found search button with ID: $searchButtonId")
+                val clicked = accessibilityService.clickNode(searchNodes[0])
+                searchNodes.forEach { it.recycle() }
+
+                if (clicked) {
+                    Log.d(TAG, "Clicked search button, waiting for search field...")
+                    // Wait for search field to appear
+                    delay(800)
+
+                    // Now find the search input field and enter text
+                    val searchRootNode = accessibilityService.getCurrentRootNode()
+                    if (searchRootNode != null) {
+                        val searchFieldEntered = enterSMSSearchText(searchRootNode, searchQuery)
+                        searchRootNode.recycle()
+                        return searchFieldEntered
+                    }
+                }
+            } else {
+                Log.w(TAG, "Could not find search button by ID: $searchButtonId")
+            }
+
+            // Alternative: Look for search by content description or text
+            val searchByDesc = rootNode.findAccessibilityNodeInfosByText("Search")
+            if (searchByDesc != null && searchByDesc.isNotEmpty()) {
+                for (node in searchByDesc) {
+                    val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                    if (clickableNode != null) {
+                        Log.d(TAG, "Found search button by text/description")
+                        val clicked = accessibilityService.clickNode(clickableNode)
+
+                        if (clickableNode != node) {
+                            clickableNode.recycle()
+                        }
+
+                        if (clicked) {
+                            delay(800)
+                            val searchRootNode = accessibilityService.getCurrentRootNode()
+                            if (searchRootNode != null) {
+                                val searchFieldEntered = enterSMSSearchText(searchRootNode, searchQuery)
+                                searchRootNode.recycle()
+                                searchByDesc.forEach { it.recycle() }
+                                return searchFieldEntered
+                            }
+                        }
+                    }
+                }
+                searchByDesc.forEach { it.recycle() }
+            }
+
+            Log.w(TAG, "Could not find or click search button")
+            return false
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error performing SMS search", e)
+            return false
+        }
+    }
+
+    private suspend fun enterSMSSearchText(rootNode: AccessibilityNodeInfo, searchQuery: String): Boolean {
+        try {
+            Log.d(TAG, "Looking for SMS search input field...")
+
+            // Try to find the search field by specific resource ID first
+            val searchFieldId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+            val searchFieldNodes = rootNode.findAccessibilityNodeInfosByViewId(searchFieldId)
+
+            if (searchFieldNodes != null && searchFieldNodes.isNotEmpty()) {
+                Log.d(TAG, "Found search field by resource ID: $searchFieldId")
+                val searchField = searchFieldNodes[0]
+
+                // Set the search text
+                val bundle = Bundle()
+                bundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    searchQuery
+                )
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+
+                searchFieldNodes.forEach { it.recycle() }
+
+                if (textSet) {
+                    Log.d(TAG, "Successfully entered search text: $searchQuery")
+                    return true
+                } else {
+                    Log.w(TAG, "Failed to set search text via resource ID")
+                }
+            }
+
+            // Fallback: Find any EditText nodes (search field)
+            Log.d(TAG, "Trying fallback: searching for any EditText nodes")
+            val editTextNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, editTextNodes)
+
+            if (editTextNodes.isNotEmpty()) {
+                Log.d(TAG, "Found ${editTextNodes.size} EditText nodes, using first one for search")
+                val searchField = editTextNodes[0]
+
+                // Set the search text
+                val bundle = Bundle()
+                bundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    searchQuery
+                )
+                val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+
+                editTextNodes.forEach { it.recycle() }
+
+                if (textSet) {
+                    Log.d(TAG, "Successfully entered search text: $searchQuery")
+                    return true
+                } else {
+                    Log.w(TAG, "Failed to set search text")
+                }
+            } else {
+                Log.w(TAG, "Could not find search input field")
+            }
+
+            return false
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error entering SMS search text", e)
+            return false
         }
     }
 

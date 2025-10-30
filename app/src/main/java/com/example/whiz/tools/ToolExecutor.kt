@@ -909,7 +909,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "sms_select_chat", "sms_draft_message", "sms_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
@@ -962,6 +962,45 @@ class ToolExecutor @Inject constructor(
                         put("message", JSONObject().apply {
                             put("type", "string")
                             put("description", "The message text to draft for user review")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "sms_select_chat" -> {
+                JSONObject().apply {
+                    put("name", "sms_select_chat")
+                    put("description", "Select a specific contact/conversation in Google Messages app")
+                    put("parameters", JSONObject().apply {
+                        put("contact_name", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The name or phone number of the contact to select")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "sms_draft_message" -> {
+                JSONObject().apply {
+                    put("name", "sms_draft_message")
+                    put("description", "Draft an SMS/text message in Google Messages. Shows overlay for user review. ALWAYS use this before sending to let user confirm the message text.")
+                    put("parameters", JSONObject().apply {
+                        put("message", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The SMS/text message text to draft for user review")
+                            put("required", true)
+                        })
+                    })
+                }
+            }
+            "sms_send_message" -> {
+                JSONObject().apply {
+                    put("name", "sms_send_message")
+                    put("description", "Send an SMS/text message in Google Messages. MUST have already drafted the message and received user confirmation.")
+                    put("parameters", JSONObject().apply {
+                        put("message", JSONObject().apply {
+                            put("type", "string")
+                            put("description", "The SMS/text message text to send")
                             put("required", true)
                         })
                     })

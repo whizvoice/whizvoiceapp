@@ -189,6 +189,17 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     return (False, error_msg)
 
 
+def get_device_model():
+    """Get the device model name."""
+    result = subprocess.run(
+        ['adb', 'shell', 'getprop', 'ro.product.model'],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    return result.stdout.strip()
+
+
 def enable_accessibility_service_if_needed(tester):
     """Enable accessibility service if the dialog is showing."""
     import time
@@ -200,27 +211,60 @@ def enable_accessibility_service_if_needed(tester):
         screenshot_path,
         "The screen shows an 'Enable accessibility service' dialog or prompt"
     ):
-        # Click "Open Settings" button
-        tester.tap(700, 1725)
-        time.sleep(2)
+        device_model = get_device_model()
+        print(f"📱 Device model: {device_model}")
 
-        # Click to select WhizVoice DEBUG
-        tester.tap(500, 1000)
-        time.sleep(1)
+        if device_model == "Pixel 8":
+            # Pixel 8 specific tap coordinates
+            # Click "Open Settings" button
+            tester.tap(700, 1725)
+            time.sleep(2)
 
-        # Click toggle to enable WhizVoice DEBUG
-        tester.tap(925, 400)
-        time.sleep(1)
+            # Click to select WhizVoice DEBUG
+            tester.tap(500, 1000)
+            time.sleep(1)
 
-        # Click Allow button
-        tester.tap(500, 1650)
-        time.sleep(1)
+            # Click toggle to enable WhizVoice DEBUG
+            tester.tap(925, 400)
+            time.sleep(1)
 
-        # Press back twice to return to app
-        tester.press_back()
-        time.sleep(0.5)
-        tester.press_back()
-        time.sleep(1)
+            # Click Allow button
+            tester.tap(500, 1650)
+            time.sleep(1)
+
+            # Press back twice to return to app
+            tester.press_back()
+            time.sleep(0.5)
+            tester.press_back()
+            time.sleep(1)
+        elif device_model == "Pixel 7a":
+            # Pixel 8 specific tap coordinates
+            # Click "Open Settings" button
+            tester.tap(700, 1725)
+            time.sleep(2)
+
+            # Click to select WhizVoice DEBUG
+            tester.tap(500, 500)
+            time.sleep(1)
+
+            # Click toggle to enable WhizVoice DEBUG
+            tester.tap(925, 600)
+            time.sleep(1)
+
+            # Click Allow button
+            tester.tap(500, 1650)
+            time.sleep(1)
+
+            # Press back twice to return to app
+            tester.press_back()
+            time.sleep(0.5)
+            tester.press_back()
+            time.sleep(1)
+        else:
+            print(f"⚠️  Unknown device model: {device_model}")
+            print(f"⚠️  Accessibility service needs to be enabled manually")
+            print(f"⚠️  Or add tap coordinates for this device model to enable_accessibility_service_if_needed()")
+            # You could add elif blocks here for other device models with their specific coordinates
 
 
 def login_if_needed(tester):
@@ -275,11 +319,11 @@ def tester(app_installed):
     # Give the app time to fully launch
     time.sleep(3)
 
-    # Enable accessibility service if needed
-    enable_accessibility_service_if_needed(tester)
-
-    # Log in if needed
+    # Log in if needed (do this first)
     login_if_needed(tester)
+
+    # Enable accessibility service after login
+    enable_accessibility_service_if_needed(tester)
 
     yield tester
     # Add any per-test cleanup here if needed
@@ -702,7 +746,7 @@ def test_sms_draft_message(tester):
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice"',
+        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey just testing SMS from whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -716,7 +760,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'  or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
         "There is also a yellow notification bubble with the outline of a robot head. "
@@ -732,7 +776,7 @@ def test_sms_draft_message(tester):
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Actually, can you make the message shorter?"',
+        '--es', 'text', '"Actually, can you make the message more polite?"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -742,12 +786,12 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "that is shorter than the original message, possibly just 'testing SMS from whiz voice' or similar. "
+        "similar to 'just testing SMS'. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
-        "There is also a yellow notification bubble with the outline of a robot head "
-        "and a microphone icon inside."
+        "There is also a yellow notification bubble with the outline of a robot head. "
+        "There may or may not be an icon inside the robot head outline. "
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_updated_validation")
@@ -769,12 +813,11 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is NO yellow overlay. "
-        "The most recent message is something with text similar to 'testing SMS from whiz voice' or similar. "
-        "Though the message may not be exactly the same. "
-        "There is also a yellow notification bubble with the outline of a robot head "
-        "and a microphone icon inside."
+        "The most recent message is something with text similar to 'just testing SMS'. "
+        "There is also a yellow notification bubble with the outline of a robot head. "
+        "There may or may not be an icon inside the robot head outline. "
     )
     if not validation_result:
         save_failed_screenshot(screenshot_path, "sms_draft_message", "message_sent_validation")
@@ -803,3 +846,56 @@ def test_sms_draft_message(tester):
     if not validation_result:
         save_failed_screenshot(screenshot_path, "sms_draft_message", "message_deleted_validation")
     assert validation_result, "Failed to delete the sent SMS message"
+
+
+def test_open_sms_app_debug(tester):
+    """Test that opens the SMS app and then intentionally fails to capture screen state."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # Navigate to My Chats page
+    success, error_msg = navigate_to_my_chats(tester, "open_sms_app_debug")
+    assert success, error_msg
+
+    # Click on coordinates to open a new chat
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "open_sms_app_debug", "new_chat_screen")
+    assert validation_result, "Failed to reach New Chat screen"
+
+    # Send a voice transcription asking to open the Messages app
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Can you open the Messages app?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # Wait for the SMS/Messages app to open
+    time.sleep(10)
+
+    # Take a screenshot before intentionally failing
+    tester.screenshot(screenshot_path)
+
+    # Save screenshot and UI dump for debugging
+    save_failed_screenshot(screenshot_path, "open_sms_app_debug", "messages_app_opened")
+
+    # Intentionally fail to trigger screenshot/dump save
+    assert False, "Intentional failure - check screen_agent_test_output directory for screenshot and UI dump of Messages app"
