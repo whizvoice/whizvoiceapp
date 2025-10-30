@@ -664,3 +664,142 @@ def test_google_maps_directions(tester):
     if not validation_result:
         save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
     assert validation_result, "Assistant did not mention the 1885 Mission Street address in the chat"
+
+
+def test_sms_draft_message(tester):
+    """Test that we can draft, modify draft, and send SMS messages."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # Navigate to My Chats page
+    success, error_msg = navigate_to_my_chats(tester, "sms_draft_message")
+    assert success, error_msg
+
+    # Click on coordinates to open a new chat
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Validate we are on the New Chat screen
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "The screen shows a 'New Chat' page where users can start a new conversation"
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "new_chat_screen")
+    assert validation_result, "Failed to reach New Chat screen"
+
+    # Send a voice transcription with the test message to send an SMS
+    # Note: The app is in continuous listening mode by default (voice app behavior),
+    # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(3)  # Give time for message to be processed
+
+    # wait for draft overlay to appear over SMS input text bar
+    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
+    assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+
+    # Validate Messages app is open with the draft message
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+        "similar to 'hey testing SMS from whiz voice'. "
+        "There is also a yellow notification bubble with the outline of a robot head. "
+        "There may or may not be an icon inside the robot head outline. "
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_message_validation")
+    assert validation_result, "Failed to draft SMS message correctly"
+
+    # Send a voice transcription to modify the message
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"Actually, can you make the message shorter?"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(10)
+
+    # Validate that the draft was updated
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+        "that is shorter than the original message, possibly just 'testing SMS from whiz voice' or similar. "
+        "The Yellow overlay should have some text in red strike out and some text in blue. "
+        "There is also a yellow notification bubble with the outline of a robot head "
+        "and a microphone icon inside."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_updated_validation")
+    assert validation_result, "Failed to update SMS draft message correctly"
+
+    # Send a voice transcription to send the message
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', '"That looks good, go ahead and send the text."',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+    time.sleep(15)
+
+    # Validate that the message was sent
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "At the bottom of the screen, there is NO yellow overlay. "
+        "The most recent message is something with text similar to 'testing SMS from whiz voice' or similar. "
+        "Though the message may not be exactly the same. "
+        "There is also a yellow notification bubble with the outline of a robot head "
+        "and a microphone icon inside."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "message_sent_validation")
+    assert validation_result, "Failed to send SMS message correctly"
+
+    # Cleanup: Delete the sent message
+    # Long press on the newly sent message
+    tester.long_press(500, 1280)
+    time.sleep(2)
+
+    # Click delete button (may vary by SMS app)
+    tester.tap(800, 200)
+    time.sleep(2)
+
+    # Click confirm delete
+    tester.tap(750, 1290)
+    time.sleep(2)
+
+    # Validate that the message was deleted
+    tester.screenshot(screenshot_path)
+    validation_result = tester.validate_screenshot(
+        screenshot_path,
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "The most recent message in the chat has been deleted."
+    )
+    if not validation_result:
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "message_deleted_validation")
+    assert validation_result, "Failed to delete the sent SMS message"

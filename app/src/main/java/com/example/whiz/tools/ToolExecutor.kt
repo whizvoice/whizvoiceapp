@@ -1,6 +1,9 @@
 package com.example.whiz.tools
 
+import android.content.Context
+import android.provider.Telephony
 import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,8 +31,10 @@ sealed class ToolExecutionResult {
 
 @Singleton
 class ToolExecutor @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val screenAgentTools: ScreenAgentTools,
-    private val userPreferences: com.example.whiz.data.preferences.UserPreferences
+    private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
+    private val authRepository: com.example.whiz.data.auth.AuthRepository
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -71,6 +76,15 @@ class ToolExecutor @Inject constructor(
                     }
                     "whatsapp_draft_message" -> {
                         executeWhatsAppDraftMessage(requestId, params)
+                    }
+                    "sms_select_chat" -> {
+                        executeSMSSelectChat(requestId, params)
+                    }
+                    "sms_draft_message" -> {
+                        executeSMSDraftMessage(requestId, params)
+                    }
+                    "sms_send_message" -> {
+                        executeSMSSendMessage(requestId, params)
                     }
                     "disable_continuous_listening" -> {
                         executeDisableContinuousListening(requestId, voiceManager)
@@ -186,7 +200,32 @@ class ToolExecutor @Inject constructor(
                     put("description", "Send the drafted message (must draft first)")
                 }
             )
-            else -> emptyList()
+            else -> {
+                // Check if this is the default SMS app
+                val defaultSmsPackage = Telephony.Sms.getDefaultSmsPackage(context)
+                if (packageName == defaultSmsPackage) {
+                    Log.i(TAG, "Detected SMS app: $packageName (default SMS app)")
+                    // Save the SMS app package for future reference
+                    authRepository.saveDefaultSmsAppPackage(packageName)
+
+                    listOf(
+                        JSONObject().apply {
+                            put("name", "sms_select_chat")
+                            put("description", "Select a specific SMS conversation by contact name")
+                        },
+                        JSONObject().apply {
+                            put("name", "sms_draft_message")
+                            put("description", "Draft an SMS message for user review before sending")
+                        },
+                        JSONObject().apply {
+                            put("name", "sms_send_message")
+                            put("description", "Send the drafted SMS message (must draft first)")
+                        }
+                    )
+                } else {
+                    emptyList()
+                }
+            }
         }
     }
 
@@ -347,6 +386,119 @@ class ToolExecutor @Inject constructor(
                     toolName = "whatsapp_send_message",
                     requestId = requestId,
                     error = "Failed to send WhatsApp message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    // ========== SMS Tool Execution Methods ==========
+
+    private suspend fun executeSMSSelectChat(requestId: String, params: JSONObject) {
+        try {
+            val contactName = params.getString("contact_name")
+            Log.i(TAG, "Selecting SMS chat: $contactName")
+
+            val result = screenAgentTools.selectSMSChat(contactName)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.contactName?.let { put("contact_name", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] SMS select chat result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "sms_select_chat",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing SMS select chat", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "sms_select_chat",
+                    requestId = requestId,
+                    error = "Failed to select SMS chat: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSMSDraftMessage(requestId: String, params: JSONObject) {
+        Log.i(TAG, "executeSMSDraftMessage called with requestId: $requestId")
+        Log.i(TAG, "Params received: ${params.toString(2)}")
+        try {
+            val message = params.getString("message")
+            val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+
+            Log.i(TAG, "Drafting SMS message: message='$message', previousText='$previousText'")
+
+            val result = screenAgentTools.draftSMSMessage(message, previousText)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.message?.let { put("message", it) }
+                result.error?.let { put("error", it) }
+                put("overlay_shown", result.overlayShown)
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "sms_draft_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing SMS draft message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "sms_draft_message",
+                    requestId = requestId,
+                    error = "Failed to draft SMS message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSMSSendMessage(requestId: String, params: JSONObject) {
+        try {
+            val message = params.getString("message")
+            Log.d(TAG, "Sending SMS message: $message")
+
+            val result = screenAgentTools.sendSMSMessage(message)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] SMS send message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "sms_send_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing SMS send message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "sms_send_message",
+                    requestId = requestId,
+                    error = "Failed to send SMS message: ${e.message}"
                 )
             )
         }

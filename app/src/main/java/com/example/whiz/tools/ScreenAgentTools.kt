@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.provider.Telephony
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.accessibility.WhizAccessibilityService
@@ -43,7 +44,14 @@ class ScreenAgentTools @Inject constructor(
         val chatName: String? = null,
         val error: String? = null
     )
-    
+
+    data class SMSResult(
+        val success: Boolean,
+        val action: String,
+        val contactName: String? = null,
+        val error: String? = null
+    )
+
     data class DraftResult(
         val success: Boolean,
         val message: String? = null,
@@ -856,7 +864,461 @@ class ScreenAgentTools @Inject constructor(
             )
         }
     }
-    
+
+    // ========== SMS Specific Functions ==========
+
+    suspend fun selectSMSChat(contactName: String): SMSResult {
+        Log.i(TAG, "Attempting to select SMS chat: $contactName")
+
+        try {
+            // Note: This assumes the SMS app is already open.
+            // The server should use launch_app tool first if needed.
+
+            // Get accessibility service instance
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                Log.e(TAG, "Accessibility service not available")
+                return SMSResult(
+                    success = false,
+                    action = "select_chat",
+                    contactName = contactName,
+                    error = "Accessibility service not enabled. Please enable it in settings."
+                )
+            }
+
+            // Navigate to conversation list by pressing back repeatedly
+            // Try up to 6 times to reach the list
+            var onConversationList = false
+            val maxBackAttempts = 6
+
+            for (backAttempt in 1..maxBackAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    // Check if we're on the conversation list by looking for common indicators
+                    // Most SMS apps have a search button or "New message" button on the main list
+                    val searchButton = rootNode.findAccessibilityNodeInfosByText("Search")
+                    val newMessageButton = rootNode.findAccessibilityNodeInfosByText("Start chat")
+                    val hasListIndicators = (searchButton != null && searchButton.isNotEmpty()) ||
+                                           (newMessageButton != null && newMessageButton.isNotEmpty())
+
+                    searchButton?.forEach { it.recycle() }
+                    newMessageButton?.forEach { it.recycle() }
+
+                    if (hasListIndicators) {
+                        Log.i(TAG, "Reached conversation list after $backAttempt back button(s)")
+                        onConversationList = true
+                        rootNode.recycle()
+                        break
+                    }
+
+                    rootNode.recycle()
+
+                    // Not on conversation list yet, press back
+                    Log.i(TAG, "Not on conversation list, pressing back button")
+                    accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                    delay(500) // Wait for navigation to complete
+                } else {
+                    Log.w(TAG, "Could not get root node on back attempt $backAttempt")
+                    delay(500)
+                }
+            }
+
+            if (!onConversationList) {
+                Log.e(TAG, "Failed to navigate to conversation list after $maxBackAttempts back button presses")
+                return SMSResult(
+                    success = false,
+                    action = "select_chat",
+                    contactName = contactName,
+                    error = "Could not navigate to SMS conversation list. Please ensure the SMS app is open."
+                )
+            }
+
+            // Try to find and click on the conversation
+            var success = false
+            var attempts = 0
+            val maxAttempts = 3
+
+            while (!success && attempts < maxAttempts) {
+                attempts++
+                Log.i(TAG, "Attempt $attempts to find conversation: $contactName")
+
+                // Get the root node
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode == null) {
+                    Log.w(TAG, "Could not get root node")
+                    delay(200)
+                    continue
+                }
+
+                // Try to find the conversation by contact name
+                val contactNodes = rootNode.findAccessibilityNodeInfosByText(contactName)
+                if (contactNodes != null && contactNodes.isNotEmpty()) {
+                    Log.i(TAG, "Found ${contactNodes.size} nodes matching contact name")
+
+                    // Try to click on each matching node until one succeeds
+                    for (contactNode in contactNodes) {
+                        val clickableNode = findClickableParent(contactNode)
+                        if (clickableNode != null) {
+                            Log.d(TAG, "Found clickable parent, attempting click...")
+                            success = accessibilityService.clickNode(clickableNode)
+                            Log.d(TAG, "Click result: $success")
+
+                            if (success) {
+                                // Wait a bit for the conversation to open
+                                delay(1000)
+
+                                // Clean up
+                                contactNodes.forEach { it.recycle() }
+                                rootNode.recycle()
+
+                                return SMSResult(
+                                    success = true,
+                                    action = "select_chat",
+                                    contactName = contactName
+                                )
+                            }
+                            clickableNode.recycle()
+                        }
+                    }
+
+                    // Recycle nodes
+                    contactNodes.forEach { it.recycle() }
+                }
+
+                // Recycle root node
+                rootNode.recycle()
+
+                // Wait before retrying
+                delay(500)
+            }
+
+            Log.e(TAG, "Could not find or click on conversation: $contactName after $attempts attempts")
+
+            return SMSResult(
+                success = false,
+                action = "select_chat",
+                contactName = contactName,
+                error = "Could not find contact or conversation named '$contactName' in SMS app. Please verify the contact name."
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error selecting SMS chat", e)
+            return SMSResult(
+                success = false,
+                action = "select_chat",
+                contactName = contactName,
+                error = "Error selecting chat: ${e.message}"
+            )
+        }
+    }
+
+    suspend fun draftSMSMessage(message: String, previousText: String? = null): DraftResult {
+        Log.d(TAG, "Attempting to draft SMS message: $message, previousText: $previousText")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            // Wait a bit to ensure we're in a conversation
+            delay(800)
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Could not get root node"
+                )
+            }
+
+            // Find the SMS message input field
+            // Common hints: "Text message", "Message", "iMessage", "Type a message"
+            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, inputNodes)
+
+            if (inputNodes.isNotEmpty()) {
+                Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
+
+                // Pick the best candidate input field (usually near bottom of screen)
+                val screenHeight = context.resources.displayMetrics.heightPixels
+                val inputNode = inputNodes.maxByOrNull { node ->
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    rect.top // Prefer input fields lower on screen
+                } ?: inputNodes[0]
+
+                // Get the initial bounds of the input field
+                val initialRect = android.graphics.Rect()
+                inputNode.getBoundsInScreen(initialRect)
+
+                Log.d(TAG, "Initial input field bounds before keyboard: $initialRect (top=${initialRect.top}, bottom=${initialRect.bottom})")
+                Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
+
+                // Click on the input field to focus it and open the keyboard
+                val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
+                                   inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+                if (clickSuccess) {
+                    Log.d(TAG, "Clicked/focused input field to open keyboard")
+
+                    // Wait for the keyboard to open and input field to move up
+                    val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
+                        val currentRootNode = accessibilityService.getCurrentRootNode()
+                        if (currentRootNode != null) {
+                            val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                            findEditTextNodes(currentRootNode, currentInputNodes)
+
+                            if (currentInputNodes.isNotEmpty()) {
+                                val currentRect = android.graphics.Rect()
+                                currentInputNodes[0].getBoundsInScreen(currentRect)
+
+                                // Check if input field has moved up significantly (at least 300px)
+                                val movedUp = initialRect.top - currentRect.top > 300
+
+                                currentInputNodes.forEach { it.recycle() }
+                                currentRootNode.recycle()
+
+                                movedUp
+                            } else {
+                                currentRootNode.recycle()
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+
+                    if (keyboardOpened) {
+                        Log.d(TAG, "Keyboard opened successfully, input field moved up")
+                    } else {
+                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                    }
+                } else {
+                    Log.w(TAG, "Could not click/focus input field to open keyboard")
+                }
+
+                // Wait a bit more for keyboard animation to complete
+                delay(300)
+
+                // Get the updated root node and input field after keyboard opened
+                val updatedRootNode = accessibilityService.getCurrentRootNode()
+                if (updatedRootNode == null) {
+                    inputNodes.forEach { it.recycle() }
+                    rootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not get root node after keyboard opened"
+                    )
+                }
+
+                // Find the input field again to get its new position
+                val updatedInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                findEditTextNodes(updatedRootNode, updatedInputNodes)
+
+                if (updatedInputNodes.isEmpty()) {
+                    inputNodes.forEach { it.recycle() }
+                    rootNode.recycle()
+                    updatedRootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not find input field after keyboard opened"
+                    )
+                }
+
+                val finalInputNode = updatedInputNodes.maxByOrNull { node ->
+                    val rect = android.graphics.Rect()
+                    node.getBoundsInScreen(rect)
+                    rect.top
+                } ?: updatedInputNodes[0]
+
+                // Get the final bounds of the input field (after keyboard is open)
+                val rect = android.graphics.Rect()
+                finalInputNode.getBoundsInScreen(rect)
+
+                // Get the app window bounds
+                val appBounds = android.graphics.Rect()
+                updatedRootNode.getBoundsInScreen(appBounds)
+
+                Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
+                Log.d(TAG, "SMS app window bounds: $appBounds (width=${appBounds.width()})")
+                Log.d(TAG, "Input field is at ${(rect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
+
+                // Create bounds for overlay that uses app width but input field's vertical position
+                val overlayBounds = android.graphics.Rect(
+                    appBounds.left,  // Use app's left edge
+                    rect.top,        // Use input field's vertical position
+                    appBounds.right, // Use app's right edge
+                    rect.bottom      // Use input field's bottom
+                )
+
+                // Start the draft overlay service with the bounds, message, and previousText
+                val overlayStarted = MessageDraftOverlayService.show(
+                    context,
+                    overlayBounds,
+                    message,
+                    previousText
+                )
+
+                // Clean up
+                inputNodes.forEach { it.recycle() }
+                updatedInputNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                updatedRootNode.recycle()
+
+                return DraftResult(
+                    success = overlayStarted,
+                    message = message,
+                    overlayShown = overlayStarted,
+                    error = if (!overlayStarted) "Failed to show draft overlay" else null
+                )
+            }
+
+            // Clean up
+            inputNodes.forEach { it.recycle() }
+            rootNode.recycle()
+
+            return DraftResult(
+                success = false,
+                message = message,
+                error = "Could not find message input field"
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error drafting SMS message", e)
+            return DraftResult(
+                success = false,
+                message = message,
+                error = "Error drafting message: ${e.message}"
+            )
+        }
+    }
+
+    suspend fun sendSMSMessage(message: String): SMSResult {
+        Log.d(TAG, "Attempting to send SMS message: $message")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                return SMSResult(
+                    success = false,
+                    action = "send_message",
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            // Wait a bit to ensure UI is ready
+            delay(500)
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return SMSResult(
+                    success = false,
+                    action = "send_message",
+                    error = "Could not get root node"
+                )
+            }
+
+            // Find the message input field
+            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
+            findEditTextNodes(rootNode, inputNodes)
+
+            if (inputNodes.isNotEmpty()) {
+                val inputNode = inputNodes[0]
+
+                // Set the text
+                val bundle = Bundle()
+                bundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    message
+                )
+                val textSet = inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+
+                if (textSet) {
+                    Log.d(TAG, "Message text set successfully")
+
+                    // Wait for text to be set and send button to become active
+                    delay(500)
+
+                    // Try to find the send button
+                    // Common identifiers: "Send", button with contentDescription "Send"
+                    val currentRoot = accessibilityService.getCurrentRootNode()
+                    var sendSuccess = false
+
+                    if (currentRoot != null) {
+                        // Try multiple ways to find the send button
+                        val sendButtons = mutableListOf<AccessibilityNodeInfo>()
+
+                        // Method 1: Find by text "Send"
+                        val sendTextNodes = currentRoot.findAccessibilityNodeInfosByText("Send")
+                        if (sendTextNodes != null && sendTextNodes.isNotEmpty()) {
+                            sendButtons.addAll(sendTextNodes)
+                        }
+
+                        // Method 2: Find buttons with send-related content description
+                        findNodesByContentDescription(currentRoot, "send", sendButtons)
+
+                        // Try clicking the send button
+                        for (sendButton in sendButtons) {
+                            if (sendButton.isClickable) {
+                                sendSuccess = accessibilityService.clickNode(sendButton)
+                                if (sendSuccess) {
+                                    Log.d(TAG, "Successfully clicked send button")
+                                    break
+                                }
+                            }
+                        }
+
+                        sendButtons.forEach { it.recycle() }
+                        currentRoot.recycle()
+                    }
+
+                    // Clean up
+                    inputNodes.forEach { it.recycle() }
+                    rootNode.recycle()
+
+                    return if (sendSuccess) {
+                        SMSResult(
+                            success = true,
+                            action = "send_message"
+                        )
+                    } else {
+                        SMSResult(
+                            success = false,
+                            action = "send_message",
+                            error = "Could not find or click send button"
+                        )
+                    }
+                }
+            }
+
+            // Clean up
+            inputNodes.forEach { it.recycle() }
+            rootNode.recycle()
+
+            return SMSResult(
+                success = false,
+                action = "send_message",
+                error = "Could not find message input field"
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending SMS message", e)
+            return SMSResult(
+                success = false,
+                action = "send_message",
+                error = "Error sending message: ${e.message}"
+            )
+        }
+    }
+
     // ========== YouTube Music Specific Functions ==========
 
     suspend fun playYouTubeMusicSong(query: String): MusicActionResult {
