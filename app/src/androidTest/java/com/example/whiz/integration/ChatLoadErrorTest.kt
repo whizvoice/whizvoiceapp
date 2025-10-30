@@ -163,7 +163,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         
         // Verify no input field is shown
         try {
-            composeTestRule.onNodeWithTag("chat_input_field").assertDoesNotExist()
+            composeTestRule.onNodeWithContentDescription("Message input field").assertDoesNotExist()
         } catch (e: Exception) {
             failWithScreenshot("Input field should not be visible during error state", "error_has_input_field")
         }
@@ -187,7 +187,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
         
         // Verify we have the input field in the new chat
         val hasInputField = try {
-            composeTestRule.onNodeWithTag("chat_input_field").assertExists()
+            composeTestRule.onNodeWithContentDescription("Message input field").assertExists()
             true
         } catch (e: Exception) {
             false
@@ -346,7 +346,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
             
             // Verify no input field is shown
             try {
-                composeTestRule.onNodeWithTag("chat_input_field").assertDoesNotExist()
+                composeTestRule.onNodeWithContentDescription("Message input field").assertDoesNotExist()
             } catch (e: Exception) {
                 failWithScreenshot("Input field should not be visible during connection error", "connection_error_has_input")
             }

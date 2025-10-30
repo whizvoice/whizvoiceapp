@@ -352,34 +352,21 @@ fun TokenInputSection(
 
     var previousIsBusy by remember { mutableStateOf(isBusy) } // Track previous busy state
 
-    // State for optimistic updates
-    var optimisticSaveAttempted by remember { mutableStateOf(false) }
-    var saveSucceeded by remember { mutableStateOf(false) }
-    
     // Reset local operation trackers when isBusy becomes false
-    // Also, handle UI changes post-operation
     LaunchedEffect(isBusy, previousIsBusy, saveOperationInitiated, clearOperationInitiated, inputValue, hasToken) {
         Log.d("TokenInputSection", "[$title] LaunchedEffect(isBusy Triggered). isBusy: $isBusy, previousIsBusy: $previousIsBusy, saveOpInit: $saveOperationInitiated, clearOpInit: $clearOperationInitiated, hasToken: $hasToken")
         if (previousIsBusy && !isBusy) { // Operation just finished
             if (saveOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Save operation finished. inputValue: '$inputValue'")
-                // Check if the save actually succeeded by looking at hasToken
-                saveSucceeded = (inputValue.isNotBlank() && hasToken == true)
-                if (!saveSucceeded && optimisticSaveAttempted) {
-                    // Save failed, revert the optimistic UI update
-                    Log.d("TokenInputSection", "[$title] Save failed, reverting optimistic update. Setting editMode = true.")
-                    editMode = true
+                // Exit edit mode if save succeeded (token is set)
+                if (hasToken == true && inputValue.isNotBlank()) {
+                    Log.d("TokenInputSection", "[$title] Save succeeded, exiting edit mode")
+                    editMode = false
                 }
                 saveOperationInitiated = false
-                optimisticSaveAttempted = false
             }
             if (clearOperationInitiated) {
                 Log.d("TokenInputSection", "[$title] Clear operation finished.")
-                // If a clear operation results in hasToken being false, editMode will be set by rememberSaveable.
-                // If hasToken is still true (e.g. clear failed), editMode remains as is (likely true if user clicked 'Clear' from 'Token is set' view's editMode).
-                // However, 'Clear' button is only available when !editMode and hasToken == true.
-                // Clicking 'Clear' sets clearOperationInitiated=true, calls onClearClick (which saves blank token).
-                // Then hasToken should become false, and rememberSaveable(hasToken) will set editMode=true.
                 clearOperationInitiated = false
             }
         }
@@ -441,7 +428,11 @@ fun TokenInputSection(
                             else -> "Clear $title"
                         }
                         ClearButton(
-                            onClick = { clearOperationInitiated = true; onClearClick() },
+                            onClick = {
+                                saveOperationInitiated = false // Cancel any pending save
+                                clearOperationInitiated = true
+                                onClearClick()
+                            },
                             isLoading = isBusy && clearOperationInitiated,
                             enabled = clearEnabled,
                             modifier = Modifier.semantics { contentDescription = clearButtonDescription }
@@ -479,15 +470,9 @@ fun TokenInputSection(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 SaveButton(
                                     text = "Save $title",
-                                    onClick = { 
+                                    onClick = {
                                         saveOperationInitiated = true
-                                        optimisticSaveAttempted = true
-                                        // Optimistic update: exit edit mode immediately
-                                        if (inputValue.isNotBlank()) {
-                                            Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
-                                            editMode = false
-                                        }
-                                        onSaveClick() 
+                                        onSaveClick()
                                     },
                                     isLoading = isBusy && saveOperationInitiated,
                                     enabled = !isBusy && inputValue.isNotBlank(),
@@ -523,15 +508,9 @@ fun TokenInputSection(
                         Spacer(modifier = Modifier.height(8.dp))
                         SaveButton(
                             text = "Save $title",
-                            onClick = { 
+                            onClick = {
                                 saveOperationInitiated = true
-                                optimisticSaveAttempted = true
-                                // Optimistic update: exit edit mode immediately
-                                if (inputValue.isNotBlank()) {
-                                    Log.d("TokenInputSection", "[$title] Optimistically exiting edit mode")
-                                    editMode = false
-                                }
-                                onSaveClick() 
+                                onSaveClick()
                             },
                             isLoading = isBusy && saveOperationInitiated,
                             enabled = !isBusy && inputValue.isNotBlank(),

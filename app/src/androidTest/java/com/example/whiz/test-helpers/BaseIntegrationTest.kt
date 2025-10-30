@@ -451,18 +451,20 @@ abstract class BaseIntegrationTest {
             newChatButton.click()
             android.util.Log.d("BaseIntegrationTest", "✅ Click performed")
             
-            // Wait for navigation to chat screen with longer timeout
+            // Wait for navigation to chat screen
             android.util.Log.d("BaseIntegrationTest", "⏳ Waiting for navigation to chat screen...")
             device.findObject(UiSelector().packageName(packageName)).waitForExists(10) // Force UI sync
+
+            // Use content description which is explicitly set in production code
             val chatScreenLoaded = device.wait(Until.hasObject(
-                By.clazz("android.widget.EditText").pkg(packageName)
-            ), 2000)
-            
+                By.desc("Message input field").pkg(packageName)
+            ), 5000)
+
             if (chatScreenLoaded) {
                 android.util.Log.d("BaseIntegrationTest", "✅ Successfully navigated to chat screen")
                 return true
             } else {
-                android.util.Log.e("BaseIntegrationTest", "❌ Navigation to chat screen failed - EditText not found after 8 seconds")
+                android.util.Log.e("BaseIntegrationTest", "❌ Navigation to chat screen failed - Message input field not found after 5s")
                 return false
             }
             
