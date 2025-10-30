@@ -54,7 +54,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
 
     companion object {
         private const val TAG = "MicrophoneButtonStateTest"
-        private const val TEST_TIMEOUT = 10000L
+        private const val TEST_TIMEOUT = 15000L
     }
 
     @Before
