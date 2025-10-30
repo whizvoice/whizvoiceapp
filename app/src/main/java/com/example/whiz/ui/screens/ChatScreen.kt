@@ -282,9 +282,8 @@ fun ChatInputBar(
                 },
                 modifier = Modifier
                     .fillMaxWidth() // TextField fills the Box
-                    .semantics { 
+                    .semantics {
                         contentDescription = "Message input field"
-                        testTag = "chat_input_field"
                         // 🔧 PRODUCTION BUG FIX: Ensure proper accessibility exposure for UI testing
                         role = Role.Button
                         focused = true
