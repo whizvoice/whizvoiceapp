@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.whiz.data.local.DateFormatter
 import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.data.local.MessageType
+import com.example.whiz.ui.components.MarkdownText
 import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
 
@@ -1142,10 +1143,11 @@ fun MessageItem(
                 }
                 CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
                     SelectionContainer {
-                        Text(
-                            text = message.content,
+                        MarkdownText(
+                            markdown = message.content,
                             style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.semantics { 
+                            color = textColor,
+                            modifier = Modifier.semantics {
                                 contentDescription = if (message.type == MessageType.USER) {
                                     "User message: ${message.content}"
                                 } else {

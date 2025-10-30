@@ -71,7 +71,7 @@ class BubbleOverlayService : Service() {
     
     companion object {
         private const val TAG = "BubbleOverlayService"
-        private const val CLICK_THRESHOLD = 10
+        private const val CLICK_THRESHOLD = 30
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
