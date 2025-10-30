@@ -1141,12 +1141,21 @@ class WhizServerRepository @Inject constructor(
                 // Don't reset to false - preserve existing value
                 Log.d(TAG, "Preserving existing persistentDisconnectForTest value: $persistentDisconnectForTest")
             }
-            
+
             // Cancel any pending jobs
             connectionTimeoutJob?.cancel()
-            reconnectJob?.cancel() // Cancel any pending reconnect attempts
-            retryJob?.cancel() // Cancel any pending retry attempts
-            currentReconnectAttempts = 0 // Reset attempts
+
+            // Only cancel reconnect attempts and reset counter when NOT simulating network loss
+            // When setPersistentDisconnect=true (test simulating network down), keep reconnect attempts running
+            // This allows the retry mechanism to continue in the background (blocked at connection level by the flag)
+            if (!setPersistentDisconnect) {
+                Log.d(TAG, "Cancelling reconnect job and resetting attempts (production disconnect)")
+                reconnectJob?.cancel() // Cancel any pending reconnect attempts
+                retryJob?.cancel() // Cancel any pending retry attempts
+                currentReconnectAttempts = 0 // Reset attempts
+            } else {
+                Log.d(TAG, "Preserving reconnect job and attempts (simulating network loss)")
+            }
             
             // Don't clear retry queue on manual disconnect - messages should be retried when reconnecting
             // This allows queued messages to be sent when the connection is re-established
