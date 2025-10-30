@@ -48,7 +48,6 @@ import kotlinx.coroutines.launch
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
-import dev.jeziellago.compose.markdowntext.MarkdownText
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import com.example.whiz.permissions.MicrophonePermissionHandler
@@ -1143,10 +1142,10 @@ fun MessageItem(
                 }
                 CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
                     SelectionContainer {
-                        MarkdownText(
-                            markdown = message.content,
-                            style = MaterialTheme.typography.bodyLarge.copy(color = textColor),
-                            modifier = Modifier.semantics {
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.semantics { 
                                 contentDescription = if (message.type == MessageType.USER) {
                                     "User message: ${message.content}"
                                 } else {
