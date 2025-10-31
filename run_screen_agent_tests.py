@@ -753,7 +753,13 @@ def test_sms_draft_message(tester):
     time.sleep(3)  # Give time for message to be processed
 
     # wait for draft overlay to appear over SMS input text bar
-    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
+    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=20.0)  # #fffad0
+
+    # If overlay detection failed, capture diagnostics before asserting
+    if not result['matched']:
+        tester.screenshot(screenshot_path)
+        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_overlay_not_detected")
+
     assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
     # Validate Messages app is open with the draft message

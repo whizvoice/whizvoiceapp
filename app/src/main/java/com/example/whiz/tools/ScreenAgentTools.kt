@@ -1012,15 +1012,39 @@ class ScreenAgentTools @Inject constructor(
                                     updatedRootNode.recycle()
                                 }
 
-                                // Clean up
-                                contactNodes.forEach { it.recycle() }
-                                rootNode.recycle()
+                                // Validate we actually opened a conversation (not still in search)
+                                delay(800) // Wait for conversation to load
+                                val validationRootNode = accessibilityService.getCurrentRootNode()
+                                if (validationRootNode != null) {
+                                    // Check if we're still in search screen
+                                    val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                                    val stillInSearch = validationRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
 
-                                return SMSResult(
-                                    success = true,
-                                    action = "select_chat",
-                                    contactName = contactName
-                                )
+                                    if (stillInSearch != null && stillInSearch.isNotEmpty()) {
+                                        Log.w(TAG, "Click succeeded but still in search screen - conversation not opened")
+                                        stillInSearch.forEach { it.recycle() }
+                                        validationRootNode.recycle()
+                                        // Mark as not successful so outer loop retries
+                                        success = false
+                                    } else {
+                                        // Successfully opened conversation
+                                        Log.i(TAG, "Successfully opened conversation with $contactName")
+                                        validationRootNode.recycle()
+
+                                        // Clean up
+                                        contactNodes.forEach { it.recycle() }
+                                        rootNode.recycle()
+
+                                        return SMSResult(
+                                            success = true,
+                                            action = "select_chat",
+                                            contactName = contactName
+                                        )
+                                    }
+                                } else {
+                                    Log.w(TAG, "Could not validate conversation opened")
+                                    success = false
+                                }
                             }
                             clickableNode.recycle()
                         }
@@ -1096,6 +1120,20 @@ class ScreenAgentTools @Inject constructor(
             // Get screen height for later use
             val screenHeight = context.resources.displayMetrics.heightPixels
 
+            // IMPORTANT: Check if we're still in the search screen
+            val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+            val searchBoxNodes = rootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
+            if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
+                Log.e(TAG, "Still in search screen - not in a conversation!")
+                searchBoxNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Cannot draft message: still in search screen. Please select a contact first to open a conversation."
+                )
+            }
+
             // Find the SMS message input field
             // Try by resource ID first (Google Messages)
             var inputNode: AccessibilityNodeInfo? = null
@@ -1107,23 +1145,34 @@ class ScreenAgentTools @Inject constructor(
                 inputNode = composeMessageNodes[0]
                 composeMessageNodes.drop(1).forEach { it.recycle() }
             } else {
-                // Fallback: Find any EditText nodes
+                // Fallback: Find any EditText nodes, but exclude search boxes
                 Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
                 val inputNodes = mutableListOf<AccessibilityNodeInfo>()
                 findEditTextNodes(rootNode, inputNodes)
 
-                if (inputNodes.isNotEmpty()) {
-                    Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
+                // Filter out search box nodes
+                val filteredNodes = inputNodes.filter { node ->
+                    val viewId = node.viewIdResourceName
+                    viewId != searchBoxId && !viewId.contains("search")
+                }
+
+                // Recycle nodes that were filtered out
+                inputNodes.filter { it !in filteredNodes }.forEach { it.recycle() }
+
+                if (filteredNodes.isNotEmpty()) {
+                    Log.d(TAG, "Found ${filteredNodes.size} potential input field(s) after filtering")
 
                     // Pick the best candidate input field (usually near bottom of screen)
-                    inputNode = inputNodes.maxByOrNull { node ->
+                    inputNode = filteredNodes.maxByOrNull { node ->
                         val rect = android.graphics.Rect()
                         node.getBoundsInScreen(rect)
                         rect.top // Prefer input fields lower on screen
-                    } ?: inputNodes[0]
+                    } ?: filteredNodes[0]
 
                     // Recycle unused nodes
-                    inputNodes.filter { it != inputNode }.forEach { it.recycle() }
+                    filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
+                } else {
+                    Log.d(TAG, "No valid input fields found after filtering")
                 }
             }
 
@@ -1499,6 +1548,15 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Found search field by resource ID: $searchFieldId")
                 val searchField = searchFieldNodes[0]
 
+                // Log the EditText's configuration to understand its IME setup
+                val inputType = searchField.inputType
+                Log.d(TAG, "Search field inputType: $inputType (${Integer.toHexString(inputType)})")
+                Log.d(TAG, "Search field className: ${searchField.className}")
+                Log.d(TAG, "Search field hintText: ${searchField.hintText}")
+
+                // Note: AccessibilityNodeInfo doesn't directly expose imeOptions,
+                // but we can infer from the keyboard behavior
+
                 // Set the search text
                 val bundle = Bundle()
                 bundle.putCharSequence(
@@ -1507,13 +1565,82 @@ class ScreenAgentTools @Inject constructor(
                 )
                 val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
 
-                searchFieldNodes.forEach { it.recycle() }
-
                 if (textSet) {
                     Log.d(TAG, "Successfully entered search text: $searchQuery")
+                    searchFieldNodes.forEach { it.recycle() }
+
+                    // Trigger search - try different keycodes to see which works
+                    Log.d(TAG, "Trying to trigger search submission...")
+                    delay(300) // Brief delay for text to be set
+
+                    val accessibilityService = WhizAccessibilityService.getInstance()
+                    var searchTriggered = false
+
+                    // Try different keycodes in order of likelihood
+                    val keycodesToTry = listOf(
+                        Pair(84, "KEYCODE_SEARCH (IME_ACTION_SEARCH)"),
+                        Pair(66, "KEYCODE_ENTER (general submit)"),
+                        Pair(23, "KEYCODE_DPAD_CENTER")
+                    )
+
+                    for ((keycode, name) in keycodesToTry) {
+                        if (searchTriggered) break
+
+                        try {
+                            Log.d(TAG, "Trying $name ($keycode)...")
+                            val process = Runtime.getRuntime().exec("input keyevent $keycode")
+                            process.waitFor()
+                            delay(500)
+
+                            // Check if results appeared
+                            if (accessibilityService != null) {
+                                val currentRoot = accessibilityService.getCurrentRootNode()
+                                if (currentRoot != null) {
+                                    val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
+                                        "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                    )
+                                    searchTriggered = chatResults != null && chatResults.isNotEmpty()
+                                    chatResults?.forEach { it.recycle() }
+                                    currentRoot.recycle()
+
+                                    if (searchTriggered) {
+                                        Log.i(TAG, "✅ $name successfully triggered search results!")
+                                    } else {
+                                        Log.d(TAG, "❌ $name did not trigger results")
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to send $name: ${e.message}")
+                        }
+                    }
+
+                    // Final check with intelligent wait
+                    if (!searchTriggered && accessibilityService != null) {
+                        Log.d(TAG, "No keycode worked, waiting to see if results appear...")
+                        val resultsAppeared = waitForCondition(maxWaitMs = 2000) {
+                            val currentRoot = accessibilityService.getCurrentRootNode()
+                            if (currentRoot != null) {
+                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
+                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                )
+                                val hasResults = chatResults != null && chatResults.isNotEmpty()
+                                chatResults?.forEach { it.recycle() }
+                                currentRoot.recycle()
+                                hasResults
+                            } else {
+                                false
+                            }
+                        }
+                        if (resultsAppeared) {
+                            Log.i(TAG, "Search results appeared after delay")
+                        }
+                    }
+
                     return true
                 } else {
                     Log.w(TAG, "Failed to set search text via resource ID")
+                    searchFieldNodes.forEach { it.recycle() }
                 }
             }
 
@@ -1534,13 +1661,57 @@ class ScreenAgentTools @Inject constructor(
                 )
                 val textSet = searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
 
-                editTextNodes.forEach { it.recycle() }
-
                 if (textSet) {
-                    Log.d(TAG, "Successfully entered search text: $searchQuery")
+                    Log.d(TAG, "Successfully entered search text: $searchQuery (fallback path)")
+                    editTextNodes.forEach { it.recycle() }
+
+                    // Trigger search by sending KEYCODE_SEARCH
+                    Log.d(TAG, "Triggering search submission with KEYCODE_SEARCH (fallback path)...")
+                    delay(300)
+
+                    try {
+                        val process = Runtime.getRuntime().exec("input keyevent 84") // KEYCODE_SEARCH
+                        process.waitFor()
+                        Log.d(TAG, "Sent KEYCODE_SEARCH (84) - fallback")
+                        delay(500)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to send KEYCODE_SEARCH: ${e.message}")
+                        return false
+                    }
+
+                    // Wait for search results
+                    Log.d(TAG, "Waiting for search results (fallback path)...")
+                    val accessibilityService = WhizAccessibilityService.getInstance()
+                    if (accessibilityService != null) {
+                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
+                            val currentRoot = accessibilityService.getCurrentRootNode()
+                            if (currentRoot != null) {
+                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
+                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                )
+                                val hasResults = chatResults != null && chatResults.isNotEmpty()
+                                chatResults?.forEach { it.recycle() }
+                                currentRoot.recycle()
+                                hasResults
+                            } else {
+                                false
+                            }
+                        }
+
+                        if (resultsAppeared) {
+                            Log.d(TAG, "Search results appeared after KEYCODE_SEARCH (fallback path)")
+                        } else {
+                            Log.w(TAG, "Search results did not appear after KEYCODE_SEARCH (fallback path)")
+                        }
+                    } else {
+                        Log.w(TAG, "Accessibility service not available (fallback path)")
+                        delay(1000)
+                    }
+
                     return true
                 } else {
                     Log.w(TAG, "Failed to set search text")
+                    editTextNodes.forEach { it.recycle() }
                 }
             } else {
                 Log.w(TAG, "Could not find search input field")
