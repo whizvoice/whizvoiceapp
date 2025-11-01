@@ -965,11 +965,11 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Click result: $success")
 
                             if (success) {
-                                // Wait a bit for the screen to update
-                                delay(1000)
+                                // Wait longer for the screen to update (conversations list may take time to load)
+                                delay(1500)
 
                                 // Check if we're on secondary search results screen
-                                // (Google Messages shows this when there are multiple conversations)
+                                // (Google Messages shows this when clicking a contact shows their conversations)
                                 val updatedRootNode = accessibilityService.getCurrentRootNode()
                                 if (updatedRootNode != null) {
                                     // Look for "Conversations" header indicating secondary results
@@ -978,7 +978,7 @@ class ScreenAgentTools @Inject constructor(
                                     )
 
                                     if (conversationsHeader != null && conversationsHeader.isNotEmpty()) {
-                                        Log.i(TAG, "On secondary search results screen, clicking first conversation...")
+                                        Log.i(TAG, "✅ Found conversation header - on conversations list for contact")
                                         conversationsHeader.forEach { it.recycle() }
 
                                         // Find the conversations RecyclerView
@@ -987,12 +987,15 @@ class ScreenAgentTools @Inject constructor(
                                         )
 
                                         if (conversationsResults != null && conversationsResults.isNotEmpty()) {
+                                            Log.d(TAG, "Found conversations results container")
+
                                             // Find clickable conversation items
                                             val swipeableContainers = conversationsResults[0].findAccessibilityNodeInfosByViewId(
                                                 "com.google.android.apps.messaging:id/swipeableContainer"
                                             )
 
                                             if (swipeableContainers != null && swipeableContainers.isNotEmpty()) {
+                                                Log.d(TAG, "Found ${swipeableContainers.size} swipeable containers, clicking first...")
                                                 val firstConversation = swipeableContainers[0]
                                                 val clicked = accessibilityService.clickNode(firstConversation)
 
@@ -1000,13 +1003,20 @@ class ScreenAgentTools @Inject constructor(
                                                 conversationsResults.forEach { it.recycle() }
 
                                                 if (clicked) {
-                                                    Log.i(TAG, "Successfully clicked first conversation in secondary results")
-                                                    delay(1000) // Wait for conversation to open
+                                                    Log.i(TAG, "✅ Clicked first conversation in list")
+                                                    delay(1200) // Wait for conversation to open
+                                                } else {
+                                                    Log.w(TAG, "Failed to click first conversation")
                                                 }
                                             } else {
+                                                Log.w(TAG, "No swipeableContainer found in conversations results")
                                                 conversationsResults.forEach { it.recycle() }
                                             }
+                                        } else {
+                                            Log.w(TAG, "Conversation header found but no results container")
                                         }
+                                    } else {
+                                        Log.d(TAG, "No conversation header found - may have opened directly or still in search")
                                     }
 
                                     updatedRootNode.recycle()
@@ -1548,15 +1558,6 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Found search field by resource ID: $searchFieldId")
                 val searchField = searchFieldNodes[0]
 
-                // Log the EditText's configuration to understand its IME setup
-                val inputType = searchField.inputType
-                Log.d(TAG, "Search field inputType: $inputType (${Integer.toHexString(inputType)})")
-                Log.d(TAG, "Search field className: ${searchField.className}")
-                Log.d(TAG, "Search field hintText: ${searchField.hintText}")
-
-                // Note: AccessibilityNodeInfo doesn't directly expose imeOptions,
-                // but we can infer from the keyboard behavior
-
                 // Set the search text
                 val bundle = Bundle()
                 bundle.putCharSequence(
@@ -1567,58 +1568,37 @@ class ScreenAgentTools @Inject constructor(
 
                 if (textSet) {
                     Log.d(TAG, "Successfully entered search text: $searchQuery")
-                    searchFieldNodes.forEach { it.recycle() }
 
-                    // Trigger search - try different keycodes to see which works
-                    Log.d(TAG, "Trying to trigger search submission...")
+                    // Trigger search using ACTION_IME_ENTER (requires Android 11+)
+                    Log.d(TAG, "Triggering IME action...")
                     delay(300) // Brief delay for text to be set
 
-                    val accessibilityService = WhizAccessibilityService.getInstance()
-                    var searchTriggered = false
-
-                    // Try different keycodes in order of likelihood
-                    val keycodesToTry = listOf(
-                        Pair(84, "KEYCODE_SEARCH (IME_ACTION_SEARCH)"),
-                        Pair(66, "KEYCODE_ENTER (general submit)"),
-                        Pair(23, "KEYCODE_DPAD_CENTER")
-                    )
-
-                    for ((keycode, name) in keycodesToTry) {
-                        if (searchTriggered) break
-
+                    val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        Log.d(TAG, "Using ACTION_IME_ENTER (Android 11+)")
+                        searchField.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                    } else {
+                        // Fallback for older Android versions: use KEYCODE_ENTER
+                        Log.d(TAG, "Android < 11, using KEYCODE_ENTER fallback")
                         try {
-                            Log.d(TAG, "Trying $name ($keycode)...")
-                            val process = Runtime.getRuntime().exec("input keyevent $keycode")
-                            process.waitFor()
-                            delay(500)
-
-                            // Check if results appeared
-                            if (accessibilityService != null) {
-                                val currentRoot = accessibilityService.getCurrentRootNode()
-                                if (currentRoot != null) {
-                                    val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                        "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                    )
-                                    searchTriggered = chatResults != null && chatResults.isNotEmpty()
-                                    chatResults?.forEach { it.recycle() }
-                                    currentRoot.recycle()
-
-                                    if (searchTriggered) {
-                                        Log.i(TAG, "✅ $name successfully triggered search results!")
-                                    } else {
-                                        Log.d(TAG, "❌ $name did not trigger results")
-                                    }
-                                }
-                            }
+                            val process = Runtime.getRuntime().exec("input keyevent 66")
+                            process.waitFor() == 0
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to send $name: ${e.message}")
+                            Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
+                            false
                         }
                     }
+                    if (imeActionPerformed) {
+                        Log.i(TAG, "✅ Successfully triggered IME action")
+                    } else {
+                        Log.w(TAG, "❌ IME action returned false")
+                    }
 
-                    // Final check with intelligent wait
-                    if (!searchTriggered && accessibilityService != null) {
-                        Log.d(TAG, "No keycode worked, waiting to see if results appear...")
-                        val resultsAppeared = waitForCondition(maxWaitMs = 2000) {
+                    searchFieldNodes.forEach { it.recycle() }
+
+                    // Wait for search results to appear
+                    val accessibilityService = WhizAccessibilityService.getInstance()
+                    if (accessibilityService != null) {
+                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
                             val currentRoot = accessibilityService.getCurrentRootNode()
                             if (currentRoot != null) {
                                 val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
@@ -1633,7 +1613,9 @@ class ScreenAgentTools @Inject constructor(
                             }
                         }
                         if (resultsAppeared) {
-                            Log.i(TAG, "Search results appeared after delay")
+                            Log.i(TAG, "✅ Search results appeared")
+                        } else {
+                            Log.w(TAG, "Search results did not appear within timeout")
                         }
                     }
 
