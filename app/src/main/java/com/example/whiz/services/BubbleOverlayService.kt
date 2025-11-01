@@ -722,6 +722,12 @@ class BubbleOverlayService : Service() {
         isActive = false
         serviceInstance = null
 
+        // CRITICAL: Always stop microphone when bubble is dismissed
+        // The isListening flag can be false even when the recognizer is still active in continuous mode,
+        // so we need to unconditionally stop it to prevent it from continuing to listen
+        Log.d(TAG, "BubbleOverlayService onDestroy - stopping microphone immediately (isListening=${voiceManager.isListening.value})")
+        voiceManager.stopListening()
+
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null
         Log.d(TAG, "Cleared saved TTS state on bubble service destroy")

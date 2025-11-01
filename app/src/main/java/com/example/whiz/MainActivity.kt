@@ -645,12 +645,19 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
         // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
-        
+
         // Check if bubble overlay is active and in TTS mode before stopping TTS
         val bubbleActive = BubbleOverlayService.isActive
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
         val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
-        
+
+        // Stop microphone immediately if bubble isn't active
+        // This prevents the mic from continuing to listen while the app is backgrounding
+        if (!bubbleActive && voiceManager.isListening.value) {
+            Log.d("MainActivity", "Stopping microphone immediately - app pausing without bubble")
+            voiceManager.stopListening()
+        }
+
         // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
         if (!shouldKeepTTS) {
             try {

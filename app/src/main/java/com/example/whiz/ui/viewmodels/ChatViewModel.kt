@@ -369,6 +369,9 @@ class ChatViewModel @Inject constructor(
                 }
         }
 
+        // NOTE: ChatScreen collects from voiceManager.transcriptionFlow for regular (non-bubble) transcriptions
+        // and calls sendUserInput() there. We don't duplicate that logic here to avoid sending messages twice.
+
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
             Log.d(TAG, "🧵 THREAD DEBUG: WebSocket collector starting on thread: ${Thread.currentThread().name}")
@@ -1626,52 +1629,22 @@ class ChatViewModel @Inject constructor(
 
     private fun startContinuousListening() {
         Log.d(TAG, "[LOG] startContinuousListening called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, isResponding=${_isResponding.value}")
-        
-        // Headphone-aware listening behavior
+
+        // Chat-specific headphone-aware listening behavior
+        // Prevents audio feedback when TTS is speaking without headphones
         if (ttsManager.isSpeaking.value) {
             val headphonesConnected = ttsManager.areHeadphonesConnected()
             if (!headphonesConnected) {
-                // Without headphones: Don't listen during TTS to prevent feedback
-                Log.d(TAG, "[LOG] startContinuousListening: Skipping start while TTS is speaking without headphones (will restart when TTS completes)")
+                Log.d(TAG, "[LOG] Skipping start while TTS is speaking without headphones (will restart when TTS completes)")
                 return
             } else {
-                // With headphones: Continue listening even during TTS
-                Log.d(TAG, "[LOG] startContinuousListening: Allowing listening during TTS with headphones connected")
+                Log.d(TAG, "[LOG] Allowing listening during TTS with headphones connected")
             }
         }
-        
-        voiceManager.startListening { finalText ->
-            Log.d(TAG, "[LOG] startContinuousListening: got transcription. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, text='$finalText', isResponding=${_isResponding.value}")
-            
-            // Always set transcribed text to input field when we have valid text
-            // This ensures text is preserved even when user manually stops the microphone
-            if (finalText.isNotBlank()) {
-                Log.d(TAG, "[LOG] startContinuousListening: Setting transcribed text to input field: '$finalText'")
-            updateInputText(finalText, fromVoice = true)
-                
-                // Only auto-send if continuous listening is still enabled
-                if (voiceManager.isContinuousListeningEnabled.value) {
-                    Log.d(TAG, "[LOG] startContinuousListening: Auto-sending transcription (continuous listening enabled)")
-            sendUserInput(finalText) // Send the transcription
-                } else {
-                    Log.d(TAG, "[LOG] startContinuousListening: Preserving transcription in input field (continuous listening disabled, user can manually send)")
-                }
-            }
-            
-            // Always restart listening if continuous listening is enabled, regardless of responding state
-            if (voiceManager.isContinuousListeningEnabled.value) {
-                Log.d(TAG, "[LOG] Continuous listening: restarting after result (isResponding=${_isResponding.value})")
-                viewModelScope.launch {
-                    // Small delay to ensure the previous listening session is fully stopped
-                    delay(100L)
-                    if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
-                        startContinuousListening() // This will check isSpeaking again
-                    }
-                }
-            } else {
-                Log.d(TAG, "[LOG] Continuous listening disabled, not restarting")
-            }
-        }
+
+        // Delegate to VoiceManager which has proper safety checks (shouldBeListening, etc.)
+        // and handles auto-restart logic. Transcriptions will be received via transcriptionFlow.
+        voiceManager.startContinuousListening()
     }
 
     fun sendUserInput(text: String = _inputText.value) {
