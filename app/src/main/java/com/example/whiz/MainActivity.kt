@@ -644,9 +644,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
-        // Notify that app is going to background
-        appLifecycleService.notifyAppBackgrounded()
-        Log.d("MainActivity", "Notified app backgrounded")
+        // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
         
         // Check if bubble overlay is active and in TTS mode before stopping TTS
         val bubbleActive = BubbleOverlayService.isActive
