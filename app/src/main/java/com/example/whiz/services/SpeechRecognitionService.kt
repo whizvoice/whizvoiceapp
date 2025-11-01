@@ -300,6 +300,14 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] onReadyForSpeech")
                 _errorState.value = null
                 manualStopInProgress = false
+
+                // CRITICAL: Re-check if we should still be listening
+                // This prevents race conditions where bubble is dismissed after restart is initiated
+                val shouldStillBeListening = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
+                if (!shouldStillBeListening) {
+                    Log.w(TAG, "🔄 RESTART_DEBUG: onReadyForSpeech - shouldRestartCallback now returns false, stopping immediately")
+                    stopListening()
+                }
             }
 
             override fun onBeginningOfSpeech() {
