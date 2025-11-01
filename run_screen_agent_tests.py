@@ -154,36 +154,53 @@ def save_failed_screenshot(screenshot_path, test_name, step_name):
         print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
 
 
-def navigate_to_my_chats(tester, test_name="unknown"):
+def check_on_new_chat_screen(tester):
+    """Check if we're on the New Chat screen using UI hierarchy.
+
+    Returns:
+        bool: True if on New Chat screen, False otherwise
+    """
+    return check_element_exists_in_ui(tester, text="New Chat", wait_after_dump=2.0)
+
+
+def navigate_to_my_chats(tester, test_name="unknown", use_ui_check=False):
     """Navigate to the My Chats page by pressing back until we reach it.
 
     Args:
         tester: The AndroidAccessibilityTester instance
         test_name: Name of the test calling this function, for screenshot naming
+        use_ui_check: If True, use UI dump to check (causes accessibility dialog flicker).
+                     If False, just press back a few times without validation (faster, no API cost)
 
     Returns:
         tuple: (success: bool, error_message: str)
     """
     import time
 
-    screenshot_path = "/tmp/whiz_screen.png"
-    max_attempts = 5
+    if not use_ui_check:
+        # Simple approach: just press back a few times without checking
+        # This avoids both Claude API calls and UI dump interference
+        print("🔙 Navigating to My Chats by pressing back...")
+        for i in range(3):
+            tester.press_back()
+            time.sleep(0.5)
+        print("✅ Navigation complete (no validation)")
+        return (True, "")
 
+    # UI check approach (causes accessibility dialog flicker)
+    max_attempts = 5
     for attempt in range(max_attempts):
-        tester.screenshot(screenshot_path)
-        if tester.validate_screenshot(
-            screenshot_path,
-            "The screen shows a 'My Chats' page with a list of chats or an empty state. "
-            "This is the main chat list view of WhizVoice."
-            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
-        ):
+        if check_element_exists_in_ui(tester, text="My Chats", wait_after_dump=2.0):
+            print(f"✅ Found My Chats screen on attempt {attempt + 1}")
             return (True, "")
 
-        # Press back button and try again
+        print(f"🔙 My Chats not found, pressing back (attempt {attempt + 1}/{max_attempts})")
         tester.press_back()
         time.sleep(1)
 
-    # Failed to reach My Chats after all attempts - save screenshot for debugging
+    # Failed to reach My Chats after all attempts
+    screenshot_path = "/tmp/whiz_screen.png"
+    tester.screenshot(screenshot_path)
     save_failed_screenshot(screenshot_path, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
     error_msg = f"Failed to reach My Chats page after {max_attempts} attempts. Screenshot saved to screen_agent_test_output directory."
     return (False, error_msg)
@@ -200,17 +217,67 @@ def get_device_model():
     return result.stdout.strip()
 
 
+def check_element_exists_in_ui(tester, content_desc=None, text=None, wait_after_dump=0.5):
+    """Check if an element exists in the UI hierarchy without using API.
+
+    Args:
+        tester: AndroidAccessibilityTester instance
+        content_desc: Content description to search for (optional)
+        text: Text content to search for (optional)
+        wait_after_dump: Seconds to wait after UI dump to let accessibility service reconnect (default 0.5)
+
+    Returns:
+        bool: True if element found, False otherwise
+    """
+    import xml.etree.ElementTree as ET
+    import time
+
+    try:
+        # Get UI hierarchy XML
+        device_path = "/sdcard/ui_hierarchy_check.xml"
+        tester.shell(f"uiautomator dump {device_path}")
+
+        # Wait a bit for accessibility service to reconnect after uiautomator
+        # (uiautomator temporarily disconnects accessibility services)
+        if wait_after_dump > 0:
+            time.sleep(wait_after_dump)
+            # Take a second dump after accessibility service reconnects
+            tester.shell(f"uiautomator dump {device_path}")
+
+        # Pull to local
+        local_path = "/tmp/ui_hierarchy_check.xml"
+        subprocess.run(['adb', 'pull', device_path, local_path],
+                      capture_output=True, check=True)
+
+        # Parse XML
+        with open(local_path, 'r') as f:
+            xml_content = f.read()
+        root = ET.fromstring(xml_content)
+
+        # Search for element
+        for node in root.iter():
+            if content_desc and node.get('content-desc') == content_desc:
+                return True
+            if text and node.get('text') == text:
+                return True
+
+        return False
+    except Exception as e:
+        print(f"⚠️  Error checking UI hierarchy: {e}")
+        return False
+
+
 def enable_accessibility_service_if_needed(tester):
     """Enable accessibility service if the dialog is showing."""
     import time
 
-    screenshot_path = "/tmp/whiz_screen.png"
-    tester.screenshot(screenshot_path)
+    # Check if accessibility dialog is showing by looking for the title element
+    dialog_showing = check_element_exists_in_ui(
+        tester,
+        content_desc="Enable accessibility service title"
+    )
 
-    if tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows an 'Enable accessibility service' dialog or prompt"
-    ):
+    if dialog_showing:
         device_model = get_device_model()
         print(f"📱 Device model: {device_model}")
 
@@ -238,7 +305,7 @@ def enable_accessibility_service_if_needed(tester):
             tester.press_back()
             time.sleep(1)
         elif device_model == "Pixel 7a":
-            # Pixel 8 specific tap coordinates
+            # Pixel 7a specific tap coordinates
             # Click "Open Settings" button
             tester.tap(700, 1725)
             time.sleep(2)
@@ -349,13 +416,11 @@ def test_whatsapp_draft_message(tester):
     time.sleep(2)
 
     # Validate we are on the New Chat screen
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"
-    )
+    validation_result = check_on_new_chat_screen(tester)
     if not validation_result:
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "new_chat_screen")
+        screenshot_path_temp = "/tmp/whiz_screen.png"
+        tester.screenshot(screenshot_path_temp)
+        save_failed_screenshot(screenshot_path_temp, "whatsapp_draft_message", "new_chat_screen")
     assert validation_result, "Failed to reach New Chat screen"
 
     # Send a voice transcription with the test message
@@ -492,13 +557,11 @@ def test_youtube_music_integration(tester):
     time.sleep(2)
 
     # Validate we are on the New Chat screen
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"
-    )
+    validation_result = check_on_new_chat_screen(tester)
     if not validation_result:
-        save_failed_screenshot(screenshot_path, "youtube_music", "new_chat_screen")
+        screenshot_path_temp = "/tmp/whiz_screen.png"
+        tester.screenshot(screenshot_path_temp)
+        save_failed_screenshot(screenshot_path_temp, "youtube_music", "new_chat_screen")
     assert validation_result, "Failed to reach New Chat screen"
 
     # Send a voice transcription to play songs on YouTube Music
@@ -582,13 +645,11 @@ def test_google_maps_directions(tester):
 
     # Validate we are on the New Chat screen
     tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"            "There may be an overlay over the screen, but the My Chats page should still be showing underneath."
-        "There may be an overlay over the screen, but the New Chat page should still be showing underneath."
-    )
+    validation_result = check_on_new_chat_screen(tester)
     if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "new_chat_screen")
+        screenshot_path_temp = "/tmp/whiz_screen.png"
+        tester.screenshot(screenshot_path_temp)
+        save_failed_screenshot(screenshot_path_temp, "google_maps_directions", "new_chat_screen")
     assert validation_result, "Failed to reach New Chat screen"
 
     # Send a voice transcription to ask for directions to Trader Joe's
@@ -905,3 +966,39 @@ def test_open_sms_app_debug(tester):
 
     # Intentionally fail to trigger screenshot/dump save
     assert False, "Intentional failure - check screen_agent_test_output directory for screenshot and UI dump of Messages app"
+
+
+def test_whizvoice_my_chats_ui_dump(tester):
+    """Test that captures My Chats and New Chat UI dumps."""
+    import time
+
+    screenshot_path = "/tmp/whiz_screen.png"
+
+    # Open WhizVoice Debug app
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+
+    # The fixture already navigates to My Chats, so we should be there
+    # Just wait a moment for the screen to settle
+    print("⏳ Waiting for My Chats screen to load...")
+    time.sleep(2)
+
+    # Capture My Chats screen
+    print("📸 Capturing My Chats screen...")
+    tester.screenshot(screenshot_path)
+    save_failed_screenshot(screenshot_path, "whizvoice_ui_dump", "my_chats_screen")
+    print("✅ My Chats UI dump saved!")
+
+    # Click on coordinates to open a new chat
+    print("➕ Tapping new chat button at (950, 2225)...")
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Capture New Chat screen
+    print("📸 Capturing New Chat screen...")
+    tester.screenshot(screenshot_path)
+    save_failed_screenshot(screenshot_path, "whizvoice_ui_dump", "new_chat_screen")
+    print("✅ New Chat UI dump saved!")
+
+    # Intentionally fail to trigger screenshot/dump save
+    assert False, "Intentional failure - check screen_agent_test_output directory for My Chats and New Chat UI dumps"
