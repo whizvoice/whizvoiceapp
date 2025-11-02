@@ -419,31 +419,51 @@ def test_whatsapp_draft_message(tester):
     """Test that we can draft and modify draft and send message in WhatsApp."""
     import time
 
+    print("\n========================================")
+    print("STEP 1: Opening WhizVoice Debug app")
+    print("========================================")
     screenshot_path = "/tmp/whiz_screen.png"
 
     # Open WhizVoice Debug app
     tester.open_app("com.example.whiz.debug")
     time.sleep(3)
 
+    print("\n========================================")
+    print("STEP 2: Navigating to My Chats page")
+    print("========================================")
     # Navigate to My Chats page
     success, error_msg = navigate_to_my_chats(tester, "whatsapp_draft_message")
     assert success, error_msg
+    print("✅ Successfully navigated to My Chats page")
 
+    print("\n========================================")
+    print("STEP 3: Opening new chat")
+    print("========================================")
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
     time.sleep(2)
 
+    print("\n========================================")
+    print("STEP 4: Validating New Chat screen")
+    print("========================================")
     # Validate we are on the New Chat screen
     validation_result = check_on_new_chat_screen(tester)
     if not validation_result:
+        print("❌ New Chat screen validation failed!")
         screenshot_path_temp = "/tmp/whiz_screen.png"
         tester.screenshot(screenshot_path_temp)
         save_failed_screenshot(screenshot_path_temp, "whatsapp_draft_message", "new_chat_screen")
+    else:
+        print("✅ Successfully validated New Chat screen")
     assert validation_result, "Failed to reach New Chat screen"
 
+    print("\n========================================")
+    print("STEP 5: Sending WhatsApp draft request")
+    print("========================================")
     # Send a voice transcription with the test message
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+    print("📤 Broadcasting: 'Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
@@ -453,12 +473,24 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
+    print("⏳ Waiting 3 seconds for message to be processed...")
     time.sleep(3)  # Give time for message to be processed
 
+    print("\n========================================")
+    print("STEP 6: Waiting for draft overlay to appear")
+    print("========================================")
     # wait for draft overlay to appear over whatsapp input text bar
+    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0...")
     result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
+    if result['matched']:
+        print("✅ Draft overlay detected!")
+    else:
+        print("❌ Draft overlay not detected!")
     assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
+    print("\n========================================")
+    print("STEP 7: Validating WhatsApp draft message")
+    print("========================================")
     # Validate WhatsApp is open with the draft message
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -471,10 +503,17 @@ def test_whatsapp_draft_message(tester):
         "There may or may not be an icon inside the robot head outline. "
     )
     if not validation_result:
+        print("❌ WhatsApp draft message validation failed!")
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_message_validation")
+    else:
+        print("✅ WhatsApp draft message validated successfully!")
     assert validation_result, "Failed to draft WhatsApp message correctly"
 
+    print("\n========================================")
+    print("STEP 8: Requesting to modify the message")
+    print("========================================")
     # Send a voice transcription to modify the message
+    print("📤 Broadcasting: 'Actually, can you make the message more polite?'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
@@ -484,8 +523,12 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
+    print("⏳ Waiting 10 seconds for message modification...")
     time.sleep(10)
 
+    print("\n========================================")
+    print("STEP 9: Validating draft message was updated")
+    print("========================================")
     # Validate that the draft was updated
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -499,10 +542,17 @@ def test_whatsapp_draft_message(tester):
         "and a microphone icon inside."
     )
     if not validation_result:
+        print("❌ Draft update validation failed!")
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_updated_validation")
+    else:
+        print("✅ Draft message successfully updated with strikethrough and new text!")
     assert validation_result, "Failed to draft WhatsApp message correctly"
 
+    print("\n========================================")
+    print("STEP 10: Sending the WhatsApp message")
+    print("========================================")
     # Send a voice transcription to send the message
+    print("📤 Broadcasting: 'That looks good, go ahead and send the message.'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
@@ -512,8 +562,12 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
+    print("⏳ Waiting 15 seconds for message to be sent...")
     time.sleep(15)
 
+    print("\n========================================")
+    print("STEP 11: Validating message was sent")
+    print("========================================")
     # Validate that the message was sent
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -527,22 +581,34 @@ def test_whatsapp_draft_message(tester):
         "and a microphone icon inside."
     )
     if not validation_result:
+        print("❌ Message sent validation failed!")
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
+    else:
+        print("✅ WhatsApp message successfully sent!")
     assert validation_result, "Failed to send WhatsApp message correctly"
 
+    print("\n========================================")
+    print("STEP 12: Cleaning up - Deleting sent message")
+    print("========================================")
     # Cleanup: Delete the sent message
     # Long press on the newly sent message
+    print("🖱️  Long pressing on message at (500, 1280)...")
     tester.long_press(500, 1280)
     time.sleep(2)
 
     # Click delete button
+    print("🗑️  Tapping delete button at (800, 200)...")
     tester.tap(800, 200)
     time.sleep(2)
 
     # Click confirm delete
+    print("✔️  Confirming delete at (750, 1290)...")
     tester.tap(750, 1290)
     time.sleep(2)
 
+    print("\n========================================")
+    print("STEP 13: Validating message was deleted")
+    print("========================================")
     # Validate that the message was deleted
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -552,37 +618,64 @@ def test_whatsapp_draft_message(tester):
         "The most recent message in the chat has been deleted."
     )
     if not validation_result:
+        print("❌ Message deletion validation failed!")
         save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
+    else:
+        print("✅ WhatsApp message successfully deleted!")
     assert validation_result, "Failed to delete the sent message"
+
+    print("\n========================================")
+    print("🎉 TEST COMPLETED SUCCESSFULLY!")
+    print("========================================")
 
 
 def test_youtube_music_integration(tester):
     """Test that we can play and queue songs on YouTube Music."""
     import time
 
+    print("\n========================================")
+    print("STEP 1: Opening WhizVoice Debug app")
+    print("========================================")
     screenshot_path = "/tmp/whiz_screen.png"
 
     # Open WhizVoice Debug app
     tester.open_app("com.example.whiz.debug")
     time.sleep(3)
 
+    print("\n========================================")
+    print("STEP 2: Navigating to My Chats page")
+    print("========================================")
     # Navigate to My Chats page
     success, error_msg = navigate_to_my_chats(tester, "youtube_music_integration")
     assert success, error_msg
+    print("✅ Successfully navigated to My Chats page")
 
+    print("\n========================================")
+    print("STEP 3: Opening new chat")
+    print("========================================")
     # Click on coordinates to open a new chat
     tester.tap(950, 2225)
     time.sleep(2)
 
+    print("\n========================================")
+    print("STEP 4: Validating New Chat screen")
+    print("========================================")
     # Validate we are on the New Chat screen
     validation_result = check_on_new_chat_screen(tester)
     if not validation_result:
+        print("❌ New Chat screen validation failed!")
         screenshot_path_temp = "/tmp/whiz_screen.png"
         tester.screenshot(screenshot_path_temp)
         save_failed_screenshot(screenshot_path_temp, "youtube_music", "new_chat_screen")
+    else:
+        print("✅ Successfully validated New Chat screen")
     assert validation_result, "Failed to reach New Chat screen"
 
+    print("\n========================================")
+    print("STEP 5: Requesting to play song on YouTube Music")
+    print("========================================")
     # Send a voice transcription to play songs on YouTube Music
+    print("📤 Broadcasting: 'Hey can you play Golden from Kpop Demon Hunters on YouTube Music?'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
@@ -592,12 +685,20 @@ def test_youtube_music_integration(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
+    print("⏳ Waiting 3 seconds for message to be processed...")
     time.sleep(3)  # Give time for message to be processed
 
+    print("\n========================================")
+    print("STEP 6: Waiting for YouTube Music to open and play song")
+    print("========================================")
     # Wait for YouTube Music to open and song to start playing
     # The bot should launch YouTube Music, search for the song, and play it
+    print("⏳ Waiting 15 seconds for YouTube Music to open and play the song...")
     time.sleep(15)
 
+    print("\n========================================")
+    print("STEP 7: Validating song is playing")
+    print("========================================")
     # Validate YouTube Music is open and showing the song
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -608,10 +709,17 @@ def test_youtube_music_integration(tester):
         "There may be a yellow notification bubble with a robot head icon visible on the screen."
     )
     if not validation_result:
+        print("❌ Song playing validation failed!")
         save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
+    else:
+        print("✅ YouTube Music opened and playing 'Golden' successfully!")
     assert validation_result, "Failed to open YouTube Music and play song"
 
+    print("\n========================================")
+    print("STEP 8: Requesting to queue second song")
+    print("========================================")
     # Send a voice transcription to queue up "How it's Done" by HUNTRIX
+    print("📤 Broadcasting: 'Can you queue up How it's Done by HUNTRIX?'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
@@ -622,17 +730,30 @@ def test_youtube_music_integration(tester):
         '--ez', 'autoSend', 'true'
     ], check=True)
 
-    # Wait 15 seconds for queueing to complete
+    print("\n========================================")
+    print("STEP 9: Waiting for song to be queued")
+    print("========================================")
+    # Wait 20 seconds for queueing to complete
+    print("⏳ Waiting 20 seconds for song to be added to queue...")
     time.sleep(20)
 
+    print("\n========================================")
+    print("STEP 10: Opening queue view")
+    print("========================================")
     # Tap to full screen the current song
+    print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
     subprocess.run(['adb', 'shell', 'input', 'tap', '500', '2100'], check=True)
     time.sleep(1)
 
     # Tap to see what's up next
+    print("🖱️  Tapping to see queue at (300, 2200)...")
     subprocess.run(['adb', 'shell', 'input', 'tap', '300', '2200'], check=True)
+    print("⏳ Waiting 2 seconds for queue to appear...")
     time.sleep(2)  # Wait for queue to appear
 
+    print("\n========================================")
+    print("STEP 11: Validating song queue")
+    print("========================================")
     # Screenshot and validate that it shows the queue with Golden first and How It's Done second
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
@@ -640,8 +761,15 @@ def test_youtube_music_integration(tester):
         "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue."
     )
     if not validation_result:
+        print("❌ Queue validation failed!")
         save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
+    else:
+        print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
+
+    print("\n========================================")
+    print("🎉 TEST COMPLETED SUCCESSFULLY!")
+    print("========================================")
 
 def test_google_maps_directions(tester):
     """Test that we can get directions to multiple locations using Google Maps."""
