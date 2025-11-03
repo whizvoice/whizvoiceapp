@@ -1,5 +1,7 @@
 package com.example.whiz.services
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -26,10 +28,30 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
     private val _appBackgroundEvent = MutableSharedFlow<Unit>(replay = 1)
     val appBackgroundEvent: SharedFlow<Unit> = _appBackgroundEvent.asSharedFlow()
 
+    // Track whether we've already registered the observer
+    @Volatile
+    private var isObserverRegistered = false
+
     init {
-        // Automatically observe app-wide lifecycle using ProcessLifecycleOwner
-        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-        Log.d(TAG, "AppLifecycleService initialized with ProcessLifecycleOwner")
+        // Register observer on main thread to avoid IllegalStateException in tests
+        // where Hilt instantiates this singleton on a background thread
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            // Already on main thread, register immediately
+            registerLifecycleObserver()
+        } else {
+            // Not on main thread (e.g., during test setup), post to main thread
+            Handler(Looper.getMainLooper()).post {
+                registerLifecycleObserver()
+            }
+        }
+    }
+
+    private fun registerLifecycleObserver() {
+        if (!isObserverRegistered) {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+            isObserverRegistered = true
+            Log.d(TAG, "AppLifecycleService initialized with ProcessLifecycleOwner")
+        }
     }
 
     override fun onStart(owner: LifecycleOwner) {
