@@ -49,4 +49,17 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
     fun isInForeground(): Boolean {
         return _isInForeground
     }
+
+    // Test helpers to manually trigger lifecycle events
+    fun notifyAppForegrounded() {
+        Log.d(TAG, "Manual notification: App foregrounded")
+        _isInForeground = true
+        _appForegroundEvent.tryEmit(Unit)
+    }
+
+    fun notifyAppBackgrounded() {
+        Log.d(TAG, "Manual notification: App backgrounded")
+        _isInForeground = false
+        _appBackgroundEvent.tryEmit(Unit)
+    }
 } 

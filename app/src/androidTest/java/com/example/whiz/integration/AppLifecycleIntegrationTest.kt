@@ -346,7 +346,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // Speech recognition should stop when app is backgrounded, but may take a moment to finish current cycle
             Log.d(TAG, "⏳ Waiting for speech service to stop listening after backgrounding...")
             var backgroundWaitAttempts = 0
-            val maxBackgroundWaitAttempts = 50 // 50 attempts * 100ms = 5 seconds max
+            val maxBackgroundWaitAttempts = 30 // 30 attempts * 100ms = 3 seconds max
             var finalBackgroundListening = initialBackgroundListening
 
             while (speechRecognitionService.isListening.value && backgroundWaitAttempts < maxBackgroundWaitAttempts) {
@@ -354,7 +354,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 backgroundWaitAttempts++
                 finalBackgroundListening = speechRecognitionService.isListening.value
                 if (backgroundWaitAttempts % 10 == 0) { // Log every second
-                    Log.d(TAG, "⏳ Still waiting for speech service to stop... attempt $backgroundWaitAttempts/50, isListening=$finalBackgroundListening")
+                    Log.d(TAG, "⏳ Still waiting for speech service to stop... attempt $backgroundWaitAttempts/30, isListening=$finalBackgroundListening")
                 }
             }
 
