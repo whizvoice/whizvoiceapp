@@ -786,7 +786,30 @@ class ScreenAgentTools @Inject constructor(
             
             if (inputNodes.isNotEmpty()) {
                 val inputNode = inputNodes[0]
-                
+
+                // Dismiss the draft overlay if it's active
+                try {
+                    val overlayService = com.example.whiz.services.MessageDraftOverlayService.getInstance()
+                    if (overlayService != null && com.example.whiz.services.MessageDraftOverlayService.isActive) {
+                        Log.d(TAG, "Dismissing draft overlay before sending message")
+                        overlayService.dismiss()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
+                }
+
+                // Clear the input field first
+                val clearBundle = Bundle()
+                clearBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    ""
+                )
+                inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+                Log.d(TAG, "Cleared input field")
+
+                // Wait a bit for the clear to take effect
+                delay(200)
+
                 // Set the text
                 val bundle = Bundle()
                 bundle.putCharSequence(
@@ -1649,6 +1672,17 @@ class ScreenAgentTools @Inject constructor(
             }
 
             if (inputNode != null) {
+
+                // Dismiss the draft overlay if it's active
+                try {
+                    val overlayService = com.example.whiz.services.MessageDraftOverlayService.getInstance()
+                    if (overlayService != null && com.example.whiz.services.MessageDraftOverlayService.isActive) {
+                        Log.d(TAG, "Dismissing draft overlay before sending message")
+                        overlayService.dismiss()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
+                }
 
                 // Clear the input field first
                 val clearBundle = Bundle()
