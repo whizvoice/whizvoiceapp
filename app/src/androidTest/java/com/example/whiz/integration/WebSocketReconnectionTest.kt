@@ -1079,7 +1079,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to navigate to new chat", "new_chat_navigation_failed_first")
                 }
                 
-                val firstMessage = "Test ${System.currentTimeMillis()}: Pls respond with 1 word for the following test questions. What is the capital of France?"
+                val firstMessage = "Test ${System.currentTimeMillis()}: You MUST respond with ONLY 1 word for each of the following test questions. What is the capital of France?"
                 val sent1 = ComposeTestHelper.sendMessage(composeTestRule, firstMessage)
                 if (!sent1) {
                     failWithScreenshot("Failed to send first message", "first_message_send_failed")
@@ -1174,7 +1174,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     failWithScreenshot("Failed to navigate to new chat for second chat", "new_chat_navigation_failed_second")
                 }
                 
-                val secondChatFirstMessage = "Test ${System.currentTimeMillis()}: Pls keep responses to 1 word. What is the capital of Italy?"
+                val secondChatFirstMessage = "Test ${System.currentTimeMillis()}: You MUST respond with ONLY 1 word per question. What's the capital of Italy?"
                 val sent2 = ComposeTestHelper.sendMessage(composeTestRule, secondChatFirstMessage, rapid = true)
                 if (!sent2) {
                     failWithScreenshot("Failed to send second chat first message", "second_chat_first_message_failed")
