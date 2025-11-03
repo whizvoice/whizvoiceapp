@@ -874,16 +874,31 @@ class ScreenAgentTools @Inject constructor(
             // Note: This assumes the SMS app is already open.
             // The server should use launch_app tool first if needed.
 
-            // Get accessibility service instance
-            val accessibilityService = WhizAccessibilityService.getInstance()
+            // Wait for accessibility service to become available (with retry logic)
+            // This handles cases where the service is temporarily disconnected
+            var accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                Log.e(TAG, "Accessibility service not available")
-                return SMSResult(
-                    success = false,
-                    action = "select_chat",
-                    contactName = contactName,
-                    error = "Accessibility service not enabled. Please enable it in settings."
-                )
+                Log.w(TAG, "Accessibility service not immediately available, waiting up to 2 seconds...")
+                val maxRetries = 8
+                var retryCount = 0
+                while (accessibilityService == null && retryCount < maxRetries) {
+                    delay(250) // Wait 250ms between retries
+                    accessibilityService = WhizAccessibilityService.getInstance()
+                    retryCount++
+                    if (accessibilityService != null) {
+                        Log.i(TAG, "Accessibility service became available after ${retryCount * 250}ms")
+                    }
+                }
+
+                if (accessibilityService == null) {
+                    Log.e(TAG, "Accessibility service not available after waiting 2 seconds")
+                    return SMSResult(
+                        success = false,
+                        action = "select_chat",
+                        contactName = contactName,
+                        error = "Accessibility service not enabled. Please enable it in settings."
+                    )
+                }
             }
 
             // Navigate to conversation list by pressing back repeatedly
@@ -957,7 +972,14 @@ class ScreenAgentTools @Inject constructor(
                     Log.i(TAG, "Found ${contactNodes.size} nodes matching contact name")
 
                     // Try to click on each matching node until one succeeds
+                    // Skip EditText nodes to avoid clicking search fields
                     for (contactNode in contactNodes) {
+                        // Skip if this is an EditText (search field)
+                        if (contactNode.className == "android.widget.EditText") {
+                            Log.d(TAG, "Skipping EditText node (likely search field)")
+                            continue
+                        }
+
                         val clickableNode = findClickableParent(contactNode)
                         if (clickableNode != null) {
                             Log.d(TAG, "Found clickable parent, attempting click...")
@@ -1072,6 +1094,136 @@ class ScreenAgentTools @Inject constructor(
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         delay(1500) // Wait for search results to appear
+
+                        // After search, click on the first search result
+                        val searchResultRootNode = accessibilityService.getCurrentRootNode()
+                        if (searchResultRootNode != null) {
+                            Log.d(TAG, "Looking for search results to click...")
+
+                            // Find the search results RecyclerView
+                            val searchResultsId = "com.google.android.apps.messaging:id/zero_state_search_results"
+                            val searchResultsNodes = searchResultRootNode.findAccessibilityNodeInfosByViewId(searchResultsId)
+
+                            if (searchResultsNodes != null && searchResultsNodes.isNotEmpty()) {
+                                Log.d(TAG, "Found search results container")
+
+                                // Find the first clickable item in search results
+                                // Look for LinearLayout children that are clickable
+                                val searchResultsContainer = searchResultsNodes[0]
+                                val clickableItems = mutableListOf<AccessibilityNodeInfo>()
+                                findClickableChildren(searchResultsContainer, clickableItems)
+
+                                if (clickableItems.isNotEmpty()) {
+                                    Log.d(TAG, "Found ${clickableItems.size} clickable search results, clicking first...")
+                                    val firstResult = clickableItems[0]
+                                    val clicked = accessibilityService.clickNode(firstResult)
+
+                                    Log.d(TAG, "Click on first search result: $clicked")
+
+                                    clickableItems.forEach { it.recycle() }
+
+                                    if (clicked) {
+                                        delay(1500) // Wait for conversation to open
+
+                                        // Validate we opened a conversation
+                                        val validationRootNode = accessibilityService.getCurrentRootNode()
+                                        if (validationRootNode != null) {
+                                            val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                                            val stillInSearch = validationRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
+
+                                            if (stillInSearch == null || stillInSearch.isEmpty()) {
+                                                // Successfully opened conversation
+                                                Log.i(TAG, "Successfully opened conversation from search results")
+                                                validationRootNode.recycle()
+                                                searchResultsNodes.forEach { it.recycle() }
+                                                searchResultRootNode.recycle()
+                                                rootNode.recycle()
+
+                                                return SMSResult(
+                                                    success = true,
+                                                    action = "select_chat",
+                                                    contactName = contactName
+                                                )
+                                            } else {
+                                                // Still in search - might be showing conversations with this contact
+                                                // Try clicking the first result again
+                                                Log.w(TAG, "Still in search screen after clicking first result")
+                                                Log.d(TAG, "Checking if we're in conversations view...")
+
+                                                stillInSearch.forEach { it.recycle() }
+
+                                                // Find search results again and click
+                                                // After first click, results may be in zero_state_search_chat_results instead
+                                                var searchResultsAgain = validationRootNode.findAccessibilityNodeInfosByViewId(
+                                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                                )
+
+                                                if (searchResultsAgain == null || searchResultsAgain.isEmpty()) {
+                                                    // Try the original results container
+                                                    searchResultsAgain = validationRootNode.findAccessibilityNodeInfosByViewId(
+                                                        "com.google.android.apps.messaging:id/zero_state_search_results"
+                                                    )
+                                                }
+
+                                                if (searchResultsAgain != null && searchResultsAgain.isNotEmpty()) {
+                                                    val clickableItemsAgain = mutableListOf<AccessibilityNodeInfo>()
+                                                    findClickableChildren(searchResultsAgain[0], clickableItemsAgain)
+
+                                                    if (clickableItemsAgain.isNotEmpty()) {
+                                                        Log.d(TAG, "Found ${clickableItemsAgain.size} results, clicking first again...")
+                                                        val clickedAgain = accessibilityService.clickNode(clickableItemsAgain[0])
+                                                        clickableItemsAgain.forEach { it.recycle() }
+
+                                                        if (clickedAgain) {
+                                                            Log.d(TAG, "Clicked result again, waiting for conversation...")
+                                                            delay(1500)
+
+                                                            // Final validation
+                                                            val finalRootNode = accessibilityService.getCurrentRootNode()
+                                                            if (finalRootNode != null) {
+                                                                val finalSearchBox = finalRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
+
+                                                                if (finalSearchBox == null || finalSearchBox.isEmpty()) {
+                                                                    Log.i(TAG, "Successfully opened conversation after second click")
+                                                                    finalRootNode.recycle()
+                                                                    searchResultsAgain.forEach { it.recycle() }
+                                                                    validationRootNode.recycle()
+                                                                    searchResultsNodes.forEach { it.recycle() }
+                                                                    searchResultRootNode.recycle()
+                                                                    rootNode.recycle()
+
+                                                                    return SMSResult(
+                                                                        success = true,
+                                                                        action = "select_chat",
+                                                                        contactName = contactName
+                                                                    )
+                                                                } else {
+                                                                    finalSearchBox.forEach { it.recycle() }
+                                                                }
+                                                                finalRootNode.recycle()
+                                                            }
+                                                        }
+                                                    } else {
+                                                        Log.w(TAG, "No clickable items found on second attempt")
+                                                    }
+
+                                                    searchResultsAgain.forEach { it.recycle() }
+                                                }
+                                            }
+                                            validationRootNode.recycle()
+                                        }
+                                    }
+                                } else {
+                                    Log.w(TAG, "No clickable items found in search results")
+                                }
+
+                                searchResultsNodes.forEach { it.recycle() }
+                            } else {
+                                Log.w(TAG, "Search results container not found")
+                            }
+
+                            searchResultRootNode.recycle()
+                        }
                     }
                 }
 
@@ -1145,7 +1297,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Find the SMS message input field
-            // Try by resource ID first (Google Messages)
+            // Try by resource ID first (Google Messages - traditional view)
             var inputNode: AccessibilityNodeInfo? = null
             val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
             val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
@@ -1155,7 +1307,7 @@ class ScreenAgentTools @Inject constructor(
                 inputNode = composeMessageNodes[0]
                 composeMessageNodes.drop(1).forEach { it.recycle() }
             } else {
-                // Fallback: Find any EditText nodes, but exclude search boxes
+                // Fallback 1: Find any EditText nodes, but exclude search boxes
                 Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
                 val inputNodes = mutableListOf<AccessibilityNodeInfo>()
                 findEditTextNodes(rootNode, inputNodes)
@@ -1182,7 +1334,42 @@ class ScreenAgentTools @Inject constructor(
                     // Recycle unused nodes
                     filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
                 } else {
-                    Log.d(TAG, "No valid input fields found after filtering")
+                    Log.d(TAG, "No EditText nodes found - trying Compose UI fallback")
+
+                    // Fallback 2: For Compose-based Google Messages
+                    // Look for clickable View near the bottom that's part of the compose area
+                    // These are typically wider views in the bottom third of the screen
+                    val allClickableNodes = mutableListOf<AccessibilityNodeInfo>()
+                    findClickableChildren(rootNode, allClickableNodes)
+
+                    val screenHeight = context.resources.displayMetrics.heightPixels
+                    val bottomThirdStart = (screenHeight * 0.67).toInt()
+
+                    // Find wide clickable views in bottom third that could be the compose area
+                    val composeAreaCandidates = allClickableNodes.filter { node ->
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        val width = rect.right - rect.left
+                        val screenWidth = context.resources.displayMetrics.widthPixels
+
+                        // Must be in bottom third, reasonably wide, and not too tall (not a list item)
+                        rect.top > bottomThirdStart &&
+                        width > (screenWidth * 0.4) &&
+                        (rect.bottom - rect.top) < 400
+                    }
+
+                    if (composeAreaCandidates.isNotEmpty()) {
+                        // Use the first candidate (usually the compose text area)
+                        inputNode = composeAreaCandidates[0]
+                        Log.d(TAG, "Found compose area candidate in Compose UI at bottom of screen")
+
+                        // Recycle others
+                        composeAreaCandidates.drop(1).forEach { it.recycle() }
+                        allClickableNodes.filter { it !in composeAreaCandidates }.forEach { it.recycle() }
+                    } else {
+                        Log.w(TAG, "No compose area candidates found")
+                        allClickableNodes.forEach { it.recycle() }
+                    }
                 }
             }
 
@@ -1197,34 +1384,77 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
+                // For Compose fields, sometimes need to click twice
                 val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
                                    inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
                 if (clickSuccess) {
                     Log.d(TAG, "Clicked/focused input field to open keyboard")
 
+                    // Double-tap for Compose fields - they sometimes need the click action twice
+                    delay(50)
+                    val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.d(TAG, "Second click result: $secondClick")
+
+                    // Force show keyboard using GLOBAL_ACTION_SHOW_IME (API 34+)
+                    // This bypasses the node entirely and tells the system to show the keyboard
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        try {
+                            // GLOBAL_ACTION_SHOW_IME = 16 (API 34+)
+                            val shown = accessibilityService.performGlobalAction(16)
+                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $shown")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not perform GLOBAL_ACTION_SHOW_IME", e)
+                        }
+                    } else {
+                        Log.d(TAG, "GLOBAL_ACTION_SHOW_IME not available (API ${android.os.Build.VERSION.SDK_INT}, requires 34+)")
+                    }
+
                     // Wait for the keyboard to open and input field to move up
+                    // The input field should move significantly upward when keyboard opens
                     val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
                         val currentRootNode = accessibilityService.getCurrentRootNode()
                         if (currentRootNode != null) {
+                            // Try to find EditText nodes first (traditional UI)
                             val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
                             findEditTextNodes(currentRootNode, currentInputNodes)
 
-                            if (currentInputNodes.isNotEmpty()) {
+                            val movedUp = if (currentInputNodes.isNotEmpty()) {
                                 val currentRect = android.graphics.Rect()
                                 currentInputNodes[0].getBoundsInScreen(currentRect)
-
-                                // Check if input field has moved up significantly (at least 300px)
-                                val movedUp = initialRect.top - currentRect.top > 300
-
+                                val moved = initialRect.top - currentRect.top > 300
                                 currentInputNodes.forEach { it.recycle() }
-                                currentRootNode.recycle()
-
-                                movedUp
+                                moved
                             } else {
-                                currentRootNode.recycle()
-                                false
+                                // For Compose UI, check if any wide clickable view in bottom area moved up
+                                val allClickable = mutableListOf<AccessibilityNodeInfo>()
+                                findClickableChildren(currentRootNode, allClickable)
+
+                                val screenWidth = context.resources.displayMetrics.widthPixels
+                                val wideBottomViews = allClickable.filter { node ->
+                                    val rect = android.graphics.Rect()
+                                    node.getBoundsInScreen(rect)
+                                    val width = rect.right - rect.left
+                                    width > (screenWidth * 0.4) && rect.bottom > 2000
+                                }
+
+                                val moved = if (wideBottomViews.isNotEmpty()) {
+                                    val currentRect = android.graphics.Rect()
+                                    wideBottomViews[0].getBoundsInScreen(currentRect)
+                                    val upMovement = initialRect.top - currentRect.top
+                                    Log.d(TAG, "Compose UI: input moved up by ${upMovement}px")
+                                    upMovement > 300
+                                } else {
+                                    false
+                                }
+
+                                wideBottomViews.forEach { it.recycle() }
+                                allClickable.filter { it !in wideBottomViews }.forEach { it.recycle() }
+                                moved
                             }
+
+                            currentRootNode.recycle()
+                            movedUp
                         } else {
                             false
                         }
@@ -1258,26 +1488,58 @@ class ScreenAgentTools @Inject constructor(
                 val updatedInputNodes = mutableListOf<AccessibilityNodeInfo>()
                 findEditTextNodes(updatedRootNode, updatedInputNodes)
 
-                if (updatedInputNodes.isEmpty()) {
-                    inputNode.recycle()
-                    rootNode.recycle()
-                    updatedRootNode.recycle()
-                    return DraftResult(
-                        success = false,
-                        message = message,
-                        error = "Could not find input field after keyboard opened"
-                    )
-                }
-
-                val finalInputNode = updatedInputNodes.maxByOrNull { node ->
-                    val rect = android.graphics.Rect()
-                    node.getBoundsInScreen(rect)
-                    rect.top
-                } ?: updatedInputNodes[0]
-
-                // Get the final bounds of the input field (after keyboard is open)
+                val finalInputNode: AccessibilityNodeInfo
                 val rect = android.graphics.Rect()
-                finalInputNode.getBoundsInScreen(rect)
+
+                if (updatedInputNodes.isNotEmpty()) {
+                    // Traditional EditText found
+                    finalInputNode = updatedInputNodes.maxByOrNull { node ->
+                        val r = android.graphics.Rect()
+                        node.getBoundsInScreen(r)
+                        r.top
+                    } ?: updatedInputNodes[0]
+
+                    finalInputNode.getBoundsInScreen(rect)
+
+                    // Clean up others
+                    updatedInputNodes.filter { it != finalInputNode }.forEach { it.recycle() }
+                } else {
+                    // Compose UI - find wide clickable view in bottom area (after keyboard moved it up)
+                    Log.d(TAG, "No EditText found after keyboard, looking for Compose input area...")
+
+                    val allClickable = mutableListOf<AccessibilityNodeInfo>()
+                    findClickableChildren(updatedRootNode, allClickable)
+
+                    val screenWidth = context.resources.displayMetrics.widthPixels
+                    val wideBottomViews = allClickable.filter { node ->
+                        val r = android.graphics.Rect()
+                        node.getBoundsInScreen(r)
+                        val width = r.right - r.left
+                        // Look for wide views that are now in the middle of screen (moved up from bottom)
+                        width > (screenWidth * 0.4) && r.top > 800 && r.top < 1800
+                    }
+
+                    if (wideBottomViews.isEmpty()) {
+                        allClickable.forEach { it.recycle() }
+                        inputNode.recycle()
+                        rootNode.recycle()
+                        updatedRootNode.recycle()
+                        return DraftResult(
+                            success = false,
+                            message = message,
+                            error = "Could not find input field after keyboard opened (Compose UI)"
+                        )
+                    }
+
+                    finalInputNode = wideBottomViews[0]
+                    finalInputNode.getBoundsInScreen(rect)
+
+                    Log.d(TAG, "Found Compose input area at: $rect")
+
+                    // Clean up
+                    wideBottomViews.drop(1).forEach { it.recycle() }
+                    allClickable.filter { it !in wideBottomViews }.forEach { it.recycle() }
+                }
 
                 // Get the app window bounds
                 val appBounds = android.graphics.Rect()
@@ -1305,7 +1567,7 @@ class ScreenAgentTools @Inject constructor(
 
                 // Clean up
                 inputNode.recycle()
-                updatedInputNodes.forEach { it.recycle() }
+                finalInputNode.recycle()
                 rootNode.recycle()
                 updatedRootNode.recycle()
 
@@ -4916,7 +5178,7 @@ class ScreenAgentTools @Inject constructor(
             if (node.className == "android.widget.EditText") {
                 results.add(AccessibilityNodeInfo.obtain(node))
             }
-            
+
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null) {
@@ -4928,7 +5190,25 @@ class ScreenAgentTools @Inject constructor(
             Log.e(TAG, "Error finding EditText nodes", e)
         }
     }
-    
+
+    private fun findClickableChildren(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>) {
+        try {
+            if (node.isClickable) {
+                results.add(AccessibilityNodeInfo.obtain(node))
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    findClickableChildren(child, results)
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding clickable children", e)
+        }
+    }
+
     private fun clickSendButton(rootNode: AccessibilityNodeInfo): Boolean {
         try {
             // Look for send button by content description

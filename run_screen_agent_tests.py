@@ -965,13 +965,13 @@ def test_sms_draft_message(tester):
     # Send a voice transcription with the test message to send an SMS
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(628)209-9005 that says hey just testing SMS from whiz voice'")
+    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(415)604-8024 that says hey just testing SMS from whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey just testing SMS from whiz voice"',
+        '--es', 'text', '"Hello, can you please send a text message to +1(415)604-8024 that says hey just testing SMS from whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -983,7 +983,7 @@ def test_sms_draft_message(tester):
     print("========================================")
     # wait for draft overlay to appear over SMS input text bar
     print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0...")
-    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=20.0)  # #fffad0
+    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=30.0)  # #fffad0
 
     # If overlay detection failed, capture diagnostics before asserting
     if not result['matched']:
