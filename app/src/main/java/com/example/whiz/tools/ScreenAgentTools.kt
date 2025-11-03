@@ -789,10 +789,9 @@ class ScreenAgentTools @Inject constructor(
 
                 // Dismiss the draft overlay if it's active
                 try {
-                    val overlayService = com.example.whiz.services.MessageDraftOverlayService.getInstance()
-                    if (overlayService != null && com.example.whiz.services.MessageDraftOverlayService.isActive) {
+                    if (com.example.whiz.services.MessageDraftOverlayService.isActive) {
                         Log.d(TAG, "Dismissing draft overlay before sending message")
-                        overlayService.dismiss()
+                        com.example.whiz.services.MessageDraftOverlayService.stop(accessibilityService.applicationContext)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
@@ -1675,10 +1674,9 @@ class ScreenAgentTools @Inject constructor(
 
                 // Dismiss the draft overlay if it's active
                 try {
-                    val overlayService = com.example.whiz.services.MessageDraftOverlayService.getInstance()
-                    if (overlayService != null && com.example.whiz.services.MessageDraftOverlayService.isActive) {
+                    if (com.example.whiz.services.MessageDraftOverlayService.isActive) {
                         Log.d(TAG, "Dismissing draft overlay before sending message")
-                        overlayService.dismiss()
+                        com.example.whiz.services.MessageDraftOverlayService.stop(accessibilityService.applicationContext)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
@@ -1716,24 +1714,46 @@ class ScreenAgentTools @Inject constructor(
                     var sendSuccess = false
 
                     if (currentRoot != null) {
-                        // Find by resource ID (Google Messages compose send button)
-                        val composeSendId = "Compose:Draft:Send"
-                        val composeSendNodes = currentRoot.findAccessibilityNodeInfosByViewId(composeSendId)
+                        // Find by content description and try direct click
+                        val sendButtons = mutableListOf<AccessibilityNodeInfo>()
+                        findNodesByContentDescription(currentRoot, "Send encrypted message", sendButtons)
 
-                        if (composeSendNodes != null && composeSendNodes.isNotEmpty()) {
-                            Log.d(TAG, "Found send button by resource ID: $composeSendId")
-                            val sendButton = composeSendNodes[0]
+                        if (sendButtons.isNotEmpty()) {
+                            Log.d(TAG, "Found send button by content description")
+                            val sendButtonChild = sendButtons[0]
 
-                            if (sendButton.isClickable) {
-                                sendSuccess = accessibilityService.clickNode(sendButton)
-                                if (sendSuccess) {
-                                    Log.d(TAG, "Successfully clicked send button")
+                            // Try clicking the node directly first - Android might bubble the click up
+                            sendSuccess = sendButtonChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            Log.d(TAG, "Tried clicking node directly, result: $sendSuccess")
+
+                            // If direct click didn't work, walk up the tree to find clickable ancestor
+                            if (!sendSuccess) {
+                                Log.d(TAG, "Direct click failed, walking up tree to find clickable ancestor")
+                                var sendButton = sendButtonChild.parent
+
+                                // Walk up the tree to find a clickable ancestor
+                                var attempts = 0
+                                while (sendButton != null && !sendButton.isClickable && attempts < 3) {
+                                    Log.d(TAG, "Parent node not clickable, trying grandparent (attempt ${attempts + 1})")
+                                    val nextParent = sendButton.parent
+                                    sendButton.recycle()
+                                    sendButton = nextParent
+                                    attempts++
+                                }
+
+                                if (sendButton != null && sendButton.isClickable) {
+                                    sendSuccess = accessibilityService.clickNode(sendButton)
+                                    Log.d(TAG, "Clicked send button by walking up tree, result: $sendSuccess")
+                                    sendButton.recycle()
+                                } else {
+                                    Log.w(TAG, "Could not find clickable ancestor for send button")
+                                    sendButton?.recycle()
                                 }
                             }
 
-                            composeSendNodes.forEach { it.recycle() }
+                            sendButtons.forEach { it.recycle() }
                         } else {
-                            Log.e(TAG, "Could not find send button by resource ID: $composeSendId")
+                            Log.e(TAG, "Could not find send button by content description")
                         }
 
                         currentRoot.recycle()
@@ -4217,6 +4237,29 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error finding nodes by content description", e)
+        }
+    }
+
+    private fun findNodesByResourceId(node: AccessibilityNodeInfo, resourceId: String, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
+        if (depth > 15) return // Limit recursion depth
+
+        try {
+            // Check if this node matches the resource ID
+            val nodeResourceId = node.viewIdResourceName
+            if (nodeResourceId != null && nodeResourceId == resourceId) {
+                results.add(AccessibilityNodeInfo.obtain(node))
+            }
+
+            // Continue searching children
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    findNodesByResourceId(child, resourceId, results, depth + 1)
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding nodes by resource ID", e)
         }
     }
 

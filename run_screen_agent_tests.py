@@ -523,8 +523,8 @@ def test_whatsapp_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    print("⏳ Waiting 10 seconds for message modification...")
-    time.sleep(10)
+    print("⏳ Waiting 15 seconds for message modification...")
+    time.sleep(15)
 
     print("\n========================================")
     print("STEP 9: Validating draft message was updated")
@@ -1030,8 +1030,8 @@ def test_sms_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    print("⏳ Waiting 10 seconds for message modification...")
-    time.sleep(10)
+    print("⏳ Waiting 15 seconds for message modification...")
+    time.sleep(15)
 
     print("\n========================================")
     print("STEP 9: Validating draft message was updated")
@@ -1110,7 +1110,7 @@ def test_sms_draft_message(tester):
 
     # Click confirm delete
     print("✔️  Confirming delete at (750, 1490)...")
-    tester.tap(750, 1290)
+    tester.tap(750, 1490)
     time.sleep(2)
 
     print("\n========================================")
@@ -1134,55 +1134,3 @@ def test_sms_draft_message(tester):
     print("🎉 TEST COMPLETED SUCCESSFULLY!")
     print("========================================")
 
-
-def test_open_sms_app_debug(tester):
-    """Test that opens the SMS app and then intentionally fails to capture screen state."""
-    import time
-
-    screenshot_path = "/tmp/whiz_screen.png"
-
-    # Open WhizVoice Debug app
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
-
-    # Navigate to My Chats page
-    success, error_msg = navigate_to_my_chats(tester, "open_sms_app_debug")
-    assert success, error_msg
-
-    # Click on coordinates to open a new chat
-    tester.tap(950, 2225)
-    time.sleep(2)
-
-    # Validate we are on the New Chat screen
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "open_sms_app_debug", "new_chat_screen")
-    assert validation_result, "Failed to reach New Chat screen"
-
-    # Send a voice transcription asking to open the Messages app
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Can you open the Messages app?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    time.sleep(3)  # Give time for message to be processed
-
-    # Wait for the SMS/Messages app to open
-    time.sleep(10)
-
-    # Take a screenshot before intentionally failing
-    tester.screenshot(screenshot_path)
-
-    # Save screenshot and UI dump for debugging
-    save_failed_screenshot(screenshot_path, "open_sms_app_debug", "messages_app_opened")
-
-    # Intentionally fail to trigger screenshot/dump save
-    assert False, "Intentional failure - check screen_agent_test_output directory for screenshot and UI dump of Messages app"
