@@ -40,7 +40,7 @@ class MessageDraftOverlayService : Service() {
     
     companion object {
         private const val TAG = "MessageDraftOverlay"
-        private const val AUTO_DISMISS_DELAY = 15000L // 15 seconds
+        private const val AUTO_DISMISS_DELAY = 25000L // 25 seconds
         private const val EXTRA_BOUNDS = "bounds"
         private const val EXTRA_MESSAGE = "message"
         private const val EXTRA_PREVIOUS_TEXT = "previous_text"

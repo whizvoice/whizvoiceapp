@@ -1650,6 +1650,18 @@ class ScreenAgentTools @Inject constructor(
 
             if (inputNode != null) {
 
+                // Clear the input field first
+                val clearBundle = Bundle()
+                clearBundle.putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    ""
+                )
+                inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+                Log.d(TAG, "Cleared input field")
+
+                // Wait a bit for the clear to take effect
+                delay(200)
+
                 // Set the text
                 val bundle = Bundle()
                 bundle.putCharSequence(
@@ -1670,30 +1682,26 @@ class ScreenAgentTools @Inject constructor(
                     var sendSuccess = false
 
                     if (currentRoot != null) {
-                        // Try multiple ways to find the send button
-                        val sendButtons = mutableListOf<AccessibilityNodeInfo>()
+                        // Find by resource ID (Google Messages compose send button)
+                        val composeSendId = "Compose:Draft:Send"
+                        val composeSendNodes = currentRoot.findAccessibilityNodeInfosByViewId(composeSendId)
 
-                        // Method 1: Find by text "Send"
-                        val sendTextNodes = currentRoot.findAccessibilityNodeInfosByText("Send")
-                        if (sendTextNodes != null && sendTextNodes.isNotEmpty()) {
-                            sendButtons.addAll(sendTextNodes)
-                        }
+                        if (composeSendNodes != null && composeSendNodes.isNotEmpty()) {
+                            Log.d(TAG, "Found send button by resource ID: $composeSendId")
+                            val sendButton = composeSendNodes[0]
 
-                        // Method 2: Find buttons with send-related content description
-                        findNodesByContentDescription(currentRoot, "send", sendButtons)
-
-                        // Try clicking the send button
-                        for (sendButton in sendButtons) {
                             if (sendButton.isClickable) {
                                 sendSuccess = accessibilityService.clickNode(sendButton)
                                 if (sendSuccess) {
                                     Log.d(TAG, "Successfully clicked send button")
-                                    break
                                 }
                             }
+
+                            composeSendNodes.forEach { it.recycle() }
+                        } else {
+                            Log.e(TAG, "Could not find send button by resource ID: $composeSendId")
                         }
 
-                        sendButtons.forEach { it.recycle() }
                         currentRoot.recycle()
                     }
 

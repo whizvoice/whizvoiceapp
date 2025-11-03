@@ -965,13 +965,13 @@ def test_sms_draft_message(tester):
     # Send a voice transcription with the test message to send an SMS
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(415)604-8024 that says hey just testing SMS from whiz voice'")
+    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a text message to +1(415)604-8024 that says hey just testing SMS from whiz voice"',
+        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -982,8 +982,9 @@ def test_sms_draft_message(tester):
     print("STEP 6: Waiting for draft overlay to appear")
     print("========================================")
     # wait for draft overlay to appear over SMS input text bar
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0...")
-    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=30.0)  # #fffad0
+    # Support both light mode (#fffad0) and dark mode (#d2cea4) colors
+    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0 or #d2cea4...")
+    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4'], timeout=30.0)
 
     # If overlay detection failed, capture diagnostics before asserting
     if not result['matched']:
@@ -1005,8 +1006,8 @@ def test_sms_draft_message(tester):
         "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'  or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
-        "There is also a yellow notification bubble with the outline of a robot head. "
-        "There may or may not be an icon inside the robot head outline. "
+        "There is also a yellow notification bubble with an outline of something (it's a robot head). "
+        "There may or may not be an icon inside the outline. "
     )
     if not validation_result:
         print("❌ Draft message validation failed!")
@@ -1041,7 +1042,7 @@ def test_sms_draft_message(tester):
         screenshot_path,
         "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'just testing SMS'. "
+        "similar to 'testing SMS'. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
         "There is also a yellow notification bubble with the outline of a robot head. "
         "There may or may not be an icon inside the robot head outline. "
@@ -1067,8 +1068,8 @@ def test_sms_draft_message(tester):
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    print("⏳ Waiting 15 seconds for message to be sent...")
-    time.sleep(15)
+    print("⏳ Waiting 30 seconds for message to be sent...")
+    time.sleep(30)
 
     print("\n========================================")
     print("STEP 11: Validating message was sent")
@@ -1079,7 +1080,7 @@ def test_sms_draft_message(tester):
         screenshot_path,
         "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is NO yellow overlay. "
-        "The most recent message is something with text similar to 'just testing SMS'. "
+        "The most recent message is something with text similar to 'testing SMS'. "
         "There is also a yellow notification bubble with the outline of a robot head. "
         "There may or may not be an icon inside the robot head outline. "
     )
