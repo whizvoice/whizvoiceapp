@@ -42,7 +42,10 @@ class ChatsListViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 Log.d(TAG, "ChatsListViewModel init: Checking if conversations need to be loaded")
-                
+
+                // Clean up stale optimistic chats on initial load
+                repository.cleanupStaleOptimisticChats()
+
                 // If we don't have any conversations cached, trigger a refresh
                 if (repository.conversations.value.isEmpty()) {
                     Log.d(TAG, "ChatsListViewModel init: No conversations cached, triggering refresh")
@@ -96,7 +99,10 @@ class ChatsListViewModel @Inject constructor(
                 Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
                 val result = repository.performIncrementalSync()
                 Log.d(TAG, "refreshChats: Incremental sync completed successfully")
-                
+
+                // Clean up stale optimistic chats (empty chats older than 1 hour)
+                repository.cleanupStaleOptimisticChats()
+
                 // Check if we're showing cached data (result will indicate this)
                 _isShowingCachedData.value = result.isCachedData
             } catch (e: Exception) {
