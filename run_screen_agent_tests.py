@@ -1079,10 +1079,13 @@ def test_sms_draft_message(tester):
     validation_result = tester.validate_screenshot(
         screenshot_path,
         "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
-        "At the bottom of the screen, there is NO yellow overlay. "
-        "The most recent message is something with text similar to 'testing SMS'. "
+        "At the bottom of the screen, there is NO yellow overlay covering the keyboard. The keyboard may be visible. "
+        "The app may be in dark mode. "
+        "The most recent message is something with text somewhat similar to 'testing SMS'. "
+        "The message may have words added to make it more polite. "
         "There is also a yellow notification bubble with the outline of a robot head. "
         "There may or may not be an icon inside the robot head outline. "
+        "Please look carefully. Sometimes in dark mode it may look like a message was sent when it is still in the edit text input instead and not in the conversation yet."
     )
     if not validation_result:
         print("❌ Message sent validation failed!")
@@ -1097,7 +1100,7 @@ def test_sms_draft_message(tester):
     # Cleanup: Delete the sent message
     # Long press on the newly sent message
     print("🖱️  Long pressing on message at (500, 1280)...")
-    tester.long_press(500, 1280)
+    tester.long_press(500, 1180)
     time.sleep(2)
 
     # Click delete button (may vary by SMS app)
@@ -1106,7 +1109,7 @@ def test_sms_draft_message(tester):
     time.sleep(2)
 
     # Click confirm delete
-    print("✔️  Confirming delete at (750, 1290)...")
+    print("✔️  Confirming delete at (750, 1490)...")
     tester.tap(750, 1290)
     time.sleep(2)
 
@@ -1117,7 +1120,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
         "The most recent message in the chat has been deleted."
     )
     if not validation_result:
