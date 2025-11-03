@@ -1852,14 +1852,10 @@ class WhizRepository @Inject constructor(
                     }
                 }
                 
-                // Sort optimistic chats by timestamp (most recent first)
-                val sortedOptimisticChats = unmigratedOptimisticChats.sortedByDescending { it.lastMessageTime }
-                
-                // Server chats are already sorted by the API
-                // Combine: optimistic chats first, then server chats
-                val combinedChats = sortedOptimisticChats + serverChats
-                
-                Log.d(TAG, "getAllChatsFlow: Returning ${sortedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
+                // Combine server chats and optimistic chats, then sort by lastMessageTime (most recent first)
+                val combinedChats = (serverChats + unmigratedOptimisticChats).sortedByDescending { it.lastMessageTime }
+
+                Log.d(TAG, "getAllChatsFlow: Returning ${unmigratedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
                 emit(combinedChats)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in getAllChatsFlow", e)
