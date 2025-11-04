@@ -349,7 +349,12 @@ class ChatViewModel @Inject constructor(
             Log.d(TAG, "Started collecting app background events")
             appLifecycleService.appBackgroundEvent.collect {
                 Log.d(TAG, "App background event received")
-                onAppBackgrounded()
+                // Check if app is actually in background - if not, this is a stale replayed event
+                if (appLifecycleService.isInForeground()) {
+                    Log.d(TAG, "Ignoring stale background event - app is actually in foreground")
+                } else {
+                    onAppBackgrounded()
+                }
             }
         }
 

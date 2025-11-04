@@ -120,16 +120,16 @@ fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
     android.util.Log.d("DatabaseEntities", "  Server timestamp: '${this.timestamp}'")
     android.util.Log.d("DatabaseEntities", "  Request ID: '${this.request_id}'")
     android.util.Log.d("DatabaseEntities", "  Content preview: '${this.content.take(50)}'")
-    android.util.Log.d("DatabaseEntities", "  Message type: '${this.message_type}'")
-    
+    android.util.Log.d("DatabaseEntities", "  Message sender: '${this.message_sender}'")
+
     val parsedTimestamp = parseTimestampToMillis(this.timestamp)
     android.util.Log.d("DatabaseEntities", "  Parsed timestamp: $parsedTimestamp (${java.time.Instant.ofEpochMilli(parsedTimestamp)})")
-    
+
     return MessageEntity(
         id = 0,  // Let Room auto-generate the ID - don't use server ID!
         chatId = this.conversation_id,
         content = this.content,
-        type = parseMessageType(this.message_type),
+        type = parseMessageType(this.message_sender),  // Changed from message_type to message_sender
         timestamp = parsedTimestamp,
         requestId = this.request_id  // 🔧 FIXED: Preserve request_id from server
     )
