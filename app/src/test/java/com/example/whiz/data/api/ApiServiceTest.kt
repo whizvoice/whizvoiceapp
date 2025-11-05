@@ -42,7 +42,7 @@ class ApiServiceTest {
             id = 456L,
             conversation_id = 789L,
             content = "Hello, can you help me with the quarterly report?",
-            message_sender = "USER",
+            message_type = "USER",
             timestamp = "2023-12-15T10:30:00Z"
         )
         
@@ -62,7 +62,7 @@ class ApiServiceTest {
             id = 789L,
             conversation_id = 123L,
             content = "I'd be happy to help you with the quarterly report. Let me break this down into sections...",
-            message_sender = "ASSISTANT", 
+            message_type = "ASSISTANT", 
             timestamp = "2023-12-15T10:31:00Z"
         )
         
@@ -80,7 +80,7 @@ class ApiServiceTest {
             id = 999L,
             conversation_id = 123L,
             content = "Test message with unknown type",
-            message_sender = "UNKNOWN_TYPE",
+            message_type = "UNKNOWN_TYPE",
             timestamp = "2023-12-15T10:32:00Z"
         )
         
@@ -98,7 +98,7 @@ class ApiServiceTest {
             id = 1L,
             conversation_id = 1L,
             content = "Timestamp test",
-            message_sender = "USER",
+            message_type = "USER",
             timestamp = testTimestamp
         )
         
