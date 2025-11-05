@@ -34,7 +34,7 @@ class DatabaseEntitiesTest {
             id = 1L,
             conversation_id = TestData.TEST_CONVERSATION_ID,
             content = TestData.TEST_MESSAGE_CONTENT,
-            message_type = "USER",
+            message_sender = "USER",
             timestamp = "2023-12-15T10:30:00Z"
         )
 
@@ -55,7 +55,7 @@ class DatabaseEntitiesTest {
             id = 2L,
             conversation_id = TestData.TEST_CONVERSATION_ID,
             content = "Assistant response",
-            message_type = "ASSISTANT",
+            message_sender = "ASSISTANT",
             timestamp = "2023-12-15T10:30:00Z"
         )
 

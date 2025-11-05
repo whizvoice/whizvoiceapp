@@ -183,6 +183,32 @@ class BubbleOverlayService : Service() {
             }
         }
 
+        // Observe TTS state changes and update bubble mode accordingly
+        serviceScope.launch {
+            voiceManager.isVoiceResponseEnabled.collect { ttsEnabled ->
+                if (isActive) {
+                    Log.d(TAG, "[TTS_STATE_CHANGE] TTS enabled state changed to: $ttsEnabled")
+
+                    // Update bubble mode based on TTS state
+                    val newMode = if (ttsEnabled) {
+                        ListeningMode.TTS_WITH_LISTENING
+                    } else {
+                        // When TTS is disabled, keep mic on (CONTINUOUS_LISTENING)
+                        ListeningMode.CONTINUOUS_LISTENING
+                    }
+
+                    if (currentMode != newMode) {
+                        Log.d(TAG, "[TTS_STATE_CHANGE] Switching bubble mode from $currentMode to $newMode")
+                        currentMode = newMode
+                        updateModeVisual()
+                        applyCurrentMode()
+                    } else {
+                        Log.d(TAG, "[TTS_STATE_CHANGE] Bubble mode already $currentMode, no change needed")
+                    }
+                }
+            }
+        }
+
         startVoiceTranscriptionListener()
         startBotResponseListener()
         registerTestTranscriptionReceiver()

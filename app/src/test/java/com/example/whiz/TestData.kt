@@ -53,7 +53,7 @@ object TestData {
         id = id,
         conversation_id = conversationId,
         content = content,
-        message_type = messageType,
+        message_sender = messageType,
         timestamp = TEST_TIMESTAMP
     )
     

@@ -586,8 +586,13 @@ class ToolExecutor @Inject constructor(
             val isBubbleActive = com.example.whiz.services.BubbleOverlayService.isActive
             Log.i(TAG, "Setting TTS enabled to: $enabled (bubble active: $isBubbleActive)")
 
+            // Always update VoiceManager state so observers are notified
+            chatViewModel.setVoiceResponseEnabled(enabled)
+            Log.i(TAG, "Updated VoiceManager TTS state to: $enabled")
+
             if (isBubbleActive) {
-                // In bubble mode, switch modes based on TTS enabled state
+                // In bubble mode, also directly update bubble mode for immediate effect
+                // (The bubble observer will also react, but direct update ensures it happens immediately)
                 if (enabled) {
                     Log.i(TAG, "Bubble mode active - switching to TTS_WITH_LISTENING mode")
                     com.example.whiz.services.BubbleOverlayService.setMode(com.example.whiz.services.ListeningMode.TTS_WITH_LISTENING)
@@ -595,9 +600,6 @@ class ToolExecutor @Inject constructor(
                     Log.i(TAG, "Bubble mode active - switching to CONTINUOUS_LISTENING mode")
                     com.example.whiz.services.BubbleOverlayService.setMode(com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING)
                 }
-            } else {
-                // Not in bubble mode, use normal chatViewModel
-                chatViewModel.setVoiceResponseEnabled(enabled)
             }
 
             val resultJson = JSONObject().apply {
