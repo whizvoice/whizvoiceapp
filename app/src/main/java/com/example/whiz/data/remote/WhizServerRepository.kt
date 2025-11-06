@@ -472,10 +472,22 @@ class WhizServerRepository @Inject constructor(
                                 Log.i(TAG, "🔧 Request ID: ${jsonObject.optString("request_id", "none")}")
                                 Log.i(TAG, "🔧 Full request: ${jsonObject.toString(2)}")
                                 
-                                scope.launch { 
+                                scope.launch {
                                     Log.d(TAG, "🔧 Emitting ToolExecution event")
                                     emitEvent(WebSocketEvent.ToolExecution(jsonObject, requestId, conversationId))
                                 }
+                                messageHandled = true
+                            }
+                            // Check if this is a queued message acknowledgment
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "queued") {
+                                val queuePosition = jsonObject.optInt("queue_position", 0)
+                                val queueMessage = jsonObject.optString("message", "Message queued")
+
+                                Log.i(TAG, "📬 Message queued on server (position: $queuePosition)")
+                                Log.d(TAG, "📬 Queue message: $queueMessage")
+
+                                // Don't display queued acknowledgments as messages
+                                // The actual response will come later when the queue is processed
                                 messageHandled = true
                             }
                             // Check if this is a cancellation confirmation
