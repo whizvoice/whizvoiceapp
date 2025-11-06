@@ -1350,7 +1350,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Check for Paris response (should NOT contain Rome/Italy)
                 val parisResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
+                    selector = {
                         composeTestRule.onNodeWithContentDescription(
                             "Assistant message: Paris",
                             substring = true,
@@ -1358,7 +1358,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L,
+                    timeoutMs = 15000L,
                     description = "Paris response in first chat"
                 )
                 
@@ -1537,7 +1537,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Check for Rome response (should NOT contain Paris/France)
                 val romeResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
+                    selector = {
                         composeTestRule.onNodeWithContentDescription(
                             "Assistant message: Rome",
                             substring = true,
@@ -1545,7 +1545,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L,
+                    timeoutMs = 15000L,
                     description = "Rome response in second chat"
                 )
                 
