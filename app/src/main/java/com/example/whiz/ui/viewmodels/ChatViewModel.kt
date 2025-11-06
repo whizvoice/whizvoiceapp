@@ -326,7 +326,7 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Chat migration detected: updating chat ID from $optimisticId to $serverId")
                     _chatId.value = serverId
                     // The messages flow will automatically update since it observes _chatId
-                    
+
                     // No longer needed - chatId is passed directly to sendMessage
                     Log.d(TAG, "Chat ID migration complete: $serverId")
                 }
