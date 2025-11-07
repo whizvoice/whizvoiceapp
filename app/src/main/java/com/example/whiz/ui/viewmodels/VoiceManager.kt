@@ -595,18 +595,15 @@ class VoiceManager @Inject constructor(
         if (ttsManager.isSpeaking.value) {
             Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - starting listening")
 
-            // Stop TTS immediately (user wants to speak)
-            stopSpeaking()
+            // User explicitly wants to speak, so force listening to restart after TTS stops
+            // by setting continuousListeningBeforeTTS to true. The TTS completion callback
+            // will check this and restart listening.
+            continuousListeningBeforeTTS = true
+            Log.d(TAG, "handleMicClickDuringTTS: Set continuousListeningBeforeTTS=true to force listening restart")
 
-            // Start listening immediately for this one interaction
-            // The continuous listening state will be restored when TTS completes (via callback)
-            coroutineScope.launch {
-                // Wait for TTS to actually stop
-                ttsManager.isSpeaking.first { !it }
-                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, starting listening for user input")
-                // Start a one-time listening session (continuous mode will be restored by TTS callback)
-                startContinuousListening()
-            }
+            // Stop TTS immediately (user wants to speak)
+            // The onCompleted callback will restart listening because we set continuousListeningBeforeTTS=true
+            stopSpeaking()
         }
     }
 
