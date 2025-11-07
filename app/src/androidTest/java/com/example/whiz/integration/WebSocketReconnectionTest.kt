@@ -1538,8 +1538,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val romeResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = {
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Rome",
+                        composeTestRule.onNodeWithText(
+                            "Rome",
                             substring = true,
                             ignoreCase = true,
                             useUnmergedTree = true

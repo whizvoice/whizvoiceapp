@@ -745,10 +745,22 @@ fun ChatScreen(
         }
     }
 
+    // Track whether we've already initialized voice settings for this screen instance
+    // This prevents re-initialization during chat migration (chatId changes)
+    val voiceInitialized = remember { mutableStateOf(false) }
+
     // Voice app behavior: enable microphone for all chats on FIRST launch only
     // Don't override user's preference if they've manually toggled it
-    LaunchedEffect(viewModelChatId, enableTTSMode, effectiveHasPermission) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled")
+    // IMPORTANT: Don't re-initialize during chat migration (when chatId changes from -1 to optimistic ID)
+    LaunchedEffect(enableTTSMode, effectiveHasPermission) {
+        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled, voiceInitialized=${voiceInitialized.value}")
+
+        // Only initialize voice settings ONCE per screen instance
+        // Skip if already initialized (prevents override during chat migration)
+        if (voiceInitialized.value) {
+            Log.d("ChatScreen", "[LOG] Voice already initialized - skipping to preserve user settings (migration or settings change)")
+            return@LaunchedEffect
+        }
 
         // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
         // For existing chats, respect the user's current continuous listening state
@@ -775,12 +787,14 @@ fun ChatScreen(
             }
 
             Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
+            voiceInitialized.value = true
         } else if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
         } else {
             Log.d("ChatScreen", "[LOG] Existing chat (ID=$viewModelChatId) - preserving user's continuous listening preference (currently: $isContinuousListeningEnabled)")
+            voiceInitialized.value = true // Mark as initialized so we don't override later
         }
-        
+
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
     }
