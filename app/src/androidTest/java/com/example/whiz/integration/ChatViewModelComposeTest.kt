@@ -323,7 +323,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             while (!baristaResponseFound && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
                 for (expectedResponse in expectedBaristaResponses) {
                     try {
-                        composeTestRule.onNodeWithText(expectedResponse).assertIsDisplayed()
+                        composeTestRule.onNodeWithText(expectedResponse, useUnmergedTree = true).assertIsDisplayed()
                         baristaResponseFound = true
                         actualBaristaResponse = expectedResponse
                         Log.d(TAG, "✅ Barista response found: '$actualBaristaResponse' after ${System.currentTimeMillis() - waitStartTime}ms")
