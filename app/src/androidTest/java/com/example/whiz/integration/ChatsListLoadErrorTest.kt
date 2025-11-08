@@ -39,16 +39,16 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     
     @Inject
     lateinit var repository: WhizRepository
-    
+
     @Inject
     lateinit var testInterceptor: TestInterceptor
-    
+
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-    
+
     @Inject
     lateinit var whizServerRepository: WhizServerRepository
-    
+
     companion object {
         private const val TAG = "ChatsListLoadErrorTest"
         private const val TEST_TIMEOUT = 10000L
@@ -57,18 +57,18 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
+
         // Grant microphone permission
         device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
         permissionManager.updateMicrophonePermission(true)
-        
+
         // Reset test interceptor state
         testInterceptor.resetErrorState()
-        
+
         // Configure TestInterceptor to check WebSocket persistent disconnect state
         TestInterceptor.persistentDisconnectForTestCheck = { whizServerRepository.persistentDisconnectForTest() }
         TestInterceptor.simulateNetworkErrorForManualDisconnect = true
-        
+
         Log.d(TAG, "Test setup complete")
     }
     
@@ -98,7 +98,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             TestInterceptor.persistentDisconnectForTestCheck = null
             TestInterceptor.simulateNetworkErrorForManualDisconnect = true
             testInterceptor.resetErrorState()
-            
+
             Log.d(TAG, "Cleanup complete")
         }
     }
@@ -132,21 +132,26 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 Log.w(TAG, "Chat list may not be fully loaded, continuing with test")
             }
 
-            // Wait for auto-refresh to complete (takes ~1-2 seconds, using 1.5s to be safe)
+            // Wait for auto-refresh to complete
+            // Based on GitHub Actions logs, auto-refresh took ~3.6 seconds
+            // Using 5 seconds to be safe
             Log.d(TAG, "Waiting for auto-refresh to complete...")
-            delay(1500)
+            delay(5000)
+            Log.d(TAG, "Auto-refresh wait period complete")
 
-            // Disconnect to show offline snackbar
+            // Disconnect to trigger offline mode
             Log.d(TAG, "Disconnecting WebSocket to trigger offline mode...")
             whizServerRepository.disconnect(setPersistentDisconnect = true)
-            
+
             withTimeout(5000) {
                 while (whizServerRepository.isConnected()) {
                     delay(100)
                 }
             }
-            
-            // Trigger refresh to show snackbar
+            Log.d(TAG, "Disconnected successfully")
+
+            // Perform pull-to-refresh gesture
+            Log.d(TAG, "Performing pull-to-refresh gesture...")
             try {
                 composeTestRule.onRoot().performTouchInput {
                     swipeDown(
@@ -154,6 +159,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                         endY = centerY + (height * 0.2f)
                     )
                 }
+                Log.d(TAG, "Pull-to-refresh gesture completed")
             } catch (e: AssertionError) {
                 Log.e(TAG, "Failed to perform swipe: ${e.message}")
                 failWithScreenshot("Failed to perform swipe - ${e.message}", "swipe_failed_multiple_roots")
@@ -163,7 +169,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
                 failWithScreenshot("Unexpected error during swipe: ${e.message}", "swipe_error")
                 return@runBlocking
             }
-            
+
             // Wait for snackbar
             val snackbarAppeared = ComposeTestHelper.waitForElement(
                 composeTestRule,

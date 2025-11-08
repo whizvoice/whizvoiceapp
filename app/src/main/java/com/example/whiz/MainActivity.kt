@@ -65,13 +65,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var preloadManager: PreloadManager
-    
+
     @Inject
     lateinit var permissionManager: PermissionManager
-    
+
     @Inject
     lateinit var ttsManager: com.example.whiz.services.TTSManager
-    
+
     @Inject
     lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
     
@@ -80,9 +80,8 @@ class MainActivity : ComponentActivity() {
     
     @Inject
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
-    
+
     private lateinit var navController: NavHostController
-    private val chatsListViewModel: ChatsListViewModel by viewModels()
     private var testTranscriptionReceiver: BroadcastReceiver? = null
 
     // Expose NavController for testing
