@@ -183,6 +183,32 @@ class BubbleOverlayService : Service() {
             }
         }
 
+        // Observe TTS state changes and update bubble mode accordingly
+        serviceScope.launch {
+            voiceManager.isVoiceResponseEnabled.collect { ttsEnabled ->
+                if (isActive) {
+                    Log.d(TAG, "[TTS_STATE_CHANGE] TTS enabled state changed to: $ttsEnabled")
+
+                    // Update bubble mode based on TTS state
+                    val newMode = if (ttsEnabled) {
+                        ListeningMode.TTS_WITH_LISTENING
+                    } else {
+                        // When TTS is disabled, keep mic on (CONTINUOUS_LISTENING)
+                        ListeningMode.CONTINUOUS_LISTENING
+                    }
+
+                    if (currentMode != newMode) {
+                        Log.d(TAG, "[TTS_STATE_CHANGE] Switching bubble mode from $currentMode to $newMode")
+                        currentMode = newMode
+                        updateModeVisual()
+                        applyCurrentMode()
+                    } else {
+                        Log.d(TAG, "[TTS_STATE_CHANGE] Bubble mode already $currentMode, no change needed")
+                    }
+                }
+            }
+        }
+
         startVoiceTranscriptionListener()
         startBotResponseListener()
         registerTestTranscriptionReceiver()
@@ -721,6 +747,12 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
         isActive = false
         serviceInstance = null
+
+        // CRITICAL: Always stop microphone when bubble is dismissed
+        // The isListening flag can be false even when the recognizer is still active in continuous mode,
+        // so we need to unconditionally stop it to prevent it from continuing to listen
+        Log.d(TAG, "BubbleOverlayService onDestroy - stopping microphone immediately (isListening=${voiceManager.isListening.value})")
+        voiceManager.stopListening()
 
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null

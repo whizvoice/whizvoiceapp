@@ -1,6 +1,10 @@
 package com.example.whiz.ui.viewmodels
 
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
@@ -37,19 +41,73 @@ class VoiceManager @Inject constructor(
 ) {
 
     private val TAG = "VoiceManager"
-    
+
     companion object {
         @Volatile
         var instance: VoiceManager? = null
             private set
     }
-    
+
     init {
         instance = this
     }
-    
+
     // Create a coroutine scope for this singleton service
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // Screen lock detection
+    private val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+    private val _isScreenLocked = MutableStateFlow(keyguardManager.isKeyguardLocked)
+    private val isScreenLocked: StateFlow<Boolean> = _isScreenLocked.asStateFlow()
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen turned off - stopping microphone and destroying recognizer")
+                    _isScreenLocked.value = true
+                    // Stop and completely destroy the recognizer when screen turns off
+                    if (isListening.value) {
+                        stopListening()
+                        // Force destroy the recognizer to ensure it's completely stopped
+                        speechRecognitionService.release()
+                        speechRecognitionService.initialize()
+                    }
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    Log.d(TAG, "Screen turned on - updating lock state")
+                    // When screen turns on, it might still be locked (showing lock screen)
+                    // Update the lock state and STOP listening if still locked
+                    val isLocked = keyguardManager.isKeyguardLocked
+                    _isScreenLocked.value = isLocked
+
+                    if (isLocked) {
+                        Log.d(TAG, "Screen is on but still locked - destroying recognizer to prevent audio pickup")
+                        if (isListening.value) {
+                            stopListening()
+                        }
+                        // Force destroy any lingering recognizer instances
+                        speechRecognitionService.release()
+                        speechRecognitionService.initialize()
+                    }
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    Log.d(TAG, "Screen unlocked (user present)")
+                    _isScreenLocked.value = false
+                    // Restart listening if continuous mode was enabled
+                    if (continuousListeningEnabled && appLifecycleService.isInForeground()) {
+                        Log.d(TAG, "Screen unlocked - restarting continuous listening")
+                        coroutineScope.launch {
+                            delay(100L) // Small delay to ensure state is settled
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Speech Recognition State
     val transcriptionState = speechRecognitionService.transcriptionState
@@ -94,7 +152,16 @@ class VoiceManager @Inject constructor(
         observePermissionChanges()
         observeAppLifecycle()
         observeBubbleModeChanges()
-        
+        observeScreenLockState()
+
+        // Register screen state receiver
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        context.registerReceiver(screenStateReceiver, filter)
+
         // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
         speechRecognitionService.shouldRestartCallback = { shouldBeListening() }
@@ -109,20 +176,23 @@ class VoiceManager @Inject constructor(
         val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
-        
+        val screenNotLocked = !isScreenLocked.value
+
         // Check bubble mode - if bubble is active and mic is off, don't listen
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
-        val bubbleAllowsListening = !isBubbleActive || 
+        val bubbleAllowsListening = !isBubbleActive ||
             (bubbleMode == ListeningMode.CONTINUOUS_LISTENING || bubbleMode == ListeningMode.TTS_WITH_LISTENING)
-        
+
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
-        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) && 
-                    hasPermission && notSpeaking && bubbleAllowsListening
-        
+        // BUT only if screen is NOT locked (unless bubble is active)
+        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
+                    hasPermission && notSpeaking && bubbleAllowsListening &&
+                    (screenNotLocked || isBubbleActive) // Allow listening when screen locked ONLY if bubble is active
+
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
-                "permission=$hasPermission, notSpeaking=$notSpeaking, result=$should")
-        
+                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, result=$should")
+
         return should
     }
 
@@ -273,7 +343,7 @@ class VoiceManager @Inject constructor(
         coroutineScope.launch {
             BubbleOverlayService.modeChangeFlow.collect { mode ->
                 Log.d(TAG, "Bubble mode changed to: $mode")
-                
+
                 when (mode) {
                     ListeningMode.MIC_OFF -> {
                         // Stop both listening and TTS when mic is turned off
@@ -288,7 +358,7 @@ class VoiceManager @Inject constructor(
                             Log.d(TAG, "Stopping TTS as bubble switched to listening-only mode")
                             ttsManager.stop()
                         }
-                        
+
                         // Re-evaluate if we should be listening
                         Log.d(TAG, "Mode allows listening, checking if should restart")
                         if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
@@ -318,6 +388,19 @@ class VoiceManager @Inject constructor(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private fun observeScreenLockState() {
+        // Listen for screen lock state changes
+        coroutineScope.launch {
+            isScreenLocked.collect { locked ->
+                Log.d(TAG, "Screen lock state changed: locked=$locked")
+                if (locked && isListening.value) {
+                    Log.d(TAG, "Screen locked - stopping microphone")
+                    stopListening()
                 }
             }
         }
@@ -436,6 +519,12 @@ class VoiceManager @Inject constructor(
             return
         }
 
+        // Check if we should actually be listening (includes screen lock check)
+        if (!shouldBeListening()) {
+            Log.d(TAG, "startContinuousListening called but shouldBeListening() returned false - not starting")
+            return
+        }
+
         Log.d(TAG, "[DEBUG] About to call startListening()")
         startListening { finalText ->
             Log.d(TAG, "startContinuousListening: got transcription. continuousListeningEnabled=$continuousListeningEnabled, text='$finalText'")
@@ -504,19 +593,20 @@ class VoiceManager @Inject constructor(
     // Handle mic button click during TTS - interrupt TTS and start listening
     fun handleMicClickDuringTTS() {
         if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - starting listening")
+            Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - enabling conversation mode")
 
             // Stop TTS immediately (user wants to speak)
             stopSpeaking()
 
-            // Start listening immediately for this one interaction
-            // The continuous listening state will be restored when TTS completes (via callback)
+            // Enable continuous listening for conversation mode
+            // When user clicks "Interrupt and speak", they want to have a conversation
             coroutineScope.launch {
                 // Wait for TTS to actually stop
                 ttsManager.isSpeaking.first { !it }
-                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, starting listening for user input")
-                // Start a one-time listening session (continuous mode will be restored by TTS callback)
-                startContinuousListening()
+                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, enabling continuous listening for conversation")
+
+                // Enable and start continuous listening
+                updateContinuousListeningEnabled(true)
             }
         }
     }
@@ -525,6 +615,11 @@ class VoiceManager @Inject constructor(
     // As a Singleton, this will rarely be called in practice
     fun cleanup() {
         Log.d(TAG, "Cleaning up VoiceManager resources")
+        try {
+            context.unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering screen state receiver", e)
+        }
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()

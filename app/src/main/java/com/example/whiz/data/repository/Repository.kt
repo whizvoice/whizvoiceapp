@@ -285,12 +285,42 @@ class WhizRepository @Inject constructor(
             Log.d(TAG, "deleteAllChats: deleting all chats via API")
             apiService.deleteAllConversations()
             Log.d(TAG, "deleteAllChats: deleted all chats and messages")
-            
+
             // Clear caches and trigger refresh
             _conversations.value = emptyList()
             triggerConversationsRefresh()
         } catch (e: Exception) {
             Log.e(TAG, "Error deleting all chats via API", e)
+        }
+    }
+
+    suspend fun cleanupStaleOptimisticChats() {
+        try {
+            // Get all local chats
+            val localChats = chatDao.getAllChatsFlow().first()
+
+            // Find optimistic chats (ID < -1) that are older than 1 hour and have no messages
+            val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
+            val staleChats = localChats.filter { chat ->
+                chat.id < -1 && // Is optimistic chat
+                chat.createdAt < oneHourAgo && // Created more than 1 hour ago
+                messageDao.getMessageCountForChat(chat.id) == 0 // Has no messages
+            }
+
+            if (staleChats.isNotEmpty()) {
+                Log.d(TAG, "cleanupStaleOptimisticChats: Found ${staleChats.size} stale optimistic chats to delete")
+                staleChats.forEach { chat ->
+                    Log.d(TAG, "cleanupStaleOptimisticChats: Deleting stale chat ${chat.id} (${chat.title}) created at ${chat.createdAt}")
+                    chatDao.deleteChat(chat.id)
+                }
+
+                // Trigger refresh to update UI
+                triggerConversationsRefresh()
+            } else {
+                Log.d(TAG, "cleanupStaleOptimisticChats: No stale optimistic chats found")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up stale optimistic chats", e)
         }
     }
 
@@ -1852,14 +1882,10 @@ class WhizRepository @Inject constructor(
                     }
                 }
                 
-                // Sort optimistic chats by timestamp (most recent first)
-                val sortedOptimisticChats = unmigratedOptimisticChats.sortedByDescending { it.lastMessageTime }
-                
-                // Server chats are already sorted by the API
-                // Combine: optimistic chats first, then server chats
-                val combinedChats = sortedOptimisticChats + serverChats
-                
-                Log.d(TAG, "getAllChatsFlow: Returning ${sortedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
+                // Combine server chats and optimistic chats, then sort by lastMessageTime (most recent first)
+                val combinedChats = (serverChats + unmigratedOptimisticChats).sortedByDescending { it.lastMessageTime }
+
+                Log.d(TAG, "getAllChatsFlow: Returning ${unmigratedOptimisticChats.size} optimistic + ${serverChats.size} server = ${combinedChats.size} total chats")
                 emit(combinedChats)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in getAllChatsFlow", e)

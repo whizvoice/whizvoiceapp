@@ -69,7 +69,7 @@ interface ApiService {
         val id: Long,
         val conversation_id: Long,
         val content: String,
-        val message_type: String,
+        val message_type: String,  // API returns message_type (server maps message_sender -> message_type)
         val timestamp: String,
         val request_id: String? = null,  // Request ID for tracking request/response pairs
         val cancelled: String? = null  // Timestamp when message was cancelled (null if not cancelled)

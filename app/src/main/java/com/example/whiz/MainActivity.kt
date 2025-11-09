@@ -65,13 +65,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var preloadManager: PreloadManager
-    
+
     @Inject
     lateinit var permissionManager: PermissionManager
-    
+
     @Inject
     lateinit var ttsManager: com.example.whiz.services.TTSManager
-    
+
     @Inject
     lateinit var authRepository: com.example.whiz.data.auth.AuthRepository
     
@@ -80,9 +80,8 @@ class MainActivity : ComponentActivity() {
     
     @Inject
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
-    
+
     private lateinit var navController: NavHostController
-    private val chatsListViewModel: ChatsListViewModel by viewModels()
     private var testTranscriptionReceiver: BroadcastReceiver? = null
 
     // Expose NavController for testing
@@ -644,15 +643,20 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
-        // Notify that app is going to background
-        appLifecycleService.notifyAppBackgrounded()
-        Log.d("MainActivity", "Notified app backgrounded")
-        
+        // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
+
         // Check if bubble overlay is active and in TTS mode before stopping TTS
         val bubbleActive = BubbleOverlayService.isActive
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
         val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
-        
+
+        // Stop microphone immediately if bubble isn't active
+        // This prevents the mic from continuing to listen while the app is backgrounding
+        if (!bubbleActive && voiceManager.isListening.value) {
+            Log.d("MainActivity", "Stopping microphone immediately - app pausing without bubble")
+            voiceManager.stopListening()
+        }
+
         // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
         if (!shouldKeepTTS) {
             try {

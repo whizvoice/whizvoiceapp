@@ -41,11 +41,15 @@ messages table:
 id | int8
 conversation_id | int8 | foreign key to conversations.id
 content | text
-message_type | text | 'USER' or 'ASSISTANT'
+message_sender | text | 'USER' or 'ASSISTANT' (renamed from message_type)
+content_type | text | 'text', 'tool_use', 'tool_result', or 'mixed' | default 'text' | NOT NULL
+tool_content | jsonb | NULL for text messages, populated for tool-related messages
 timestamp | timestamp | now()
 updated_at | timestamp | now()
 request_id | text
 cancelled | timestamp | NULL if not cancelled
+
+Note: For text messages, content contains the plain text. For tool messages, tool_content contains the structured JSON (tool_use, tool_result blocks). This allows storing full Claude API conversation context including tool execution history.
 
 This table also has indexes
 - idx_messages_conversation_id on messages(conversation_id)

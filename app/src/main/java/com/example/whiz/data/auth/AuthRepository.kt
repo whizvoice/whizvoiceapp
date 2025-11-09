@@ -42,6 +42,7 @@ private object PreferenceKeys {
     const val USER_NAME = "user_name"
     const val USER_EMAIL = "user_email"
     const val USER_PHOTO_URL = "user_photo_url"
+    const val DEFAULT_SMS_APP_PACKAGE = "default_sms_app_package"
 }
 
 // OAuth client ID for Google Sign-In
@@ -591,11 +592,25 @@ open class AuthRepository @Inject constructor(
                 Log.e(TAG, "🧪 [TEST] ❌ FAILING TEST to prevent UI dialog...")
                 
                 throw Exception("TEST AUTHENTICATION FAILED: Cannot authenticate $email programmatically. UI authentication is disabled in test mode. Please set up the test account properly on the device.")
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "🧪 [TEST] ❌ Error setting test authentication state", e)
                 throw e
             }
         }
+    }
+
+    // Get the stored default SMS app package name
+    fun getDefaultSmsAppPackage(): String? {
+        return sharedPreferences.getString(PreferenceKeys.DEFAULT_SMS_APP_PACKAGE, null)
+    }
+
+    // Save the default SMS app package name
+    fun saveDefaultSmsAppPackage(packageName: String) {
+        sharedPreferences.edit().apply {
+            putString(PreferenceKeys.DEFAULT_SMS_APP_PACKAGE, packageName)
+            apply()
+        }
+        Log.d(TAG, "Saved default SMS app package: $packageName")
     }
 } 

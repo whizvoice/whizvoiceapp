@@ -169,22 +169,30 @@ open class PermissionManager @Inject constructor(
     /**
      * Observe accessibility service state changes to automatically update permission status
      * This ensures the dialog dismisses immediately when the service connects
+     *
+     * NOTE: We check actual system settings (isServiceEnabled) rather than service connection state
+     * because uiautomator temporarily disconnects accessibility services during UI dumps,
+     * which would incorrectly trigger the permission dialog.
      */
     private fun observeAccessibilityServiceState() {
         scope.launch {
-            // Observe the WhizAccessibilityService state directly
+            // Observe the WhizAccessibilityService state changes
             WhizAccessibilityService.serviceState.collect { state ->
-                val wasGranted = _accessibilityPermissionGranted.value
-                val isNowEnabled = state != WhizAccessibilityService.ServiceState.DISCONNECTED
-
                 val threadName = Thread.currentThread().name
                 val threadId = Thread.currentThread().id
-                Log.d(TAG, "Accessibility service state changed on thread: $threadName (id=$threadId): $state, wasGranted=$wasGranted, isNowEnabled=$isNowEnabled")
+                Log.d(TAG, "Accessibility service state changed on thread: $threadName (id=$threadId): $state")
 
-                // Update the accessibility permission status
-                if (isNowEnabled != wasGranted) {
-                    _accessibilityPermissionGranted.value = isNowEnabled
-                    Log.d(TAG, "Accessibility permission status updated to: $isNowEnabled")
+                // When service state changes, check actual system settings to determine if permission is granted
+                // This avoids false negatives from temporary disconnections (e.g., during uiautomator dumps)
+                val isEnabledInSettings = accessibilityChecker.isServiceEnabled()
+                val wasGranted = _accessibilityPermissionGranted.value
+
+                Log.d(TAG, "Checking settings: isEnabledInSettings=$isEnabledInSettings, wasGranted=$wasGranted")
+
+                // Update the accessibility permission status based on settings, not connection state
+                if (isEnabledInSettings != wasGranted) {
+                    _accessibilityPermissionGranted.value = isEnabledInSettings
+                    Log.d(TAG, "Accessibility permission status updated to: $isEnabledInSettings")
 
                     // Update the next required step immediately
                     updateNextRequiredStep()
@@ -195,13 +203,15 @@ open class PermissionManager @Inject constructor(
         // Also observe the AccessibilityManager's state for redundancy
         scope.launch {
             accessibilityManager.isAccessibilityEnabled.collect { isEnabled ->
+                // Verify with actual system settings before updating
+                val isEnabledInSettings = accessibilityChecker.isServiceEnabled()
                 val wasGranted = _accessibilityPermissionGranted.value
 
-                Log.d(TAG, "AccessibilityManager state changed: isEnabled=$isEnabled, wasGranted=$wasGranted")
+                Log.d(TAG, "AccessibilityManager state changed: reported=$isEnabled, actualSettings=$isEnabledInSettings, wasGranted=$wasGranted")
 
-                if (isEnabled != wasGranted) {
-                    _accessibilityPermissionGranted.value = isEnabled
-                    Log.d(TAG, "Accessibility permission updated from AccessibilityManager: $isEnabled")
+                if (isEnabledInSettings != wasGranted) {
+                    _accessibilityPermissionGranted.value = isEnabledInSettings
+                    Log.d(TAG, "Accessibility permission updated from AccessibilityManager: $isEnabledInSettings")
 
                     // Update the next required step immediately
                     updateNextRequiredStep()

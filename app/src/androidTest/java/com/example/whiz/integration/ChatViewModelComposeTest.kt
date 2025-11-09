@@ -308,31 +308,29 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             // Step 6: Wait for barista response and verify message order
             Log.d(TAG, "☕ Step 6: Waiting for barista response and verifying message order...")
             
-            // The first message asked for "coffee-making professional" - expect variations of "Barista" response
-            val expectedBaristaResponses = listOf("Barista", "Barista.", "Barista!")
-            Log.d(TAG, "🔍 Looking for barista response variations: $expectedBaristaResponses")
-            
-            // 🔧 NEW: Wait for any barista response variation to appear before verifying order
+            // The first message asked for "coffee-making professional" - expect "Barista" response
+            // Note: Using substring=true to handle both plain "Barista" and markdown "**Barista**"
+            Log.d(TAG, "🔍 Looking for barista response (with substring matching for markdown compatibility)")
+
+            // 🔧 NEW: Wait for barista response to appear before verifying order
             // Since we sent messages rapidly, the bot response might take time to arrive
             Log.d(TAG, "⏳ Waiting for barista response to appear...")
             val waitStartTime = System.currentTimeMillis()
             val waitTimeout = 5000L // 5 seconds timeout
             var baristaResponseFound = false
             var actualBaristaResponse = ""
-            
+
             while (!baristaResponseFound && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
-                for (expectedResponse in expectedBaristaResponses) {
-                    try {
-                        composeTestRule.onNodeWithText(expectedResponse).assertIsDisplayed()
-                        baristaResponseFound = true
-                        actualBaristaResponse = expectedResponse
-                        Log.d(TAG, "✅ Barista response found: '$actualBaristaResponse' after ${System.currentTimeMillis() - waitStartTime}ms")
-                        break
-                    } catch (e: Exception) {
-                        // Continue to next variation
-                    } catch (e: AssertionError) {
-                        // Continue to next variation
-                    }
+                try {
+                    // Single search with substring=true handles both "Barista" and "**Barista**"
+                    composeTestRule.onNodeWithText("Barista", substring = true, useUnmergedTree = true).assertIsDisplayed()
+                    baristaResponseFound = true
+                    actualBaristaResponse = "Barista"
+                    Log.d(TAG, "✅ Barista response found after ${System.currentTimeMillis() - waitStartTime}ms")
+                } catch (e: Exception) {
+                    // Continue waiting
+                } catch (e: AssertionError) {
+                    // Continue waiting
                 }
                 
                 if (!baristaResponseFound) {
@@ -342,8 +340,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             }
             
             if (!baristaResponseFound) {
-                Log.e(TAG, "❌ None of the barista response variations appeared within ${waitTimeout}ms")
-                Log.e(TAG, "❌ Expected variations: $expectedBaristaResponses")
+                Log.e(TAG, "❌ Barista response did not appear within ${waitTimeout}ms")
+                Log.e(TAG, "❌ Expected to find text containing: 'Barista' (with or without markdown formatting)")
                 failWithScreenshot("barista_response_timeout", "Barista response did not appear within timeout")
                 return@runBlocking
             }
