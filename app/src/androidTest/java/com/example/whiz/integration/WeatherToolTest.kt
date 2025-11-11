@@ -2,6 +2,7 @@ package com.example.whiz.integration
 
 import android.util.Log
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
@@ -45,9 +46,19 @@ class WeatherToolTest : BaseIntegrationTest() {
     private val createdChatIds = mutableListOf<Long>()
     private val uniqueTestId = System.currentTimeMillis()
 
+    // Track the navigation-scoped ViewModel
+    private var navigationScopedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
+
+        // Set up callback to capture the navigation-scoped ViewModel
+        MainActivity.testViewModelCallback = { viewModel ->
+            Log.d(TAG, "📝 Captured navigation-scoped ViewModel: ${viewModel.hashCode()}")
+            navigationScopedViewModel = viewModel
+        }
+
         Log.d(TAG, "🧪 weather tool test setup complete")
     }
 
@@ -72,6 +83,10 @@ class WeatherToolTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ test cleanup completed")
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+            } finally {
+                // Clean up the test callback
+                MainActivity.testViewModelCallback = null
+                navigationScopedViewModel = null
             }
         }
     }
@@ -125,8 +140,23 @@ class WeatherToolTest : BaseIntegrationTest() {
                 }
             }
 
-            // Get ChatViewModel for state checking
-            val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
+            // Wait for the navigation-scoped ViewModel to be captured
+            var chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+            val viewModelCaptureStart = System.currentTimeMillis()
+            while (chatViewModel == null && System.currentTimeMillis() - viewModelCaptureStart < 5000) {
+                chatViewModel = navigationScopedViewModel
+                if (chatViewModel == null) {
+                    delay(100)
+                }
+            }
+
+            if (chatViewModel == null) {
+                Log.e(TAG, "❌ Failed to capture navigation-scoped ViewModel")
+                failWithScreenshot("weather_no_viewmodel", "Failed to capture ViewModel")
+                return@runBlocking
+            }
+
+            Log.d(TAG, "✅ Using navigation-scoped ViewModel: ${chatViewModel.hashCode()}")
 
             // Step 3: Send message asking for weather in San Francisco
             Log.d(TAG, "💬 step 3: sending message asking for weather in San Francisco...")
@@ -177,6 +207,25 @@ class WeatherToolTest : BaseIntegrationTest() {
                 failWithScreenshot("weather_no_bot_response", "bot did not respond")
                 return@runBlocking
             }
+
+            // Step 4.5: Verify the assistant message appears on screen
+            Log.d(TAG, "📱 step 4.5: verifying message appears on screen...")
+            val messagePreview = botResponseText.take(50).trim()
+            val messageOnScreen = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(messagePreview, substring = true) },
+                timeoutMs = 5000L,
+                description = "assistant message on screen"
+            )
+
+            if (!messageOnScreen) {
+                Log.e(TAG, "❌ FAILURE: assistant message not visible on screen")
+                Log.e(TAG, "❌ Message preview we were looking for: '$messagePreview'")
+                failWithScreenshot("weather_message_not_visible", "assistant message not on screen")
+                return@runBlocking
+            }
+
+            Log.d(TAG, "✅ Assistant message is visible on screen")
 
             // Step 5: Verify response does not contain error words
             Log.d(TAG, "🔍 step 5: verifying response does not contain error indicators...")
