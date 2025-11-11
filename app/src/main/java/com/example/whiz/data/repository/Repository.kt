@@ -954,8 +954,24 @@ class WhizRepository @Inject constructor(
                 
                 Log.d(TAG, "fetchMessagesWithDeduplication: Starting new API request for chat $chatId with since=$sinceString")
                 val response = apiService.getMessagesIncremental(chatId, since = sinceString)
+
+                // Log all messages from server including cancelled status
+                response.messages.forEachIndexed { index, msg ->
+                    Log.d(TAG, "fetchMessagesWithDeduplication: RAW[$index] id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                }
+
                 // Filter out cancelled messages before converting to entities
                 val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                val cancelledMessages = response.messages.filter { it.cancelled != null }
+
+                // Log which messages were filtered out
+                if (cancelledMessages.isNotEmpty()) {
+                    Log.w(TAG, "fetchMessagesWithDeduplication: Filtering out ${cancelledMessages.size} cancelled messages:")
+                    cancelledMessages.forEach { msg ->
+                        Log.w(TAG, "  CANCELLED: id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                    }
+                }
+
                 val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
                 Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${response.messages.size} messages (${nonCancelledMessages.size} non-cancelled) for chat $chatId")
                 // Debug: Log the conversation IDs of the messages
@@ -981,7 +997,23 @@ class WhizRepository @Inject constructor(
                             // We already know this chat was migrated, fetch from the server chat
                             Log.d(TAG, "fetchMessagesWithDeduplication: Found existing migration $chatId → $migratedChatId, fetching from server chat")
                             val response = apiService.getMessagesIncremental(migratedChatId, since = null)
+
+                            // Log all messages from server including cancelled status
+                            response.messages.forEachIndexed { index, msg ->
+                                Log.d(TAG, "fetchMessagesWithDeduplication: RAW[$index] id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                            }
+
                             val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                            val cancelledMessages = response.messages.filter { it.cancelled != null }
+
+                            // Log which messages were filtered out
+                            if (cancelledMessages.isNotEmpty()) {
+                                Log.w(TAG, "fetchMessagesWithDeduplication: Filtering out ${cancelledMessages.size} cancelled messages:")
+                                cancelledMessages.forEach { msg ->
+                                    Log.w(TAG, "  CANCELLED: id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                                }
+                            }
+
                             val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
                             Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${response.messages.size} messages (${nonCancelledMessages.size} non-cancelled) from migrated chat $migratedChatId")
                             serverMessages
@@ -1005,9 +1037,25 @@ class WhizRepository @Inject constructor(
                                 
                                 // Fetch messages from the server chat
                                 val response = apiService.getMessagesIncremental(serverChatWithOptimisticId.id, since = null)
+
+                                // Log all messages from server including cancelled status
+                                response.messages.forEachIndexed { index, msg ->
+                                    Log.d(TAG, "fetchMessagesWithDeduplication: RAW[$index] id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                                }
+
                                 val nonCancelledMessages = response.messages.filter { it.cancelled == null }
+                                val cancelledMessages = response.messages.filter { it.cancelled != null }
+
+                                // Log which messages were filtered out
+                                if (cancelledMessages.isNotEmpty()) {
+                                    Log.w(TAG, "fetchMessagesWithDeduplication: Filtering out ${cancelledMessages.size} cancelled messages:")
+                                    cancelledMessages.forEach { msg ->
+                                        Log.w(TAG, "  CANCELLED: id=${msg.id} type=${msg.message_type} cancelled=${msg.cancelled} requestId=${msg.request_id} content='${msg.content.take(50)}...'")
+                                    }
+                                }
+
                                 val serverMessages = nonCancelledMessages.map { it.toMessageEntity() }
-                                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${serverMessages.size} messages from server chat ${serverChatWithOptimisticId.id}")
+                                Log.d(TAG, "fetchMessagesWithDeduplication: Retrieved ${response.messages.size} messages (${nonCancelledMessages.size} non-cancelled) from server chat ${serverChatWithOptimisticId.id}")
                                 
                                 // Trigger message migration asynchronously
                                 repositoryScope.launch {
