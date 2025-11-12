@@ -27,6 +27,7 @@ import org.junit.After
 import android.util.Log
 import android.provider.Settings
 import com.example.whiz.data.local.MessageType
+import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.MainActivity
 
@@ -62,6 +63,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     private val createdChatIds = mutableListOf<Long>()
     private var createdNewChatThisTest = false
     private var testUniqueId: Long = 0
+
+    // ChatViewModel capture for direct state access
+    private var capturedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
 
     companion object {
         private const val TAG = "ChatViewModelComposeTest"
@@ -130,9 +134,44 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             // Clean up ComposeTestHelper resources
             ComposeTestHelper.cleanup()
-            
+
+            // Clean up ViewModel callback
+            MainActivity.testViewModelCallback = null
+            capturedViewModel = null
+
             Log.d(TAG, "✅ Test cleanup completed")
         }
+    }
+
+    /**
+     * Wait for a message matching the predicate to appear in the ViewModel's messages state.
+     * This is much faster than checking the UI repeatedly since it's just checking a data structure.
+     *
+     * @param viewModel The ChatViewModel to monitor
+     * @param predicate Function to test each message
+     * @param timeout Maximum time to wait in milliseconds
+     * @return The matching MessageEntity or null if timeout
+     */
+    private fun waitForMessageInViewModel(
+        viewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
+        predicate: (MessageEntity) -> Boolean,
+        timeout: Long = 5000L
+    ): MessageEntity? {
+        val startTime = System.currentTimeMillis()
+
+        while (System.currentTimeMillis() - startTime < timeout) {
+            val messages = viewModel.messages.value
+            val found = messages.find(predicate)
+            if (found != null) {
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.d(TAG, "✅ Found matching message in ViewModel after ${elapsed}ms: '${found.content.take(50)}...'")
+                return found
+            }
+            Thread.sleep(20) // Check every 20ms (very cheap data check)
+        }
+
+        Log.e(TAG, "❌ Message not found in ViewModel after ${timeout}ms timeout")
+        return null
     }
 
     /**
@@ -210,13 +249,35 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             }
             
             Log.d(TAG, "📋 On chats list, clicking new chat button with Compose Testing")
+
+            // Set up ViewModel capture callback before navigating to chat
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { vm ->
+                Log.d(TAG, "✅ ChatViewModel captured from navigation!")
+                capturedViewModel = vm
+            }
+
             if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                 failWithScreenshot("new_chat_creation_failed", "New chat button not found or chat screen failed to load")
                 return@runBlocking
             }
-            
+
             Log.d(TAG, "✅ Successfully navigated to new chat screen with Compose Testing")
-            
+
+            // Wait for ChatViewModel capture
+            Log.d(TAG, "⏳ Waiting for ChatViewModel capture...")
+            var waitTime = 0
+            while (capturedViewModel == null && waitTime < 3000) {
+                Thread.sleep(50)
+                waitTime += 50
+            }
+
+            if (capturedViewModel == null) {
+                Log.e(TAG, "❌ ChatViewModel not captured - will fall back to UI-only checks")
+            } else {
+                Log.d(TAG, "✅ ChatViewModel captured successfully")
+            }
+
             // Step 3: Send first message to trigger bot response using Compose Testing
             val sentMessages = mutableListOf<String>()
             val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - $uniqueTestId"
@@ -312,37 +373,62 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             // Note: Using substring=true to handle both plain "Barista" and markdown "**Barista**"
             Log.d(TAG, "🔍 Looking for barista response (with substring matching for markdown compatibility)")
 
-            // 🔧 NEW: Wait for barista response to appear before verifying order
-            // Since we sent messages rapidly, the bot response might take time to arrive
-            Log.d(TAG, "⏳ Waiting for barista response to appear...")
-            val waitStartTime = System.currentTimeMillis()
-            val waitTimeout = 5000L // 5 seconds timeout
-            var baristaResponseFound = false
-            var actualBaristaResponse = ""
+            // 🔧 OPTIMIZED: Wait for barista response in ViewModel first (fast data check)
+            // Then verify it appears in UI (single UI check with exact content)
+            Log.d(TAG, "⏳ Waiting for barista response in ViewModel...")
 
-            while (!baristaResponseFound && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
-                try {
-                    // Single search with substring=true handles both "Barista" and "**Barista**"
-                    composeTestRule.onNodeWithText("Barista", substring = true, useUnmergedTree = true).assertIsDisplayed()
-                    baristaResponseFound = true
-                    actualBaristaResponse = "Barista"
-                    Log.d(TAG, "✅ Barista response found after ${System.currentTimeMillis() - waitStartTime}ms")
-                } catch (e: Exception) {
-                    // Continue waiting
-                } catch (e: AssertionError) {
-                    // Continue waiting
+            val baristaMessage = if (capturedViewModel != null) {
+                // Fast path: Check ViewModel state directly
+                waitForMessageInViewModel(
+                    capturedViewModel!!,
+                    predicate = { message ->
+                        message.type == MessageType.ASSISTANT &&
+                        message.content.contains("Barista", ignoreCase = true)
+                    },
+                    timeout = 5000L
+                )
+            } else {
+                // Fallback: ViewModel not captured, search UI directly (slower)
+                Log.w(TAG, "⚠️ ViewModel not captured, falling back to UI search (slower)")
+                var found: MessageEntity? = null
+                val waitStartTime = System.currentTimeMillis()
+                val waitTimeout = 5000L
+
+                while (found == null && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
+                    try {
+                        composeTestRule.onNodeWithText("Barista", substring = true, useUnmergedTree = true).assertIsDisplayed()
+                        // Create a mock MessageEntity with the content we found
+                        found = MessageEntity(
+                            id = 0,
+                            conversationId = 0,
+                            content = "Barista",
+                            type = MessageType.ASSISTANT,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    } catch (e: Exception) {
+                        Thread.sleep(100)
+                    }
                 }
-                
-                if (!baristaResponseFound) {
-                    Log.d(TAG, "⏳ Still waiting for barista response... (${System.currentTimeMillis() - waitStartTime}ms elapsed)")
-                    Thread.sleep(100) // Check every 100ms
-                }
+                found
             }
-            
-            if (!baristaResponseFound) {
-                Log.e(TAG, "❌ Barista response did not appear within ${waitTimeout}ms")
-                Log.e(TAG, "❌ Expected to find text containing: 'Barista' (with or without markdown formatting)")
-                failWithScreenshot("barista_response_timeout", "Barista response did not appear within timeout")
+
+            if (baristaMessage == null) {
+                Log.e(TAG, "❌ Barista response did not appear within timeout")
+                Log.e(TAG, "❌ Expected to find ASSISTANT message containing: 'Barista'")
+                failWithScreenshot("barista_response_timeout", "Barista response did not appear in ViewModel or UI")
+                return@runBlocking
+            }
+
+            // Now verify the message actually appears in the UI with the exact content from ViewModel
+            val actualBaristaResponse = baristaMessage.content
+            Log.d(TAG, "🔍 Verifying barista message appears in UI: '$actualBaristaResponse'")
+            try {
+                composeTestRule.onNodeWithText(actualBaristaResponse, substring = true, useUnmergedTree = true).assertIsDisplayed()
+                Log.d(TAG, "✅ Barista response verified in UI")
+            } catch (e: AssertionError) {
+                Log.e(TAG, "❌ Barista message found in ViewModel but not displayed in UI!")
+                Log.e(TAG, "   ViewModel content: '$actualBaristaResponse'")
+                failWithScreenshot("barista_in_viewmodel_not_ui", "Message exists in ViewModel but not visible in UI")
                 return@runBlocking
             }
             
