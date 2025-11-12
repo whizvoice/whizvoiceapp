@@ -151,6 +151,14 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
+            // Step 1b: Set up ViewModel capture callback before navigating
+            Log.d(TAG, "🎯 step 1b: setting up ViewModel capture callback...")
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { vm ->
+                Log.d(TAG, "✅ ChatViewModel captured from navigation!")
+                capturedViewModel = vm
+            }
+
             // Step 2: Navigate to new chat
             Log.d(TAG, "➕ step 2: navigating to new chat...")
             val initialChats = try {
@@ -174,6 +182,23 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 return@runBlocking
             }
 
+            // Step 2b: Wait for ChatViewModel capture
+            Log.d(TAG, "⏳ step 2b: waiting for navigation-scoped ChatViewModel capture...")
+            var waitTime = 0
+            while (capturedViewModel == null && waitTime < 5000) {
+                Thread.sleep(100)
+                waitTime += 100
+            }
+
+            if (capturedViewModel == null) {
+                Log.e(TAG, "❌ FAILURE: ChatViewModel not captured from navigation")
+                failWithScreenshot("voice_control_viewmodel_not_captured", "ViewModel not captured")
+                return@runBlocking
+            }
+
+            Log.d(TAG, "✅ ChatViewModel captured successfully")
+            val chatViewModel = capturedViewModel!!
+
             // Track the new chat
             val currentChats = repository.getAllChats()
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
@@ -183,9 +208,6 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                     Log.d(TAG, "📝 Tracked new chat: ${chat.id}")
                 }
             }
-
-            // Get ChatViewModel for state checking
-            val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
 
             // Step 3: Verify continuous listening is enabled by default
             Log.d(TAG, "🔍 step 3: verifying continuous listening is enabled by default...")
@@ -245,6 +267,44 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 failWithScreenshot("voice_control_listening_not_disabled", "continuous listening still on")
                 return@runBlocking
             }
+
+            // Step 6: Wait for bot to finish responding before sending next message
+            Log.d(TAG, "⏳ step 6: waiting for bot to finish responding to disable continuous listening...")
+            var botResponded = false
+            val botResponseStartTime = System.currentTimeMillis()
+            val botResponseTimeout = 30000L // 30 seconds for bot to respond
+
+            // Count how many USER messages we have before waiting
+            val initialMessages = chatViewModel.messages.value
+            val initialUserMessageCount = initialMessages.count { it.type == com.example.whiz.data.local.MessageType.USER }
+
+            while (System.currentTimeMillis() - botResponseStartTime < botResponseTimeout) {
+                val messages = chatViewModel.messages.value
+                val elapsed = System.currentTimeMillis() - botResponseStartTime
+
+                // Count ASSISTANT messages
+                val assistantMessages = messages.filter { it.type == com.example.whiz.data.local.MessageType.ASSISTANT }
+                val lastMessage = messages.lastOrNull()
+
+                Log.v(TAG, "🔍 [$elapsed ms] Messages: ${messages.size}, Assistant msgs: ${assistantMessages.size}, Last msg type: ${lastMessage?.type}")
+
+                // Check if the last message is from the assistant (bot has responded)
+                if (lastMessage?.type == com.example.whiz.data.local.MessageType.ASSISTANT) {
+                    botResponded = true
+                    Log.d(TAG, "✅ Bot responded after ${elapsed}ms")
+                    break
+                }
+                delay(200)
+            }
+
+            if (!botResponded) {
+                val finalMessages = chatViewModel.messages.value
+                Log.e(TAG, "❌ FAILURE: bot did not respond after disabling continuous listening")
+                Log.e(TAG, "❌ Final message count: ${finalMessages.size}, Last message type: ${finalMessages.lastOrNull()?.type}")
+                failWithScreenshot("voice_control_no_bot_response_after_disable", "bot did not respond")
+                return@runBlocking
+            }
+
             // Step 8: Send typed message to enable TTS (continuous listening is now OFF)
             Log.d(TAG, "🔊 step 8: sending typed message to enable TTS...")
             val enableTTSMessage = "Please turn on text to speech - $uniqueTestId"
@@ -268,12 +328,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             while (System.currentTimeMillis() - enableTTSStartTime < enableTTSTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
-                val isResponding = chatViewModel.isResponding.value
+                val messages = chatViewModel.messages.value
                 val elapsed = System.currentTimeMillis() - enableTTSStartTime
 
-                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+                // Check if the last message is from the assistant (bot has responded)
+                val lastMessage = messages.lastOrNull()
+                val botHasResponded = lastMessage?.type == com.example.whiz.data.local.MessageType.ASSISTANT
 
-                if (currentTTSState) {
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, botHasResponded: $botHasResponded, lastMsgType: ${lastMessage?.type}")
+
+                // Wait for bot to respond AND TTS to be enabled
+                if (currentTTSState && botHasResponded) {
                     ttsEnabled = true
                     Log.d(TAG, "✅ TTS enabled after ${elapsed}ms")
                     break
@@ -313,12 +378,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             while (System.currentTimeMillis() - disableTTSStartTime < disableTTSTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
-                val isResponding = chatViewModel.isResponding.value
+                val messages = chatViewModel.messages.value
                 val elapsed = System.currentTimeMillis() - disableTTSStartTime
 
-                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+                // Check if the last message is from the assistant (bot has responded)
+                val lastMessage = messages.lastOrNull()
+                val botHasResponded = lastMessage?.type == com.example.whiz.data.local.MessageType.ASSISTANT
 
-                if (!currentTTSState) {
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, botHasResponded: $botHasResponded, lastMsgType: ${lastMessage?.type}")
+
+                // Wait for bot to respond AND TTS to be disabled
+                if (!currentTTSState && botHasResponded) {
                     ttsDisabled = true
                     Log.d(TAG, "✅ TTS disabled after ${elapsed}ms")
                     break
@@ -373,12 +443,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             while (System.currentTimeMillis() - enableTTSAgainStartTime < enableTTSAgainTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
-                val isResponding = chatViewModel.isResponding.value
+                val messages = chatViewModel.messages.value
                 val elapsed = System.currentTimeMillis() - enableTTSAgainStartTime
 
-                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+                // Check if the last message is from the assistant (bot has responded)
+                val lastMessage = messages.lastOrNull()
+                val botHasResponded = lastMessage?.type == com.example.whiz.data.local.MessageType.ASSISTANT
 
-                if (currentTTSState) {
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, botHasResponded: $botHasResponded, lastMsgType: ${lastMessage?.type}")
+
+                // Wait for bot to respond AND TTS to be enabled
+                if (currentTTSState && botHasResponded) {
                     ttsEnabledAgain = true
                     Log.d(TAG, "✅ TTS enabled after ${elapsed}ms")
                     break
@@ -419,12 +494,17 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             while (System.currentTimeMillis() - disableTTSAgainStartTime < disableTTSAgainTimeout) {
                 val currentTTSState = chatViewModel.isVoiceResponseEnabled.value
-                val isResponding = chatViewModel.isResponding.value
+                val messages = chatViewModel.messages.value
                 val elapsed = System.currentTimeMillis() - disableTTSAgainStartTime
 
-                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, isResponding: $isResponding")
+                // Check if the last message is from the assistant (bot has responded)
+                val lastMessage = messages.lastOrNull()
+                val botHasResponded = lastMessage?.type == com.example.whiz.data.local.MessageType.ASSISTANT
 
-                if (!currentTTSState) {
+                Log.d(TAG, "🔍 [${elapsed}ms] TTS state: $currentTTSState, botHasResponded: $botHasResponded, lastMsgType: ${lastMessage?.type}")
+
+                // Wait for bot to respond AND TTS to be disabled
+                if (!currentTTSState && botHasResponded) {
                     ttsDisabledAgain = true
                     Log.d(TAG, "✅ TTS disabled after ${elapsed}ms")
                     break
