@@ -400,10 +400,9 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                         // Create a mock MessageEntity with the content we found
                         found = MessageEntity(
                             id = 0,
-                            conversationId = 0,
+                            chatId = 0,
                             content = "Barista",
-                            type = MessageType.ASSISTANT,
-                            timestamp = System.currentTimeMillis()
+                            type = MessageType.ASSISTANT
                         )
                     } catch (e: Exception) {
                         Thread.sleep(100)
@@ -422,22 +421,26 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             // Now verify the message actually appears in the UI with the exact content from ViewModel
             val actualBaristaResponse = baristaMessage.content
             Log.d(TAG, "🔍 Verifying barista message appears in UI: '$actualBaristaResponse'")
+            // Strip markdown for UI comparison (UI renders markdown, so "**Barista**" becomes "Barista")
+            val strippedBaristaText = actualBaristaResponse.replace("**", "").replace("*", "")
+            Log.d(TAG, "🔍 Searching for stripped text in UI: '$strippedBaristaText'")
             try {
-                composeTestRule.onNodeWithText(actualBaristaResponse, substring = true, useUnmergedTree = true).assertIsDisplayed()
+                composeTestRule.onNodeWithText(strippedBaristaText, substring = true, useUnmergedTree = true).assertIsDisplayed()
                 Log.d(TAG, "✅ Barista response verified in UI")
             } catch (e: AssertionError) {
                 Log.e(TAG, "❌ Barista message found in ViewModel but not displayed in UI!")
                 Log.e(TAG, "   ViewModel content: '$actualBaristaResponse'")
+                Log.e(TAG, "   Stripped for search: '$strippedBaristaText'")
                 failWithScreenshot("barista_in_viewmodel_not_ui", "Message exists in ViewModel but not visible in UI")
                 return@runBlocking
             }
             
             // Verify that the barista response appears exactly once (position doesn't matter with interruption)
             Log.d(TAG, "🔍 Verifying Barista response appears exactly once (position doesn't matter with interruption)")
-            
-            // Count occurrences of "Barista" by checking all text nodes
-            val baristaCount = ComposeTestHelper.countTextOccurrences(composeTestRule, actualBaristaResponse)
-            
+
+            // Count occurrences by checking all assistant messages with "Barista"
+            val baristaCount = ComposeTestHelper.countTextOccurrences(composeTestRule, "Barista")
+
             if (baristaCount != 1) {
                 Log.e(TAG, "❌ Barista response count verification failed - expected 1, found $baristaCount")
                 if (baristaCount > 1) {
