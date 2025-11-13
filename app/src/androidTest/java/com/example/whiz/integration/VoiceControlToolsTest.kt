@@ -249,7 +249,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 5: waiting for bot to execute disable_continuous_listening tool...")
             var listeningDisabled = false
             val disableStartTime = System.currentTimeMillis()
-            val disableTimeout = 15000L // 15 seconds for bot response and tool execution
+            val disableTimeout = 25000L // 25 seconds for bot response and tool execution
 
             while (System.currentTimeMillis() - disableStartTime < disableTimeout) {
                 val currentState = voiceManager.isContinuousListeningEnabled.value
@@ -770,7 +770,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 Log.d(TAG, "⏳ step 7: waiting for bubble to switch to CONTINUOUS_LISTENING mode...")
                 var ttsDisableModeSwitched = false
                 val disableTTSStartTime = System.currentTimeMillis()
-                val disableTTSTimeout = 15000L
+                val disableTTSTimeout = 25000L
 
                 while (System.currentTimeMillis() - disableTTSStartTime < disableTTSTimeout) {
                     val currentBubbleMode = BubbleOverlayService.bubbleListeningMode
@@ -805,7 +805,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 Log.d(TAG, "⏳ step 9: waiting for bubble to switch back to TTS_WITH_LISTENING mode...")
                 var ttsModeSwitched = false
                 val enableTTSStartTime = System.currentTimeMillis()
-                val enableTTSTimeout = 15000L
+                val enableTTSTimeout = 25000L
 
                 while (System.currentTimeMillis() - enableTTSStartTime < enableTTSTimeout) {
                     val currentBubbleMode = BubbleOverlayService.bubbleListeningMode
@@ -843,7 +843,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ step 11: waiting for bubble to switch to MIC_OFF mode...")
             var modeSwitched = false
             val disableStartTime = System.currentTimeMillis()
-            val disableTimeout = 15000L
+            val disableTimeout = 25000L
 
             while (System.currentTimeMillis() - disableStartTime < disableTimeout) {
                 val currentMode = BubbleOverlayService.bubbleListeningMode
