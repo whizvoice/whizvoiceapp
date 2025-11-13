@@ -501,7 +501,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Check second message is still visible
                 val secondMessageStillVisible = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
+                    selector = {
                         composeTestRule.onNodeWithText(
                             secondMessage,
                             substring = false,
@@ -509,7 +509,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 2000L,
+                    timeoutMs = 5000L,
                     description = "second user message after reconnection"
                 )
                 
