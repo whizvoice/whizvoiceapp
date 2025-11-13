@@ -526,7 +526,7 @@ fun ChatScreen(
     
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
-    
+
     LaunchedEffect(viewModelChatId) {
         Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (provided chatId=$chatId)")
     }

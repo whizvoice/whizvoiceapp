@@ -117,16 +117,17 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                 }
                 
-                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on request ID for user messages
+                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on request ID
                 val deduplicatedMessages = messagesList.distinctBy { message ->
-                    // Use request ID for user messages (when available) to handle optimistic UI transitions
+                    // Use request ID for ALL messages (when available) to handle optimistic UI transitions
+                    // Both USER and ASSISTANT messages have requestIds that pair them together
                     val key = when {
-                        message.type == MessageType.USER && message.requestId != null -> {
-                            // For user messages with request ID: use requestId + type as unique key
+                        message.requestId != null -> {
+                            // For messages with request ID (both USER and ASSISTANT): use requestId + type as unique key
                             Pair(message.requestId, message.type)
                         }
                         else -> {
-                            // For assistant messages or user messages without requestId: use content + type
+                            // For messages without requestId: use content + type
                             Pair(message.content.trim(), message.type)
                         }
                     }
