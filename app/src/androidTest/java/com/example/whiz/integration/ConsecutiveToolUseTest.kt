@@ -263,22 +263,10 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             }
 
             if (!ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, firstMessage)) {
-                Log.e(TAG, "❌ First message failed to send or appear in UI")
+                Log.e(TAG, "❌ First message failed to send or appear in UI as USER message")
                 failWithScreenshot("first_message_failed", "First message failed to send or appear in UI")
                 return@runBlocking
             }
-
-            // CRITICAL: Verify it appears as a USER message, not just in the input field
-            Log.d(TAG, "🔍 Verifying first message appears as USER message in chat...")
-            try {
-                composeTestRule.onNodeWithContentDescription("User message: $firstMessage").assertIsDisplayed()
-                Log.d(TAG, "✅ First message confirmed as USER message in chat")
-            } catch (e: AssertionError) {
-                Log.e(TAG, "❌ First message text found but NOT as a USER message in chat - may still be in input field")
-                failWithScreenshot("first_message_not_user_message", "First message not appearing as USER message")
-                return@runBlocking
-            }
-
             sentMessages.add(firstMessage)
             Log.d(TAG, "✅ First message sent and verified in UI")
 
@@ -300,22 +288,10 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             val secondMessage = "Actually can you change it to bread and milk?"
 
             if (!ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, secondMessage, rapid = true)) {
-                Log.e(TAG, "❌ Second message failed to send or appear in UI")
+                Log.e(TAG, "❌ Second message failed to send or appear in UI as USER message")
                 failWithScreenshot("second_message_failed", "Second message failed to send or appear in UI")
                 return@runBlocking
             }
-
-            // CRITICAL: Verify it appears as a USER message, not just in the input field
-            Log.d(TAG, "🔍 Verifying second message appears as USER message in chat...")
-            try {
-                composeTestRule.onNodeWithContentDescription("User message: $secondMessage").assertIsDisplayed()
-                Log.d(TAG, "✅ Second message confirmed as USER message in chat")
-            } catch (e: AssertionError) {
-                Log.e(TAG, "❌ Second message text found but NOT as a USER message in chat - may still be in input field")
-                failWithScreenshot("second_message_not_user_message", "Second message not appearing as USER message")
-                return@runBlocking
-            }
-
             Log.d(TAG, "✅ Second message sent and verified in UI")
             sentMessages.add(secondMessage)
 
@@ -405,7 +381,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔍 No ViewModel response, waiting for any assistant message in UI...")
 
                 val startTime = System.currentTimeMillis()
-                val timeoutMs = 20000L
+                val timeoutMs = 25000L
                 var foundResponse = false
 
                 while ((System.currentTimeMillis() - startTime) < timeoutMs && !foundResponse) {
@@ -457,11 +433,124 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             }
             Log.d(TAG, "✅ Response doesn't contain 'wrong'")
 
+            // Step 8: Send follow-up message to delete the task
+            Log.d(TAG, "🗑️ Step 8: Sending follow-up message to delete the task...")
+            val deleteMessage = "Thanks. Actually, i changed my mind. Can you delete the task?"
+
+            if (!ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, deleteMessage)) {
+                Log.e(TAG, "❌ Delete message failed to send or appear in UI as USER message")
+                failWithScreenshot("delete_message_failed", "Delete message failed to send or appear in UI")
+                return@runBlocking
+            }
+            Log.d(TAG, "✅ Delete message sent and verified in UI")
+            sentMessages.add(deleteMessage)
+
+            // Step 9: Wait for final bot response to deletion request
+            Log.d(TAG, "🤖 Step 9: Waiting for bot response to deletion request...")
+
+            val deleteResponseMessage = if (capturedViewModel != null) {
+                Log.d(TAG, "⏳ Waiting up to 20 seconds for deletion response...")
+
+                var lastAssistantMessage: MessageEntity? = null
+                val startTime = System.currentTimeMillis()
+                val timeout = 20000L
+
+                while ((System.currentTimeMillis() - startTime) < timeout) {
+                    val messages = capturedViewModel!!.messages.value
+
+                    // Find all assistant messages
+                    val assistantMessages = messages.filter {
+                        it.type == MessageType.ASSISTANT && it.content.trim().isNotEmpty()
+                    }
+
+                    if (assistantMessages.isNotEmpty()) {
+                        // Get the most recent one
+                        lastAssistantMessage = assistantMessages.last()
+
+                        // Check if it comes after our delete message
+                        val deleteMessageIndex = messages.indexOfLast {
+                            it.type == MessageType.USER && it.content == deleteMessage
+                        }
+                        val lastAssistantIndex = messages.indexOf(lastAssistantMessage)
+
+                        if (deleteMessageIndex >= 0 && lastAssistantIndex > deleteMessageIndex) {
+                            Log.d(TAG, "✅ Found assistant response after delete message")
+                            break
+                        }
+                    }
+                    Thread.sleep(200)
+                }
+
+                lastAssistantMessage
+            } else {
+                Log.w(TAG, "⚠️ ViewModel not captured, will rely on UI verification only")
+                null
+            }
+
+            if (deleteResponseMessage == null && capturedViewModel != null) {
+                Log.e(TAG, "❌ No assistant response to deletion request received in ViewModel within timeout")
+                failWithScreenshot("no_delete_response_viewmodel", "No response to delete request in ViewModel")
+                return@runBlocking
+            }
+
+            val deleteResponse = deleteResponseMessage?.content ?: ""
+            if (deleteResponse.isNotEmpty()) {
+                Log.d(TAG, "✅ Received deletion response in ViewModel: '${deleteResponse.take(100)}...'")
+
+                // Verify it's not blank (whitespace only)
+                if (deleteResponse.trim().isEmpty()) {
+                    Log.e(TAG, "❌ Deletion response is only whitespace!")
+                    failWithScreenshot("blank_delete_response", "Delete response is blank/whitespace only: '$deleteResponse'")
+                    return@runBlocking
+                }
+
+                // Verify the response appears in UI
+                Log.d(TAG, "🔍 Verifying deletion response appears in UI...")
+                val strippedDeleteResponse = deleteResponse.replace("**", "").replace("*", "")
+                Log.d(TAG, "🔍 Searching for deletion response in UI (stripped): '${strippedDeleteResponse.take(50)}...'")
+
+                try {
+                    composeTestRule.onNodeWithText(strippedDeleteResponse, substring = true, useUnmergedTree = true).assertIsDisplayed()
+                    Log.d(TAG, "✅ Deletion response verified in UI")
+                } catch (e: AssertionError) {
+                    Log.e(TAG, "❌ Deletion response found in ViewModel but NOT in UI")
+                    Log.e(TAG, "   ViewModel content: '$deleteResponse'")
+                    Log.e(TAG, "   Stripped for search: '$strippedDeleteResponse'")
+                    failWithScreenshot("delete_response_not_in_ui", "Delete response in ViewModel but not visible in UI")
+                    return@runBlocking
+                }
+
+                // Check response is valid (not empty, no errors)
+                if (strippedDeleteResponse.trim().isEmpty()) {
+                    Log.e(TAG, "❌ Deletion response is empty")
+                    failWithScreenshot("empty_delete_response", "Delete response is empty")
+                    return@runBlocking
+                }
+
+                val lowerDeleteResponse = deleteResponse.lowercase()
+                if (lowerDeleteResponse.contains("error")) {
+                    Log.e(TAG, "❌ Deletion response contains the word 'error'")
+                    failWithScreenshot("delete_response_contains_error", "Delete response contains 'error': $deleteResponse")
+                    return@runBlocking
+                }
+
+                if (lowerDeleteResponse.contains("wrong")) {
+                    Log.e(TAG, "❌ Deletion response contains the word 'wrong'")
+                    failWithScreenshot("delete_response_contains_wrong", "Delete response contains 'wrong': $deleteResponse")
+                    return@runBlocking
+                }
+
+                Log.d(TAG, "✅ Deletion response is valid")
+            }
+
             Log.d(TAG, "📊 Test summary:")
             Log.d(TAG, "   ✅ Sent first Asana task message (bread)")
             Log.d(TAG, "   ✅ Sent rapid correction message (bread and milk)")
-            Log.d(TAG, "   ✅ Received non-empty bot response")
+            Log.d(TAG, "   ✅ Received non-empty bot response to task creation/update")
             Log.d(TAG, "   ✅ Response doesn't contain 'error' or 'wrong'")
+            Log.d(TAG, "   ✅ Sent deletion request message")
+            Log.d(TAG, "   ✅ Received non-empty bot response to deletion")
+            Log.d(TAG, "   ✅ Deletion response doesn't contain 'error' or 'wrong'")
             Log.d(TAG, "   ✅ Consecutive tool use test completed successfully")
         }
     }

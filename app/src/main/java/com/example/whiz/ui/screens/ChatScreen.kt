@@ -699,9 +699,10 @@ fun ChatScreen(
         }
     }
 
-    // Scroll to bottom when new messages arrive
-    LaunchedEffect(messages.size) { // Trigger scroll based on message count change
-        if (messages.isNotEmpty() && messages.size > 0) {
+    // Scroll to bottom when new messages arrive or when the last message changes
+    // Use last message's ID/timestamp as key instead of size to handle message updates/replacements
+    LaunchedEffect(messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) {
+        if (messages.isNotEmpty()) {
             delay(100L) // Allow layout
             val targetIndex = messages.size - 1
             if (targetIndex >= 0) { // Extra safety check to prevent crash
