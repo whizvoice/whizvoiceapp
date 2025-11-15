@@ -1264,6 +1264,7 @@ class ChatViewModel @Inject constructor(
     
     fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
+        Log.d(TAG, "🔥 STACK TRACE for loadChatWithVoiceMode:", Exception("Stack trace"))
         Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode: Current input text: '${_inputText.value}'")
         // Clear any previous chat load error when starting to load a new chat
         _chatLoadError.value = null
@@ -1412,6 +1413,7 @@ class ChatViewModel @Inject constructor(
                 if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
                         Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat for chat ${_chatId.value}...")
+                        Log.d(TAG, "🔌 WEBSOCKET CONNECT TRACE - chatId: ${_chatId.value}, requested chatId: $chatId", Exception("WebSocket connect stack trace"))
                         delay(100) // Small delay to ensure state propagation
                         // Connect with the specific chat ID
                         whizServerRepository.connect(_chatId.value)

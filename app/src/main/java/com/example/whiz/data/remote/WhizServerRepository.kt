@@ -272,6 +272,7 @@ class WhizServerRepository @Inject constructor(
     
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
+        Log.d(TAG, "🔌 WEBSOCKET CONNECT CALLED - conversationId: $conversationId", Exception("connect() stack trace"))
 
         // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
         if (turnOffPersistentDisconnect && conversationId == null) {
@@ -326,6 +327,15 @@ class WhizServerRepository @Inject constructor(
                     Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
                     return
                 }
+
+                // Check if this is just a migration from optimistic to real ID
+                if (connectionState == ConnectionState.CONNECTED &&
+                    currentConversationId != null && conversationId != null &&
+                    connectionStateManager.areChatsMigrated(currentConversationId, conversationId)) {
+                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server already updated subscription)")
+                    return
+                }
+
                 // Different conversation or still connecting - close and reconnect
                 Log.d(TAG, "Currently ${connectionState.name.lowercase()} to conversation $currentConversationId, need to connect to $conversationId - closing old connection")
                 // Continue below to close old connection and open new one
