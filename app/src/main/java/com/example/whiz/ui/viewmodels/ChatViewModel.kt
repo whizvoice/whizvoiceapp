@@ -907,8 +907,15 @@ class ChatViewModel @Inject constructor(
                     } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "Request ID ${event.requestId} not found in pending requests")
-                                        // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
-                                        if (event.clientConversationId != null) {
+
+                                        // 🔧 FIX: Accept message if it's for the current chat, even if request completed
+                                        // This prevents race condition where request is removed from pendingRequests
+                                        // before all WebSocket messages for that request arrive
+                                        if (effectiveConversationId != null && effectiveConversationId == _chatId.value) {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: Message is for current chat (conversationId=$effectiveConversationId matches _chatId=${_chatId.value}) - accepting despite request not in pendingRequests")
+                                            effectiveConversationId
+                                        } else if (event.clientConversationId != null) {
+                                            // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
                                             Log.d(TAG, "🐛 VOICE_DEBUG: Using clientConversationId from server: ${event.clientConversationId}")
                                             // Check if this optimistic chat has been migrated to a server-backed ID
                                             val migratedId = repository.getMigratedChatId(event.clientConversationId)
@@ -919,7 +926,7 @@ class ChatViewModel @Inject constructor(
                                                 event.clientConversationId
                                             }
                                         } else {
-                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - discarding message to prevent cross-chat contamination")
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests, conversationId doesn't match current chat, and no clientConversationId - discarding message to prevent cross-chat contamination")
                                             // Discard the message by returning null - will be handled below
                                             null
                                         }
