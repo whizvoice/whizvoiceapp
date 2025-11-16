@@ -699,17 +699,8 @@ fun ChatScreen(
         }
     }
 
-    // Scroll to bottom when new messages arrive or when the last message changes
-    // Use last message's ID/timestamp as key instead of size to handle message updates/replacements
-    LaunchedEffect(messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) {
-        if (messages.isNotEmpty()) {
-            delay(100L) // Allow layout
-            val targetIndex = messages.size - 1
-            if (targetIndex >= 0) { // Extra safety check to prevent crash
-                listState.animateScrollToItem(targetIndex)
-            }
-        }
-    }
+    // 🔧 AUTO-SCROLL: Moved to MessagesList composable to use deduplicatedMessages.size
+    // (Scrolling based on messages.size can fail if UI deduplication changes the count)
 
     // Show speech recognition errors
     LaunchedEffect(speechError) {
@@ -1075,7 +1066,21 @@ fun MessagesList(
         
         deduplicated
     }
-    
+
+    // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
+    // This must use deduplicatedMessages (not messages) since that's what LazyColumn renders
+    // Using messages.size could cause scroll to non-existent index if sizes differ
+    LaunchedEffect(deduplicatedMessages.lastOrNull()?.id, deduplicatedMessages.lastOrNull()?.timestamp) {
+        if (deduplicatedMessages.isNotEmpty()) {
+            delay(100L) // Allow layout to complete
+            val targetIndex = deduplicatedMessages.size - 1
+            if (targetIndex >= 0) {
+                listState.animateScrollToItem(targetIndex)
+                android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${deduplicatedMessages.size})")
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = modifier
