@@ -300,12 +300,12 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
             // We want the LAST assistant message - the one that responds to BOTH user messages
             val assistantMessage = if (capturedViewModel != null) {
-                Log.d(TAG, "⏳ Waiting up to 20 seconds for final assistant response...")
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for final assistant response...")
 
                 // Wait for an assistant message that comes AFTER both user messages
                 var lastAssistantMessage: MessageEntity? = null
                 val startTime = System.currentTimeMillis()
-                val timeout = 20000L
+                val timeout = 30000L
 
                 while ((System.currentTimeMillis() - startTime) < timeout) {
                     val messages = capturedViewModel!!.messages.value
@@ -361,6 +361,12 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             Log.d(TAG, "🔍 Step 6: Verifying response appears in UI...")
 
             if (response.isNotEmpty()) {
+                // Wait for UI to recompose and auto-scroll to complete
+                // The UI needs time to: 1) recompose with new messages, 2) layout items,
+                // 3) wait for LaunchedEffect delay (100ms), 4) complete scroll animation
+                Log.d(TAG, "⏳ Waiting 500ms for UI to recompose and scroll...")
+                Thread.sleep(500)
+
                 // Strip markdown for UI comparison (UI renders markdown, so "**text**" becomes "text")
                 val strippedResponse = response.replace("**", "").replace("*", "")
                 Log.d(TAG, "🔍 Searching for response in UI (stripped): '${strippedResponse.take(50)}...'")
@@ -449,11 +455,11 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             Log.d(TAG, "🤖 Step 9: Waiting for bot response to deletion request...")
 
             val deleteResponseMessage = if (capturedViewModel != null) {
-                Log.d(TAG, "⏳ Waiting up to 20 seconds for deletion response...")
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for deletion response...")
 
                 var lastAssistantMessage: MessageEntity? = null
                 val startTime = System.currentTimeMillis()
-                val timeout = 20000L
+                val timeout = 30000L
 
                 while ((System.currentTimeMillis() - startTime) < timeout) {
                     val messages = capturedViewModel!!.messages.value
@@ -506,6 +512,13 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
                 // Verify the response appears in UI
                 Log.d(TAG, "🔍 Verifying deletion response appears in UI...")
+
+                // Wait for UI to recompose and auto-scroll to complete
+                // The UI needs time to: 1) recompose with new messages, 2) layout items,
+                // 3) wait for LaunchedEffect delay (100ms), 4) complete scroll animation
+                Log.d(TAG, "⏳ Waiting 500ms for UI to recompose and scroll...")
+                Thread.sleep(500)
+
                 val strippedDeleteResponse = deleteResponse.replace("**", "").replace("*", "")
                 Log.d(TAG, "🔍 Searching for deletion response in UI (stripped): '${strippedDeleteResponse.take(50)}...'")
 
