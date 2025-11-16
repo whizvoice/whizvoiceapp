@@ -1067,7 +1067,8 @@ fun MessagesList(
     // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
     // This must use deduplicatedMessages (not messages) since that's what LazyColumn renders
     // Using messages.size could cause scroll to non-existent index if sizes differ
-    LaunchedEffect(deduplicatedMessages.lastOrNull()?.id, deduplicatedMessages.lastOrNull()?.timestamp) {
+    // Key on size to handle case where duplicates are removed but last message id/timestamp stays same
+    LaunchedEffect(deduplicatedMessages.size, deduplicatedMessages.lastOrNull()?.id) {
         if (deduplicatedMessages.isNotEmpty()) {
             delay(100L) // Allow layout to complete
             val targetIndex = deduplicatedMessages.size - 1
