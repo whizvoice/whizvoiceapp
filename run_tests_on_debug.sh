@@ -937,6 +937,11 @@ else
     log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
 fi
 
+# Prevent screen from sleeping during tests
+log_with_time "📱 Disabling screen timeout and keeping screen on during tests..."
+adb shell settings put system screen_off_timeout 2147483647 >/dev/null 2>&1 || true  # Max timeout (~24 days)
+adb shell svc power stayon true >/dev/null 2>&1 || true  # Keep screen on while charging/USB connected
+
 # Run tests sequentially for maximum reliability
 if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
     log_with_time "📱 Running integration tests only (skipping unit tests)..."
@@ -1065,6 +1070,11 @@ else
 fi
 
 log_summary_only "✅ Test execution completed. Check test_gradle_output.log (gradle), test_logcat_output.log (logcat), and test_summary.log (summaries)."
+
+# Restore original screen timeout settings
+log_with_time "📱 Restoring screen timeout to normal settings..."
+adb shell settings put system screen_off_timeout 30000 >/dev/null 2>&1 || true  # 30 seconds default
+adb shell svc power stayon false >/dev/null 2>&1 || true  # Restore normal power behavior
 
 # Disable trap before normal exit (trap will only run on abnormal exits now)
 trap - EXIT ERR
