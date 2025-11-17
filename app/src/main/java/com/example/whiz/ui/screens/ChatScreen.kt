@@ -1076,7 +1076,7 @@ fun MessagesList(
             delay(100L) // Allow layout to complete
             val targetIndex = deduplicatedMessages.size - 1
             if (targetIndex >= 0) {
-                listState.animateScrollToItem(targetIndex)
+                listState.scrollToItem(targetIndex)
                 android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${deduplicatedMessages.size})")
             }
         }
