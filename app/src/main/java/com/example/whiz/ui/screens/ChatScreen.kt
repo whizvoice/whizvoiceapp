@@ -1027,6 +1027,8 @@ fun MessagesList(
     showTypingIndicator: Boolean = false,
     onLongPressMessage: ((MessageEntity) -> Unit)? = null
 ) {
+    android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
+
     // 🔧 DEDUPLICATION FIX: Remove duplicate messages during chat ID migration race condition
     // The test countMessageOccurrences() uses UI Automator to scan screen text - during optimistic
     // to server chat ID migration, same content can appear in two UI contexts simultaneously
@@ -1065,10 +1067,11 @@ fun MessagesList(
     }
 
     // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
-    // This must use deduplicatedMessages (not messages) since that's what LazyColumn renders
-    // Using messages.size could cause scroll to non-existent index if sizes differ
-    // Key on size to handle case where duplicates are removed but last message id/timestamp stays same
-    LaunchedEffect(deduplicatedMessages.size, deduplicatedMessages.lastOrNull()?.id) {
+    // Key on message count + last message ID/timestamp to detect additions
+    // Don't use remember() because we need this to recalculate if the list mutates
+    android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: deduplicatedMessages.size=${deduplicatedMessages.size}, messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
+    LaunchedEffect(messages.size, messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) {
+        android.util.Log.d("MessagesList", "🔥 LAUNCHED_EFFECT_FIRED: messages.size=${messages.size}, lastId=${messages.lastOrNull()?.id}, deduplicatedMessages.size=${deduplicatedMessages.size}")
         if (deduplicatedMessages.isNotEmpty()) {
             delay(100L) // Allow layout to complete
             val targetIndex = deduplicatedMessages.size - 1

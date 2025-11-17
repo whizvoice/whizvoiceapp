@@ -364,9 +364,9 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
                 // Wait for UI to recompose and auto-scroll to complete
                 // The UI needs time to: 1) recompose with new messages, 2) layout items,
                 // 3) wait for LaunchedEffect delay (100ms), 4) complete scroll animation
-                // On CI emulators, this can take significantly longer due to slower rendering
-                Log.d(TAG, "⏳ Waiting 3000ms for UI to recompose and scroll (extended for CI)...")
-                Thread.sleep(3000)
+                Log.d(TAG, "⏳ Waiting for UI to recompose and scroll...")
+                composeTestRule.waitForIdle()
+                Thread.sleep(500)
 
                 // Strip markdown for UI comparison (UI renders markdown, so "**text**" becomes "text")
                 val strippedResponse = response.replace("**", "").replace("*", "")
@@ -517,9 +517,9 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
                 // Wait for UI to recompose and auto-scroll to complete
                 // The UI needs time to: 1) recompose with new messages, 2) layout items,
                 // 3) wait for LaunchedEffect delay (100ms), 4) complete scroll animation
-                // On CI emulators, this can take significantly longer due to slower rendering
-                Log.d(TAG, "⏳ Waiting 3000ms for UI to recompose and scroll (extended for CI)...")
-                Thread.sleep(3000)
+                Log.d(TAG, "⏳ Waiting for UI to recompose and scroll...")
+                composeTestRule.waitForIdle()
+                Thread.sleep(500)
 
                 val strippedDeleteResponse = deleteResponse.replace("**", "").replace("*", "")
                 Log.d(TAG, "🔍 Searching for deletion response in UI (stripped): '${strippedDeleteResponse.take(50)}...'")
