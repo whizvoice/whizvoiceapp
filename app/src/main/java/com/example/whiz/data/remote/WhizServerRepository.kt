@@ -588,6 +588,8 @@ class WhizServerRepository @Inject constructor(
                                     val lastActiveId = connectionStateManager.getLastActiveConversationId()
                                     if (lastActiveId == clientConversationId) {
                                         Log.d(TAG, "Updating ConnectionStateManager: migration from $clientConversationId to $conversationId")
+                                        // Register migration FIRST so areChatsMigrated() check in connect() will work
+                                        connectionStateManager.registerChatMigration(clientConversationId, conversationId)
                                         connectionStateManager.setActiveConversation(conversationId)
                                     }
                                 }

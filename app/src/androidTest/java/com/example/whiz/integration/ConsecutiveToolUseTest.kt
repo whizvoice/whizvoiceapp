@@ -368,18 +368,17 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
                 composeTestRule.waitForIdle()
                 Thread.sleep(500)
 
-                // Strip markdown for UI comparison (UI renders markdown, so "**text**" becomes "text")
-                val strippedResponse = response.replace("**", "").replace("*", "")
-                Log.d(TAG, "🔍 Searching for response in UI (stripped): '${strippedResponse.take(50)}...'")
+                // Search using content description which contains the raw message content
+                Log.d(TAG, "🔍 Searching for response in UI via content description: '${response.take(50)}...'")
 
-                // Try to find the response in the UI
+                // Try to find the response in the UI using content description
                 try {
-                    composeTestRule.onNodeWithText(strippedResponse, substring = true, useUnmergedTree = true).assertIsDisplayed()
+                    composeTestRule.onNodeWithContentDescription("Assistant message: $response", substring = true, useUnmergedTree = true).assertIsDisplayed()
                     Log.d(TAG, "✅ Assistant response verified in UI")
                 } catch (e: AssertionError) {
                     Log.e(TAG, "❌ Bot response found in ViewModel but NOT in UI")
                     Log.e(TAG, "   ViewModel content: '$response'")
-                    Log.e(TAG, "   Stripped for search: '$strippedResponse'")
+                    Log.e(TAG, "   Search string: 'Assistant message: $response'")
                     failWithScreenshot("assistant_response_not_in_ui", "Assistant response in ViewModel but not visible in UI")
                     return@runBlocking
                 }
