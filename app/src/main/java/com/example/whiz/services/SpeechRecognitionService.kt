@@ -63,9 +63,14 @@ class SpeechRecognitionService @Inject constructor(
     // Note: Continuous listening state is now managed by VoiceManager
     // This callback provides the current state when needed
     var continuousListeningCallback: (() -> Boolean)? = null
-    
+
     // Callback to check if we should actually restart listening (considers all conditions)
     var shouldRestartCallback: (() -> Boolean)? = null
+
+    // --- Test Support ---
+    // Allow tests to simulate partial transcriptions without real speech recognizer
+    @Volatile
+    private var testModeEnabled = false
 
     fun initialize() {
         // Ensure initialization always happens on the main thread
@@ -537,5 +542,65 @@ class SpeechRecognitionService @Inject constructor(
             // Show unknown errors
             else -> true
         }
+    }
+
+    // ==================== TEST SUPPORT METHODS ====================
+
+    /**
+     * Enable test mode to allow simulating partial transcriptions.
+     * This allows tests to inject partial results without using real speech recognizer.
+     */
+    fun enableTestMode() {
+        testModeEnabled = true
+        Log.d(TAG, "[TEST] Test mode enabled for partial transcription simulation")
+    }
+
+    /**
+     * Disable test mode and return to normal operation.
+     */
+    fun disableTestMode() {
+        testModeEnabled = false
+        Log.d(TAG, "[TEST] Test mode disabled")
+    }
+
+    /**
+     * Simulate a partial transcription result (for testing only).
+     * This updates the transcriptionState but does NOT emit to transcriptionFlow.
+     *
+     * @param partialText The partial transcription text to simulate
+     */
+    fun testSetPartialTranscription(partialText: String) {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testSetPartialTranscription called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Setting partial transcription: '$partialText'")
+        _transcriptionState.value = partialText
+        _isListening.value = true
+    }
+
+    /**
+     * Simulate a final transcription result (for testing only).
+     * This triggers the recognitionCallback and emits to transcriptionFlow,
+     * just like a real onResults() callback would.
+     *
+     * @param finalText The final transcription text to simulate
+     */
+    suspend fun testSendFinalTranscription(finalText: String) {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testSendFinalTranscription called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Sending final transcription: '$finalText'")
+        _transcriptionState.value = finalText
+
+        // Trigger the callback (like onResults does)
+        recognitionCallback?.invoke(finalText)
+
+        // Note: transcriptionFlow emission is handled by VoiceManager
+        // We just need to ensure the callback is invoked
+        _isListening.value = false
     }
 }
