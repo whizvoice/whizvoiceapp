@@ -110,6 +110,9 @@ class ToolExecutor @Inject constructor(
                     "recenter_google_maps" -> {
                         executeRecenterGoogleMaps(requestId, params)
                     }
+                    "fullscreen_google_maps" -> {
+                        executeFullscreenGoogleMaps(requestId, params)
+                    }
                     "select_location_from_list" -> {
                         executeSelectLocationFromList(requestId, params)
                     }
@@ -174,6 +177,10 @@ class ToolExecutor @Inject constructor(
                 JSONObject().apply {
                     put("name", "recenter_google_maps")
                     put("description", "Re-center the map to your current location")
+                },
+                JSONObject().apply {
+                    put("name", "fullscreen_google_maps")
+                    put("description", "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay")
                 }
             )
             "com.google.android.apps.youtube.music" -> listOf(
@@ -864,6 +871,42 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    private suspend fun executeFullscreenGoogleMaps(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Fullscreening Google Maps")
+
+            val result = screenAgentTools.fullscreenGoogleMaps()
+
+            Log.i(TAG, "Google Maps fullscreen result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps fullscreen result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "fullscreen_google_maps",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps fullscreen", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "fullscreen_google_maps",
+                    requestId = requestId,
+                    error = "Failed to fullscreen map: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executeSelectLocationFromList(requestId: String, params: JSONObject) {
         try {
             val position = if (params.has("position")) params.getInt("position") else null
@@ -911,7 +954,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "sms_select_chat", "sms_draft_message", "sms_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
+        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "sms_select_chat", "sms_draft_message", "sms_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "fullscreen_google_maps", "select_location_from_list")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

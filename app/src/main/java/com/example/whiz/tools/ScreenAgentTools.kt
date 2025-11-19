@@ -2748,6 +2748,41 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    suspend fun fullscreenGoogleMaps(): MapsActionResult {
+        Log.d(TAG, "Attempting to fullscreen Google Maps")
+
+        try {
+            // Foreground Google Maps by launching it
+            val packageManager = context.packageManager
+            val launchIntent = packageManager.getLaunchIntentForPackage("com.google.android.apps.maps")
+
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                context.startActivity(launchIntent)
+
+                Log.i(TAG, "Successfully foregrounded Google Maps")
+                return MapsActionResult(
+                    success = true,
+                    action = "fullscreen"
+                )
+            } else {
+                return MapsActionResult(
+                    success = false,
+                    action = "fullscreen",
+                    error = "Google Maps is not installed"
+                )
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fullscreening Google Maps", e)
+            return MapsActionResult(
+                success = false,
+                action = "fullscreen",
+                error = "Error fullscreening map: ${e.message}"
+            )
+        }
+    }
+
     suspend fun selectLocationFromList(position: Int? = null, fragment: String? = null): MapsActionResult {
         val selectionDesc = if (position != null) "position $position" else "fragment '$fragment'"
         Log.d(TAG, "Attempting to select location from list: $selectionDesc")
