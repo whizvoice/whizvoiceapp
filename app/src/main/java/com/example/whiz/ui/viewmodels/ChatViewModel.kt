@@ -1451,15 +1451,27 @@ class ChatViewModel @Inject constructor(
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
-                // 🎙️ VOICE APP BEHAVIOR: Update permission state and let UI layer control all microphone behavior
-                // Since this is a voice app, the UI always enables continuous listening by default
+                // 🎙️ VOICE APP BEHAVIOR: Update permission state and restart continuous listening if enabled
+                // Since this is a voice app, we need to restart continuous listening after loadChat stops it
                 val actualPermissionState = PermissionHandler.hasMicrophonePermission(context)
                 if (_micPermissionGranted.value != actualPermissionState) {
                     Log.d(TAG, "[LOG] Updating permission state from ${_micPermissionGranted.value} to $actualPermissionState")
                     _micPermissionGranted.value = actualPermissionState
                 }
-                
-                Log.d(TAG, "[LOG] Chat load complete - UI layer will handle voice app default behavior (always enable microphone)")
+
+                // Restart continuous listening if it was enabled before loadChat stopped it
+                // Skip restart if this is a voice mode activation (voice mode will handle it)
+                if (voiceManager.isContinuousListeningEnabled.value && _micPermissionGranted.value && !isVoiceModeActivation) {
+                    viewModelScope.launch {
+                        delay(100L) // Small delay to ensure state propagation
+                        if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value && !_isResponding.value) {
+                            Log.d(TAG, "[LOG] Restarting continuous listening after loadChat")
+                            startContinuousListening()
+                        }
+                    }
+                }
+
+                Log.d(TAG, "[LOG] Chat load complete - continuous listening restarted if it was enabled")
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error in loadChat", e)
                 _errorState.value = "Failed to load chat: ${e.message}"
