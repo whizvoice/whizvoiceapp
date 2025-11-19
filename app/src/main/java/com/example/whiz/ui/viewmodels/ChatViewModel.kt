@@ -197,6 +197,7 @@ class ChatViewModel @Inject constructor(
     val speechError = voiceManager.speechError
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
+    private var pendingTTSMessage: String? = null  // Queue TTS message if user is speaking
     
     // Track when app was last backgrounded to prevent TTS replay of old messages
     private var lastBackgroundedTime = 0L
@@ -1116,13 +1117,24 @@ class ChatViewModel @Inject constructor(
                                         "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
-                                    if (isListening.value) {
-                                        wasListeningBeforeTTS = true
-                                        voiceManager.stopListening() // Stop STT before TTS speaks
+                                    // Check if user has active partial transcription
+                                    val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+
+                                    if (hasPartialTranscription) {
+                                        Log.d(TAG, "User is speaking - queueing TTS instead of starting immediately: '$messageContentForChat'")
+                                        // Always update to the latest message - replaces any existing queued message
+                                        pendingTTSMessage = messageContentForChat
+                                        // Don't stop listening, let user finish
+                                    } else {
+                                        // No active speech - start TTS immediately
+                                        if (isListening.value) {
+                                            wasListeningBeforeTTS = true
+                                            voiceManager.stopListening() // Stop STT before TTS speaks
+                                        }
+                                        val utteranceId = UUID.randomUUID().toString()
+                                        ttsManager.speak(messageContentForChat, "chat_message")
+                                        // TTSManager will handle the isSpeaking state
                                     }
-                                    val utteranceId = UUID.randomUUID().toString()
-                                    ttsManager.speak(messageContentForChat, "chat_message")
-                                    // TTSManager will handle the isSpeaking state
                                 } else {
                                     // Always restart continuous listening after assistant reply if enabled and not speaking
                                     if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
@@ -1851,6 +1863,9 @@ class ChatViewModel @Inject constructor(
             if (!configUseRemoteAgent && currentChatId > 0) {
                 schedulePersistenceCheck(currentChatId)
             }
+
+            // Start queued TTS if user was speaking when assistant message arrived
+            startQueuedTTS()
             } catch (e: Exception) {
                 Log.e(TAG, "Error in sendUserInput", e)
             }
@@ -2206,6 +2221,20 @@ class ChatViewModel @Inject constructor(
         sendUserInput(currentInput)
     }
 
+    /**
+     * Start queued TTS message after user finishes speaking.
+     * Called when user's message is sent via sendUserInput().
+     */
+    private fun startQueuedTTS() {
+        pendingTTSMessage?.let { message ->
+            Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
+            viewModelScope.launch(Dispatchers.Main) {
+                ttsManager.speak(message, "chat_message")
+            }
+            pendingTTSMessage = null  // Clear the queue
+        }
+    }
+
     private fun initializeTTS() {
         // Use event-driven approach without delays
         ttsManager.initialize { success ->
@@ -2222,18 +2251,6 @@ class ChatViewModel @Inject constructor(
                 ttsManager.setAudioEventCallbacks(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
-
-                        // 🔧 BUG FIX: Save any pending partial transcription before it's lost
-                        // When TTS starts, the speech recognizer may stop without calling onResults
-                        val pendingTranscription = voiceManager.transcriptionState.value
-                        if (pendingTranscription.isNotBlank()) {
-                            Log.d(TAG, "⚠️ Saving pending partial transcription before TTS: '$pendingTranscription'")
-                            viewModelScope.launch {
-                                // Update input and send the partial transcription immediately
-                                updateInputText(pendingTranscription, fromVoice = true)
-                                sendUserInput(pendingTranscription)
-                            }
-                        }
 
                         // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
                         // Must run on main thread for speech recognizer
