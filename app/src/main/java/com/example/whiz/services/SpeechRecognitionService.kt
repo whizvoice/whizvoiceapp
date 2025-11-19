@@ -410,14 +410,14 @@ class SpeechRecognitionService @Inject constructor(
                 val finalText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
-                
+
                 // Send to bubble overlay if active
                 try {
                     BubbleOverlayService.updateUserTranscription(finalText)
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not update bubble overlay: ${e.message}")
                 }
-                
+
                 if (recognitionCallback != null) {
                     if (finalText.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
@@ -442,6 +442,7 @@ class SpeechRecognitionService @Inject constructor(
                 }
                 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
+                Log.d(TAG, "[DEBUG] 🧹 CLEARING transcription state (was: '$finalText', partial may have been: '${_transcriptionState.value}')")
                 _transcriptionState.value = ""
                 Log.d(TAG, "[DEBUG] Cleared transcription state after processing results")
             }
@@ -450,8 +451,15 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] onPartialResults")
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val partialText = matches?.firstOrNull() ?: ""
-                Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
-                _transcriptionState.value = partialText
+                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
+
+                // Ignore empty partial results to prevent clearing user's spoken text
+                // Empty partials can occur due to TTS interference, pauses, or recognition resets
+                if (partialText.isNotBlank()) {
+                    _transcriptionState.value = partialText
+                } else {
+                    Log.d(TAG, "[DEBUG] Ignoring empty partial result to preserve previous transcription")
+                }
 
                 // Note: We only update the transcription state for UI display.
                 // We do NOT send partial results to bubble overlay to avoid creating

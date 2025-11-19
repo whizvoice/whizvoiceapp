@@ -2222,15 +2222,47 @@ class ChatViewModel @Inject constructor(
                 ttsManager.setAudioEventCallbacks(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
+
+                        // 🔧 BUG FIX: Save any pending partial transcription before it's lost
+                        // When TTS starts, the speech recognizer may stop without calling onResults
+                        val pendingTranscription = voiceManager.transcriptionState.value
+                        if (pendingTranscription.isNotBlank()) {
+                            Log.d(TAG, "⚠️ Saving pending partial transcription before TTS: '$pendingTranscription'")
+                            viewModelScope.launch {
+                                // Update input and send the partial transcription immediately
+                                updateInputText(pendingTranscription, fromVoice = true)
+                                sendUserInput(pendingTranscription)
+                            }
+                        }
+
+                        // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
+                        // Must run on main thread for speech recognizer
+                        if (!ttsManager.areHeadphonesConnected()) {
+                            if (voiceManager.isListening.value) {
+                                Log.d(TAG, "Stopping listening to prevent TTS echo (no headphones)")
+                                wasListeningBeforeTTS = true
+                            }
+                            viewModelScope.launch(Dispatchers.Main) {
+                                voiceManager.stopListening()
+                            }
+                        }
                         // TTSManager handles its own isSpeaking state
                     },
                     onCompleted = {
                         Log.d(TAG, "TTS completed - audio focus released")
                         // TTSManager handles its own isSpeaking state
-                        // Handle continuous listening if enabled and headphones are connected
-                        if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
-                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
-                            startContinuousListening()
+                        // Restart listening if we stopped it when TTS started
+                        // Must run on main thread for speech recognizer
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
+                                Log.d(TAG, "TTS completed - restarting listening that was paused for TTS")
+                                wasListeningBeforeTTS = false
+                                startContinuousListening()
+                            } else if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
+                                // Headphones case: always restart
+                                Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                                startContinuousListening()
+                            }
                         }
                     },
                     onError = {
