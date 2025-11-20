@@ -1395,13 +1395,19 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 try {
-                    Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
-                    voiceManager.stopListening()
+                    // Don't stop continuous listening - let it keep running across chat navigation
+                    if (voiceManager.isListening.value && !voiceManager.isContinuousListeningEnabled.value) {
+                        // Only stop if it's a one-time listening session (not continuous)
+                        Log.d(TAG, "loadChat: Stopping one-time listening session")
+                        voiceManager.stopListening()
+                    } else {
+                        Log.d(TAG, "loadChat: Keeping listening state as-is (continuous or not listening)")
+                    }
                     Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${isSpeaking.value})")
                     ttsManager.stop()
-                    Log.d(TAG, "loadChat: Speech services stopped successfully")
+                    Log.d(TAG, "loadChat: Speech services handled successfully")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error stopping speech services during loadChat", e)
+                    Log.e(TAG, "Error managing speech services during loadChat", e)
                 }
 
                 // Refresh messages to ensure we have latest data
@@ -1451,27 +1457,17 @@ class ChatViewModel @Inject constructor(
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
-                // 🎙️ VOICE APP BEHAVIOR: Update permission state and restart continuous listening if enabled
-                // Since this is a voice app, we need to restart continuous listening after loadChat stops it
+                // 🎙️ VOICE APP BEHAVIOR: Update permission state
                 val actualPermissionState = PermissionHandler.hasMicrophonePermission(context)
                 if (_micPermissionGranted.value != actualPermissionState) {
                     Log.d(TAG, "[LOG] Updating permission state from ${_micPermissionGranted.value} to $actualPermissionState")
                     _micPermissionGranted.value = actualPermissionState
                 }
 
-                // Restart continuous listening if it was enabled before loadChat stopped it
-                // Skip restart if this is a voice mode activation (voice mode will handle it)
-                if (voiceManager.isContinuousListeningEnabled.value && _micPermissionGranted.value && !isVoiceModeActivation) {
-                    viewModelScope.launch {
-                        delay(100L) // Small delay to ensure state propagation
-                        if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value && !_isResponding.value) {
-                            Log.d(TAG, "[LOG] Restarting continuous listening after loadChat")
-                            startContinuousListening()
-                        }
-                    }
-                }
-
-                Log.d(TAG, "[LOG] Chat load complete - continuous listening restarted if it was enabled")
+                // Note: We no longer stop/restart continuous listening in loadChat
+                // If continuous listening is enabled, it stays running throughout the chat load
+                // This avoids race conditions with async stop/start IPC calls
+                Log.d(TAG, "[LOG] Chat load complete - continuous listening preserved if it was enabled")
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error in loadChat", e)
                 _errorState.value = "Failed to load chat: ${e.message}"
@@ -2267,7 +2263,9 @@ class ChatViewModel @Inject constructor(
                         // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
                         // Must run on main thread for speech recognizer
                         if (!ttsManager.areHeadphonesConnected()) {
-                            if (voiceManager.isListening.value) {
+                            // Check if continuous listening is ENABLED (the user's intent)
+                            // not if we're currently listening (which can be transiently false during restarts)
+                            if (voiceManager.isContinuousListeningEnabled.value) {
                                 Log.d(TAG, "Stopping listening to prevent TTS echo (no headphones)")
                                 wasListeningBeforeTTS = true
                             }

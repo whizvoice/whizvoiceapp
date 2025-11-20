@@ -122,12 +122,12 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
 
-            // Wait for navigation
-            val navigatedToChat = device.wait(Until.hasObject(
-                By.clazz("android.widget.EditText").pkg(packageName)
-            ), 5000)
+            // Wait for app to load
+            Thread.sleep(1000)
 
-            if (!navigatedToChat) {
+            // Navigate to new chat
+            Log.d(TAG, "📱 Navigating to new chat...")
+            if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
                 failWithScreenshot("navigation_failed", "Failed to navigate to chat screen")
                 return@runBlocking
             }
@@ -146,49 +146,38 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ App launched and ViewModel captured")
 
+            // Step 2: Send 3 regular messages and wait for responses
+            Log.d(TAG, "💬 Step 2: Sending 3 regular messages...")
+            val messages = listOf(
+                "This is a test - ${System.currentTimeMillis()} . I'm really interested in space.",
+                "Can you tell me about Mars in 30 words exactly? - ${System.currentTimeMillis()}",
+                "Yeah it's just that I've been thinking a lot about how big the world and even the universe is and how I'm kind of a tiny spec of dust in comparison and maybe nothing really matters but maybe actually everything matters a lot and there's just a lot of it and i have to take care of my own little corner of the world even though there's lots of corners and lots of people feeling things all the time and I guess I just have to accept that. Anyways I wonder if there's some sentient life on Mars too having similar thoughts. - ${System.currentTimeMillis()}"
+            )
+
             // Track chat for cleanup
             val currentChatId = capturedViewModel?.chatId?.value
             if (currentChatId != null && currentChatId != 0L) {
                 createdChatIds.add(currentChatId)
             }
 
-            // Step 2: Send 3 regular messages and wait for responses
-            Log.d(TAG, "💬 Step 2: Sending 3 regular messages...")
-            val messages = listOf(
-                "Pls always reply with just 1 word for test - ${System.currentTimeMillis()}",
-                "TTS queue test msg 2 - ${System.currentTimeMillis()}",
-                "TTS queue test msg 3 - ${System.currentTimeMillis()}"
-            )
-
-            messages.forEach { message ->
-                instrumentation.runOnMainSync {
-                    capturedViewModel?.let { vm ->
-                        Log.d(TAG, "📤 Sending message: '$message'")
-                        vm.updateInputText(message, fromVoice = false)
-                        vm.sendUserInput(message)
-                    }
-                }
-
-                // Wait for message to appear
-                val messageAppeared = ComposeTestHelper.waitForElement(
-                    composeTestRule = composeTestRule,
-                    selector = { composeTestRule.onNodeWithText(message) },
-                    timeoutMs = 3000L,
-                    description = "message: $message"
+            // Send only the first 2 messages
+            messages.take(2).forEach { message ->
+                Log.d(TAG, "🎤 Sending voice message: '$message'")
+                val messageSent = ComposeTestHelper.sendVoiceMessage(
+                    message = message,
+                    voiceManager = voiceManager,
+                    composeTestRule = composeTestRule
                 )
 
-                if (!messageAppeared) {
-                    failWithScreenshot("message_not_displayed", "Message not displayed: $message")
+                if (!messageSent) {
+                    failWithScreenshot("message_not_sent", "Message not sent: $message")
                     return@runBlocking
                 }
 
-                Log.d(TAG, "✅ Message sent and displayed: '$message'")
-
-                // Wait a bit for response
-                delay(2000)
+                Log.d(TAG, "✅ Voice message sent and displayed: '$message'")
             }
 
-            Log.d(TAG, "✅ All 3 messages sent successfully")
+            Log.d(TAG, "✅ First 2 messages sent successfully")
 
             // Step 3: Enable TTS and continuous listening
             Log.d(TAG, "🔊 Step 3: Enabling TTS and continuous listening...")
@@ -220,116 +209,135 @@ class TTSQueueingTest : BaseIntegrationTest() {
             Log.d(TAG, "🎤 Step 4: Starting partial transcription simulation...")
             speechRecognitionService.enableTestMode()
 
-            val words = listOf("I", "want", "to", "test", "if", "TTS", "gets", "queued", "properly")
+            // Use words from the third message for partial transcription
+            val thirdMessage = messages[2]
+            val words = thirdMessage.split(" ")
             var partialText = ""
-            var wordIndex = 0
             var assistantMessageArrived = false
-            var assistantMessageTimestamp = 0L
-            val messageToSend = "voice during TTS test - ${System.currentTimeMillis()}"
 
-            // Launch coroutine to feed partials
-            val partialJob = launch {
-                while (wordIndex < words.size || (assistantMessageArrived && System.currentTimeMillis() - assistantMessageTimestamp < 1000)) {
-                    // Add next word if we have more
-                    if (wordIndex < words.size) {
-                        partialText += (if (partialText.isEmpty()) "" else " ") + words[wordIndex]
-                        speechRecognitionService.testSetPartialTranscription(partialText)
-                        Log.d(TAG, "🎤 [TEST] Partial #$wordIndex: '$partialText'")
-                        wordIndex++
+            // Step 5: Send partials while assistant response arrives
+            // The assistant is already responding to the 2 messages we sent earlier
+            Log.d(TAG, "🎤 Step 5: Starting to send partials (assistant response should arrive during this)...")
+
+            for (wordIndex in words.indices) {
+                // Check that we're not being interrupted by TTS
+                val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
+                if (isSpeakingNow) {
+                    Log.e(TAG, "❌ FAILURE: TTS started during partials at word #$wordIndex")
+                    failWithScreenshot("tts_during_partials", "TTS started during partials")
+                    throw AssertionError("TTS started speaking during partial transcriptions - should be queued!")
+                }
+
+                // Check that continuous listening is still active (with retries for first word)
+                var isListeningNow = voiceManager.isListening.value
+                if (!isListeningNow && wordIndex == 0) {
+                    // First word: give it a chance to restart (up to 3 tries with 100ms delay)
+                    Log.w(TAG, "⚠️ Listening not active at word #0, retrying up to 3 times...")
+                    var retries = 0
+                    while (!isListeningNow && retries < 3) {
+                        delay(100)
+                        isListeningNow = voiceManager.isListening.value
+                        retries++
+                        Log.d(TAG, "🔄 Retry #$retries: isListening=$isListeningNow")
                     }
-
-                    delay(200) // Update every 200ms
                 }
 
-                Log.d(TAG, "🎤 [TEST] Finished feeding partials")
-            }
-
-            // Wait a moment to start building up partials
-            delay(1000)
-
-            // Step 5: Send a message while partials are active (this will trigger assistant response)
-            Log.d(TAG, "📤 Step 5: Sending trigger message to get assistant response...")
-            instrumentation.runOnMainSync {
-                capturedViewModel?.let { vm ->
-                    vm.updateInputText(messageToSend, fromVoice = false)
-                    vm.sendUserInput(messageToSend)
+                if (!isListeningNow) {
+                    Log.e(TAG, "❌ FAILURE: Continuous listening stopped during partials at word #$wordIndex")
+                    failWithScreenshot("listening_stopped", "Continuous listening stopped")
+                    throw AssertionError("Continuous listening stopped - we're being blocked from continuing!")
                 }
-            }
 
-            // Wait for assistant message to arrive
-            Log.d(TAG, "⏳ Waiting for assistant response...")
-            var botResponseFound = false
-            val botResponseStartTime = System.currentTimeMillis()
-            val maxBotWaitTime = 10000L
-
-            while (!botResponseFound && (System.currentTimeMillis() - botResponseStartTime) < maxBotWaitTime) {
-                // Check for bot response
-                try {
-                    val allTexts = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
-                    for (textView in allTexts) {
-                        try {
-                            val text = textView.text
-                            if (text != null && text.isNotEmpty() &&
-                                !messages.any { text.contains(it) } &&
-                                !text.contains(messageToSend) &&
-                                !text.contains("Thinking") &&
-                                !text.contains("Type or tap")) {
-                                botResponseFound = true
-                                assistantMessageArrived = true
-                                assistantMessageTimestamp = System.currentTimeMillis()
-                                Log.d(TAG, "✅ Assistant message arrived: '$text'")
-                                break
+                // Check if assistant response has arrived (from the 2 messages we sent earlier)
+                if (!assistantMessageArrived) {
+                    try {
+                        val allTexts = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
+                        for (textView in allTexts) {
+                            try {
+                                val text = textView.text
+                                if (text != null && text.isNotEmpty() &&
+                                    !messages.any { text.contains(it) } &&
+                                    text.length > 20 &&
+                                    !text.contains("Thinking") &&
+                                    !text.contains("Type or tap")) {
+                                    assistantMessageArrived = true
+                                    Log.d(TAG, "✅ Assistant response arrived during partials (from earlier messages): '$text'")
+                                    Log.d(TAG, "🔍 Verifying TTS is queued (not playing yet)...")
+                                    val isSpeakingDuringPartials = capturedViewModel?.isSpeaking?.value ?: false
+                                    if (isSpeakingDuringPartials) {
+                                        Log.e(TAG, "❌ FAILURE: TTS started immediately instead of being queued!")
+                                        failWithScreenshot("tts_not_queued", "TTS started immediately, should have been queued")
+                                        throw AssertionError("TTS should be queued when user is speaking")
+                                    }
+                                    Log.d(TAG, "✅ TTS correctly queued (not started during partial transcriptions)")
+                                    break
+                                }
+                            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                                // Skip stale elements
                             }
-                        } catch (e: androidx.test.uiautomator.StaleObjectException) {
-                            // Skip stale elements
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error checking for bot response: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error checking for bot response: ${e.message}")
                 }
 
-                if (!botResponseFound) {
-                    delay(100)
-                }
+                // Add next word
+                partialText += (if (partialText.isEmpty()) "" else " ") + words[wordIndex]
+                speechRecognitionService.testSetPartialTranscription(partialText)
+
+                val statusMsg = if (assistantMessageArrived) " (AFTER ASSISTANT ARRIVED)" else ""
+                Log.d(TAG, "🎤 [TEST] Partial #$wordIndex: '$partialText'$statusMsg")
+
+                // Short delay between partials
+                delay(100)
             }
 
-            if (!botResponseFound) {
-                Log.w(TAG, "⚠️ Bot response not found within timeout")
-                failWithScreenshot("bot_response_timeout", "No bot response found")
-                return@runBlocking
+            Log.d(TAG, "🎤 [TEST] ✅ Successfully sent all ${words.size} partial words!")
+            if (assistantMessageArrived) {
+                Log.d(TAG, "🎤 [TEST] ✅ Completed partials AFTER assistant response arrived - queuing worked!")
+            } else {
+                Log.w(TAG, "⚠️ Assistant response didn't arrive during partials, but continuing test...")
             }
 
-            // Step 6: Verify TTS is NOT playing yet (should be queued)
-            Log.d(TAG, "🔍 Step 6: Verifying TTS is queued (not playing yet)...")
-            delay(300) // Brief pause
-
-            val isSpeakingDuringPartials = capturedViewModel?.isSpeaking?.value ?: false
-            if (isSpeakingDuringPartials) {
-                Log.e(TAG, "❌ FAILURE: TTS started immediately instead of being queued!")
-                failWithScreenshot("tts_not_queued", "TTS started immediately, should have been queued")
-                throw AssertionError("TTS should be queued when user is speaking")
-            }
-            Log.d(TAG, "✅ TTS correctly queued (not started during partial transcriptions)")
-
-            // Step 7: Wait for partials to continue for 1 second after message arrival
-            Log.d(TAG, "⏳ Step 7: Continuing partials for 1 second...")
-            delay(1200) // Wait for the partial job to finish
-
-            // Step 8: Stop feeding partials and send final transcription
+            // Step 8: Send final transcription
             Log.d(TAG, "🎤 Step 8: Sending final transcription...")
-            partialJob.cancel() // Stop the partial feeding
             delay(100)
 
             val finalTranscription = partialText
             speechRecognitionService.testSendFinalTranscription(finalTranscription)
             Log.d(TAG, "📤 Final transcription sent: '$finalTranscription'")
 
+            // Step 10: Verify TTS starts playing NOW (after user finished)
+            Log.d(TAG, "🔊 Step 10: Verifying queued TTS starts playing...")
+
+            // Wait for TTS to start with a timeout
+            // Should start quickly since assistant message already arrived during partials
+            var ttsStarted = false
+            val ttsStartTime = System.currentTimeMillis()
+            val ttsTimeout = 1000L // 1 second - message already arrived, should start immediately
+
+            while (!ttsStarted && (System.currentTimeMillis() - ttsStartTime) < ttsTimeout) {
+                val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
+                if (isSpeakingNow) {
+                    ttsStarted = true
+                    Log.d(TAG, "✅ Queued TTS successfully started playing after user finished (after ${System.currentTimeMillis() - ttsStartTime}ms)")
+                    break
+                }
+                delay(100)
+            }
+
+            if (!ttsStarted) {
+                Log.e(TAG, "❌ FAILURE: TTS did not start playing after user finished speaking")
+                failWithScreenshot("tts_not_started_after_finish", "TTS did not start after user finished")
+                throw AssertionError("Queued TTS should start playing after user finishes")
+            }
+
             // Step 9: Verify the user's message was sent
             Log.d(TAG, "🔍 Step 9: Verifying user message was sent...")
             val userMessageAppeared = ComposeTestHelper.waitForElement(
                 composeTestRule = composeTestRule,
                 selector = { composeTestRule.onNodeWithText(finalTranscription) },
-                timeoutMs = 3000L,
+                timeoutMs = 1000L,
                 description = "user's final message"
             )
 
@@ -340,17 +348,6 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             composeTestRule.onNodeWithText(finalTranscription).assertIsDisplayed()
             Log.d(TAG, "✅ User message successfully sent: '$finalTranscription'")
-
-            // Step 10: Verify TTS starts playing NOW (after user finished)
-            Log.d(TAG, "🔊 Step 10: Verifying queued TTS starts playing...")
-            delay(500) // Brief pause for TTS to start
-
-            val isSpeakingAfterFinal = capturedViewModel?.isSpeaking?.value ?: false
-            if (!isSpeakingAfterFinal) {
-                Log.w(TAG, "⚠️ TTS not playing after user finished - may have completed quickly")
-            } else {
-                Log.d(TAG, "✅ Queued TTS successfully started playing after user finished")
-            }
 
             Log.d(TAG, "🎉 TTS queueing test completed successfully!")
 

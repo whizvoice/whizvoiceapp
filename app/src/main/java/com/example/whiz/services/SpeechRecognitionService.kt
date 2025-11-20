@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,6 +72,7 @@ class SpeechRecognitionService @Inject constructor(
     // Allow tests to simulate partial transcriptions without real speech recognizer
     @Volatile
     private var testModeEnabled = false
+    private var isTestInjectedCallback = false
 
     fun initialize() {
         // Ensure initialization always happens on the main thread
@@ -385,7 +387,9 @@ class SpeechRecognitionService @Inject constructor(
                 val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
                 
                 Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
-                
+
+                // Only auto-restart for NO_MATCH and SPEECH_TIMEOUT
+                // ERROR_CLIENT is ambiguous and should be prevented via proper state management
                 if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && shouldRestart && !manualStopInProgress) {
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
@@ -454,6 +458,13 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onPartialResults(partialResults: Bundle?) {
                 Log.d(TAG, "[DEBUG] onPartialResults")
+
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer partial callback")
+                    return
+                }
+
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val partialText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
@@ -547,12 +558,13 @@ class SpeechRecognitionService @Inject constructor(
     // ==================== TEST SUPPORT METHODS ====================
 
     /**
-     * Enable test mode to allow simulating partial transcriptions.
-     * This allows tests to inject partial results without using real speech recognizer.
+     * Enable test mode to allow simulating speech recognition through real callbacks.
+     * In test mode, we inject results through the actual onPartialResults/onResults callbacks,
+     * allowing the real SpeechRecognizer to run (and fail gracefully) while tests control the input.
      */
     fun enableTestMode() {
         testModeEnabled = true
-        Log.d(TAG, "[TEST] Test mode enabled for partial transcription simulation")
+        Log.d(TAG, "[TEST] Test mode enabled - will inject results through real callbacks")
     }
 
     /**
@@ -564,8 +576,8 @@ class SpeechRecognitionService @Inject constructor(
     }
 
     /**
-     * Simulate a partial transcription result (for testing only).
-     * This updates the transcriptionState but does NOT emit to transcriptionFlow.
+     * Simulate a partial transcription result by injecting through the real onPartialResults callback.
+     * This goes through the exact same code path as real speech recognition.
      *
      * @param partialText The partial transcription text to simulate
      */
@@ -575,15 +587,27 @@ class SpeechRecognitionService @Inject constructor(
             return
         }
 
-        Log.d(TAG, "[TEST] Setting partial transcription: '$partialText'")
-        _transcriptionState.value = partialText
-        _isListening.value = true
+        Log.d(TAG, "[TEST] Injecting partial result through real callback: '$partialText'")
+
+        // Create a Bundle like Android's SpeechRecognizer would
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(partialText))
+        }
+
+        // Inject through the REAL onPartialResults callback
+        Handler(Looper.getMainLooper()).post {
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onPartialResults(bundle)
+            } finally {
+                isTestInjectedCallback = false
+            }
+        }
     }
 
     /**
-     * Simulate a final transcription result (for testing only).
-     * This triggers the recognitionCallback and emits to transcriptionFlow,
-     * just like a real onResults() callback would.
+     * Simulate a final transcription result by injecting through the real onResults callback.
+     * This goes through the exact same code path as real speech recognition.
      *
      * @param finalText The final transcription text to simulate
      */
@@ -593,14 +617,16 @@ class SpeechRecognitionService @Inject constructor(
             return
         }
 
-        Log.d(TAG, "[TEST] Sending final transcription: '$finalText'")
-        _transcriptionState.value = finalText
+        Log.d(TAG, "[TEST] Injecting final result through real callback: '$finalText'")
 
-        // Trigger the callback (like onResults does)
-        recognitionCallback?.invoke(finalText)
+        // Create a Bundle like Android's SpeechRecognizer would
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(finalText))
+        }
 
-        // Note: transcriptionFlow emission is handled by VoiceManager
-        // We just need to ensure the callback is invoked
-        _isListening.value = false
+        // Inject through the REAL onResults callback on main thread
+        withContext(Dispatchers.Main) {
+            recognitionListener?.onResults(bundle)
+        }
     }
 }
