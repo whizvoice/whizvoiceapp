@@ -492,14 +492,14 @@ run_integration_tests_with_logcat() {
     echo "🔍 Discovered test log tags: $(echo $discovered_tags | tr '\n' ' ')" >> test_summary.log
     echo "📱 Starting logcat with tags: $discovered_tags" >> test_summary.log
     
-    # Start logcat capture with NO FILTER to see everything during the 3-second gaps
-    # TEMPORARILY REMOVED FILTER to debug UI blocking during server processing time
+    # Start logcat capture with filter for app-specific logs
+    # Filter: Show all logs from com.example.whiz, TestRunner, and errors/warnings from all sources
     {
-        adb logcat -v time >> test_logcat_output.log 2>&1 &
+        adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
         local logcat_pid=$!
     }
-    echo "📱 Logcat started with PID: $logcat_pid (NO FILTER - showing ALL logs)" >> test_summary.log
-    echo "🔍 Capturing ALL system activity to debug 3-second UI blocking" >> test_summary.log
+    echo "📱 Logcat started with PID: $logcat_pid (filtered for app logs + errors/warnings)" >> test_summary.log
+    echo "🔍 Capturing app-specific logs, test runner output, and system errors/warnings" >> test_summary.log
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
     local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
