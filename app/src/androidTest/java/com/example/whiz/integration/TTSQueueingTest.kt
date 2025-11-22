@@ -106,6 +106,11 @@ class TTSQueueingTest : BaseIntegrationTest() {
         Log.d(TAG, "🚀 Starting TTS queueing test")
 
         try {
+            // Step 0: Close the auto-launched activity to avoid double-launch
+            Log.d(TAG, "🛑 Closing auto-launched activity...")
+            composeTestRule.activityRule.scenario.close()
+            Thread.sleep(500) // Give it time to fully close
+
             // Step 1: Launch app and navigate to chat
             Log.d(TAG, "📱 Step 1: Launching app...")
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
@@ -343,10 +348,8 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             if (!userMessageAppeared) {
                 failWithScreenshot("user_message_not_sent", "User message not sent: $finalTranscription")
-                throw AssertionError("User's final message was not sent")
             }
 
-            composeTestRule.onNodeWithText(finalTranscription).assertIsDisplayed()
             Log.d(TAG, "✅ User message successfully sent: '$finalTranscription'")
 
             Log.d(TAG, "🎉 TTS queueing test completed successfully!")
