@@ -407,7 +407,16 @@ class WhizServerRepository @Inject constructor(
             
             val request = requestBuilder.build()
             Log.d(TAG, "Creating new WebSocket with URL: $websocketUrl, persistentDisconnect=$persistentDisconnectForTest")
-            
+
+            // Check if we should simulate connection failure for testing
+            if (persistentDisconnectForTest) {
+                Log.d(TAG, "Simulating WebSocket connection failure due to persistentDisconnectForTest flag")
+                // Reset connection state
+                connectionState = ConnectionState.IDLE
+                // Throw IOException to simulate network failure - this will trigger scheduleReconnect()
+                throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
+            }
+
             // Create the WebSocket first
             val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -757,12 +766,12 @@ class WhizServerRepository @Inject constructor(
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
                     emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
-                    
-                    // Only attempt reconnect if not manually disconnected
-                    if (!persistentDisconnectForTest) {
-                        Log.d(TAG, "Scheduling reconnect after timeout")
-                        scheduleReconnect()
-                    }
+
+                    // Always schedule reconnect after timeout - the retry mechanism should continue
+                    // even during test-induced disconnections. The flag will block the actual connection
+                    // attempt in connect(), but the retry loop should keep running.
+                    Log.d(TAG, "Scheduling reconnect after timeout (persistentDisconnect=$persistentDisconnectForTest)")
+                    scheduleReconnect()
                 }
             }
             
