@@ -887,6 +887,10 @@ log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 # Read test credentials
 read_test_credentials
 
+# Wake device before any adb operations to prevent hanging
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+sleep 0.5
+
 # Push test credentials to device for tests to load
 log_with_time "📲 Pushing test credentials to device..."
 adb shell mkdir -p /data/local/tmp >/dev/null 2>&1 || true
@@ -936,6 +940,12 @@ if [[ "$enabled_check" == "1" ]] && [[ "$services_check" == *"WhizAccessibilityS
 else
     log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
 fi
+
+# Wake device and ensure screen is on before tests
+log_with_time "📱 Waking device and ensuring screen is on..."
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true  # Wake the device
+adb shell input keyevent KEYCODE_MENU >/dev/null 2>&1 || true    # Dismiss lock screen if no security
+sleep 1
 
 # Prevent screen from sleeping during tests
 log_with_time "📱 Disabling screen timeout and keeping screen on during tests..."

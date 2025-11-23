@@ -378,19 +378,20 @@ class SpeechRecognitionService @Inject constructor(
                     Log.e(TAG, "Speech recognition error: $errorMessage (code $error)")
                     _errorState.value = errorMessage
                 }
-                
-                _isListening.value = false
 
                 // --- Continuous listening auto-restart logic with smart rate limiting ---
                 val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
                 // Use shouldRestartCallback if available, otherwise fall back to continuousListeningEnabled
                 val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
-                
-                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
 
-                // Only auto-restart for NO_MATCH and SPEECH_TIMEOUT
-                // ERROR_CLIENT is ambiguous and should be prevented via proper state management
-                if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && shouldRestart && !manualStopInProgress) {
+                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT)}")
+
+                // Auto-restart for NO_MATCH, SPEECH_TIMEOUT, and ERROR_CLIENT
+                // ERROR_CLIENT typically occurs when restarting too quickly (race condition with previous session cleanup)
+                // and should be retried automatically in continuous listening mode
+                val willRestart = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) && shouldRestart && !manualStopInProgress
+
+                if (willRestart) {
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
@@ -404,12 +405,25 @@ class SpeechRecognitionService @Inject constructor(
                     
                     if (errorRestartCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
-                        startListening(recognitionCallback ?: { })
+
+                        // Add small delay for ERROR_CLIENT to allow Android to clean up previous session
+                        if (error == SpeechRecognizer.ERROR_CLIENT) {
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Adding 100ms delay before restart (ERROR_CLIENT)")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                startListening(recognitionCallback ?: { })
+                            }, 100)
+                        } else {
+                            startListening(recognitionCallback ?: { })
+                        }
                     } else {
                         Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms or shouldRestart=$shouldRestart")
+                        // Set listening to false only when we're NOT restarting (rate limited)
+                        _isListening.value = false
                     }
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restart conditions not met - skipping restart")
+                    // Set listening to false only when we're NOT restarting (conditions not met)
+                    _isListening.value = false
                 }
             }
 

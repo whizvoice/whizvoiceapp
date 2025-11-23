@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,8 +70,27 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
     private val createdChatIds = mutableListOf<Long>()
 
+    @Before
+    override fun setUpAuthentication() {
+        super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
+
+        // Grant microphone permission for voice tests
+        Log.d(TAG, "🎙️ Granting microphone permission for TTS queueing test")
+        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
+
+        // Clean up any existing test chats
+        runBlocking {
+            cleanupTestChats(
+                repository = repository,
+                trackedChatIds = emptyList(),
+                additionalPatterns = listOf("Pls always reply with just 1 word for test", "TTS queue test", "voice during TTS", "space"),
+                enablePatternFallback = false
+            )
+        }
+    }
+
     @After
-    fun tearDown() {
+    fun cleanup() {
         Log.d(TAG, "TearDown: TTSQueueingTest")
 
         // Disable test mode
@@ -78,22 +98,26 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
         // Clean up test chats
         runBlocking {
-            Log.d(TAG, "🧹 Cleaning up test chats created during TTS queueing test")
             try {
+                Log.d(TAG, "🧹 Cleaning up test chats created during TTS queueing test")
+
+                // Clean up tracked chats and any chats with test patterns
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
                     additionalPatterns = listOf(
                         "Pls always reply with just 1 word for test",
                         "TTS queue test",
-                        "voice during TTS"
+                        "voice during TTS",
+                        "space"
                     ),
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
-                Log.d(TAG, "✅ Test chat cleanup completed")
+
+                Log.d(TAG, "✅ TTS queueing test cleanup completed")
             } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+                Log.w(TAG, "⚠️ Error during test cleanup", e)
             }
         }
 
@@ -106,18 +130,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
         Log.d(TAG, "🚀 Starting TTS queueing test")
 
         try {
-            // Step 0: Close the auto-launched activity to avoid double-launch
-            Log.d(TAG, "🛑 Closing auto-launched activity...")
-            composeTestRule.activityRule.scenario.close()
-            Thread.sleep(500) // Give it time to fully close
-
-            // Step 1: Launch app and navigate to chat
-            Log.d(TAG, "📱 Step 1: Launching app...")
-            val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
-                action = Intent.ACTION_MAIN
-                addCategory(Intent.CATEGORY_LAUNCHER)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
+            // Step 1: Set up callback and wait for app to be ready
+            // The app is already launched by composeTestRule in @Before
+            Log.d(TAG, "📱 Step 1: Setting up test...")
 
             capturedViewModel = null
             MainActivity.testViewModelCallback = { vm ->
@@ -125,9 +140,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 capturedViewModel = vm
             }
 
-            val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
-
-            // Wait for app to load
+            // Wait for app to be ready
             Thread.sleep(1000)
 
             // Navigate to new chat
