@@ -138,7 +138,18 @@ class SpeechRecognitionService @Inject constructor(
     fun startListening(callback: (String) -> Unit) {
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
-        
+
+        // 🧪 TEST MODE: If test mode is enabled, skip initialization checks and just set listening state
+        // This allows tests to inject simulated transcriptions on devices without speech recognition (e.g., CI emulators)
+        if (testModeEnabled) {
+            Log.d(TAG, "[TEST] Test mode enabled - setting isListening=true without real speech recognizer")
+            _isListening.value = true
+            _errorState.value = null
+            utteranceFinalized = false
+            manualStopInProgress = false
+            return
+        }
+
         if (!isInitialized) {
             initialize() // Try to initialize if not initialized
             if (!isInitialized) {
@@ -184,10 +195,10 @@ class SpeechRecognitionService @Inject constructor(
             _errorState.value = "Error starting speech recognition: ${e.message}"
             _isListening.value = false // Reset listening state on error
             recognitionCallback = null
-            
+
             // Force cleanup and reinitialize on error
             cleanup()
-            
+
             // Try to reinitialize for next attempt
             initialize()
         }
