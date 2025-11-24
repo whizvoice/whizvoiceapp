@@ -441,7 +441,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
             // Step 8: Send follow-up message to delete the task
             Log.d(TAG, "🗑️ Step 8: Sending follow-up message to delete the task...")
-            val deleteMessage = "Thanks. Actually, i changed my mind. Can you delete the task?"
+            val deleteMessage = "Thanks. Actually, i changed my mind. Can you delete the task? And then say DELETE SUCCESSFUL when you see the successful delete tool result."
 
             if (!ComposeTestHelper.sendMessageAndVerifyDisplay(composeTestRule, deleteMessage)) {
                 Log.e(TAG, "❌ Delete message failed to send or appear in UI as USER message")
@@ -550,6 +550,12 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
                 if (lowerDeleteResponse.contains("wrong")) {
                     Log.e(TAG, "❌ Deletion response contains the word 'wrong'")
+                    failWithScreenshot("delete_response_contains_wrong", "Delete response contains 'wrong': $deleteResponse")
+                    return@runBlocking
+                }
+
+                if (lowerDeleteResponse.contains("issue")) {
+                    Log.e(TAG, "❌ Deletion response contains the word 'issue'")
                     failWithScreenshot("delete_response_contains_wrong", "Delete response contains 'wrong': $deleteResponse")
                     return@runBlocking
                 }
