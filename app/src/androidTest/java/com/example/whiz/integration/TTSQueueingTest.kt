@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.junit.After
+import org.junit.Assume.assumeFalse
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -127,6 +128,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
     @Test
     fun testTTSQueueing_whenUserIsSpeaking(): Unit = runBlocking {
+        // Skip this test on emulators since speech recognition is not available
+        assumeFalse("Skipping TTS queueing test on emulator (speech recognition unavailable)", isRunningOnEmulator())
+
         Log.d(TAG, "🚀 Starting TTS queueing test")
 
         try {
