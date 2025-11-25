@@ -1119,7 +1119,7 @@ object ComposeTestHelper {
     fun countTextOccurrences(composeTestRule: ComposeTestRule, text: String): Int {
         return try {
             // Try to find all nodes with the text
-            val nodes = composeTestRule.onAllNodesWithText(text, substring = false, ignoreCase = true)
+            val nodes = composeTestRule.onAllNodesWithText(text, substring = true, ignoreCase = true)
             val count = nodes.fetchSemanticsNodes().size
             Log.d(TAG, "🔍 Compose: Found $count occurrences of text '$text'")
             count
