@@ -455,7 +455,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             Log.d(TAG, "🤖 Step 9: Waiting for bot response to deletion request...")
 
             val deleteResponseMessage = if (capturedViewModel != null) {
-                Log.d(TAG, "⏳ Waiting up to 30 seconds for deletion response...")
+                Log.d(TAG, "⏳ Waiting up to 30 seconds for deletion response containing 'DELETE SUCCESSFUL'...")
 
                 var lastAssistantMessage: MessageEntity? = null
                 val startTime = System.currentTimeMillis()
@@ -480,8 +480,15 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
                         val lastAssistantIndex = messages.indexOf(lastAssistantMessage)
 
                         if (deleteMessageIndex >= 0 && lastAssistantIndex > deleteMessageIndex) {
-                            Log.d(TAG, "✅ Found assistant response after delete message")
-                            break
+                            // Check if the response contains "DELETE SUCCESSFUL"
+                            if (lastAssistantMessage.content.contains("DELETE SUCCESSFUL", ignoreCase = true)) {
+                                Log.d(TAG, "✅ Found assistant response with 'DELETE SUCCESSFUL' after delete message")
+                                break
+                            } else {
+                                Log.d(TAG, "⏳ Found assistant response after delete message, but waiting for 'DELETE SUCCESSFUL': '${lastAssistantMessage.content.take(50)}...'")
+                                // Continue waiting for the correct response
+                                lastAssistantMessage = null
+                            }
                         }
                     }
                     Thread.sleep(200)
