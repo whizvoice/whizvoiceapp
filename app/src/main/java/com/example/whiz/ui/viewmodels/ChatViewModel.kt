@@ -117,10 +117,9 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                 }
                 
-                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on request ID
-                val deduplicatedMessages = messagesList.distinctBy { message ->
-                    // Use request ID for ALL messages (when available) to handle optimistic UI transitions
-                    // Both USER and ASSISTANT messages have requestIds that pair them together
+                // 🔧 DEDUPLICATION FIX: Remove duplicate messages, keeping the LATEST (highest timestamp)
+                // Group messages by their dedup key
+                val grouped = messagesList.groupBy { message ->
                     val key = when {
                         message.requestId != null -> {
                             // For messages with request ID (both USER and ASSISTANT): use requestId + type as unique key
@@ -134,6 +133,13 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG: Creating key for message ID:${message.id} RequestID:${message.requestId} -> $key")
                     key
                 }
+
+                // For each group, keep the LATEST message (highest timestamp, then LOWEST id as tiebreaker)
+                // Using lowest id when timestamps are equal keeps the first-arriving message,
+                // which is more stable as new duplicates arrive (prevents UI flickering)
+                val deduplicatedMessages = grouped.values.mapNotNull { duplicates ->
+                    duplicates.maxWithOrNull(compareBy({ it.timestamp }, { -it.id }))
+                }.sortedBy { it.timestamp }  // Re-sort by timestamp for display order
                 
                 if (deduplicatedMessages.size != messagesList.size) {
                     Log.w(TAG, "🔍 DEDUP_DEBUG: Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
@@ -144,10 +150,10 @@ class ChatViewModel @Inject constructor(
                         Log.w(TAG, "🔍 DEDUP_DEBUG: REMOVED -> ID:${removed.id} Type:${removed.type} RequestID:${removed.requestId} Timestamp:${removed.timestamp} Content:'${removed.content.take(30)}...'")
                     }
                     
-                    // Log final deduplicated list
-                    Log.d(TAG, "🔍 DEDUP_DEBUG: Final deduplicated list (${deduplicatedMessages.size} messages):")
+                    // Log final deduplicated list (using Log.w so it shows in test logcat)
+                    Log.w(TAG, "🔍 DEDUP_DEBUG: Final deduplicated list (${deduplicatedMessages.size} messages):")
                     deduplicatedMessages.forEachIndexed { index, message ->
-                        Log.d(TAG, "🔍 DEDUP_DEBUG:   FINAL[$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
+                        Log.w(TAG, "🔍 DEDUP_DEBUG:   FINAL[$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                     }
                 }
                 deduplicatedMessages
