@@ -519,27 +519,29 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
                 // Verify the response appears in UI
                 Log.d(TAG, "🔍 Verifying deletion response appears in UI...")
+                Log.d(TAG, "🔍 Searching for deletion response in UI via content description: 'Assistant message: $deleteResponse'")
 
-                // Wait for UI to recompose and auto-scroll to complete
-                // The UI needs time to: 1) recompose with new messages, 2) layout items,
-                // 3) wait for LaunchedEffect delay (100ms), 4) complete scroll animation
-                Log.d(TAG, "⏳ Waiting for UI to recompose and scroll...")
-                composeTestRule.waitForIdle()
-                Thread.sleep(500)
+                // Use ComposeTestHelper.waitForElement() with polling to handle timing variations
+                // Use onNodeWithContentDescription (like first response check) since content-desc includes raw markdown
+                val foundInUI = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithContentDescription("Assistant message: $deleteResponse", substring = true, useUnmergedTree = true) },
+                    timeoutMs = 5000L,
+                    description = "Delete response in UI"
+                )
 
-                val strippedDeleteResponse = deleteResponse.replace("**", "").replace("*", "")
-                Log.d(TAG, "🔍 Searching for deletion response in UI (stripped): '${strippedDeleteResponse.take(50)}...'")
-
-                try {
-                    composeTestRule.onNodeWithText(strippedDeleteResponse, substring = true, useUnmergedTree = true).assertIsDisplayed()
+                if (foundInUI) {
                     Log.d(TAG, "✅ Deletion response verified in UI")
-                } catch (e: AssertionError) {
-                    Log.e(TAG, "❌ Deletion response found in ViewModel but NOT in UI")
+                } else {
+                    Log.e(TAG, "❌ Deletion response found in ViewModel but NOT in UI after 5000ms")
                     Log.e(TAG, "   ViewModel content: '$deleteResponse'")
-                    Log.e(TAG, "   Stripped for search: '$strippedDeleteResponse'")
+                    Log.e(TAG, "   Search string: 'Assistant message: $deleteResponse'")
                     failWithScreenshot("delete_response_not_in_ui", "Delete response in ViewModel but not visible in UI")
                     return@runBlocking
                 }
+
+                // Strip markdown for subsequent validations
+                val strippedDeleteResponse = deleteResponse.replace("**", "").replace("*", "")
 
                 // Check response is valid (not empty, no errors)
                 if (strippedDeleteResponse.trim().isEmpty()) {
