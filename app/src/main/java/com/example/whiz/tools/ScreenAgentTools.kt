@@ -543,8 +543,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
-    suspend fun draftWhatsAppMessage(message: String, previousText: String? = null): DraftResult {
-        Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText")
+    suspend fun draftWhatsAppMessage(message: String, previousText: String? = null, chatName: String? = null): DraftResult {
+        Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText, chatName: $chatName")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -554,6 +554,41 @@ class ScreenAgentTools @Inject constructor(
                     message = message,
                     error = "Accessibility service not enabled"
                 )
+            }
+
+            // If chatName is provided, check if we need to navigate to that chat
+            if (chatName != null) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    val currentScreen = detectWhatsAppScreen(rootNode)
+                    val currentChatName = if (currentScreen == WhatsAppScreen.INSIDE_CHAT) {
+                        getCurrentWhatsAppChatName(rootNode)
+                    } else {
+                        null
+                    }
+                    rootNode.recycle()
+
+                    // Check if we're in the correct chat (case-insensitive contains check)
+                    val isCorrectChat = currentChatName != null &&
+                        (currentChatName.equals(chatName, ignoreCase = true) ||
+                         currentChatName.contains(chatName, ignoreCase = true) ||
+                         chatName.contains(currentChatName, ignoreCase = true))
+
+                    if (!isCorrectChat) {
+                        Log.d(TAG, "Not in correct chat (current: $currentChatName, requested: $chatName). Auto-selecting chat...")
+                        val selectResult = selectWhatsAppChat(chatName)
+                        if (!selectResult.success) {
+                            return DraftResult(
+                                success = false,
+                                message = message,
+                                error = "Could not open chat '$chatName': ${selectResult.error}"
+                            )
+                        }
+                        Log.d(TAG, "Successfully navigated to chat: $chatName")
+                    } else {
+                        Log.d(TAG, "Already in correct chat: $currentChatName")
+                    }
+                }
             }
 
             // Wait to ensure we're in a chat
@@ -1276,8 +1311,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun draftSMSMessage(message: String, previousText: String? = null): DraftResult {
-        Log.d(TAG, "Attempting to draft SMS message: $message, previousText: $previousText")
+    suspend fun draftSMSMessage(message: String, previousText: String? = null, contactName: String? = null): DraftResult {
+        Log.d(TAG, "Attempting to draft SMS message: $message, previousText: $previousText, contactName: $contactName")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1287,6 +1322,36 @@ class ScreenAgentTools @Inject constructor(
                     message = message,
                     error = "Accessibility service not enabled"
                 )
+            }
+
+            // If contactName is provided, check if we need to navigate to that conversation
+            if (contactName != null) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    val currentContactName = getCurrentSMSContactName(rootNode)
+                    rootNode.recycle()
+
+                    // Check if we're in the correct conversation (case-insensitive contains check)
+                    val isCorrectConversation = currentContactName != null &&
+                        (currentContactName.equals(contactName, ignoreCase = true) ||
+                         currentContactName.contains(contactName, ignoreCase = true) ||
+                         contactName.contains(currentContactName, ignoreCase = true))
+
+                    if (!isCorrectConversation) {
+                        Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName, requested: $contactName). Auto-selecting contact...")
+                        val selectResult = selectSMSChat(contactName)
+                        if (!selectResult.success) {
+                            return DraftResult(
+                                success = false,
+                                message = message,
+                                error = "Could not open conversation with '$contactName': ${selectResult.error}"
+                            )
+                        }
+                        Log.d(TAG, "Successfully navigated to SMS conversation: $contactName")
+                    } else {
+                        Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
+                    }
+                }
             }
 
             // Wait a bit to ensure we're in a conversation
@@ -1801,6 +1866,58 @@ class ScreenAgentTools @Inject constructor(
     }
 
     // ========== SMS Helper Functions ==========
+
+    /**
+     * Get the name of the current SMS contact if inside a conversation.
+     * Returns null if not inside a conversation.
+     */
+    private fun getCurrentSMSContactName(rootNode: AccessibilityNodeInfo): String? {
+        try {
+            // Try multiple approaches to find the contact name
+
+            // Approach 1: Look for the toolbar title in Google Messages
+            val toolbarTitleId = "com.google.android.apps.messaging:id/toolbar_title"
+            val toolbarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(toolbarTitleId)
+            if (toolbarTitleNodes != null && toolbarTitleNodes.isNotEmpty()) {
+                val name = toolbarTitleNodes[0].text?.toString()
+                toolbarTitleNodes.forEach { it.recycle() }
+                if (name != null && name.isNotEmpty()) {
+                    Log.d(TAG, "Current SMS contact name (from toolbar_title): $name")
+                    return name
+                }
+            }
+
+            // Approach 2: Look for the conversation header
+            val headerTitleId = "com.google.android.apps.messaging:id/conversation_title"
+            val headerTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(headerTitleId)
+            if (headerTitleNodes != null && headerTitleNodes.isNotEmpty()) {
+                val name = headerTitleNodes[0].text?.toString()
+                headerTitleNodes.forEach { it.recycle() }
+                if (name != null && name.isNotEmpty()) {
+                    Log.d(TAG, "Current SMS contact name (from conversation_title): $name")
+                    return name
+                }
+            }
+
+            // Approach 3: Look for action bar title
+            val actionBarId = "com.google.android.apps.messaging:id/action_bar_title"
+            val actionBarNodes = rootNode.findAccessibilityNodeInfosByViewId(actionBarId)
+            if (actionBarNodes != null && actionBarNodes.isNotEmpty()) {
+                val name = actionBarNodes[0].text?.toString()
+                actionBarNodes.forEach { it.recycle() }
+                if (name != null && name.isNotEmpty()) {
+                    Log.d(TAG, "Current SMS contact name (from action_bar_title): $name")
+                    return name
+                }
+            }
+
+            Log.d(TAG, "Could not determine current SMS contact name")
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting current SMS contact name", e)
+            return null
+        }
+    }
 
     private suspend fun performSMSSearch(rootNode: AccessibilityNodeInfo, searchQuery: String, accessibilityService: WhizAccessibilityService): Boolean {
         try {
@@ -4581,6 +4698,26 @@ class ScreenAgentTools @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error detecting WhatsApp screen", e)
             return WhatsAppScreen.UNKNOWN
+        }
+    }
+
+    /**
+     * Get the name of the current WhatsApp chat/contact if inside a chat.
+     * Returns null if not inside a chat.
+     */
+    private fun getCurrentWhatsAppChatName(rootNode: AccessibilityNodeInfo): String? {
+        try {
+            val conversationContactName = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
+            if (conversationContactName != null && conversationContactName.isNotEmpty()) {
+                val name = conversationContactName[0].text?.toString()
+                conversationContactName.forEach { it.recycle() }
+                Log.d(TAG, "Current WhatsApp chat name: $name")
+                return name
+            }
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting current WhatsApp chat name", e)
+            return null
         }
     }
 

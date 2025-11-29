@@ -329,9 +329,10 @@ class ToolExecutor @Inject constructor(
         try {
             val message = params.getString("message")
             val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
-            Log.i(TAG, "Drafting WhatsApp message: message='$message', previousText='$previousText'")
-            
-            val result = screenAgentTools.draftWhatsAppMessage(message, previousText)
+            val chatName = if (params.has("chat_name")) params.getString("chat_name") else null
+            Log.i(TAG, "Drafting WhatsApp message: message='$message', previousText='$previousText', chatName='$chatName'")
+
+            val result = screenAgentTools.draftWhatsAppMessage(message, previousText, chatName)
             
             val resultJson = JSONObject().apply {
                 put("success", result.success)
@@ -442,10 +443,11 @@ class ToolExecutor @Inject constructor(
         try {
             val message = params.getString("message")
             val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+            val contactName = if (params.has("contact_name")) params.getString("contact_name") else null
 
-            Log.i(TAG, "Drafting SMS message: message='$message', previousText='$previousText'")
+            Log.i(TAG, "Drafting SMS message: message='$message', previousText='$previousText', contactName='$contactName'")
 
-            val result = screenAgentTools.draftSMSMessage(message, previousText)
+            val result = screenAgentTools.draftSMSMessage(message, previousText, contactName)
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
