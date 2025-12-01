@@ -55,7 +55,7 @@ def install_debug_app(force=False):
     cmd = [script_path]
     if force:
         cmd.append('--force')
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ)
 
     # Grant overlay permission using both pm grant and appops
     package_name = "com.example.whiz.debug"
@@ -284,7 +284,7 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(2)
 
             # Click to select WhizVoice DEBUG
-            tester.tap(500, 1000)
+            tester.tap(500, 500)
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG

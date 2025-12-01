@@ -233,13 +233,27 @@ adb shell am force-stop "$PACKAGE_NAME" 2>/dev/null || true
 
 # Install the APK
 log_with_time "📱 Installing APK..."
-if adb install -r "$APK_PATH"; then
+set +e  # Temporarily disable exit on error to capture install failure
+INSTALL_OUTPUT=$(adb install -r "$APK_PATH" 2>&1)
+INSTALL_RESULT=$?
+set -e  # Re-enable exit on error
+
+# Check for signature mismatch error and retry with uninstall
+if [[ $INSTALL_RESULT -ne 0 ]] && echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAILED_UPDATE_INCOMPATIBLE"; then
+    log_with_time "⚠️  Signature mismatch detected - uninstalling old version first..."
+    adb uninstall "$PACKAGE_NAME" 2>/dev/null || true
+    INSTALL_OUTPUT=$(adb install "$APK_PATH" 2>&1)
+    INSTALL_RESULT=$?
+fi
+
+if [[ $INSTALL_RESULT -eq 0 ]]; then
     log_with_time "✅ App installed successfully!"
-    
+
     # Save current checksum for next run
     echo "$CURRENT_CHECKSUM" > "$CHECKSUM_FILE"
 else
     log_with_time "❌ App installation failed"
+    echo "$INSTALL_OUTPUT" >&2
     exit 1
 fi
 
