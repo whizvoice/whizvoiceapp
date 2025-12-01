@@ -48,8 +48,7 @@
             android:launchMode="singleInstance"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:windowSoftInputMode="adjustResize"
-            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />

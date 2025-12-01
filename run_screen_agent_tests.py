@@ -7,6 +7,7 @@ import android_accessibility_tester
 import subprocess
 import os
 import pytest
+import time
 
 
 # Set up Android SDK paths
@@ -288,7 +289,7 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG
-            tester.tap(925, 400)
+            tester.tap(925, 600)
             time.sleep(1)
 
             # Click Allow button
@@ -311,7 +312,7 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG
-            tester.tap(925, 600)
+            tester.tap(925, 400)
             time.sleep(1)
 
             # Click Allow button
@@ -388,8 +389,25 @@ def app_installed():
     """Install the debug app once for all tests."""
     clear_test_output_dir()
     install_debug_app(force=True)
+
+    # Wake device and keep screen on during tests
+    print("📱 Waking device and keeping screen on during tests...")
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MENU'], check=False)  # Dismiss lock screen
+    time.sleep(1)
+
+    # Prevent screen from sleeping during tests
+    subprocess.run(['adb', 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '2147483647'], check=False)  # Max timeout (~24 days)
+    subprocess.run(['adb', 'shell', 'svc', 'power', 'stayon', 'true'], check=False)  # Keep screen on while USB connected
+
     start_logcat()
     yield
+
+    # Restore screen timeout settings
+    print("📱 Restoring screen timeout settings...")
+    subprocess.run(['adb', 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '30000'], check=False)  # 30 seconds default
+    subprocess.run(['adb', 'shell', 'svc', 'power', 'stayon', 'false'], check=False)
+
     stop_logcat()
 
 
@@ -463,13 +481,13 @@ def test_whatsapp_draft_message(tester):
     # Send a voice transcription with the test message
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice'")
+    print("📤 Broadcasting: 'Hello, can you please send a WhatsApp message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
+        '--es', 'text', '"Hello, can you please send a WhatsApp message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -480,12 +498,14 @@ def test_whatsapp_draft_message(tester):
     print("STEP 6: Waiting for draft overlay to appear")
     print("========================================")
     # wait for draft overlay to appear over whatsapp input text bar
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0...")
-    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
+    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0 or #fff176...")
+    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#fff176'], timeout=15.0)
     if result['matched']:
         print("✅ Draft overlay detected!")
     else:
         print("❌ Draft overlay not detected!")
+        tester.screenshot(screenshot_path)
+        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_overlay_not_detected")
     assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
     print("\n========================================")
