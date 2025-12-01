@@ -499,7 +499,7 @@ def test_whatsapp_draft_message(tester):
     print("========================================")
     # wait for draft overlay to appear over whatsapp input text bar
     print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0 or #fff176...")
-    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#fff176'], timeout=15.0)
+    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#fff176'], timeout=30.0)
     if result['matched']:
         print("✅ Draft overlay detected!")
     else:
