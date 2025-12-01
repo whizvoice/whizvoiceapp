@@ -285,11 +285,11 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(2)
 
             # Click to select WhizVoice DEBUG
-            tester.tap(500, 500)
+            tester.tap(500, 900)
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG
-            tester.tap(925, 600)
+            tester.tap(925, 400)
             time.sleep(1)
 
             # Click Allow button
