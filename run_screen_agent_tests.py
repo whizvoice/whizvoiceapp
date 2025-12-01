@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
-sys.path.insert(0, '/Users/ruthgracewong/android_screenshot_testing')
+sys.path.insert(0, '/Users/ruthgracewong/android_accessibility_tester')
 
 import android_accessibility_tester
 import subprocess
