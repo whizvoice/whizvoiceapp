@@ -190,7 +190,7 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         Log.d(TAG, "⏰ Step 2: Opening Clock app using ToolExecutor...")
         
         val toolRequest = JSONObject().apply {
-            put("tool", "launch_app")
+            put("tool", "agent_launch_app")
             put("request_id", "test_request_${System.currentTimeMillis()}")
             put("params", JSONObject().apply {
                 put("app_name", "Clock")

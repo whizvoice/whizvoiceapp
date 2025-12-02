@@ -386,18 +386,42 @@ run_unit_tests() {
 read_test_credentials() {
     local credentials_file="test_credentials.json"
     if [[ ! -f "$credentials_file" ]]; then
-        log_with_time "❌ ERROR: $credentials_file not found. Please create it with test credentials."
+        log_with_time "❌ ERROR: $credentials_file not found."
+        log_with_time ""
+        log_with_time "   Please create $credentials_file with the following format:"
+        log_with_time ""
+        log_with_time '   {'
+        log_with_time '     "google_test_account": {'
+        log_with_time '       "email": "your-test-email@gmail.com",'
+        log_with_time '       "password": "your-test-password",'
+        log_with_time '       "display_name": "Test User",'
+        log_with_time '       "user_id": "your-google-user-id"'
+        log_with_time '     },'
+        log_with_time '     "test_environment": {'
+        log_with_time '       "use_real_auth": true,'
+        log_with_time '       "api_base_url": "https://whizvoice.com/api"'
+        log_with_time '     }'
+        log_with_time '   }'
+        log_with_time ""
         exit 1
     fi
-    
+
+    # Try nested format first (google_test_account.email), then flat format
     TEST_USERNAME=$(grep -o '"email": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
     TEST_PASSWORD=$(grep -o '"password": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
-    
-    if [[ -z "$TEST_USERNAME" || -z "$TEST_PASSWORD" || "$TEST_PASSWORD" == "REPLACE_WITH_ACTUAL_PASSWORD" ]]; then
-        log_with_time "❌ ERROR: Test credentials incomplete"
+
+    if [[ -z "$TEST_USERNAME" ]]; then
+        log_with_time "❌ ERROR: Could not find 'email' field in $credentials_file"
+        log_with_time "   File contents:"
+        cat "$credentials_file" | head -20 | while read line; do log_with_time "   $line"; done
         exit 1
     fi
-    
+
+    if [[ -z "$TEST_PASSWORD" || "$TEST_PASSWORD" == "REPLACE_WITH_ACTUAL_PASSWORD" ]]; then
+        log_with_time "❌ ERROR: 'password' field is missing or has placeholder value in $credentials_file"
+        exit 1
+    fi
+
     log_with_time "🔑 Successfully read test credentials for user: $TEST_USERNAME"
 }
 
