@@ -789,6 +789,34 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                     return@runBlocking
                 }
 
+                // Wait for bot to finish responding before sending the next command
+                // This prevents the "turn on" and "turn off" messages from being batched together
+                // in the same Claude API call. We check the ViewModel's message list for a new
+                // assistant message since the bubble UI doesn't show "computing" state.
+                Log.d(TAG, "⏳ Waiting for bot to finish responding before sending next command...")
+                val messageCountBeforeWait = capturedViewModel?.messages?.value?.count {
+                    it.type == com.example.whiz.data.local.MessageType.ASSISTANT
+                } ?: 0
+                val waitForResponseStart = System.currentTimeMillis()
+                val waitForResponseTimeout = 15000L
+                var botResponded = false
+
+                while (System.currentTimeMillis() - waitForResponseStart < waitForResponseTimeout) {
+                    val currentAssistantCount = capturedViewModel?.messages?.value?.count {
+                        it.type == com.example.whiz.data.local.MessageType.ASSISTANT
+                    } ?: 0
+                    if (currentAssistantCount > messageCountBeforeWait) {
+                        botResponded = true
+                        Log.d(TAG, "✅ Bot responded (assistant message count: $messageCountBeforeWait -> $currentAssistantCount)")
+                        break
+                    }
+                    delay(200)
+                }
+
+                if (!botResponded) {
+                    Log.w(TAG, "⚠️ Bot response not detected in ViewModel, but bubble mode switched - continuing anyway")
+                }
+
                 // Step 8: Send voice transcription to re-enable TTS (app is backgrounded in bubble mode, use broadcast)
                 Log.d(TAG, "🔊 step 8: sending voice transcription to re-enable TTS...")
                 val enableTTSMessage = "Please turn on text to speech - ${System.currentTimeMillis()}"
