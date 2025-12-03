@@ -418,12 +418,14 @@ class WhizServerRepository @Inject constructor(
             }
 
             // Create the WebSocket first
+            Log.d(TAG, "🔥 Creating WebSocket with URL: $websocketUrl, thisGeneration=$thisGeneration")
             val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.d(TAG, "🔥 onOpen ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration")
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
-                            Log.d(TAG, "onOpen: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            Log.w(TAG, "🔥 onOpen: IGNORING callback - generation mismatch! thisGen=$thisGeneration, currentGen=$currentGeneration")
                             webSocket.close(1000, "Superseded by newer connection")
                             return
                         }
@@ -668,6 +670,7 @@ class WhizServerRepository @Inject constructor(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.d(TAG, "🔥 onClosed ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration, code=$code, reason=$reason")
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
@@ -708,10 +711,11 @@ class WhizServerRepository @Inject constructor(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.e(TAG, "🔥 onFailure ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration, error=${t.message}", t)
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
-                            Log.d(TAG, "onFailure: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            Log.w(TAG, "🔥 onFailure: IGNORING callback - generation mismatch! thisGen=$thisGeneration, currentGen=$currentGeneration")
                             return
                         }
                         
