@@ -1,6 +1,0 @@
-#!/bin/bash
-
-# Copy this file to export_anthropic_key.sh and add your Anthropic API key
-# DO NOT commit export_anthropic_key.sh to version control
-
-export ANTHROPIC_API_KEY="your-api-key-here"

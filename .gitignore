@@ -23,7 +23,6 @@ venv
 export_anthropic_key.sh
 current_screen.png
 adb_tests/screenshots/*
-droidrun/logcat_output.txt
 __pycache__/
 screen_agent_test_output/*
 my-release-key.jks
