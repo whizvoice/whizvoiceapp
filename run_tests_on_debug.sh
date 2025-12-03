@@ -519,7 +519,7 @@ run_integration_tests_with_logcat() {
     # Start logcat capture with filter for app-specific logs
     # Filter: Show all logs from com.example.whiz, TestRunner, and errors/warnings from all sources
     {
-        adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
         local logcat_pid=$!
     }
     echo "📱 Logcat started with PID: $logcat_pid (filtered for app logs + errors/warnings)" >> test_summary.log
