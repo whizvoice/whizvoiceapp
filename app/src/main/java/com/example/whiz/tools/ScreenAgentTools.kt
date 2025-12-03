@@ -2234,6 +2234,20 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to play song on YouTube Music: $query")
 
         try {
+            // Auto-launch YouTube Music if not already open
+            val launchResult = launchApp("YouTube Music", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch YouTube Music: ${launchResult.error}")
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Failed to open YouTube Music: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "YouTube Music launched successfully")
+            delay(1000) // Wait for YouTube Music to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MusicActionResult(
@@ -2392,6 +2406,20 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to queue song on YouTube Music: $query")
 
         try {
+            // Auto-launch YouTube Music if not already open
+            val launchResult = launchApp("YouTube Music", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch YouTube Music: ${launchResult.error}")
+                return MusicActionResult(
+                    success = false,
+                    action = "queue_song",
+                    query = query,
+                    error = "Failed to open YouTube Music: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "YouTube Music launched successfully")
+            delay(1000) // Wait for YouTube Music to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MusicActionResult(
@@ -2575,6 +2603,20 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to search for location in Google Maps: $address")
 
         try {
+            // Auto-launch Google Maps if not already open
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
+                return MapsActionResult(
+                    success = false,
+                    action = "search_location",
+                    location = address,
+                    error = "Failed to open Google Maps: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Google Maps launched successfully")
+            delay(1000) // Wait for Google Maps to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MapsActionResult(
@@ -2774,6 +2816,20 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections")
 
         try {
+            // Auto-launch Google Maps if not already open
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = "Failed to open Google Maps: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Google Maps launched successfully")
+            delay(1000) // Wait for Google Maps to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MapsActionResult(
@@ -2885,6 +2941,19 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to recenter Google Maps")
 
         try {
+            // Auto-launch Google Maps if not already open
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
+                return MapsActionResult(
+                    success = false,
+                    action = "recenter",
+                    error = "Failed to open Google Maps: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Google Maps launched successfully")
+            delay(1000) // Wait for Google Maps to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MapsActionResult(
@@ -2949,27 +3018,21 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to fullscreen Google Maps")
 
         try {
-            // Foreground Google Maps by launching it
-            val packageManager = context.packageManager
-            val launchIntent = packageManager.getLaunchIntentForPackage("com.google.android.apps.maps")
-
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                context.startActivity(launchIntent)
-
-                Log.i(TAG, "Successfully foregrounded Google Maps")
-                return MapsActionResult(
-                    success = true,
-                    action = "fullscreen"
-                )
-            } else {
+            // Auto-launch Google Maps to bring it to foreground
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
                 return MapsActionResult(
                     success = false,
                     action = "fullscreen",
-                    error = "Google Maps is not installed"
+                    error = "Failed to open Google Maps: ${launchResult.error}"
                 )
             }
-
+            Log.i(TAG, "Google Maps launched/foregrounded successfully")
+            return MapsActionResult(
+                success = true,
+                action = "fullscreen"
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error fullscreening Google Maps", e)
             return MapsActionResult(
@@ -2985,6 +3048,18 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to select location from list: $selectionDesc")
 
         try {
+            // Auto-launch Google Maps to bring it to foreground
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
+                return MapsActionResult(
+                    success = false,
+                    action = "select_location",
+                    error = "Failed to open Google Maps: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Google Maps launched/foregrounded successfully")
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MapsActionResult(
@@ -3063,6 +3138,20 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to search Google Maps with phrase: $searchPhrase")
 
         try {
+            // Auto-launch Google Maps to bring it to foreground
+            val launchResult = launchApp("Maps", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
+                return MapsActionResult(
+                    success = false,
+                    action = "search_phrase",
+                    location = searchPhrase,
+                    error = "Failed to open Google Maps: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Google Maps launched/foregrounded successfully")
+            delay(1000) // Wait for Maps to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return MapsActionResult(
