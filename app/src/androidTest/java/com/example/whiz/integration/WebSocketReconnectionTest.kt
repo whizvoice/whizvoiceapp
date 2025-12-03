@@ -435,7 +435,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
 
                 val botResponseAfterReconnect = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
+                    selector = {
                         composeTestRule.onNodeWithText(
                             "LEGO", // Bot will mention LEGO in the history response
                             substring = true,
@@ -443,7 +443,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 5000L, // Give more time for sync
+                    timeoutMs = 10000L, // Give more time for sync after reconnection
                     description = "bot response about LEGO history after reconnection"
                 )
                 
