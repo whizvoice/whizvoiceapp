@@ -319,11 +319,22 @@ class ScreenAgentTools @Inject constructor(
     
     suspend fun selectWhatsAppChat(chatName: String): WhatsAppResult {
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
-        
+
         try {
-            // Note: This assumes WhatsApp is already open. 
-            // The server should use launch_app tool first if needed.
-            
+            // Auto-launch WhatsApp if not already open
+            val launchResult = launchApp("WhatsApp", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
+                return WhatsAppResult(
+                    success = false,
+                    action = "select_chat",
+                    chatName = chatName,
+                    error = "Failed to open WhatsApp: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "WhatsApp launched successfully")
+            delay(1000) // Wait for WhatsApp to fully load
+
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -547,6 +558,19 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText, chatName: $chatName")
 
         try {
+            // Auto-launch WhatsApp if not already open
+            val launchResult = launchApp("WhatsApp", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Failed to open WhatsApp: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "WhatsApp launched successfully")
+            delay(1000) // Wait for WhatsApp to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return DraftResult(
@@ -790,8 +814,21 @@ class ScreenAgentTools @Inject constructor(
     
     suspend fun sendWhatsAppMessage(message: String): WhatsAppResult {
         Log.d(TAG, "Attempting to send message in WhatsApp: $message")
-        
+
         try {
+            // Auto-launch WhatsApp if not already open
+            val launchResult = launchApp("WhatsApp", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
+                return WhatsAppResult(
+                    success = false,
+                    action = "send_message",
+                    error = "Failed to open WhatsApp: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "WhatsApp launched successfully")
+            delay(1000) // Wait for WhatsApp to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return WhatsAppResult(
@@ -800,7 +837,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Accessibility service not enabled"
                 )
             }
-            
+
             // Wait to ensure we're in a chat and UI is ready
             if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT, maxWaitMs = 1500)) {
                 Log.w(TAG, "Not in a WhatsApp chat after waiting")
@@ -928,8 +965,19 @@ class ScreenAgentTools @Inject constructor(
         Log.i(TAG, "Attempting to select SMS chat: $contactName")
 
         try {
-            // Note: This assumes the SMS app is already open.
-            // The server should use launch_app tool first if needed.
+            // Auto-launch Messages app if not already open
+            val launchResult = launchApp("Messages", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
+                return SMSResult(
+                    success = false,
+                    action = "select_chat",
+                    contactName = contactName,
+                    error = "Failed to open Messages: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Messages app launched successfully")
+            delay(1000) // Wait for Messages to fully load
 
             // Wait for accessibility service to become available (with retry logic)
             // This handles cases where the service is temporarily disconnected
@@ -1315,6 +1363,19 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to draft SMS message: $message, previousText: $previousText, contactName: $contactName")
 
         try {
+            // Auto-launch Messages app if not already open
+            val launchResult = launchApp("Messages", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = "Failed to open Messages: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Messages app launched successfully")
+            delay(1000) // Wait for Messages to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return DraftResult(
@@ -1692,6 +1753,19 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to send SMS message: $message")
 
         try {
+            // Auto-launch Messages app if not already open
+            val launchResult = launchApp("Messages", enableOverlay = true)
+            if (!launchResult.success) {
+                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
+                return SMSResult(
+                    success = false,
+                    action = "send_message",
+                    error = "Failed to open Messages: ${launchResult.error}"
+                )
+            }
+            Log.i(TAG, "Messages app launched successfully")
+            delay(1000) // Wait for Messages to fully load
+
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 return SMSResult(
