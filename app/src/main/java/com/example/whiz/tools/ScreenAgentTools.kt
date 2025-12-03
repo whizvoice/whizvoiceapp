@@ -592,14 +592,17 @@ class ScreenAgentTools @Inject constructor(
                     }
                     rootNode.recycle()
 
-                    // Check if we're in the correct chat (case-insensitive contains check)
+                    // Check if we're in the correct chat using normalized comparison
+                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005 (You)"
+                    val normalizedCurrent = normalizeChatName(currentChatName ?: "")
+                    val normalizedRequested = normalizeChatName(chatName)
                     val isCorrectChat = currentChatName != null &&
-                        (currentChatName.equals(chatName, ignoreCase = true) ||
-                         currentChatName.contains(chatName, ignoreCase = true) ||
-                         chatName.contains(currentChatName, ignoreCase = true))
+                        (normalizedCurrent == normalizedRequested ||
+                         normalizedCurrent.contains(normalizedRequested) ||
+                         normalizedRequested.contains(normalizedCurrent))
 
                     if (!isCorrectChat) {
-                        Log.d(TAG, "Not in correct chat (current: $currentChatName, requested: $chatName). Auto-selecting chat...")
+                        Log.d(TAG, "Not in correct chat (current: $currentChatName [$normalizedCurrent], requested: $chatName [$normalizedRequested]). Auto-selecting chat...")
                         val selectResult = selectWhatsAppChat(chatName)
                         if (!selectResult.success) {
                             return DraftResult(
@@ -1392,14 +1395,17 @@ class ScreenAgentTools @Inject constructor(
                     val currentContactName = getCurrentSMSContactName(rootNode)
                     rootNode.recycle()
 
-                    // Check if we're in the correct conversation (case-insensitive contains check)
+                    // Check if we're in the correct conversation using normalized comparison
+                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005"
+                    val normalizedCurrent = normalizeChatName(currentContactName ?: "")
+                    val normalizedRequested = normalizeChatName(contactName)
                     val isCorrectConversation = currentContactName != null &&
-                        (currentContactName.equals(contactName, ignoreCase = true) ||
-                         currentContactName.contains(contactName, ignoreCase = true) ||
-                         contactName.contains(currentContactName, ignoreCase = true))
+                        (normalizedCurrent == normalizedRequested ||
+                         normalizedCurrent.contains(normalizedRequested) ||
+                         normalizedRequested.contains(normalizedCurrent))
 
                     if (!isCorrectConversation) {
-                        Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName, requested: $contactName). Auto-selecting contact...")
+                        Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName [$normalizedCurrent], requested: $contactName [$normalizedRequested]). Auto-selecting contact...")
                         val selectResult = selectSMSChat(contactName)
                         if (!selectResult.success) {
                             return DraftResult(
