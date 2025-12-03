@@ -46,7 +46,9 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -1019,6 +1021,7 @@ fun ChatScreen(
     }
 }
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
@@ -1067,19 +1070,22 @@ fun MessagesList(
     }
 
     // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
-    // Key on message count + last message ID/timestamp to detect additions
-    // Don't use remember() because we need this to recalculate if the list mutates
+    // Use snapshotFlow + debounce to avoid cancellation when messages arrive rapidly
+    // (Previous approach with LaunchedEffect keys + delay would cancel on each new message)
     android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: deduplicatedMessages.size=${deduplicatedMessages.size}, messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
-    LaunchedEffect(messages.size, messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) {
-        android.util.Log.d("MessagesList", "🔥 LAUNCHED_EFFECT_FIRED: messages.size=${messages.size}, lastId=${messages.lastOrNull()?.id}, deduplicatedMessages.size=${deduplicatedMessages.size}")
-        if (deduplicatedMessages.isNotEmpty()) {
-            delay(100L) // Allow layout to complete
-            val targetIndex = deduplicatedMessages.size - 1
-            if (targetIndex >= 0) {
-                listState.scrollToItem(targetIndex)
-                android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${deduplicatedMessages.size})")
+    LaunchedEffect(Unit) {
+        snapshotFlow { Triple(messages.size, messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) }
+            .debounce(100L)
+            .collect { (size, lastId, _) ->
+                android.util.Log.d("MessagesList", "🔥 DEBOUNCE_COLLECTED: messages.size=$size, lastId=$lastId, deduplicatedMessages.size=${deduplicatedMessages.size}")
+                if (deduplicatedMessages.isNotEmpty()) {
+                    val targetIndex = deduplicatedMessages.size - 1
+                    if (targetIndex >= 0) {
+                        listState.scrollToItem(targetIndex)
+                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${deduplicatedMessages.size})")
+                    }
+                }
             }
-        }
     }
 
     LazyColumn(
