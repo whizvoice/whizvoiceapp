@@ -71,6 +71,7 @@ trap cleanup_and_ensure_debug_installed EXIT ERR
 CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
 SKIP_APP_INSTALL=false
+VERBOSE_LOGGING=false
 SINGLE_TEST=""
 
 while [[ $# -gt 0 ]]; do
@@ -91,13 +92,18 @@ while [[ $# -gt 0 ]]; do
             SINGLE_TEST="$2"
             shift 2
             ;;
+        -v|--verbose)
+            VERBOSE_LOGGING=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [-v|--verbose] [--test <test_class_or_method>]"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
             echo "  $0 --skip-app-install --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
+            echo "  $0 -v --test <test>  # Run with verbose WebSocket logging (adds WhizServerRepo:V to logcat)"
             exit 1
             ;;
     esac
@@ -518,8 +524,14 @@ run_integration_tests_with_logcat() {
     
     # Start logcat capture with filter for app-specific logs
     # Filter: Show all logs from com.example.whiz, TestRunner, and errors/warnings from all sources
+    # When VERBOSE_LOGGING is enabled, also capture WhizServerRepo Info logs for WebSocket debugging
     {
-        adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        if [[ "$VERBOSE_LOGGING" == "true" ]]; then
+            echo "📱 Verbose logging enabled - adding WhizServerRepo:V to logcat filter" >> test_summary.log
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        else
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        fi
         local logcat_pid=$!
     }
     echo "📱 Logcat started with PID: $logcat_pid (filtered for app logs + errors/warnings)" >> test_summary.log

@@ -75,7 +75,7 @@ class WhizServerRepository @Inject constructor(
     private val authRepository: AuthRepository,
     private val connectionStateManager: ConnectionStateManager
 ) {
-    private val TAG = "WhizServerRepo"
+    private val TAG = "com.example.whiz.WebSocket"
     private var webSocket: WebSocket? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     

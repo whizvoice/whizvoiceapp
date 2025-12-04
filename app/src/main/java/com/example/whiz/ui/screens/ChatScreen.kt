@@ -1034,20 +1034,24 @@ fun MessagesList(
 
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
 
+    // 🔧 AUTO-SCROLL FIX: Use rememberUpdatedState to ensure snapshotFlow always reads current messages
+    // Without this, LaunchedEffect(Unit) captures the initial messages reference and never sees updates
+    val currentMessages by rememberUpdatedState(messages)
+
     // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
     // Use snapshotFlow + debounce to avoid cancellation when messages arrive rapidly
     // (Previous approach with LaunchedEffect keys + delay would cancel on each new message)
     android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
     LaunchedEffect(Unit) {
-        snapshotFlow { Triple(messages.size, messages.lastOrNull()?.id, messages.lastOrNull()?.timestamp) }
+        snapshotFlow { Triple(currentMessages.size, currentMessages.lastOrNull()?.id, currentMessages.lastOrNull()?.timestamp) }
             .debounce(100L)
             .collect { (size, lastId, _) ->
                 android.util.Log.d("MessagesList", "🔥 DEBOUNCE_COLLECTED: messages.size=$size, lastId=$lastId")
-                if (messages.isNotEmpty()) {
-                    val targetIndex = messages.size - 1
+                if (currentMessages.isNotEmpty()) {
+                    val targetIndex = currentMessages.size - 1
                     if (targetIndex >= 0) {
                         listState.scrollToItem(targetIndex)
-                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${messages.size})")
+                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${currentMessages.size})")
                     }
                 }
             }
