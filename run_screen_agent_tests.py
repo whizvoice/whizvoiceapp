@@ -46,6 +46,35 @@ def load_anthropic_api_key():
 load_anthropic_api_key()
 
 
+def get_device_model():
+    """Get the connected Android device model."""
+    result = subprocess.run(
+        ['adb', 'shell', 'getprop', 'ro.product.model'],
+        capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+def get_phone_numbers():
+    """Get phone numbers based on device type.
+
+    Returns tuple of (whatsapp_number, sms_number) in format '+1(628)XXX-XXXX'
+    """
+    device_model = get_device_model()
+    print(f"📱 Detected device: {device_model}")
+
+    if "Pixel 8" in device_model:
+        # Pixel 8: WhatsApp uses 209-9005, SMS uses 227-4544
+        whatsapp = ("+1(628)209-9005", "(628) 209-9005")
+        sms = ("+1(628)227-4544", "(628) 227-4544")
+    else:
+        # Pixel 7a (default): WhatsApp uses 227-4544, SMS uses 209-9005
+        whatsapp = ("+1(628)227-4544", "(628) 227-4544")
+        sms = ("+1(628)209-9005", "(628) 209-9005")
+
+    return whatsapp, sms
+
+
 # Global variable to store logcat process
 _logcat_process = None
 
@@ -437,6 +466,10 @@ def test_whatsapp_draft_message(tester):
     """Test that we can draft and modify draft and send message in WhatsApp."""
     import time
 
+    # Get phone numbers based on device
+    whatsapp_numbers, _ = get_phone_numbers()
+    whatsapp_full, whatsapp_short = whatsapp_numbers
+
     print("\n========================================")
     print("STEP 1: Opening WhizVoice Debug app")
     print("========================================")
@@ -481,13 +514,13 @@ def test_whatsapp_draft_message(tester):
     # Send a voice transcription with the test message
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a WhatsApp message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice'")
+    print(f"📤 Broadcasting: 'Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a WhatsApp message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
+        '--es', 'text', f'"Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -515,7 +548,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey whats up hows it going just tryna test whiz voice'. "
@@ -553,7 +586,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'just trying to test whiz voice' but may not be an exact match. "
@@ -592,7 +625,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is NO yellow overlay. "
         "The most recent rescue mission is something with text similar to: "
@@ -633,7 +666,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "The most recent message in the chat has been deleted."
     )
@@ -941,6 +974,10 @@ def test_sms_draft_message(tester):
     """Test that we can draft, modify draft, and send SMS messages."""
     import time
 
+    # Get phone numbers based on device
+    _, sms_numbers = get_phone_numbers()
+    sms_full, sms_short = sms_numbers
+
     print("\n========================================")
     print("STEP 1: Opening WhizVoice Debug app")
     print("========================================")
@@ -985,13 +1022,13 @@ def test_sms_draft_message(tester):
     # Send a voice transcription with the test message to send an SMS
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice'")
+    print(f"📤 Broadcasting: 'Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice"',
+        '--es', 'text', f'"Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -1023,7 +1060,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'  or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
         "There is also a yellow notification bubble with an outline of something (it's a robot head). "
@@ -1060,7 +1097,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'testing SMS'. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
@@ -1098,7 +1135,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
         "At the bottom of the screen, there is NO yellow overlay covering the keyboard. The keyboard may be visible. "
         "The app may be in dark mode. "
         "The most recent message is something with text somewhat similar to 'testing SMS'. "
@@ -1140,7 +1177,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
         "The most recent message in the chat has been deleted."
     )
     if not validation_result:

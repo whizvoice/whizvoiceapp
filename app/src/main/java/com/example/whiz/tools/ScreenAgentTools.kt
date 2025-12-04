@@ -351,12 +351,20 @@ class ScreenAgentTools @Inject constructor(
             // Try up to 6 times to reach the chat list
             var onChatList = false
             val maxBackAttempts = 6
+            var uiDumped = false  // Only dump UI once for debugging
 
             for (backAttempt in 1..maxBackAttempts) {
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode != null) {
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
+
+                    // Dump UI on first UNKNOWN screen detection for debugging
+                    if (currentScreen == WhatsAppScreen.UNKNOWN && !uiDumped) {
+                        Log.w(TAG, "⚠️ WhatsApp screen not recognized, dumping UI for debugging...")
+                        dumpUIHierarchy(rootNode, "whatsapp_unknown_screen")
+                        uiDumped = true
+                    }
 
                     if (currentScreen == WhatsAppScreen.CHAT_LIST) {
                         Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
@@ -4861,6 +4869,36 @@ class ScreenAgentTools @Inject constructor(
                 return WhatsAppScreen.CHAT_LIST
             }
 
+            // NEW: Check for the new WhatsApp search bar (com.whatsapp:id/my_search_bar)
+            val newSearchBar = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/my_search_bar")
+            if (newSearchBar != null && newSearchBar.isNotEmpty()) {
+                newSearchBar.forEach { it.recycle() }
+                Log.d(TAG, "Found new WhatsApp search bar (on chat list/main screen)")
+                return WhatsAppScreen.CHAT_LIST
+            }
+
+            // NEW: Check for the pager which indicates main WhatsApp screen
+            val pager = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/pager")
+            if (pager != null && pager.isNotEmpty()) {
+                pager.forEach { it.recycle() }
+                Log.d(TAG, "Found WhatsApp pager (on main screen)")
+                return WhatsAppScreen.CHAT_LIST
+            }
+
+            // NEW: Check for bottom nav "Chats" tab by content description
+            val chatsNavNodes = rootNode.findAccessibilityNodeInfosByText("Chats")
+            if (chatsNavNodes != null && chatsNavNodes.isNotEmpty()) {
+                for (node in chatsNavNodes) {
+                    val desc = node.contentDescription?.toString() ?: ""
+                    if (desc == "Chats") {
+                        chatsNavNodes.forEach { it.recycle() }
+                        Log.d(TAG, "Found Chats navigation tab (on main screen)")
+                        return WhatsAppScreen.CHAT_LIST
+                    }
+                }
+                chatsNavNodes.forEach { it.recycle() }
+            }
+
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
             return WhatsAppScreen.UNKNOWN
 
@@ -5219,6 +5257,51 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    /**
+     * Dump the UI hierarchy to a file for debugging.
+     * Saves to /sdcard/Download/whiz_ui_dump_<timestamp>.xml
+     */
+    private fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String) {
+        try {
+            val timestamp = System.currentTimeMillis()
+            val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"
+            val file = java.io.File("/sdcard/Download", fileName)
+
+            val sb = StringBuilder()
+            sb.appendLine("=== UI Dump: $reason ===")
+            sb.appendLine("Timestamp: $timestamp")
+            sb.appendLine("Package: ${rootNode.packageName}")
+            sb.appendLine("")
+            sb.appendLine("=== Node Tree ===")
+            dumpNodeRecursive(rootNode, sb, 0)
+
+            file.writeText(sb.toString())
+            Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dump UI hierarchy", e)
+        }
+    }
+
+    private fun dumpNodeRecursive(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
+        val indent = "  ".repeat(depth)
+        val resourceId = node.viewIdResourceName ?: ""
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val className = node.className?.toString()?.substringAfterLast('.') ?: ""
+        val bounds = android.graphics.Rect()
+        node.getBoundsInScreen(bounds)
+
+        sb.appendLine("$indent[$className] id=$resourceId text=\"$text\" desc=\"$contentDesc\" bounds=$bounds clickable=${node.isClickable}")
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                dumpNodeRecursive(child, sb, depth + 1)
+                // Don't recycle children here as we're just traversing
+            }
+        }
+    }
+
     private fun logCurrentScreen(rootNode: AccessibilityNodeInfo) {
         try {
             // Log the package name to understand which app/screen we're on
