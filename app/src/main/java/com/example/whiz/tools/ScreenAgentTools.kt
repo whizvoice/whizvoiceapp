@@ -430,10 +430,12 @@ class ScreenAgentTools @Inject constructor(
                 val chatNodes = findChatNodes(rootNode, chatName)
                 if (chatNodes.isNotEmpty()) {
                     Log.i(TAG, "Found ${chatNodes.size} nodes matching chat name")
-                    
+
                     // Try to click on each matching node until one succeeds
                     for (chatNode in chatNodes) {
-                        val clickableNode = findClickableParent(chatNode)
+                        // Use skipProfilePictures=true to avoid clicking on profile pictures
+                        // which opens QuickContact popup instead of the chat
+                        val clickableNode = findClickableParent(chatNode, skipProfilePictures = true)
                         if (clickableNode != null) {
                             Log.d(TAG, "Found clickable parent, attempting click...")
                             success = accessibilityService.clickNode(clickableNode)
@@ -5666,20 +5668,65 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
-    private fun findClickableParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun findClickableParent(node: AccessibilityNodeInfo, skipProfilePictures: Boolean = false): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
-        
+
         while (current != null) {
             if (current.isClickable) {
+                // If we should skip profile pictures, check if this is a profile picture node
+                if (skipProfilePictures && isProfilePictureNode(current)) {
+                    Log.d(TAG, "Skipping profile picture clickable node: viewId=${current.viewIdResourceName}, desc=${current.contentDescription}")
+                    val parent = current.parent
+                    current.recycle()
+                    current = parent
+                    continue
+                }
                 return current
             }
-            
+
             val parent = current.parent
             current.recycle()
             current = parent
         }
-        
+
         return null
+    }
+
+    /**
+     * Check if a node is a profile picture that we should skip clicking on.
+     * Clicking on profile pictures in WhatsApp opens QuickContact popup instead of the chat.
+     */
+    private fun isProfilePictureNode(node: AccessibilityNodeInfo): Boolean {
+        // Check resource ID for profile picture indicators
+        val viewId = node.viewIdResourceName ?: ""
+        if (viewId.contains("picture") || viewId.contains("photo") || viewId.contains("avatar") || viewId.contains("contact_photo")) {
+            return true
+        }
+
+        // Check content description for profile picture indicators
+        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+        if (contentDesc.contains("profile photo") || contentDesc.contains("profile picture") || contentDesc.contains("contact photo")) {
+            return true
+        }
+
+        // Check if this is a small square node (likely a profile picture)
+        // Profile pictures are typically small and square-ish
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val width = rect.width()
+        val height = rect.height()
+
+        // Profile pictures are typically 100-200px and roughly square
+        val isSmallSquare = width in 80..250 && height in 80..250 &&
+                           Math.abs(width - height) < 50
+
+        // If it's a small square ImageView, it's likely a profile picture
+        if (isSmallSquare && node.className == "android.widget.ImageView") {
+            Log.d(TAG, "Detected likely profile picture by size/shape: ${width}x${height}")
+            return true
+        }
+
+        return false
     }
     
     private fun findEditTextNodes(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>) {

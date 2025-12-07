@@ -333,12 +333,14 @@ class ToolExecutor @Inject constructor(
             Log.i(TAG, "Drafting WhatsApp message: message='$message', previousText='$previousText', chatName='$chatName'")
 
             val result = screenAgentTools.draftWhatsAppMessage(message, previousText, chatName)
-            
+
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
+                // Add reminder for the LLM to wait for user confirmation
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
             }
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -454,6 +456,8 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
+                // Add reminder for the LLM to wait for user confirmation
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
             }
 
             Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
