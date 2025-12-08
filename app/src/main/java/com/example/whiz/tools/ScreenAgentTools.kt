@@ -2328,8 +2328,12 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== YouTube Music Specific Functions ==========
 
-    suspend fun playYouTubeMusicSong(query: String): MusicActionResult {
-        Log.d(TAG, "Attempting to play song on YouTube Music: $query")
+    suspend fun playYouTubeMusicSong(
+        query: String,
+        allowPlaylist: Boolean = false,
+        allowEpisode: Boolean = false
+    ): MusicActionResult {
+        Log.d(TAG, "Attempting to play on YouTube Music: $query (allowPlaylist=$allowPlaylist, allowEpisode=$allowEpisode)")
 
         try {
             // Auto-launch YouTube Music if not already open
@@ -2470,11 +2474,16 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "No autocomplete suggestions found, polling for play button")
             }
 
-            // Poll for the play button to appear (max 3 seconds)
-            val playClicked = waitForAndClickPlayButton(accessibilityService, maxWaitMs = 3000)
+            // Poll for the result to appear (max 3 seconds)
+            val playClicked = waitForAndClickPlayButton(
+                accessibilityService,
+                maxWaitMs = 3000,
+                allowPlaylist = allowPlaylist,
+                allowEpisode = allowEpisode
+            )
 
             return if (playClicked) {
-                Log.d(TAG, "Successfully clicked play button on search result")
+                Log.d(TAG, "Successfully clicked result on search")
                 MusicActionResult(
                     success = true,
                     action = "play_song",
@@ -4187,11 +4196,28 @@ class ScreenAgentTools @Inject constructor(
                 val hasSearchButton = searchButtonNodes != null && searchButtonNodes.isNotEmpty()
                 searchButtonNodes?.forEach { it.recycle() }
 
-                // Check if we're on the Now Playing screen (which we should navigate away from)
+                // Check if we're on the expanded Now Playing screen (which we should navigate away from)
+                // The mini player at bottom has height ~400px, expanded Now Playing covers most of screen (>1000px)
                 val playerPageNodes = rootNode.findAccessibilityNodeInfosByViewId(
                     "com.google.android.apps.youtube.music:id/player_page"
                 )
-                val isOnNowPlayingScreen = playerPageNodes != null && playerPageNodes.isNotEmpty()
+                var isOnNowPlayingScreen = false
+                if (playerPageNodes != null && playerPageNodes.isNotEmpty()) {
+                    for (node in playerPageNodes) {
+                        val rect = android.graphics.Rect()
+                        node.getBoundsInScreen(rect)
+                        val height = rect.height()
+                        // If player_page height > 1000px, it's expanded (full Now Playing)
+                        // If height < 500px, it's just the mini player at bottom - don't block navigation
+                        if (height > 1000) {
+                            Log.d(TAG, "Found expanded Now Playing screen (height=$height)")
+                            isOnNowPlayingScreen = true
+                            break
+                        } else {
+                            Log.d(TAG, "Found mini player only (height=$height), not blocking navigation")
+                        }
+                    }
+                }
                 playerPageNodes?.forEach { it.recycle() }
 
                 // Check if we're on the search screen (has search edit text that is visible and enabled)
@@ -4487,7 +4513,9 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndClickPlayButton(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000
+        maxWaitMs: Long = 3000,
+        allowPlaylist: Boolean = false,
+        allowEpisode: Boolean = false
     ): Boolean {
         val startTime = System.currentTimeMillis()
         val pollIntervalMs = 200L
@@ -4495,11 +4523,11 @@ class ScreenAgentTools @Inject constructor(
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
-                val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService)
+                val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, allowPlaylist, allowEpisode)
                 rootNode.recycle()
 
                 if (result) {
-                    Log.d(TAG, "Play button found and clicked after ${System.currentTimeMillis() - startTime}ms")
+                    Log.d(TAG, "Result found and clicked after ${System.currentTimeMillis() - startTime}ms")
                     return true
                 }
             }
@@ -4568,46 +4596,95 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickFirstYouTubeMusicResult(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+    private fun clickFirstYouTubeMusicResult(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService,
+        allowPlaylist: Boolean = false,
+        allowEpisode: Boolean = false
+    ): Boolean {
         try {
-            // Look for the "Play" or "Resume" button in the featured search result
-            // The button's content-desc is like "Play Golden" or "Resume Golden"
-            // But DON'T click if we find a "Pause" button, which means it's already playing
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
             collectAllNodes(rootNode, allNodes)
 
-            // First check if there's a Pause button, which means the song is already playing
+            // Try to find Play/Resume button (featured results may have these)
+            // Note: We don't check for Pause buttons anymore since they could be for a different song
             for (node in allNodes) {
                 val contentDesc = node.contentDescription?.toString() ?: ""
-                if (contentDesc.startsWith("Pause ", ignoreCase = true) &&
-                    node.className?.toString()?.contains("Button") == true) {
-                    Log.d(TAG, "Found Pause button - song is already playing, not clicking")
-                    allNodes.forEach { it.recycle() }
-                    return true // Return true because the song is already playing (success)
-                }
-            }
-
-            // No Pause button found, look for Play/Resume button
-            for (node in allNodes) {
-                val contentDesc = node.contentDescription?.toString() ?: ""
-                // Match "Play <song>" or "Resume <song>" buttons only (not just "Play" alone to avoid child text nodes)
-                if ((contentDesc.startsWith("Play ", ignoreCase = true) || contentDesc.startsWith("Resume ", ignoreCase = true)) &&
+                if ((contentDesc.startsWith("Play ", ignoreCase = true) ||
+                     contentDesc.startsWith("Resume ", ignoreCase = true)) &&
                     node.className?.toString()?.contains("Button") == true &&
                     node.isClickable) {
-                    Log.d(TAG, "Found Play/Resume button with content-desc: $contentDesc, clicking it")
+                    Log.d(TAG, "Found Play/Resume button: $contentDesc, clicking it")
                     val clicked = accessibilityService.clickNode(node)
                     allNodes.forEach { it.recycle() }
                     return clicked
                 }
             }
 
+            // Fallback: Click result row by type prefix
+            // Build list of acceptable type prefixes
+            val acceptableTypes = mutableListOf("Song •", "Video •")
+            if (allowPlaylist) {
+                acceptableTypes.addAll(listOf("Album •", "Playlist •", "Community playlist •"))
+            }
+            if (allowEpisode) {
+                acceptableTypes.addAll(listOf("Episode •", "Podcast •"))
+            }
+            Log.d(TAG, "Looking for result types: $acceptableTypes")
+
+            // Find clickable Button nodes with acceptable type in content-desc
+            for (node in allNodes) {
+                val className = node.className?.toString() ?: ""
+                if (className == "android.widget.Button" && node.isClickable) {
+                    val matchedType = findResultType(node, acceptableTypes)
+                    if (matchedType != null) {
+                        Log.d(TAG, "Found $matchedType result, clicking it")
+                        val clicked = accessibilityService.clickNode(node)
+                        allNodes.forEach { it.recycle() }
+                        return clicked
+                    }
+                }
+            }
+
             allNodes.forEach { it.recycle() }
-            Log.w(TAG, "Could not find Play/Resume button in search results")
+            Log.w(TAG, "Could not find result matching types: $acceptableTypes")
             return false
         } catch (e: Exception) {
-            Log.e(TAG, "Error clicking first YouTube Music result", e)
+            Log.e(TAG, "Error clicking YouTube Music result", e)
             return false
         }
+    }
+
+    // Helper to check if a node has a child/grandchild with matching type prefix
+    private fun findResultType(node: AccessibilityNodeInfo, acceptableTypes: List<String>): String? {
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val childContentDesc = child.contentDescription?.toString() ?: ""
+
+            for (type in acceptableTypes) {
+                if (childContentDesc.startsWith(type)) {
+                    child.recycle()
+                    return type
+                }
+            }
+
+            // Check grandchildren
+            for (j in 0 until child.childCount) {
+                val grandchild = child.getChild(j) ?: continue
+                val grandchildContentDesc = grandchild.contentDescription?.toString() ?: ""
+
+                for (type in acceptableTypes) {
+                    if (grandchildContentDesc.startsWith(type)) {
+                        grandchild.recycle()
+                        child.recycle()
+                        return type
+                    }
+                }
+                grandchild.recycle()
+            }
+            child.recycle()
+        }
+        return null
     }
 
     private fun openYouTubeMusicContextMenu(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
