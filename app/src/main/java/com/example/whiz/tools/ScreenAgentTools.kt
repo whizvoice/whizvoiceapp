@@ -1086,18 +1086,18 @@ class ScreenAgentTools @Inject constructor(
 
                 // Try to find the conversation by contact name
                 val contactNodes = rootNode.findAccessibilityNodeInfosByText(contactName)
-                if (contactNodes != null && contactNodes.isNotEmpty()) {
-                    Log.i(TAG, "Found ${contactNodes.size} nodes matching contact name")
+                // Filter out EditText nodes (search fields) before checking if we found anything useful
+                val nonEditTextNodes = contactNodes?.filter { it.className != "android.widget.EditText" } ?: emptyList()
+                val skippedEditTextCount = (contactNodes?.size ?: 0) - nonEditTextNodes.size
+                if (skippedEditTextCount > 0) {
+                    Log.d(TAG, "Skipped $skippedEditTextCount EditText node(s) (likely search field)")
+                }
+
+                if (nonEditTextNodes.isNotEmpty()) {
+                    Log.i(TAG, "Found ${nonEditTextNodes.size} non-EditText nodes matching contact name")
 
                     // Try to click on each matching node until one succeeds
-                    // Skip EditText nodes to avoid clicking search fields
-                    for (contactNode in contactNodes) {
-                        // Skip if this is an EditText (search field)
-                        if (contactNode.className == "android.widget.EditText") {
-                            Log.d(TAG, "Skipping EditText node (likely search field)")
-                            continue
-                        }
-
+                    for (contactNode in nonEditTextNodes) {
                         val clickableNode = findClickableParent(contactNode)
                         if (clickableNode != null) {
                             Log.d(TAG, "Found clickable parent, attempting click...")
@@ -1203,6 +1203,9 @@ class ScreenAgentTools @Inject constructor(
                     // Recycle nodes
                     contactNodes.forEach { it.recycle() }
                 } else if (!searchAttempted && attempts == 1) {
+                    // Recycle any EditText nodes we filtered out
+                    contactNodes?.forEach { it.recycle() }
+
                     // If we couldn't find the contact on the first attempt, try searching
                     Log.i(TAG, "Contact not visible, attempting to search for: $contactName")
 
@@ -1219,8 +1222,20 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Looking for search results to click...")
 
                             // Find the search results RecyclerView
-                            val searchResultsId = "com.google.android.apps.messaging:id/zero_state_search_results"
-                            val searchResultsNodes = searchResultRootNode.findAccessibilityNodeInfosByViewId(searchResultsId)
+                            // Try both IDs - zero_state_search_chat_results is used in modern Google Messages
+                            val searchResultsIds = listOf(
+                                "com.google.android.apps.messaging:id/zero_state_search_chat_results",
+                                "com.google.android.apps.messaging:id/zero_state_search_results"
+                            )
+                            var searchResultsNodes: List<AccessibilityNodeInfo>? = null
+                            for (searchResultsId in searchResultsIds) {
+                                val nodes = searchResultRootNode.findAccessibilityNodeInfosByViewId(searchResultsId)
+                                if (nodes != null && nodes.isNotEmpty()) {
+                                    searchResultsNodes = nodes
+                                    Log.d(TAG, "Found search results container with ID: $searchResultsId")
+                                    break
+                                }
+                            }
 
                             if (searchResultsNodes != null && searchResultsNodes.isNotEmpty()) {
                                 Log.d(TAG, "Found search results container")
@@ -1399,7 +1414,9 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // If contactName is provided, check if we need to navigate to that conversation
-            if (contactName != null) {
+            // SKIP this check if previousText is provided - that means we're updating an existing draft
+            // and we're already in the correct conversation
+            if (contactName != null && previousText == null) {
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode != null) {
                     val currentContactName = getCurrentSMSContactName(rootNode)
@@ -1429,6 +1446,8 @@ class ScreenAgentTools @Inject constructor(
                         Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
                     }
                 }
+            } else if (previousText != null) {
+                Log.d(TAG, "Skipping contact navigation check - updating existing draft (previousText provided)")
             }
 
             // Wait a bit to ensure we're in a conversation
@@ -1965,7 +1984,22 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Try multiple approaches to find the contact name
 
-            // Approach 1: Look for the toolbar title in Google Messages
+            // Approach 1: Look for top_app_bar_title_row in modern Google Messages (Compose UI)
+            // The contact name is in a TextView child of this element
+            val topAppBarTitleId = "com.google.android.apps.messaging:id/top_app_bar_title_row"
+            val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
+            if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
+                val titleRow = topAppBarTitleNodes[0]
+                // Find the TextView child that contains the contact name
+                val name = findTextInChildren(titleRow)
+                topAppBarTitleNodes.forEach { it.recycle() }
+                if (name != null && name.isNotEmpty()) {
+                    Log.d(TAG, "Current SMS contact name (from top_app_bar_title_row): $name")
+                    return name
+                }
+            }
+
+            // Approach 2: Look for the toolbar title in Google Messages (legacy)
             val toolbarTitleId = "com.google.android.apps.messaging:id/toolbar_title"
             val toolbarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(toolbarTitleId)
             if (toolbarTitleNodes != null && toolbarTitleNodes.isNotEmpty()) {
@@ -1977,7 +2011,7 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            // Approach 2: Look for the conversation header
+            // Approach 3: Look for the conversation header
             val headerTitleId = "com.google.android.apps.messaging:id/conversation_title"
             val headerTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(headerTitleId)
             if (headerTitleNodes != null && headerTitleNodes.isNotEmpty()) {
@@ -1989,7 +2023,7 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            // Approach 3: Look for action bar title
+            // Approach 4: Look for action bar title
             val actionBarId = "com.google.android.apps.messaging:id/action_bar_title"
             val actionBarNodes = rootNode.findAccessibilityNodeInfosByViewId(actionBarId)
             if (actionBarNodes != null && actionBarNodes.isNotEmpty()) {
@@ -2007,6 +2041,30 @@ class ScreenAgentTools @Inject constructor(
             Log.e(TAG, "Error getting current SMS contact name", e)
             return null
         }
+    }
+
+    /**
+     * Find text content in children of an accessibility node.
+     * Used to extract contact name from Compose UI elements.
+     */
+    private fun findTextInChildren(node: AccessibilityNodeInfo): String? {
+        // Check if this node has text
+        val text = node.text?.toString()
+        if (text != null && text.isNotEmpty()) {
+            return text
+        }
+
+        // Recursively check children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val childText = findTextInChildren(child)
+            child.recycle()
+            if (childText != null && childText.isNotEmpty()) {
+                return childText
+            }
+        }
+
+        return null
     }
 
     private suspend fun performSMSSearch(rootNode: AccessibilityNodeInfo, searchQuery: String, accessibilityService: WhizAccessibilityService): Boolean {
@@ -2146,7 +2204,37 @@ class ScreenAgentTools @Inject constructor(
                         if (resultsAppeared) {
                             Log.i(TAG, "✅ Search results appeared")
                         } else {
-                            Log.w(TAG, "Search results did not appear within timeout")
+                            Log.w(TAG, "Search results did not appear after IME_ENTER, trying KEYCODE_SEARCH fallback...")
+
+                            // Try sending KEYCODE_SEARCH (keyevent 84) as a fallback
+                            try {
+                                val process = Runtime.getRuntime().exec("input keyevent 84")
+                                process.waitFor()
+                                Log.d(TAG, "Sent KEYCODE_SEARCH (84) as fallback")
+                                delay(500)
+
+                                // Wait for results again
+                                val resultsAppearedAfterKeycode = waitForCondition(maxWaitMs = 3000) {
+                                    val currentRoot = accessibilityService.getCurrentRootNode()
+                                    if (currentRoot != null) {
+                                        val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
+                                            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                        )
+                                        val hasResults = chatResults != null && chatResults.isNotEmpty()
+                                        chatResults?.forEach { it.recycle() }
+                                        currentRoot.recycle()
+                                        hasResults
+                                    } else false
+                                }
+
+                                if (resultsAppearedAfterKeycode) {
+                                    Log.i(TAG, "✅ Search results appeared after KEYCODE_SEARCH fallback")
+                                } else {
+                                    Log.w(TAG, "Search results still not appearing after KEYCODE_SEARCH")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to send KEYCODE_SEARCH: ${e.message}")
+                            }
                         }
                     }
 
@@ -3467,9 +3555,61 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
-        // If no suggestions found, the search will auto-submit or we can look for a search button
-        Log.i(TAG, "No suggestions container found, search query should auto-submit or be ready")
-        return Pair(true, false)
+        // If no suggestions container found, try to find clickable nodes containing the address
+        Log.d(TAG, "No typed_suggest_container found, trying to find clickable suggestions by text")
+
+        // Look for any clickable node that contains the query text (first suggestion usually matches)
+        val matchingNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, query.split(" ").firstOrNull() ?: query, matchingNodes)
+
+        for (node in matchingNodes) {
+            // Skip the search input field itself
+            if (node.className == "android.widget.EditText") {
+                node.recycle()
+                continue
+            }
+
+            val clickableNode = findClickableParent(node)
+            if (clickableNode != null) {
+                val nodeText = node.text?.toString() ?: ""
+                Log.d(TAG, "Found clickable suggestion with text: '$nodeText'")
+                val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                clickableNode.recycle()
+                if (clicked) {
+                    Log.d(TAG, "Successfully clicked suggestion via fallback method")
+                    matchingNodes.forEach { it.recycle() }
+                    return Pair(true, false)
+                }
+            }
+            node.recycle()
+        }
+
+        // Last resort: try pressing Enter to submit the search
+        Log.d(TAG, "No clickable suggestions found, trying to press Enter to submit search")
+        val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            // Find the search field and perform IME action
+            val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
+                ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+            val result = searchFields?.firstOrNull()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false
+            searchFields?.forEach { it.recycle() }
+            result
+        } else {
+            try {
+                val process = Runtime.getRuntime().exec("input keyevent 66")
+                process.waitFor() == 0
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
+                false
+            }
+        }
+
+        if (imeActionPerformed) {
+            Log.d(TAG, "Successfully submitted search via Enter key")
+            return Pair(true, false)
+        }
+
+        Log.w(TAG, "Could not find or click any suggestions, and Enter key failed")
+        return Pair(false, false)
     }
 
     private fun getSuggestionText(node: AccessibilityNodeInfo): String? {
@@ -3519,9 +3659,10 @@ class ScreenAgentTools @Inject constructor(
         findNodesByText(rootNode, "Directions", directionNodes)
 
         for (node in directionNodes) {
-            if (node.isClickable || node.className == "android.widget.Button") {
-                val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                node.recycle()
+            val clickableNode = findClickableParent(node)
+            if (clickableNode != null) {
+                val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                clickableNode.recycle()
                 if (clicked) {
                     Log.d(TAG, "Clicked Directions button")
                     directionNodes.forEach { it.recycle() }
@@ -3566,14 +3707,10 @@ class ScreenAgentTools @Inject constructor(
 
                     var modeChanged = false
                     for (node in modeNodes) {
-                        // The parent LinearLayout is clickable
-                        var clickableNode = node
-                        if (!node.isClickable && node.parent != null) {
-                            clickableNode = node.parent
-                        }
-
-                        if (clickableNode.isClickable) {
+                        val clickableNode = findClickableParent(node)
+                        if (clickableNode != null) {
                             val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            clickableNode.recycle()
                             if (clicked) {
                                 Log.d(TAG, "Selected transport mode: $modeText")
                                 modeChanged = true
@@ -3607,6 +3744,10 @@ class ScreenAgentTools @Inject constructor(
                 if (clicked) {
                     Log.d(TAG, "Clicked Start button")
                     startNodes.forEach { it.recycle() }
+
+                    // Check for and dismiss welcome popup (no wait needed - detect by text)
+                    dismissGoogleMapsWelcomePopup(accessibilityService)
+
                     return true
                 }
             }
@@ -3615,6 +3756,46 @@ class ScreenAgentTools @Inject constructor(
 
         Log.w(TAG, "Could not find or click Start button")
         return false
+    }
+
+    private fun dismissGoogleMapsWelcomePopup(accessibilityService: WhizAccessibilityService) {
+        try {
+            val rootNode = accessibilityService.getCurrentRootNode() ?: return
+
+            // First check if welcome popup exists by looking for the title text
+            val welcomeNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Welcome to Google Maps navigation", welcomeNodes)
+
+            if (welcomeNodes.isEmpty()) {
+                Log.d(TAG, "No welcome popup detected")
+                rootNode.recycle()
+                return
+            }
+            welcomeNodes.forEach { it.recycle() }
+
+            // Found welcome popup, click OK to dismiss
+            val okNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "OK", okNodes)
+
+            try {
+                for (node in okNodes) {
+                    val clickableNode = findClickableParent(node)
+                    if (clickableNode != null) {
+                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickableNode.recycle()
+                        if (clicked) {
+                            Log.d(TAG, "Dismissed Google Maps welcome popup")
+                            return
+                        }
+                    }
+                }
+            } finally {
+                okNodes.forEach { it.recycle() }
+                rootNode.recycle()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing welcome popup: ${e.message}")
+        }
     }
 
     private fun findSelectedTransportMode(rootNode: AccessibilityNodeInfo): String? {
