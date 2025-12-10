@@ -450,6 +450,10 @@ def tester(app_installed):
     """Create a fresh tester instance and open the app for each test."""
     import time
 
+    # Force stop the app to ensure a clean start (not resuming from bubble mode or previous chat)
+    subprocess.run(['adb', 'shell', 'am', 'force-stop', 'com.example.whiz.debug'], check=False)
+    time.sleep(1)
+
     tester = android_accessibility_tester.AndroidAccessibilityTester()
     tester.open_app("com.example.whiz.debug")
 
