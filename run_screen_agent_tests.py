@@ -210,7 +210,12 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     # UI check approach (causes accessibility dialog flicker)
     max_attempts = 5
     for attempt in range(max_attempts):
-        if check_element_exists_in_ui(tester, text="My Chats", wait_after_dump=2.0):
+        # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
+        # (not just viewing a chat where "My Chats" might appear as a navigation element)
+        has_my_chats_title = check_element_exists_in_ui(tester, content_desc="My Chats Title", wait_after_dump=2.0)
+        has_new_chat_button = check_element_exists_in_ui(tester, content_desc="New Chat", wait_after_dump=0.5)
+
+        if has_my_chats_title and has_new_chat_button:
             print(f"✅ Found My Chats screen on attempt {attempt + 1}")
             return (True, "")
 
@@ -733,7 +738,7 @@ def test_youtube_music_integration(tester):
     print("========================================")
     # Send a voice transcription to play songs on YouTube Music
     # Ask for specific response format so we can detect success/failure
-    play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music. When you are done reply only with PLAY_SUCCESSFUL or PLAY_ERROR since this is a test'
+    play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music.'
     print(f"📤 Broadcasting: '{play_message}'")
     subprocess.run([
         'adb', 'shell',

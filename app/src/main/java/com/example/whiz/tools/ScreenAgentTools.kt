@@ -2411,18 +2411,22 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Poll for the result to appear (max 3 seconds)
-            val playClicked = waitForAndClickPlayButton(
+            val clickResult = waitForAndClickPlayButton(
                 accessibilityService,
                 maxWaitMs = 3000
             )
 
-            return if (playClicked) {
+            return if (clickResult.clicked) {
                 Log.d(TAG, "Successfully clicked result on search, verifying song is playing...")
 
-                // Extract the song name from the query (first word/phrase before "by" or artist name)
-                val expectedSong = query.split(" by ", " from ", " - ").firstOrNull()?.trim() ?: query
+                // Use the actual title we clicked on for verification (more accurate than parsing query)
+                // Fall back to parsing query if we couldn't extract the title
+                val expectedSong = clickResult.clickedTitle
+                    ?: query.split(" by ", " from ", " - ").firstOrNull()?.trim()
+                    ?: query
+                Log.d(TAG, "Expecting to verify song: '$expectedSong'")
 
-                // Poll for the correct song to appear in mini player (max 3 seconds)
+                // Poll for the correct song to appear in player (max 3 seconds)
                 val startTime = System.currentTimeMillis()
                 val maxWaitMs = 3000L
                 val pollIntervalMs = 200L
@@ -2455,15 +2459,26 @@ class ScreenAgentTools @Inject constructor(
                 } else null
 
                 if (finalTitle != null) {
-                    Log.w(TAG, "Wrong song playing: expected '$expectedSong', got '$finalTitle'")
-                    MusicActionResult(
-                        success = false,
-                        action = "play_song",
-                        query = query,
-                        error = "Wrong song playing: expected '$expectedSong', got '$finalTitle'"
-                    )
+                    // If we got a title from now playing, check if it matches what we clicked
+                    if (clickResult.clickedTitle != null && finalTitle.contains(clickResult.clickedTitle, ignoreCase = true)) {
+                        Log.d(TAG, "Verified via clicked title: '$finalTitle' matches clicked '${clickResult.clickedTitle}'")
+                        MusicActionResult(
+                            success = true,
+                            action = "play_song",
+                            query = query,
+                            nowPlaying = finalTitle
+                        )
+                    } else {
+                        Log.w(TAG, "Wrong song playing: expected '$expectedSong', got '$finalTitle'")
+                        MusicActionResult(
+                            success = false,
+                            action = "play_song",
+                            query = query,
+                            error = "Wrong song playing: expected '$expectedSong', got '$finalTitle'"
+                        )
+                    }
                 } else {
-                    Log.w(TAG, "Could not verify song - mini player title not found after ${maxWaitMs}ms")
+                    Log.w(TAG, "Could not verify song - player title not found after ${maxWaitMs}ms")
                     MusicActionResult(
                         success = false,
                         action = "play_song",
@@ -4643,10 +4658,14 @@ class ScreenAgentTools @Inject constructor(
      * Poll for the play button to appear in search results, checking every 200ms up to maxWaitMs.
      * Returns true if play button is found and clicked (or song is already playing), false otherwise.
      */
+    /**
+     * Wait for search results to appear and click the first result.
+     * Returns ClickResultInfo with the clicked status and the title of the song that was clicked.
+     */
     private suspend fun waitForAndClickPlayButton(
         accessibilityService: WhizAccessibilityService,
         maxWaitMs: Long = 3000
-    ): Boolean {
+    ): ClickResultInfo {
         val startTime = System.currentTimeMillis()
         val pollIntervalMs = 200L
 
@@ -4656,16 +4675,16 @@ class ScreenAgentTools @Inject constructor(
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService)
                 rootNode.recycle()
 
-                if (result) {
+                if (result.clicked) {
                     Log.d(TAG, "Result found and clicked after ${System.currentTimeMillis() - startTime}ms")
-                    return true
+                    return result
                 }
             }
             delay(pollIntervalMs)
         }
 
         Log.w(TAG, "Play button not found after waiting ${maxWaitMs}ms")
-        return false
+        return ClickResultInfo(false, null)
     }
 
     /**
@@ -4793,10 +4812,57 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
+    /**
+     * Result of clicking a YouTube Music search result.
+     * Contains success status and the title of the clicked song (if found).
+     */
+    private data class ClickResultInfo(
+        val clicked: Boolean,
+        val clickedTitle: String? = null
+    )
+
+    /**
+     * Extract the song title from a search result row node.
+     * Looks for text nodes within the row that contain the song title.
+     */
+    private fun extractTitleFromResultRow(rowNode: AccessibilityNodeInfo): String? {
+        // The title is usually in a TextView with id "title" inside the row
+        val titleNodes = rowNode.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.youtube.music:id/title"
+        )
+        if (titleNodes != null && titleNodes.isNotEmpty()) {
+            val title = titleNodes[0].text?.toString()
+            titleNodes.forEach { it.recycle() }
+            if (title != null) return title
+        }
+
+        // Fallback: look for the first text node that looks like a title
+        // (not duration, not play count, etc.)
+        val allChildren = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rowNode, allChildren)
+
+        for (child in allChildren) {
+            val text = child.text?.toString() ?: continue
+            // Skip if it looks like metadata (duration, play count, etc.)
+            if (text.contains("•") || text.matches(Regex("\\d+:\\d+")) ||
+                text.matches(Regex("\\d+(\\.\\d+)?[KMB]?\\s*(plays|views)?", RegexOption.IGNORE_CASE))) {
+                continue
+            }
+            // Found a text that could be a title
+            if (text.length > 1) {
+                allChildren.forEach { it.recycle() }
+                return text
+            }
+        }
+
+        allChildren.forEach { it.recycle() }
+        return null
+    }
+
     private fun clickFirstYouTubeMusicResult(
         rootNode: AccessibilityNodeInfo,
         accessibilityService: WhizAccessibilityService
-    ): Boolean {
+    ): ClickResultInfo {
         try {
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
             collectAllNodes(rootNode, allNodes)
@@ -4804,9 +4870,6 @@ class ScreenAgentTools @Inject constructor(
             // After clicking the filter chip, the filtered results should have clickable rows
             // with the song/album/artist info. Click the first valid result row.
             Log.d(TAG, "Searching for first result among ${allNodes.size} nodes")
-
-            // Exclude UI elements that aren't search results
-            val excludedContentDesc = listOf("Cast", "Pause", "Play video", "Video player", "Home", "Samples", "Explore", "Library", "Upgrade", "Search back", "Clear search", "Voice search", "Sound search", "Action menu", "YT Music")
 
             val clickableRows = mutableListOf<AccessibilityNodeInfo>()
             for (node in allNodes) {
@@ -4819,32 +4882,71 @@ class ScreenAgentTools @Inject constructor(
             }
 
             if (clickableRows.isNotEmpty()) {
+                val resultRow = clickableRows[0]
+                // Extract the title before clicking
+                val clickedTitle = extractTitleFromResultRow(resultRow)
+                Log.d(TAG, "Extracted title from result row: '$clickedTitle'")
+
                 // Click the first result
-                val clicked = accessibilityService.clickNode(clickableRows[0])
+                val clicked = accessibilityService.clickNode(resultRow)
                 Log.d(TAG, "Clicked first result row: $clicked")
                 allNodes.forEach { it.recycle() }
-                return clicked
+                return ClickResultInfo(clicked, clickedTitle)
             }
 
             allNodes.forEach { it.recycle() }
             Log.w(TAG, "Could not find any clickable result rows")
-            return false
+            return ClickResultInfo(false, null)
         } catch (e: Exception) {
             Log.e(TAG, "Error clicking YouTube Music result", e)
-            return false
+            return ClickResultInfo(false, null)
         }
     }
 
-    // Helper to get the title of the currently playing song from the mini player
+    /**
+     * Get the title of the currently playing song.
+     * Checks both the mini player (minimized) and expanded Now Playing view.
+     */
     private fun getMiniPlayerTitle(rootNode: AccessibilityNodeInfo): String? {
-        val titleNodes = rootNode.findAccessibilityNodeInfosByViewId(
+        // Try mini player title (when player is minimized at bottom)
+        val miniPlayerTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(
             "com.google.android.apps.youtube.music:id/mini_player_title"
         )
-        if (titleNodes != null && titleNodes.isNotEmpty()) {
-            val title = titleNodes[0].text?.toString()
-            titleNodes.forEach { it.recycle() }
-            return title
+        if (miniPlayerTitleNodes != null && miniPlayerTitleNodes.isNotEmpty()) {
+            val title = miniPlayerTitleNodes[0].text?.toString()
+            miniPlayerTitleNodes.forEach { it.recycle() }
+            if (title != null) {
+                Log.d(TAG, "Found song title in mini player: $title")
+                return title
+            }
         }
+
+        // Try expanded player title (when player is full screen)
+        val expandedTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.youtube.music:id/title"
+        )
+        if (expandedTitleNodes != null && expandedTitleNodes.isNotEmpty()) {
+            val title = expandedTitleNodes[0].text?.toString()
+            expandedTitleNodes.forEach { it.recycle() }
+            if (title != null) {
+                Log.d(TAG, "Found song title in expanded player: $title")
+                return title
+            }
+        }
+
+        // Try watch_header_title (another ID used in expanded view)
+        val watchHeaderNodes = rootNode.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.youtube.music:id/watch_header_title"
+        )
+        if (watchHeaderNodes != null && watchHeaderNodes.isNotEmpty()) {
+            val title = watchHeaderNodes[0].text?.toString()
+            watchHeaderNodes.forEach { it.recycle() }
+            if (title != null) {
+                Log.d(TAG, "Found song title in watch header: $title")
+                return title
+            }
+        }
+
         return null
     }
 
