@@ -2871,19 +2871,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // If already in directions screen, press back button to go back to location details
+            // Log if alreadyInDirections was passed (deprecated parameter)
             if (alreadyInDirections) {
-                Log.d(TAG, "Already in directions screen, pressing back to return to location details")
-                val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                if (backPressed) {
-                    Log.d(TAG, "Successfully pressed back button")
-                    delay(1000) // Wait for UI to update
-                } else {
-                    Log.w(TAG, "Failed to press back button, continuing anyway")
-                }
+                Log.w(TAG, "alreadyInDirections parameter is deprecated - using automatic screen state detection instead")
             }
 
-            val rootNode = accessibilityService.getCurrentRootNode()
+            var rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return MapsActionResult(
                     success = false,
@@ -2893,7 +2886,43 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Check if we're already on the directions screen (look for transport mode tabs)
+            // Detect current screen state and handle accordingly
+            val screenState = detectGoogleMapsScreenState(rootNode)
+            Log.d(TAG, "Google Maps screen state: $screenState")
+
+            when (screenState) {
+                GoogleMapsScreenState.LOCATION_DETAILS -> {
+                    // Perfect - we're on location details page, just proceed to click Directions
+                    Log.d(TAG, "On location details page, will click Directions button")
+                }
+                GoogleMapsScreenState.DIRECTIONS_INPUT -> {
+                    // On directions input screen - press back to get to location details first
+                    Log.d(TAG, "On directions input screen, pressing back to return to location details")
+                    rootNode.recycle()
+                    val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    if (backPressed) {
+                        Log.d(TAG, "Successfully pressed back button")
+                        delay(1000) // Wait for UI to update
+                    } else {
+                        Log.w(TAG, "Failed to press back button, continuing anyway")
+                    }
+                    // Get fresh root node after back press
+                    rootNode = accessibilityService.getCurrentRootNode()
+                    if (rootNode == null) {
+                        return MapsActionResult(
+                            success = false,
+                            action = "get_directions",
+                            mode = mode,
+                            error = "Could not get root node after pressing back"
+                        )
+                    }
+                }
+                else -> {
+                    Log.w(TAG, "Unknown screen state, attempting to proceed anyway")
+                }
+            }
+
+            // Re-check if we're now on the directions screen (in case we were already there)
             val directionsTabsNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
             val alreadyOnDirectionsScreen = directionsTabsNodes != null && directionsTabsNodes.isNotEmpty()
             directionsTabsNodes?.forEach { it.recycle() }
@@ -2912,27 +2941,57 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
 
-                // Wait for directions screen to appear
+                // Wait for directions screen to appear with Start button
                 delay(1500)
             } else {
                 rootNode.recycle()
             }
 
-            // Get fresh root node for transport mode selection and start
-            val modeRootNode = accessibilityService.getCurrentRootNode()
-            if (modeRootNode != null) {
-                // Select transportation mode if needed and click Start
-                val success = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
-                modeRootNode.recycle()
+            // Wait for directions screen to be fully loaded (look for Start button)
+            var modeRootNode: AccessibilityNodeInfo? = null
+            var startButtonFound = false
+            for (attempt in 1..5) {
+                modeRootNode = accessibilityService.getCurrentRootNode()
+                if (modeRootNode != null) {
+                    val startNodes = mutableListOf<AccessibilityNodeInfo>()
+                    findNodesByContentDesc(modeRootNode, "Start", startNodes)
+                    val hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
+                    startNodes.forEach { it.recycle() }
 
-                if (!success) {
-                    return MapsActionResult(
-                        success = false,
-                        action = "get_directions",
-                        mode = mode,
-                        error = "Could not select transport mode or click Start button"
-                    )
+                    if (hasStartButton) {
+                        startButtonFound = true
+                        Log.d(TAG, "Found Start button on attempt $attempt")
+                        break
+                    }
+                    modeRootNode.recycle()
+                    modeRootNode = null
                 }
+                Log.d(TAG, "Start button not found, waiting... (attempt $attempt/5)")
+                delay(1000)
+            }
+
+            if (!startButtonFound || modeRootNode == null) {
+                Log.w(TAG, "Directions screen did not fully load - Start button not found after 5 attempts")
+                modeRootNode?.recycle()
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = "Directions screen did not fully load - Start button not found"
+                )
+            }
+
+            // Select transportation mode if needed and click Start
+            val success = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
+            modeRootNode.recycle()
+
+            if (!success) {
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = "Could not select transport mode or click Start button"
+                )
             }
 
             return MapsActionResult(
@@ -3271,6 +3330,41 @@ class ScreenAgentTools @Inject constructor(
     }
 
     // ========== Google Maps Helper Functions ==========
+
+    /**
+     * Enum representing the different screen states in Google Maps.
+     * Used for automatic detection of current UI state.
+     */
+    private enum class GoogleMapsScreenState {
+        LOCATION_DETAILS,      // place_page_view exists - showing a location with Directions button
+        DIRECTIONS_INPUT,      // directions_mode_tabs exists - directions/choose destination screen
+        ACTIVE_NAVIGATION,     // Turn-by-turn navigation is active
+        UNKNOWN
+    }
+
+    /**
+     * Detects the current Google Maps screen state by checking for unique UI elements.
+     */
+    private fun detectGoogleMapsScreenState(rootNode: AccessibilityNodeInfo): GoogleMapsScreenState {
+        // Check for place_page_view (location details page with Directions button)
+        val placePageNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/place_page_view")
+        if (placePageNodes != null && placePageNodes.isNotEmpty()) {
+            placePageNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: LOCATION_DETAILS (place_page_view found)")
+            return GoogleMapsScreenState.LOCATION_DETAILS
+        }
+
+        // Check for directions_mode_tabs (directions input screen)
+        val directionsTabsNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+        if (directionsTabsNodes != null && directionsTabsNodes.isNotEmpty()) {
+            directionsTabsNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: DIRECTIONS_INPUT (directions_mode_tabs found)")
+            return GoogleMapsScreenState.DIRECTIONS_INPUT
+        }
+
+        Log.d(TAG, "Detected Google Maps screen state: UNKNOWN")
+        return GoogleMapsScreenState.UNKNOWN
+    }
 
     private fun extractAddressFromMaps(rootNode: AccessibilityNodeInfo): String? {
         // Try to extract the place name and address from the place details screen
