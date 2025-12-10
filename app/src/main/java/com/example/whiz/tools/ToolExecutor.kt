@@ -647,13 +647,12 @@ class ToolExecutor @Inject constructor(
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            val allowPlaylist = params.optBoolean("allow_playlist", false)
-            val allowEpisode = params.optBoolean("allow_episode", false)
-            Log.i(TAG, "Playing on YouTube Music: $query (allowPlaylist=$allowPlaylist, allowEpisode=$allowEpisode)")
+            val contentType = params.optString("content_type", "song")
+            Log.i(TAG, "Playing on YouTube Music: $query (contentType=$contentType)")
 
             // The server has already decided to use YouTube Music by calling this tool
             // No need to check preferences here - just execute the action
-            val result = screenAgentTools.playYouTubeMusicSong(query, allowPlaylist, allowEpisode)
+            val result = screenAgentTools.playYouTubeMusicSong(query, contentType)
 
             Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
 

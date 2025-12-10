@@ -732,70 +732,89 @@ def test_youtube_music_integration(tester):
     print("STEP 5: Requesting to play song on YouTube Music")
     print("========================================")
     # Send a voice transcription to play songs on YouTube Music
-    print("📤 Broadcasting: 'Hey can you play Golden from Kpop Demon Hunters on YouTube Music?'")
+    # Ask for specific response format so we can detect success/failure
+    play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music. When you are done reply only with PLAY_SUCCESSFUL or PLAY_ERROR since this is a test'
+    print(f"📤 Broadcasting: '{play_message}'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hey can you play Golden from Kpop Demon Hunters on YouTube Music?"',
+        '--es', 'text', f'"{play_message}"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    print("⏳ Waiting 3 seconds for message to be processed...")
-    time.sleep(3)  # Give time for message to be processed
 
     print("\n========================================")
-    print("STEP 6: Waiting for YouTube Music to open and play song")
+    print("STEP 6: Waiting for response and validating song is actually playing")
     print("========================================")
-    # Wait for YouTube Music to open and song to start playing
-    # The bot should launch YouTube Music, search for the song, and play it
-    print("⏳ Waiting 15 seconds for YouTube Music to open and play the song...")
-    time.sleep(15)
+    # Poll until we see YouTube Music actually playing (not just a menu or search result)
+    max_wait = 60
+    poll_interval = 3
+    play_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
 
-    print("\n========================================")
-    print("STEP 7: Validating song is playing")
-    print("========================================")
-    # Validate YouTube Music is open and showing the song
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "YouTube Music app is open and showing the song 'Golden'."
-        "The song should be the one selected, so it should be showing on the bottom of the screen. "
-        "The song may be actively playing, or it may be paused. "
-        "There may be a yellow notification bubble with a robot head icon visible on the screen."
-    )
-    if not validation_result:
-        print("❌ Song playing validation failed!")
+        # Check if YouTube Music is ACTUALLY playing "Golden" - look for pause button, playback controls, progress bar
+        # AND verify the song title is "Golden"
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the song 'Golden' is ACTUALLY PLAYING in YouTube Music. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see a PAUSE button (not play button) or playback progress bar showing the song is actively playing. Return False if: you see a Play button instead of Pause, it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'. Only return True if 'Golden' is actively playing right now."
+        )
+        if validation_result:
+            print(f"✅ Song actually playing after {(i+1)*poll_interval} seconds")
+            play_succeeded = True
+            break
+        print(f"⏳ Waiting for song to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not play_succeeded:
         save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
-    else:
-        print("✅ YouTube Music opened and playing 'Golden' successfully!")
-    assert validation_result, "Failed to open YouTube Music and play song"
+    assert play_succeeded, "Failed to play Golden on YouTube Music - song never started playing"
+    print("✅ YouTube Music playing 'Golden' successfully!")
 
     print("\n========================================")
-    print("STEP 8: Requesting to queue second song")
+    print("STEP 7: Requesting to queue second song")
     print("========================================")
     # Send a voice transcription to queue up "How it's Done" by HUNTRIX
-    print("📤 Broadcasting: 'Can you queue up How it's Done by HUNTRIX?'")
+    queue_message = "Queue How its Done by HUNTRIX on YouTube Music"
+    print(f"📤 Broadcasting: '{queue_message}'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Can you queue up How it\'s Done by HUNTRIX?"',
+        '--es', 'text', f'"{queue_message}"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
 
     print("\n========================================")
-    print("STEP 9: Waiting for song to be queued")
+    print("STEP 8: Waiting for queue action to complete")
     print("========================================")
-    # Wait 20 seconds for queueing to complete
-    print("⏳ Waiting 20 seconds for song to be added to queue...")
-    time.sleep(20)
+    # Poll for the queue action to complete - look for toast/confirmation or queue view
+    queue_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+        # Check if "How its Done" was actually queued - look for toast notification or queue confirmation
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the song 'How its Done' by HUNTRIX was added to queue. Look for: a toast message saying 'Added to queue', or a queue view showing 'How its Done' in the upcoming songs list. Return False if you see a context menu still open, a search results page, or no indication the queue action completed."
+        )
+        if validation_result:
+            print(f"✅ Song queued after {(i+1)*poll_interval} seconds")
+            queue_succeeded = True
+            break
+        print(f"⏳ Waiting for queue action... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not queue_succeeded:
+        save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
+    assert queue_succeeded, "Failed to queue How it's Done on YouTube Music"
+    print("✅ Song queued successfully!")
 
     print("\n========================================")
-    print("STEP 10: Opening queue view")
+    print("STEP 9: Opening queue view")
     print("========================================")
     # Tap to full screen the current song
     print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
@@ -809,7 +828,7 @@ def test_youtube_music_integration(tester):
     time.sleep(2)  # Wait for queue to appear
 
     print("\n========================================")
-    print("STEP 11: Validating song queue")
+    print("STEP 10: Validating song queue")
     print("========================================")
     # Screenshot and validate that it shows the queue with Golden first and How It's Done second
     tester.screenshot(screenshot_path)
