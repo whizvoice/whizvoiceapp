@@ -807,9 +807,11 @@ class ToolExecutor @Inject constructor(
         try {
             val mode = if (params.has("mode")) params.getString("mode") else null
             val alreadyInDirections = if (params.has("already_in_directions")) params.getBoolean("already_in_directions") else false
-            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections")
+            val position = if (params.has("position")) params.getInt("position") else null
+            val fragment = if (params.has("fragment")) params.getString("fragment") else null
+            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections, position: $position, fragment: $fragment")
 
-            val result = screenAgentTools.getGoogleMapsDirections(mode, alreadyInDirections)
+            val result = screenAgentTools.getGoogleMapsDirections(mode, alreadyInDirections, position, fragment)
 
             Log.i(TAG, "Google Maps directions result: success=${result.success}, error=${result.error}")
 

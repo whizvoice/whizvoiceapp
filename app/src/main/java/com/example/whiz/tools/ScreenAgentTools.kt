@@ -2866,10 +2866,27 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun getGoogleMapsDirections(mode: String? = null, alreadyInDirections: Boolean = false): MapsActionResult {
-        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections")
+    suspend fun getGoogleMapsDirections(mode: String? = null, alreadyInDirections: Boolean = false, position: Int? = null, fragment: String? = null): MapsActionResult {
+        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections, position: $position, fragment: $fragment")
 
         try {
+            // If position or fragment is provided, first select the location from the list
+            if (position != null || fragment != null) {
+                Log.d(TAG, "Selecting location from list before getting directions")
+                val selectResult = selectLocationFromList(position, fragment)
+                if (!selectResult.success) {
+                    Log.e(TAG, "Failed to select location from list: ${selectResult.error}")
+                    return MapsActionResult(
+                        success = false,
+                        action = "get_directions",
+                        mode = mode,
+                        error = "Failed to select location: ${selectResult.error}"
+                    )
+                }
+                Log.i(TAG, "Successfully selected location from list")
+                delay(1500) // Wait for location details screen to fully load
+            }
+
             // Auto-launch Google Maps if not already open
             val launchResult = launchApp("Maps", enableOverlay = true)
             if (!launchResult.success) {
@@ -3491,56 +3508,15 @@ class ScreenAgentTools @Inject constructor(
                         }
                     }
 
-                    // Second pass: no exact match, click first suggestion
-                    Log.d(TAG, "No exact match found, clicking first suggestion")
-                    val firstChild = containerNode.getChild(0)
-                    if (firstChild != null && firstChild.isClickable) {
-                        val hasSeeLocations = checkForSeeLocations(firstChild)
-                        val clicked = firstChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        firstChild.recycle()
-                        containerNode.recycle()
-                        suggestContainerNodes.forEach { it.recycle() }
-                        if (clicked) {
-                            Log.d(TAG, "Clicked first Google Maps suggestion${if (hasSeeLocations) " (See locations)" else ""}")
-                            return Pair(true, hasSeeLocations)
-                        }
-                    }
-                    firstChild?.recycle()
+                    // No exact match found - don't click first suggestion as it may be different
+                    // (e.g., "Trader Joe's near me open now" instead of "Trader Joe's near me")
+                    Log.d(TAG, "No exact match found in suggestions, will press Enter to submit search")
                 }
                 containerNode.recycle()
             }
         }
 
-        // If no suggestions container found, try to find clickable nodes containing the address
-        Log.d(TAG, "No typed_suggest_container found, trying to find clickable suggestions by text")
-
-        // Look for any clickable node that contains the query text (first suggestion usually matches)
-        val matchingNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, query.split(" ").firstOrNull() ?: query, matchingNodes)
-
-        for (node in matchingNodes) {
-            // Skip the search input field itself
-            if (node.className == "android.widget.EditText") {
-                node.recycle()
-                continue
-            }
-
-            val clickableNode = findClickableParent(node)
-            if (clickableNode != null) {
-                val nodeText = node.text?.toString() ?: ""
-                Log.d(TAG, "Found clickable suggestion with text: '$nodeText'")
-                val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                clickableNode.recycle()
-                if (clicked) {
-                    Log.d(TAG, "Successfully clicked suggestion via fallback method")
-                    matchingNodes.forEach { it.recycle() }
-                    return Pair(true, false)
-                }
-            }
-            node.recycle()
-        }
-
-        // Last resort: try pressing Enter to submit the search
+        // No exact match found - press Enter to submit the search exactly as typed
         Log.d(TAG, "No clickable suggestions found, trying to press Enter to submit search")
         val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             // Find the search field and perform IME action
