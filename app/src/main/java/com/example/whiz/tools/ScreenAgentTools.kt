@@ -1483,12 +1483,14 @@ class ScreenAgentTools @Inject constructor(
             // Find the SMS message input field
             // Try by resource ID first (Google Messages - traditional view)
             var inputNode: AccessibilityNodeInfo? = null
+            var isComposeUI = false  // Track if we're using Compose UI (needs double-click) vs EditText (single click)
             val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
             val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
 
             if (composeMessageNodes != null && composeMessageNodes.isNotEmpty()) {
                 Log.d(TAG, "Found message input field by resource ID: $composeMessageId")
                 inputNode = composeMessageNodes[0]
+                isComposeUI = false  // Traditional EditText
                 composeMessageNodes.drop(1).forEach { it.recycle() }
             } else {
                 // Fallback 1: Find any EditText nodes, but exclude search boxes
@@ -1514,6 +1516,7 @@ class ScreenAgentTools @Inject constructor(
                         node.getBoundsInScreen(rect)
                         rect.top // Prefer input fields lower on screen
                     } ?: filteredNodes[0]
+                    isComposeUI = false  // Traditional EditText
 
                     // Recycle unused nodes
                     filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
@@ -1545,6 +1548,7 @@ class ScreenAgentTools @Inject constructor(
                     if (composeAreaCandidates.isNotEmpty()) {
                         // Use the first candidate (usually the compose text area)
                         inputNode = composeAreaCandidates[0]
+                        isComposeUI = true  // Compose UI needs double-click
                         Log.d(TAG, "Found compose area candidate in Compose UI at bottom of screen")
 
                         // Recycle others
@@ -1568,31 +1572,30 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
-                // For Compose fields, sometimes need to click twice
-                val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
-                                   inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-
-                if (clickSuccess) {
-                    Log.d(TAG, "Clicked/focused input field to open keyboard")
+                // For EditText (traditional UI): Use focus only, then GLOBAL_ACTION_SHOW_IME
+                // For Compose UI: Use double-click pattern
+                val clickSuccess: Boolean
+                if (isComposeUI) {
+                    // Compose UI needs click actions
+                    val focusResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickSuccess = focusResult || clickResult
+                    Log.d(TAG, "Compose UI: focus=$focusResult, click=$clickResult")
 
                     // Double-tap for Compose fields - they sometimes need the click action twice
                     delay(50)
                     val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.d(TAG, "Second click result: $secondClick")
+                    Log.d(TAG, "Second click result (Compose UI): $secondClick")
+                } else {
+                    // Traditional EditText: Use focus || click like WhatsApp does
+                    val focusResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickSuccess = focusResult || clickResult
+                    Log.d(TAG, "EditText: focus=$focusResult, click=$clickResult")
+                }
 
-                    // Force show keyboard using GLOBAL_ACTION_SHOW_IME (API 34+)
-                    // This bypasses the node entirely and tells the system to show the keyboard
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        try {
-                            // GLOBAL_ACTION_SHOW_IME = 16 (API 34+)
-                            val shown = accessibilityService.performGlobalAction(16)
-                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $shown")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Could not perform GLOBAL_ACTION_SHOW_IME", e)
-                        }
-                    } else {
-                        Log.d(TAG, "GLOBAL_ACTION_SHOW_IME not available (API ${android.os.Build.VERSION.SDK_INT}, requires 34+)")
-                    }
+                if (clickSuccess) {
+                    Log.d(TAG, "Clicked/focused input field to open keyboard (isComposeUI=$isComposeUI)")
 
                     // Wait for the keyboard to open and input field to move up
                     // The input field should move significantly upward when keyboard opens

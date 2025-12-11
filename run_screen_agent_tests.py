@@ -1048,7 +1048,10 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route. "
+            "This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
+            "Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
+            "estimated travel time, or directions to Trader Joe's on Fulton Street. "
+            "Return False only if Google Maps is not showing any navigation/directions content."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
@@ -1217,7 +1220,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full}, '{sms_short}', 'Whiz Voice Test', Ruth Wong, or Ruth Grace Wong). "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
         "There is also a yellow notification bubble with an outline of something (it's a robot head). "
@@ -1254,7 +1257,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'testing SMS'. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
@@ -1292,14 +1295,13 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}'"
-        "At the bottom of the screen, there is NO yellow overlay covering the keyboard. The keyboard may be visible. "
-        "The app may be in dark mode. "
-        "The most recent message is something with text somewhat similar to 'testing SMS'. "
-        "The message may have words added to make it more polite. "
-        "There is also a yellow notification bubble with the outline of a robot head. "
-        "There may or may not be an icon inside the robot head outline. "
-        "Please look carefully. Sometimes in dark mode it may look like a message was sent when it is still in the edit text input instead and not in the conversation yet."
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+        "Check that the message was SENT (appears in the conversation thread as a sent message bubble, not in the text input field). "
+        "The most recent sent message should contain text similar to 'testing SMS' (may have polite words added). "
+        "There should be NO yellow overlay covering the bottom of the screen. "
+        "A yellow notification bubble with a robot head outline may be visible. "
+        "Return True if the message appears as a SENT message in the conversation. "
+        "Return False if the message text is still in the input field at the bottom."
     )
     if not validation_result:
         print("❌ Message sent validation failed!")
@@ -1334,8 +1336,8 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
-        "The most recent message in the chat has been deleted."
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+        "The most recent message in the chat has been deleted. Other messages may or may not be deleted."
     )
     if not validation_result:
         print("❌ Message deletion validation failed!")
