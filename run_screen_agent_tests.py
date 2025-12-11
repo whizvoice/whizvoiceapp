@@ -758,7 +758,7 @@ def test_youtube_music_integration(tester):
     print("STEP 6: Waiting for response and validating song is actually playing")
     print("========================================")
     # Poll until we see YouTube Music actually playing (not just a menu or search result)
-    max_wait = 60
+    max_wait = 30
     poll_interval = 3
     play_succeeded = False
     for i in range(max_wait // poll_interval):
@@ -919,6 +919,50 @@ def test_youtube_music_integration(tester):
     else:
         print("✅ 90s pop playlist validated successfully!")
     assert playlist_validation, "Failed to validate 90s pop playlist"
+
+    print("\n========================================")
+    print("STEP 15: Requesting to play 99% Invisible podcast")
+    print("========================================")
+    podcast_message = "Play the 99% Invisible podcast"
+    print(f"📤 Broadcasting: '{podcast_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{podcast_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 16: Waiting for podcast to start playing")
+    print("========================================")
+    # Poll until we see the podcast playing
+    podcast_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if 99% Invisible podcast is playing
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the '99% Invisible' podcast is playing in YouTube Music. Requirements: "
+            "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
+            "2) You must see a PAUSE button (not play button) or playback progress showing it's actively playing. "
+            "Return True if 99% Invisible podcast content is playing. Return False if it's still showing 90s pop music, "
+            "a search results page, or anything other than the 99% Invisible podcast playing."
+        )
+        if validation_result:
+            print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
+            podcast_succeeded = True
+            break
+        print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not podcast_succeeded:
+        save_failed_screenshot(screenshot_path, "youtube_music", "podcast_playing_validation")
+    assert podcast_succeeded, "Failed to play 99% Invisible podcast"
+    print("✅ 99% Invisible podcast playing successfully!")
 
     print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")

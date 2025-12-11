@@ -4761,14 +4761,9 @@ class ScreenAgentTools @Inject constructor(
             Log.w(TAG, "Failed to submit search via Enter key, continuing anyway")
         }
 
-        // Click the appropriate filter chip
-        val filterClicked = clickYouTubeMusicFilterChip(accessibilityService, filterType)
-        if (filterClicked) {
-            Log.d(TAG, "Clicked filter chip for type: $filterType")
-            delay(500) // Wait for filtered results to load
-        } else {
-            Log.w(TAG, "Could not click filter chip for type: $filterType, continuing anyway")
-        }
+        // No longer clicking filter chips - we'll find matching results directly from the main list
+        // and click their Play button or the result row itself
+        delay(500) // Wait for search results to load
 
         return YouTubeMusicSearchResult.Success
     }
@@ -4986,6 +4981,7 @@ class ScreenAgentTools @Inject constructor(
 
                 if (result) {
                     Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
+                    delay(500) // Small delay so user can see the menu appear
                     return true
                 }
             }
@@ -5015,6 +5011,7 @@ class ScreenAgentTools @Inject constructor(
 
                 if (result) {
                     Log.d(TAG, "Add to queue clicked after ${System.currentTimeMillis() - startTime}ms")
+                    delay(500) // Small delay so user can see the action complete
                     return true
                 }
             }
@@ -5092,56 +5089,63 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Failed to click top result Play button, falling back to row click")
             }
 
-            // Fall back to existing approach: find clickable result rows
+            // Fall back to clicking a result row that matches the content type
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
             collectAllNodes(rootNode, allNodes)
 
-            // After clicking the filter chip, the filtered results should have clickable rows
-            // with the song/album/artist info. Click the first valid result row.
-            Log.d(TAG, "Searching for first result among ${allNodes.size} nodes")
+            // Get acceptable type indicators for this content type
+            val acceptableTypes = getAcceptableTypeIndicators(contentType)
+            Log.d(TAG, "Searching for result row with types: $acceptableTypes among ${allNodes.size} nodes")
 
-            val clickableRows = mutableListOf<AccessibilityNodeInfo>()
+            // Find clickable result rows (Button class, long-clickable)
+            var matchingRow: AccessibilityNodeInfo? = null
+            var matchingTitle: String? = null
+
             for (node in allNodes) {
-                // Song result rows have resource-id "two_column_item_content_parent" and are long-clickable
-                val resourceId = node.viewIdResourceName ?: ""
-                if (node.isLongClickable && resourceId.contains("two_column_item_content_parent")) {
-                    Log.d(TAG, "Found result row with resourceId='$resourceId'")
-                    clickableRows.add(node)
+                val className = node.className?.toString() ?: ""
+                // Result rows are typically Button or ViewGroup that are clickable and long-clickable
+                if ((className == "android.widget.Button" || className == "android.view.ViewGroup")
+                    && node.isClickable && node.isLongClickable) {
+
+                    // Check if this row contains a matching type indicator in its children
+                    if (rowContainsTypeIndicator(node, acceptableTypes)) {
+                        // Extract the title from this row
+                        val title = extractTitleFromResultRow(node)
+                        Log.d(TAG, "Found matching result row with title: '$title'")
+                        matchingRow = node
+                        matchingTitle = title
+                        break
+                    }
                 }
             }
 
-            if (clickableRows.isNotEmpty()) {
-                val resultRow = clickableRows[0]
-                // Extract the title before clicking
-                val clickedTitle = extractTitleFromResultRow(resultRow)
-                Log.d(TAG, "Extracted title from result row: '$clickedTitle'")
-
-                // Click the first result
-                val clicked = accessibilityService.clickNode(resultRow)
-                Log.d(TAG, "Clicked first result row: $clicked")
+            if (matchingRow != null) {
+                // Click the matching result row
+                val clicked = accessibilityService.clickNode(matchingRow)
+                Log.d(TAG, "Clicked matching result row: $clicked, title: '$matchingTitle'")
                 allNodes.forEach { it.recycle() }
 
-                // For List-type content (album, playlist, artist), clicking the row opens the detail page
+                // For List-type and Podcast-type content, clicking the row opens the detail page
                 // We need to then click the Play button on that page to actually start playback
-                val isListType = contentType.lowercase() in listOf("album", "community_playlist", "artist")
-                if (clicked && isListType) {
-                    Log.d(TAG, "List-type content clicked, waiting for detail page and clicking Play button")
-                    // Wait for the playlist/album detail page to load, then click the Play button
-                    val playClicked = clickPlayButtonOnDetailPage(accessibilityService)
+                val needsDetailPagePlay = contentType.lowercase() in listOf("album", "community_playlist", "artist", "episode")
+                if (clicked && needsDetailPagePlay) {
+                    Log.d(TAG, "Content type '$contentType' needs detail page Play button click")
+                    // Wait for the detail page to load, then click the Play button
+                    val playClicked = clickPlayButtonOnDetailPage(accessibilityService, contentType)
                     if (playClicked) {
                         Log.d(TAG, "Successfully clicked Play button on detail page")
-                        return ClickResultInfo(true, clickedTitle)
+                        return ClickResultInfo(true, matchingTitle)
                     } else {
                         Log.w(TAG, "Could not find Play button on detail page")
-                        return ClickResultInfo(false, clickedTitle)
+                        return ClickResultInfo(false, matchingTitle)
                     }
                 }
 
-                return ClickResultInfo(clicked, clickedTitle)
+                return ClickResultInfo(clicked, matchingTitle)
             }
 
             allNodes.forEach { it.recycle() }
-            Log.w(TAG, "Could not find any clickable result rows")
+            Log.w(TAG, "Could not find any result rows matching types: $acceptableTypes")
             return ClickResultInfo(false, null)
         } catch (e: Exception) {
             Log.e(TAG, "Error clicking YouTube Music result", e)
@@ -5150,62 +5154,103 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Click the Play button on a playlist/album detail page.
-     * Called after clicking a playlist/album row from search results.
+     * Click the Play button on a playlist/album/podcast detail page.
+     * Called after clicking a playlist/album/podcast row from search results.
      * Waits for the detail page to load and finds the Play button.
+     *
+     * For podcasts, we look for the Play button on the first (most recent) episode row.
+     * For playlists/albums, we look for the big central Play button.
      */
-    private suspend fun clickPlayButtonOnDetailPage(accessibilityService: WhizAccessibilityService): Boolean {
+    private suspend fun clickPlayButtonOnDetailPage(accessibilityService: WhizAccessibilityService, contentType: String = "album"): Boolean {
         // Wait for the detail page to load
         delay(1000)
+
+        val isPodcast = contentType.lowercase() == "episode"
+        Log.d(TAG, "Looking for Play button on detail page, contentType=$contentType, isPodcast=$isPodcast")
 
         val maxAttempts = 5
         for (attempt in 1..maxAttempts) {
             val rootNode = accessibilityService.getCurrentRootNode() ?: continue
 
             try {
-                // Look for the Play button on playlist/album detail page
-                // It typically has content-desc "Play" or is a clickable button with "Play" text
                 val allNodes = mutableListOf<AccessibilityNodeInfo>()
                 collectAllNodes(rootNode, allNodes)
 
-                for (node in allNodes) {
-                    val contentDesc = node.contentDescription?.toString() ?: ""
-                    val text = node.text?.toString() ?: ""
-                    val resourceId = node.viewIdResourceName ?: ""
+                if (isPodcast) {
+                    // For podcasts, find the Play button in the first episode row
+                    // Episode rows are in section_list_content RecyclerView
+                    // The Play button has content-desc like "Play <episode name>"
+                    val playButtons = mutableListOf<Pair<AccessibilityNodeInfo, Int>>() // node to Y position
 
-                    // Look for Play button - it should be clickable and have "Play" in content-desc
-                    // But NOT be the mini player play button (which has "Pause" when playing)
-                    if (node.isClickable && contentDesc.equals("Play", ignoreCase = true)) {
-                        // Make sure this isn't a mini player button by checking it's not too small
-                        val bounds = android.graphics.Rect()
-                        node.getBoundsInScreen(bounds)
-                        val buttonSize = bounds.width()
+                    for (node in allNodes) {
+                        val contentDesc = node.contentDescription?.toString() ?: ""
 
-                        // Mini player play button is typically small (~126px), detail page button is larger
-                        if (buttonSize > 150) {
-                            Log.d(TAG, "Found Play button on detail page (size=$buttonSize): contentDesc='$contentDesc'")
-                            val clicked = accessibilityService.clickNode(node)
-                            allNodes.forEach { it.recycle() }
-                            rootNode.recycle()
-                            if (clicked) {
-                                delay(500) // Wait for playback to start
-                                return true
+                        // Look for Play buttons with episode names (not just "Play")
+                        if (node.isClickable && contentDesc.startsWith("Play ", ignoreCase = true)) {
+                            val bounds = android.graphics.Rect()
+                            node.getBoundsInScreen(bounds)
+
+                            // Skip mini player buttons (they're at the bottom of the screen, Y > 2000)
+                            if (bounds.top < 2000) {
+                                Log.d(TAG, "Found podcast episode Play button: '$contentDesc' at Y=${bounds.top}")
+                                playButtons.add(Pair(node, bounds.top))
                             }
-                        } else {
-                            Log.d(TAG, "Skipping small Play button (size=$buttonSize), likely mini player")
                         }
                     }
 
-                    // Also look for shuffle_play button which is common on playlist pages
-                    if (node.isClickable && resourceId.contains("play") && !resourceId.contains("mini_player")) {
-                        Log.d(TAG, "Found play-related button: resourceId='$resourceId', contentDesc='$contentDesc'")
-                        if (contentDesc.equals("Play", ignoreCase = true) || contentDesc.equals("Shuffle play", ignoreCase = true)) {
-                            val clicked = accessibilityService.clickNode(node)
-                            allNodes.forEach { it.recycle() }
-                            rootNode.recycle()
-                            if (clicked) {
-                                delay(500)
-                                return true
+                    // Sort by Y position and click the topmost one (first/latest episode)
+                    if (playButtons.isNotEmpty()) {
+                        val topmost = playButtons.minByOrNull { it.second }!!
+                        val (playButton, yPos) = topmost
+                        Log.d(TAG, "Clicking topmost episode Play button at Y=$yPos: '${playButton.contentDescription}'")
+                        val clicked = accessibilityService.clickNode(playButton)
+                        allNodes.forEach { it.recycle() }
+                        rootNode.recycle()
+                        if (clicked) {
+                            delay(500) // Wait for playback to start
+                            return true
+                        }
+                    }
+                } else {
+                    // For playlists/albums/episodes, look for the big central Play button
+                    for (node in allNodes) {
+                        val contentDesc = node.contentDescription?.toString() ?: ""
+                        val resourceId = node.viewIdResourceName ?: ""
+
+                        // Look for Play button - it should be clickable and have "Play" in content-desc
+                        // Content-desc can be "Play" or "Play <episode/song name>" (e.g., "Play Mini-Stories: Volume 9")
+                        if (node.isClickable && (contentDesc.equals("Play", ignoreCase = true) || contentDesc.startsWith("Play ", ignoreCase = true))) {
+                            // Make sure this isn't a mini player button by checking it's not too small
+                            val bounds = android.graphics.Rect()
+                            node.getBoundsInScreen(bounds)
+                            val buttonSize = bounds.width()
+
+                            // Mini player play button is typically small (~126px), detail page button is larger
+                            if (buttonSize > 150) {
+                                Log.d(TAG, "Found Play button on detail page (size=$buttonSize): contentDesc='$contentDesc'")
+                                val clicked = accessibilityService.clickNode(node)
+                                allNodes.forEach { it.recycle() }
+                                rootNode.recycle()
+                                if (clicked) {
+                                    delay(500) // Wait for playback to start
+                                    return true
+                                }
+                            } else {
+                                Log.d(TAG, "Skipping small Play button (size=$buttonSize), likely mini player")
+                            }
+                        }
+
+                        // Also look for shuffle_play button which is common on playlist pages
+                        if (node.isClickable && resourceId.contains("play") && !resourceId.contains("mini_player")) {
+                            Log.d(TAG, "Found play-related button: resourceId='$resourceId', contentDesc='$contentDesc'")
+                            if (contentDesc.equals("Play", ignoreCase = true) || contentDesc.equals("Shuffle play", ignoreCase = true)) {
+                                val clicked = accessibilityService.clickNode(node)
+                                allNodes.forEach { it.recycle() }
+                                rootNode.recycle()
+                                if (clicked) {
+                                    delay(500)
+                                    return true
+                                }
                             }
                         }
                     }
@@ -5505,6 +5550,13 @@ class ScreenAgentTools @Inject constructor(
             child.recycle()
         }
         return false
+    }
+
+    /**
+     * Alias for hasSongTypeIndicator - checks if a result row contains any of the acceptable type indicators.
+     */
+    private fun rowContainsTypeIndicator(node: AccessibilityNodeInfo, acceptableTypes: List<String>): Boolean {
+        return hasSongTypeIndicator(node, acceptableTypes)
     }
 
     private fun findActionMenuInRow(rowNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
