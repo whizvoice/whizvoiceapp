@@ -2917,15 +2917,86 @@ class ScreenAgentTools @Inject constructor(
                         )
                     }
                 }
+                GoogleMapsScreenState.ACTIVE_NAVIGATION -> {
+                    // We're in active turn-by-turn navigation - need to exit first
+                    Log.d(TAG, "In active navigation, pressing back to exit navigation mode")
+                    rootNode.recycle()
+
+                    // Press back and wait for navigation to exit
+                    var exitedNavigation = false
+                    for (backAttempt in 1..3) {
+                        val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                        if (backPressed) {
+                            Log.d(TAG, "Back press $backAttempt successful, waiting for screen state change")
+                        } else {
+                            Log.w(TAG, "Back press $backAttempt failed")
+                            continue
+                        }
+
+                        // Wait for screen state to change from ACTIVE_NAVIGATION
+                        exitedNavigation = waitForCondition(maxWaitMs = 2000) {
+                            val checkNode = accessibilityService.getCurrentRootNode()
+                            if (checkNode != null) {
+                                val newState = detectGoogleMapsScreenState(checkNode)
+                                checkNode.recycle()
+                                newState != GoogleMapsScreenState.ACTIVE_NAVIGATION
+                            } else {
+                                false
+                            }
+                        }
+
+                        if (exitedNavigation) {
+                            Log.d(TAG, "Exited navigation after $backAttempt back presses")
+                            break
+                        }
+                    }
+
+                    // Get fresh root node after exiting navigation
+                    rootNode = accessibilityService.getCurrentRootNode()
+                    if (rootNode == null) {
+                        return MapsActionResult(
+                            success = false,
+                            action = "get_directions",
+                            mode = mode,
+                            error = "Could not get root node after exiting navigation"
+                        )
+                    }
+
+                    // Re-check state - we might now be on location details or need to search again
+                    var newState = detectGoogleMapsScreenState(rootNode)
+                    Log.d(TAG, "After exiting navigation, screen state is: $newState")
+                    if (newState == GoogleMapsScreenState.ACTIVE_NAVIGATION) {
+                        rootNode.recycle()
+                        return MapsActionResult(
+                            success = false,
+                            action = "get_directions",
+                            mode = mode,
+                            error = "Could not exit active navigation mode"
+                        )
+                    }
+
+                }
                 else -> {
                     Log.w(TAG, "Unknown screen state, attempting to proceed anyway")
                 }
             }
 
             // Re-check if we're now on the directions screen (in case we were already there)
-            val directionsTabsNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
-            val alreadyOnDirectionsScreen = directionsTabsNodes != null && directionsTabsNodes.isNotEmpty()
-            directionsTabsNodes?.forEach { it.recycle() }
+            // Check for Start button FIRST - it loads before directions_mode_tabs
+            val startCheckNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByContentDesc(rootNode, "Start", startCheckNodes)
+            val hasStartButton = startCheckNodes.any { it.isClickable && it.className == "android.widget.Button" }
+            startCheckNodes.forEach { it.recycle() }
+
+            val alreadyOnDirectionsScreen = if (hasStartButton) {
+                Log.d(TAG, "Start button found - already on directions screen")
+                true
+            } else {
+                val directionsTabsNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+                val hasTabs = directionsTabsNodes != null && directionsTabsNodes.isNotEmpty()
+                directionsTabsNodes?.forEach { it.recycle() }
+                hasTabs
+            }
 
             if (!alreadyOnDirectionsScreen) {
                 // Find and click the "Directions" button
@@ -3360,6 +3431,34 @@ class ScreenAgentTools @Inject constructor(
             directionsTabsNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: DIRECTIONS_INPUT (directions_mode_tabs found)")
             return GoogleMapsScreenState.DIRECTIONS_INPUT
+        }
+
+        // Check for active navigation by looking for "Re-center" button or "Exit" text
+        // These are unique to the turn-by-turn navigation screen
+        val recenterNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "Re-center", recenterNodes)
+        if (recenterNodes.isNotEmpty()) {
+            recenterNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Re-center button found)")
+            return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Also check for "Exit" button which appears during navigation
+        val exitNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "Exit", exitNodes)
+        if (exitNodes.isNotEmpty()) {
+            exitNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Exit button found)")
+            return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Check for arrival screen (reached destination) - shows "Arriving at [destination]"
+        val arrivingNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "Arriving", arrivingNodes)
+        if (arrivingNodes.isNotEmpty()) {
+            arrivingNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Arriving at destination)")
+            return GoogleMapsScreenState.ACTIVE_NAVIGATION
         }
 
         Log.d(TAG, "Detected Google Maps screen state: UNKNOWN")

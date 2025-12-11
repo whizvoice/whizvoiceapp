@@ -961,7 +961,7 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route. "
+            "Google Maps is open and showing the navigation screen for a route. An acceptable alternative is if it says Arriving at 1885 Mission Street instead."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
@@ -986,7 +986,7 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route. "
+            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR. An acceptable alternative is if it says Arriving at 1885 Mission Street instead."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
