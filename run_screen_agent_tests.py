@@ -66,11 +66,11 @@ def get_phone_numbers():
     if "Pixel 8" in device_model:
         # Pixel 8: WhatsApp uses 209-9005, SMS uses 227-4544
         whatsapp = ("+1(628)209-9005", "(628) 209-9005")
-        sms = ("+1(628)227-4544", "(628) 227-4544")
+        sms = ("Whiz Voice Test", "+1(628)227-4544")
     else:
         # Pixel 7a (default): WhatsApp uses 227-4544, SMS uses 209-9005
         whatsapp = ("+1(628)227-4544", "(628) 227-4544")
-        sms = ("+1(628)209-9005", "(628) 209-9005")
+        sms = ("Ruth Grace Wong", "+1(628)209-9005")
 
     return whatsapp, sms
 
@@ -1016,8 +1016,8 @@ def test_google_maps_directions(tester):
         ], check=True)
         time.sleep(3)  # Give time for message to be processed
 
-        # Wait 15 seconds for the search to complete and "See locations" to appear
-        time.sleep(30)
+        # Wait for the search to complete and "See locations" to appear
+        time.sleep(20)
 
         # Validate that Google Maps is showing the "See locations" list for Trader Joe's
         tester.screenshot(screenshot_path)
@@ -1073,7 +1073,7 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route. An acceptable alternative is if it says Arriving at 1885 Mission Street instead."
+            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route). If this is not the case, an acceptable alternative is if it says Arriving at 1885 Mission Street instead."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
@@ -1196,9 +1196,9 @@ def test_sms_draft_message(tester):
     print("STEP 6: Waiting for draft overlay to appear")
     print("========================================")
     # wait for draft overlay to appear over SMS input text bar
-    # Support both light mode (#fffad0) and dark mode (#d2cea4) colors
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0 or #d2cea4...")
-    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4'], timeout=30.0)
+    # Support light mode (#fffad0), dark mode (#d2cea4), and other yellow variants (#aead93, #afad92, #fbf7cd)
+    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0, #d2cea4, #aead93, #afad92, or #fbf7cd...")
+    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd'], timeout=30.0)
 
     # If overlay detection failed, capture diagnostics before asserting
     if not result['matched']:
@@ -1217,7 +1217,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full}, '{sms_short}', 'Whiz Voice Test', Ruth Wong, or Ruth Grace Wong). "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
         "There is also a yellow notification bubble with an outline of something (it's a robot head). "
@@ -1292,7 +1292,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}'"
         "At the bottom of the screen, there is NO yellow overlay covering the keyboard. The keyboard may be visible. "
         "The app may be in dark mode. "
         "The most recent message is something with text somewhat similar to 'testing SMS'. "

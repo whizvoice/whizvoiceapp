@@ -2100,12 +2100,20 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Alternative: Look for search by content description or text
+            // IMPORTANT: Only click if the node belongs to the Messages app to avoid triggering Google Search
             val searchByDesc = rootNode.findAccessibilityNodeInfosByText("Search")
             if (searchByDesc != null && searchByDesc.isNotEmpty()) {
                 for (node in searchByDesc) {
+                    // Skip nodes that don't belong to the Messages app
+                    val nodePackage = node.packageName?.toString() ?: ""
+                    if (!nodePackage.contains("messaging") && !nodePackage.contains("com.google.android.apps.messaging")) {
+                        Log.d(TAG, "Skipping search node from non-Messages package: $nodePackage")
+                        continue
+                    }
+
                     val clickableNode = if (node.isClickable) node else findClickableParent(node)
                     if (clickableNode != null) {
-                        Log.d(TAG, "Found search button by text/description")
+                        Log.d(TAG, "Found search button by text/description in Messages app")
                         val clicked = accessibilityService.clickNode(clickableNode)
 
                         if (clickableNode != node) {
@@ -2205,13 +2213,14 @@ class ScreenAgentTools @Inject constructor(
                         if (resultsAppeared) {
                             Log.i(TAG, "✅ Search results appeared")
                         } else {
-                            Log.w(TAG, "Search results did not appear after IME_ENTER, trying KEYCODE_SEARCH fallback...")
+                            Log.w(TAG, "Search results did not appear after IME_ENTER, trying KEYCODE_ENTER fallback...")
 
-                            // Try sending KEYCODE_SEARCH (keyevent 84) as a fallback
+                            // Try sending KEYCODE_ENTER (keyevent 66) as a fallback
+                            // Note: KEYCODE_SEARCH (84) triggers system-wide Google Search, so we use Enter instead
                             try {
-                                val process = Runtime.getRuntime().exec("input keyevent 84")
+                                val process = Runtime.getRuntime().exec("input keyevent 66")
                                 process.waitFor()
-                                Log.d(TAG, "Sent KEYCODE_SEARCH (84) as fallback")
+                                Log.d(TAG, "Sent KEYCODE_ENTER (66) as fallback")
                                 delay(500)
 
                                 // Wait for results again
@@ -2229,12 +2238,12 @@ class ScreenAgentTools @Inject constructor(
                                 }
 
                                 if (resultsAppearedAfterKeycode) {
-                                    Log.i(TAG, "✅ Search results appeared after KEYCODE_SEARCH fallback")
+                                    Log.i(TAG, "✅ Search results appeared after KEYCODE_ENTER fallback")
                                 } else {
-                                    Log.w(TAG, "Search results still not appearing after KEYCODE_SEARCH")
+                                    Log.w(TAG, "Search results still not appearing after KEYCODE_ENTER")
                                 }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Failed to send KEYCODE_SEARCH: ${e.message}")
+                                Log.e(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
                             }
                         }
                     }
@@ -2267,17 +2276,18 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Successfully entered search text: $searchQuery (fallback path)")
                     editTextNodes.forEach { it.recycle() }
 
-                    // Trigger search by sending KEYCODE_SEARCH
-                    Log.d(TAG, "Triggering search submission with KEYCODE_SEARCH (fallback path)...")
+                    // Trigger search by sending KEYCODE_ENTER
+                    // Note: KEYCODE_SEARCH (84) triggers system-wide Google Search, so we use Enter instead
+                    Log.d(TAG, "Triggering search submission with KEYCODE_ENTER (fallback path)...")
                     delay(300)
 
                     try {
-                        val process = Runtime.getRuntime().exec("input keyevent 84") // KEYCODE_SEARCH
+                        val process = Runtime.getRuntime().exec("input keyevent 66") // KEYCODE_ENTER
                         process.waitFor()
-                        Log.d(TAG, "Sent KEYCODE_SEARCH (84) - fallback")
+                        Log.d(TAG, "Sent KEYCODE_ENTER (66) - fallback")
                         delay(500)
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to send KEYCODE_SEARCH: ${e.message}")
+                        Log.e(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
                         return false
                     }
 
@@ -2301,9 +2311,9 @@ class ScreenAgentTools @Inject constructor(
                         }
 
                         if (resultsAppeared) {
-                            Log.d(TAG, "Search results appeared after KEYCODE_SEARCH (fallback path)")
+                            Log.d(TAG, "Search results appeared after KEYCODE_ENTER (fallback path)")
                         } else {
-                            Log.w(TAG, "Search results did not appear after KEYCODE_SEARCH (fallback path)")
+                            Log.w(TAG, "Search results did not appear after KEYCODE_ENTER (fallback path)")
                         }
                     } else {
                         Log.w(TAG, "Accessibility service not available (fallback path)")
@@ -3736,18 +3746,18 @@ class ScreenAgentTools @Inject constructor(
         val directionNodes = mutableListOf<AccessibilityNodeInfo>()
         findNodesByText(rootNode, "Directions", directionNodes)
 
+        // Don't recycle nodes during iteration - recycling nodes that share the same
+        // underlying view hierarchy can cause issues when we need to try multiple nodes.
+        // Let the GC handle cleanup instead.
         for (node in directionNodes) {
             val clickableNode = findClickableParent(node)
             if (clickableNode != null) {
                 val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                clickableNode.recycle()
                 if (clicked) {
                     Log.d(TAG, "Clicked Directions button")
-                    directionNodes.forEach { it.recycle() }
                     return true
                 }
             }
-            node.recycle()
         }
 
         Log.w(TAG, "Could not find Directions button")
@@ -5706,9 +5716,9 @@ class ScreenAgentTools @Inject constructor(
         if (depth > 15) return // Limit recursion depth
 
         try {
-            // Check if this node matches the content description
+            // Check if this node matches the content description (using contains for partial matching)
             val nodeContentDesc = node.contentDescription?.toString()
-            if (nodeContentDesc != null && nodeContentDesc.equals(contentDesc, ignoreCase = true)) {
+            if (nodeContentDesc != null && nodeContentDesc.contains(contentDesc, ignoreCase = true)) {
                 results.add(AccessibilityNodeInfo.obtain(node))
             }
 
