@@ -2899,8 +2899,8 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun getGoogleMapsDirections(mode: String? = null, alreadyInDirections: Boolean = false, position: Int? = null, fragment: String? = null): MapsActionResult {
-        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections, position: $position, fragment: $fragment")
+    suspend fun getGoogleMapsDirections(mode: String? = null, position: Int? = null, fragment: String? = null): MapsActionResult {
+        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, position: $position, fragment: $fragment")
 
         try {
             // If position or fragment is provided, first select the location from the list
@@ -2958,11 +2958,6 @@ class ScreenAgentTools @Inject constructor(
                     mode = mode,
                     error = "Google Maps did not become ready in time"
                 )
-            }
-
-            // Log if alreadyInDirections was passed (deprecated parameter)
-            if (alreadyInDirections) {
-                Log.w(TAG, "alreadyInDirections parameter is deprecated - using automatic screen state detection instead")
             }
 
             var rootNode = accessibilityService.getCurrentRootNode()
@@ -3581,6 +3576,17 @@ class ScreenAgentTools @Inject constructor(
         if (navContainerNodes != null && navContainerNodes.isNotEmpty()) {
             navContainerNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (nav_container found)")
+            return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Check for "Arriving at" screen (post-navigation arrival state)
+        // This screen appears when navigation completes and shows "Arriving at [address]"
+        // Treat this the same as ACTIVE_NAVIGATION since user has arrived at destination
+        val arrivingAtNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "Arriving at", arrivingAtNodes)
+        if (arrivingAtNodes.isNotEmpty()) {
+            arrivingAtNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Arriving at screen found)")
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
         }
 
