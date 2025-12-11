@@ -179,4 +179,29 @@ interface ApiService {
     
     @POST("/api/subscription/cancel")
     suspend fun cancelSubscription(): CancelSubscriptionResponse
+
+    // ========== UI DUMP ENDPOINTS ==========
+    data class UiDumpCreate(
+        @SerializedName("dump_reason") val dumpReason: String,
+        @SerializedName("error_message") val errorMessage: String? = null,
+        @SerializedName("ui_hierarchy") val uiHierarchy: String,
+        @SerializedName("package_name") val packageName: String? = null,
+        @SerializedName("device_model") val deviceModel: String? = null,
+        @SerializedName("device_manufacturer") val deviceManufacturer: String? = null,
+        @SerializedName("android_version") val androidVersion: String? = null,
+        @SerializedName("screen_width") val screenWidth: Int? = null,
+        @SerializedName("screen_height") val screenHeight: Int? = null,
+        @SerializedName("app_version") val appVersion: String? = null,
+        @SerializedName("conversation_id") val conversationId: Long? = null,
+        @SerializedName("recent_actions") val recentActions: List<String>? = null,
+        @SerializedName("screen_agent_context") val screenAgentContext: Map<String, Any>? = null
+    )
+
+    data class UiDumpResponse(
+        val id: Long,
+        @SerializedName("created_at") val createdAt: String
+    )
+
+    @POST("/api/ui-dumps")
+    suspend fun uploadUiDump(@Body request: UiDumpCreate): UiDumpResponse
 } 

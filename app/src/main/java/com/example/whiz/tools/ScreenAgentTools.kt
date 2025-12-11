@@ -8,13 +8,19 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.provider.Telephony
+import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import com.example.whiz.BuildConfig
 import com.example.whiz.accessibility.WhizAccessibilityService
+import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,9 +30,45 @@ import javax.inject.Singleton
  */
 @Singleton
 class ScreenAgentTools @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val apiService: ApiService
 ) {
     private val TAG = "ScreenAgentTools"
+
+    // Recent actions tracking for UI dump context (max 5 actions)
+    private val recentActions = mutableListOf<String>()
+    private val maxRecentActions = 5
+
+    /**
+     * Track an action for UI dump context.
+     * Call this when performing significant screen agent actions.
+     */
+    fun trackAction(action: String) {
+        synchronized(recentActions) {
+            recentActions.add(action)
+            while (recentActions.size > maxRecentActions) {
+                recentActions.removeAt(0)
+            }
+        }
+    }
+
+    /**
+     * Clear recent actions (call on successful operation completion).
+     */
+    fun clearRecentActions() {
+        synchronized(recentActions) {
+            recentActions.clear()
+        }
+    }
+
+    /**
+     * Get a copy of recent actions for UI dump.
+     */
+    private fun getRecentActionsCopy(): List<String> {
+        synchronized(recentActions) {
+            return recentActions.toList()
+        }
+    }
     
     // Result data classes
     data class LaunchResult(
@@ -363,7 +405,7 @@ class ScreenAgentTools @Inject constructor(
                     // Dump UI on first UNKNOWN screen detection for debugging
                     if (currentScreen == WhatsAppScreen.UNKNOWN && !uiDumped) {
                         Log.w(TAG, "⚠️ WhatsApp screen not recognized, dumping UI for debugging...")
-                        dumpUIHierarchy(rootNode, "whatsapp_unknown_screen")
+                        dumpUIHierarchy(rootNode, "whatsapp_unknown_screen", "WhatsApp screen not recognized during navigation")
                         uiDumped = true
                     }
 
@@ -2537,7 +2579,7 @@ class ScreenAgentTools @Inject constructor(
                 // Dump UI for debugging
                 val debugRoot = accessibilityService.getCurrentRootNode()
                 if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_no_play_button")
+                    dumpUIHierarchy(debugRoot, "ytmusic_no_play_button", "Could not find play button after waiting for search results")
                     debugRoot.recycle()
                 }
                 MusicActionResult(
@@ -2655,7 +2697,7 @@ class ScreenAgentTools @Inject constructor(
                 // Dump UI for debugging (the openYouTubeMusicContextMenu already dumps, but this captures the full state)
                 val debugRoot = accessibilityService.getCurrentRootNode()
                 if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu")
+                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu", "Could not find or open context menu after waiting for search results")
                     debugRoot.recycle()
                 }
                 rootNode.recycle()
@@ -2941,6 +2983,7 @@ class ScreenAgentTools @Inject constructor(
                 GoogleMapsScreenState.LOCATION_DETAILS -> {
                     // Perfect - we're on location details page, just proceed to click Directions
                     Log.d(TAG, "On location details page, will click Directions button")
+                    rootNode.recycle()
                 }
                 GoogleMapsScreenState.DIRECTIONS_INPUT -> {
                     // On directions input screen - press back to get to location details first
@@ -3024,31 +3067,83 @@ class ScreenAgentTools @Inject constructor(
 
                 }
                 else -> {
-                    Log.w(TAG, "Unknown screen state, attempting to proceed anyway")
+                    Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
+                    // Dump UI hierarchy for debugging unknown states
+                    dumpUIHierarchy(rootNode, "google_maps_unknown_state", "Google Maps screen state not recognized")
+                    rootNode.recycle()
+
+                    // Press back multiple times if needed to get to a known screen
+                    for (backAttempt in 1..3) {
+                        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                        delay(1000)
+
+                        // Re-detect screen state after pressing back
+                        val newRootNode = accessibilityService.getCurrentRootNode()
+                        if (newRootNode != null) {
+                            val newScreenState = detectGoogleMapsScreenState(newRootNode)
+                            Log.d(TAG, "After back press $backAttempt, new screen state: $newScreenState")
+                            newRootNode.recycle()
+
+                            when (newScreenState) {
+                                GoogleMapsScreenState.LOCATION_DETAILS -> {
+                                    Log.d(TAG, "Now on location details page, can proceed")
+                                    break // Exit the loop, we're in a good state
+                                }
+                                GoogleMapsScreenState.DIRECTIONS_INPUT -> {
+                                    Log.d(TAG, "Now on directions screen after pressing back")
+                                    break // Exit the loop, we're in a good state
+                                }
+                                GoogleMapsScreenState.ACTIVE_NAVIGATION -> {
+                                    Log.d(TAG, "In active navigation, pressing back again to exit")
+                                    // Continue the loop to press back again
+                                }
+                                else -> {
+                                    Log.w(TAG, "Still in unknown state after back press $backAttempt")
+                                    // Continue the loop to try again
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Re-check if we're now on the directions screen (in case we were already there)
-            // Check for Start button FIRST - it loads before directions_mode_tabs
-            val startCheckNodes = mutableListOf<AccessibilityNodeInfo>()
-            findNodesByContentDesc(rootNode, "Start", startCheckNodes)
-            val hasStartButton = startCheckNodes.any { it.isClickable && it.className == "android.widget.Button" }
-            startCheckNodes.forEach { it.recycle() }
+            // Get fresh root node after handling screen states (especially important after UNKNOWN pressed back)
+            val currentRootNode = accessibilityService.getCurrentRootNode()
+            if (currentRootNode == null) {
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = "Could not get root node after screen state handling"
+                )
+            }
 
-            val alreadyOnDirectionsScreen = if (hasStartButton) {
-                Log.d(TAG, "Start button found - already on directions screen")
+            // Re-check if we're now on the directions screen (in case we were already there)
+            // Check for trip_details_footer_layout which contains the Start button on directions screen
+            // This is more reliable than just looking for any "Start" button (which can appear on location pages)
+            val footerLayoutNodes = currentRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_details_footer_layout")
+            val hasFooterLayout = footerLayoutNodes != null && footerLayoutNodes.isNotEmpty()
+            footerLayoutNodes?.forEach { it.recycle() }
+
+            val alreadyOnDirectionsScreen = if (hasFooterLayout) {
+                Log.d(TAG, "trip_details_footer_layout found - already on directions screen")
                 true
             } else {
-                val directionsTabsNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+                // Fallback: check for directions_mode_tabs
+                val directionsTabsNodes = currentRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
                 val hasTabs = directionsTabsNodes != null && directionsTabsNodes.isNotEmpty()
                 directionsTabsNodes?.forEach { it.recycle() }
+                if (hasTabs) {
+                    Log.d(TAG, "directions_mode_tabs found - already on directions screen")
+                }
                 hasTabs
             }
 
             if (!alreadyOnDirectionsScreen) {
+                Log.d(TAG, "Not on directions screen, will click Directions button")
                 // Find and click the "Directions" button
-                val directionsClicked = clickGoogleMapsDirections(rootNode, accessibilityService)
-                rootNode.recycle()
+                val directionsClicked = clickGoogleMapsDirections(currentRootNode, accessibilityService)
+                currentRootNode.recycle()
 
                 if (!directionsClicked) {
                     return MapsActionResult(
@@ -3062,7 +3157,7 @@ class ScreenAgentTools @Inject constructor(
                 // Wait for directions screen to appear with Start button
                 delay(1500)
             } else {
-                rootNode.recycle()
+                currentRootNode.recycle()
             }
 
             // Wait for directions screen to be fully loaded (look for Start button)
@@ -3480,31 +3575,12 @@ class ScreenAgentTools @Inject constructor(
             return GoogleMapsScreenState.DIRECTIONS_INPUT
         }
 
-        // Check for active navigation by looking for "Re-center" button or "Exit" text
-        // These are unique to the turn-by-turn navigation screen
-        val recenterNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Re-center", recenterNodes)
-        if (recenterNodes.isNotEmpty()) {
-            recenterNodes.forEach { it.recycle() }
-            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Re-center button found)")
-            return GoogleMapsScreenState.ACTIVE_NAVIGATION
-        }
-
-        // Also check for "Exit" button which appears during navigation
-        val exitNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Exit", exitNodes)
-        if (exitNodes.isNotEmpty()) {
-            exitNodes.forEach { it.recycle() }
-            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Exit button found)")
-            return GoogleMapsScreenState.ACTIVE_NAVIGATION
-        }
-
-        // Check for arrival screen (reached destination) - shows "Arriving at [destination]"
-        val arrivingNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Arriving", arrivingNodes)
-        if (arrivingNodes.isNotEmpty()) {
-            arrivingNodes.forEach { it.recycle() }
-            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Arriving at destination)")
+        // Check for active navigation by looking for nav_container
+        // This is the main navigation container that only exists during turn-by-turn navigation
+        val navContainerNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/nav_container")
+        if (navContainerNodes != null && navContainerNodes.isNotEmpty()) {
+            navContainerNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (nav_container found)")
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
         }
 
@@ -5442,7 +5518,7 @@ class ScreenAgentTools @Inject constructor(
 
             Log.w(TAG, "No song search results with action menu found (even with fallback)")
             // Dump UI for debugging before recycling nodes
-            dumpUIHierarchy(rootNode, "ytmusic_no_action_menu")
+            dumpUIHierarchy(rootNode, "ytmusic_no_action_menu", "No song search results with action menu found in YouTube Music")
             allNodes.forEach { it.recycle() }
             return false
         } catch (e: Exception) {
@@ -5663,7 +5739,7 @@ class ScreenAgentTools @Inject constructor(
             }
             Log.d(TAG, "Could not find queue option. Visible elements: ${visibleTexts.take(30).joinToString(", ")}")
             // Dump UI for debugging before recycling nodes
-            dumpUIHierarchy(rootNode, "ytmusic_no_queue_option")
+            dumpUIHierarchy(rootNode, "ytmusic_no_queue_option", "Add to queue option not found in YouTube Music context menu")
             allNodes.forEach { it.recycle() }
 
             return false
@@ -6427,27 +6503,81 @@ class ScreenAgentTools @Inject constructor(
     }
     
     /**
-     * Dump the UI hierarchy to a file for debugging.
-     * Saves to /sdcard/Download/whiz_ui_dump_<timestamp>.xml
+     * Dump the UI hierarchy to a file for debugging and upload to server.
+     * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
+     * Also uploads to server asynchronously (fire-and-forget).
      */
-    private fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String) {
+    private fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
         try {
             val timestamp = System.currentTimeMillis()
             val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"
             val file = java.io.File("/sdcard/Download", fileName)
+            val packageName = rootNode.packageName?.toString()
 
             val sb = StringBuilder()
             sb.appendLine("=== UI Dump: $reason ===")
             sb.appendLine("Timestamp: $timestamp")
-            sb.appendLine("Package: ${rootNode.packageName}")
+            sb.appendLine("Package: $packageName")
             sb.appendLine("")
             sb.appendLine("=== Node Tree ===")
             dumpNodeRecursive(rootNode, sb, 0)
 
-            file.writeText(sb.toString())
+            val uiHierarchy = sb.toString()
+
+            // Save locally
+            file.writeText(uiHierarchy)
             Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
+
+            // Upload to server asynchronously (fire-and-forget)
+            uploadUiDumpToServer(
+                dumpReason = reason,
+                errorMessage = errorMessage,
+                uiHierarchy = uiHierarchy,
+                packageName = packageName
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dump UI hierarchy", e)
+        }
+    }
+
+    /**
+     * Upload UI dump to server asynchronously. Fire-and-forget - does not block.
+     */
+    private fun uploadUiDumpToServer(
+        dumpReason: String,
+        errorMessage: String?,
+        uiHierarchy: String,
+        packageName: String?
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Get screen dimensions
+                val displayMetrics = context.resources.displayMetrics
+                val screenWidth = displayMetrics.widthPixels
+                val screenHeight = displayMetrics.heightPixels
+
+                val request = ApiService.UiDumpCreate(
+                    dumpReason = dumpReason,
+                    errorMessage = errorMessage,
+                    uiHierarchy = uiHierarchy,
+                    packageName = packageName,
+                    deviceModel = Build.MODEL,
+                    deviceManufacturer = Build.MANUFACTURER,
+                    androidVersion = Build.VERSION.SDK_INT.toString(),
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    conversationId = null, // Could be passed in if available
+                    recentActions = getRecentActionsCopy(),
+                    screenAgentContext = null // Could add more context here
+                )
+
+                val response = apiService.uploadUiDump(request)
+                Log.i(TAG, "📤 UI dump uploaded to server: id=${response.id}")
+            } catch (e: Exception) {
+                // Fire-and-forget - just log the error
+                Log.w(TAG, "Failed to upload UI dump to server (non-fatal): ${e.message}")
+            }
         }
     }
 
