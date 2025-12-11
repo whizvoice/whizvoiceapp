@@ -853,6 +853,74 @@ def test_youtube_music_integration(tester):
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
     print("\n========================================")
+    print("STEP 11: Requesting to play 90s pop instead")
+    print("========================================")
+    # Send a voice transcription to change to 90s pop
+    change_message = "Actually can you play some 90s pop instead"
+    print(f"📤 Broadcasting: '{change_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{change_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 12: Waiting for music to change from Golden")
+    print("========================================")
+    # Poll until we see the song has changed from Golden (indicating playlist started)
+    music_changed = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if the music changed from "Golden" - meaning a new song/playlist started
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the currently playing song is NO LONGER 'Golden' by Kpop Demon Hunters. "
+            "Return True if you see a DIFFERENT song playing (like 'Baby One More Time', or any other song that is NOT 'Golden'). "
+            "Return False if 'Golden' is still showing as the currently playing track."
+        )
+        if validation_result:
+            print(f"✅ Music changed after {(i+1)*poll_interval} seconds")
+            music_changed = True
+            break
+        print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not music_changed:
+        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_music_change_validation")
+    assert music_changed, "Failed to change music from Golden"
+    print("✅ Music changed successfully!")
+
+    print("\n========================================")
+    print("STEP 13: Pressing back to see playlist")
+    print("========================================")
+    # Press back to exit the full player view and see the playlist
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_BACK'], check=True)
+    time.sleep(2)
+
+    print("\n========================================")
+    print("STEP 14: Validating 90s pop playlist is visible")
+    print("========================================")
+    tester.screenshot(screenshot_path)
+    playlist_validation = tester.validate_screenshot(
+        screenshot_path,
+        "Check if this is a 90s pop playlist or similar. Requirements: "
+        "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
+        "2) You should see a list of songs that are typical 90s pop hits (e.g., Britney Spears, Backstreet Boys, NSYNC, Spice Girls, etc.). "
+        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all."
+    )
+    if not playlist_validation:
+        print("❌ 90s pop playlist validation failed!")
+        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_playlist_validation")
+    else:
+        print("✅ 90s pop playlist validated successfully!")
+    assert playlist_validation, "Failed to validate 90s pop playlist"
+
+    print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")
     print("========================================")
 

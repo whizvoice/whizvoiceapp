@@ -25,7 +25,7 @@ cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test "com.example.whiz.
 
 the tests take a long time so please run it with your max timeout (10mins)
 
-**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete.
+**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete. Also, there is no need to build with Gradle before testing; the test will build so just run the test directly.
 
 When investigating test failures, check these log files for detailed information:
 
