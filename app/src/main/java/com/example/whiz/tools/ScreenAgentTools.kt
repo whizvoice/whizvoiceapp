@@ -129,7 +129,8 @@ class ScreenAgentTools @Inject constructor(
     
     fun launchApp(appName: String, enableOverlay: Boolean = true): LaunchResult {
         Log.d(TAG, "Attempting to launch app: $appName")
-        
+        trackAction("launchApp: $appName")
+
         try {
             val packageManager = context.packageManager
             val normalizedAppName = appName.lowercase().trim()
@@ -362,6 +363,7 @@ class ScreenAgentTools @Inject constructor(
     
     suspend fun selectWhatsAppChat(chatName: String): WhatsAppResult {
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
+        trackAction("selectWhatsAppChat: $chatName")
 
         try {
             // Auto-launch WhatsApp if not already open
@@ -609,6 +611,7 @@ class ScreenAgentTools @Inject constructor(
     
     suspend fun draftWhatsAppMessage(message: String, previousText: String? = null, chatName: String? = null): DraftResult {
         Log.d(TAG, "Attempting to draft message in WhatsApp: $message, previousText: $previousText, chatName: $chatName")
+        trackAction("draftWhatsAppMessage: ${message.take(30)}...")
 
         try {
             // Auto-launch WhatsApp if not already open
@@ -1019,6 +1022,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun selectSMSChat(contactName: String): SMSResult {
         Log.i(TAG, "Attempting to select SMS chat: $contactName")
+        trackAction("selectSMSChat: $contactName")
 
         try {
             // Auto-launch Messages app if not already open
@@ -1432,6 +1436,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun draftSMSMessage(message: String, previousText: String? = null, contactName: String? = null): DraftResult {
         Log.d(TAG, "Attempting to draft SMS message: $message, previousText: $previousText, contactName: $contactName")
+        trackAction("draftSMSMessage: ${message.take(30)}...")
 
         try {
             // Auto-launch Messages app if not already open
@@ -2389,6 +2394,7 @@ class ScreenAgentTools @Inject constructor(
         contentType: String = "song"
     ): MusicActionResult {
         Log.d(TAG, "Attempting to play on YouTube Music: $query (contentType=$contentType)")
+        trackAction("playYouTubeMusicSong: $query")
 
         try {
             // Auto-launch YouTube Music if not already open
@@ -2603,6 +2609,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun queueYouTubeMusicSong(query: String): MusicActionResult {
         Log.d(TAG, "Attempting to queue song on YouTube Music: $query")
+        trackAction("queueYouTubeMusicSong: $query")
 
         try {
             // Auto-launch YouTube Music if not already open
@@ -2744,6 +2751,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun searchGoogleMapsLocation(address: String): MapsActionResult {
         Log.d(TAG, "Attempting to search for location in Google Maps: $address")
+        trackAction("searchGoogleMapsLocation: $address")
 
         try {
             // Auto-launch Google Maps if not already open
@@ -2901,6 +2909,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun getGoogleMapsDirections(mode: String? = null, position: Int? = null, fragment: String? = null): MapsActionResult {
         Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, position: $position, fragment: $fragment")
+        trackAction("getGoogleMapsDirections: mode=${mode ?: "default"}")
 
         try {
             // If position or fragment is provided, first select the location from the list
@@ -3418,6 +3427,7 @@ class ScreenAgentTools @Inject constructor(
 
     suspend fun searchGoogleMapsPhrase(searchPhrase: String): MapsActionResult {
         Log.d(TAG, "Attempting to search Google Maps with phrase: $searchPhrase")
+        trackAction("searchGoogleMapsPhrase: $searchPhrase")
 
         try {
             // Auto-launch Google Maps to bring it to foreground
