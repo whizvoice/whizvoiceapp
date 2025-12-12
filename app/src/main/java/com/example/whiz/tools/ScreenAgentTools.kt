@@ -290,14 +290,24 @@ class ScreenAgentTools @Inject constructor(
             }
             
             Log.w(TAG, "Could not find app matching: $appName")
+            logScreenAgentError(
+                reason = "app_not_found",
+                errorMessage = "Could not find an app matching '$appName'",
+                packageName = null
+            )
             return LaunchResult(
                 success = false,
                 appName = appName,
                 error = "Could not find an app matching '$appName'"
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error launching app: $appName", e)
+            logScreenAgentError(
+                reason = "app_launch_error",
+                errorMessage = "Error launching app '$appName': ${e.message}",
+                packageName = null
+            )
             return LaunchResult(
                 success = false,
                 appName = appName,
@@ -384,6 +394,11 @@ class ScreenAgentTools @Inject constructor(
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 Log.e(TAG, "Accessibility service not available")
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for selectWhatsAppChat",
+                    packageName = "com.whatsapp"
+                )
                 return WhatsAppResult(
                     success = false,
                     action = "select_chat",
@@ -441,6 +456,18 @@ class ScreenAgentTools @Inject constructor(
 
             if (!onChatList) {
                 Log.e(TAG, "Failed to navigate to chat list after $maxBackAttempts back button presses")
+                // Try to get UI dump for debugging
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    dumpUIHierarchy(rootNode, "whatsapp_nav_to_chatlist_failed", "Failed to navigate to chat list after $maxBackAttempts attempts")
+                    rootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "whatsapp_nav_to_chatlist_failed",
+                        errorMessage = "Failed to navigate to chat list after $maxBackAttempts attempts (no root node)",
+                        packageName = "com.whatsapp"
+                    )
+                }
                 return WhatsAppResult(
                     success = false,
                     action = "select_chat",
@@ -550,15 +577,33 @@ class ScreenAgentTools @Inject constructor(
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
 
+            // UI dump for debugging - try to get current screen state
+            val finalRootNode = accessibilityService.getCurrentRootNode()
+            if (finalRootNode != null) {
+                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts")
+                finalRootNode.recycle()
+            } else {
+                logScreenAgentError(
+                    reason = "whatsapp_chat_not_found",
+                    errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
+                    packageName = "com.whatsapp"
+                )
+            }
+
             return WhatsAppResult(
                 success = false,
                 action = "select_chat",
                 chatName = chatName,
                 error = "Could not find contact or chat named '$chatName' in WhatsApp. Please verify the contact name and ask the user to confirm the exact spelling if needed."
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error selecting WhatsApp chat", e)
+            logScreenAgentError(
+                reason = "whatsapp_select_chat_error",
+                errorMessage = "Exception selecting WhatsApp chat '$chatName': ${e.message}",
+                packageName = "com.whatsapp"
+            )
             return WhatsAppResult(
                 success = false,
                 action = "select_chat",
@@ -629,6 +674,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for draftWhatsAppMessage",
+                    packageName = "com.whatsapp"
+                )
                 return DraftResult(
                     success = false,
                     message = message,
@@ -852,6 +902,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Clean up - no input field found
             inputNodes.forEach { it.recycle() }
+            dumpUIHierarchy(rootNode, "whatsapp_input_not_found", "Could not find message input field in WhatsApp")
             rootNode.recycle()
 
             return DraftResult(
@@ -862,6 +913,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting WhatsApp message", e)
+            logScreenAgentError(
+                reason = "whatsapp_draft_error",
+                errorMessage = "Exception drafting WhatsApp message: ${e.message}",
+                packageName = "com.whatsapp"
+            )
             return DraftResult(
                 success = false,
                 message = message,
@@ -983,13 +1039,19 @@ class ScreenAgentTools @Inject constructor(
                     inputNodes.forEach { it.recycle() }
                     rootNode.recycle()
                     
-                    return if (sendSuccess) {
-                        WhatsAppResult(
+                    if (sendSuccess) {
+                        return WhatsAppResult(
                             success = true,
                             action = "send_message"
                         )
                     } else {
-                        WhatsAppResult(
+                        // UI dump for send button not found
+                        val dumpRoot = accessibilityService.getCurrentRootNode()
+                        if (dumpRoot != null) {
+                            dumpUIHierarchy(dumpRoot, "whatsapp_send_button_not_found", "Could not find or click send button in WhatsApp")
+                            dumpRoot.recycle()
+                        }
+                        return WhatsAppResult(
                             success = false,
                             action = "send_message",
                             error = "Could not find or click send button"
@@ -997,19 +1059,25 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
             }
-            
+
             // Clean up
             inputNodes.forEach { it.recycle() }
+            dumpUIHierarchy(rootNode, "whatsapp_send_input_not_found", "Could not find message input field in sendWhatsAppMessage")
             rootNode.recycle()
-            
+
             return WhatsAppResult(
                 success = false,
                 action = "send_message",
                 error = "Could not find message input field"
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error sending WhatsApp message", e)
+            logScreenAgentError(
+                reason = "whatsapp_send_error",
+                errorMessage = "Exception sending WhatsApp message: ${e.message}",
+                packageName = "com.whatsapp"
+            )
             return WhatsAppResult(
                 success = false,
                 action = "send_message",
@@ -1057,6 +1125,11 @@ class ScreenAgentTools @Inject constructor(
 
                 if (accessibilityService == null) {
                     Log.e(TAG, "Accessibility service not available after waiting 2 seconds")
+                    logScreenAgentError(
+                        reason = "accessibility_unavailable",
+                        errorMessage = "Accessibility service not available for selectSMSChat after 2s retry",
+                        packageName = "com.google.android.apps.messaging"
+                    )
                     return SMSResult(
                         success = false,
                         action = "select_chat",
@@ -1105,6 +1178,18 @@ class ScreenAgentTools @Inject constructor(
 
             if (!onConversationList) {
                 Log.e(TAG, "Failed to navigate to conversation list after $maxBackAttempts back button presses")
+                // Try to get UI dump for debugging
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    dumpUIHierarchy(rootNode, "sms_nav_to_list_failed", "Failed to navigate to SMS conversation list after $maxBackAttempts attempts")
+                    rootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "sms_nav_to_list_failed",
+                        errorMessage = "Failed to navigate to SMS conversation list after $maxBackAttempts attempts (no root node)",
+                        packageName = "com.google.android.apps.messaging"
+                    )
+                }
                 return SMSResult(
                     success = false,
                     action = "select_chat",
@@ -1416,6 +1501,19 @@ class ScreenAgentTools @Inject constructor(
 
             Log.e(TAG, "Could not find or click on conversation: $contactName after $attempts attempts")
 
+            // UI dump for debugging
+            val finalRootNode = accessibilityService.getCurrentRootNode()
+            if (finalRootNode != null) {
+                dumpUIHierarchy(finalRootNode, "sms_chat_not_found", "Could not find SMS conversation '$contactName' after $attempts attempts")
+                finalRootNode.recycle()
+            } else {
+                logScreenAgentError(
+                    reason = "sms_chat_not_found",
+                    errorMessage = "Could not find SMS conversation '$contactName' after $attempts attempts (no root node)",
+                    packageName = "com.google.android.apps.messaging"
+                )
+            }
+
             return SMSResult(
                 success = false,
                 action = "select_chat",
@@ -1425,6 +1523,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error selecting SMS chat", e)
+            logScreenAgentError(
+                reason = "sms_select_chat_error",
+                errorMessage = "Exception selecting SMS chat '$contactName': ${e.message}",
+                packageName = "com.google.android.apps.messaging"
+            )
             return SMSResult(
                 success = false,
                 action = "select_chat",
@@ -1454,6 +1557,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for draftSMSMessage",
+                    packageName = "com.google.android.apps.messaging"
+                )
                 return DraftResult(
                     success = false,
                     message = message,
@@ -1817,6 +1925,7 @@ class ScreenAgentTools @Inject constructor(
             if (inputNode != null) {
                 inputNode.recycle()
             }
+            dumpUIHierarchy(rootNode, "sms_input_not_found", "Could not find message input field in SMS app")
             rootNode.recycle()
 
             return DraftResult(
@@ -1827,6 +1936,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting SMS message", e)
+            logScreenAgentError(
+                reason = "sms_draft_error",
+                errorMessage = "Exception drafting SMS message: ${e.message}",
+                packageName = "com.google.android.apps.messaging"
+            )
             return DraftResult(
                 success = false,
                 message = message,
@@ -1988,13 +2102,19 @@ class ScreenAgentTools @Inject constructor(
                     inputNode.recycle()
                     rootNode.recycle()
 
-                    return if (sendSuccess) {
-                        SMSResult(
+                    if (sendSuccess) {
+                        return SMSResult(
                             success = true,
                             action = "send_message"
                         )
                     } else {
-                        SMSResult(
+                        // UI dump for send button not found
+                        val dumpRoot = accessibilityService.getCurrentRootNode()
+                        if (dumpRoot != null) {
+                            dumpUIHierarchy(dumpRoot, "sms_send_button_not_found", "Could not find or click send button in SMS app")
+                            dumpRoot.recycle()
+                        }
+                        return SMSResult(
                             success = false,
                             action = "send_message",
                             error = "Could not find or click send button"
@@ -2007,6 +2127,7 @@ class ScreenAgentTools @Inject constructor(
             if (inputNode != null) {
                 inputNode.recycle()
             }
+            dumpUIHierarchy(rootNode, "sms_send_input_not_found", "Could not find message input field in sendSMSMessage")
             rootNode.recycle()
 
             return SMSResult(
@@ -2017,6 +2138,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error sending SMS message", e)
+            logScreenAgentError(
+                reason = "sms_send_error",
+                errorMessage = "Exception sending SMS message: ${e.message}",
+                packageName = "com.google.android.apps.messaging"
+            )
             return SMSResult(
                 success = false,
                 action = "send_message",
@@ -2413,6 +2539,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for playYouTubeMusicSong",
+                    packageName = "com.google.android.apps.youtube.music"
+                )
                 return MusicActionResult(
                     success = false,
                     action = "play_song",
@@ -2440,6 +2571,12 @@ class ScreenAgentTools @Inject constructor(
             // Navigate to a searchable screen (speed dial or search screen)
             val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
             if (!navigationSuccess) {
+                // UI dump for navigation failure
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_nav_to_search_failed", "Could not navigate to searchable screen in YouTube Music")
+                    dumpRoot.recycle()
+                }
                 return MusicActionResult(
                     success = false,
                     action = "play_song",
@@ -2598,6 +2735,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error playing YouTube Music song", e)
+            logScreenAgentError(
+                reason = "ytmusic_play_error",
+                errorMessage = "Exception playing YouTube Music song '$query': ${e.message}",
+                packageName = "com.google.android.apps.youtube.music"
+            )
             return MusicActionResult(
                 success = false,
                 action = "play_song",
@@ -2628,6 +2770,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for queueYouTubeMusicSong",
+                    packageName = "com.google.android.apps.youtube.music"
+                )
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -2655,6 +2802,12 @@ class ScreenAgentTools @Inject constructor(
             // Navigate to a searchable screen (speed dial or search screen)
             val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
             if (!navigationSuccess) {
+                // UI dump for navigation failure
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_queue_nav_failed", "Could not navigate to searchable screen in YouTube Music for queueing")
+                    dumpRoot.recycle()
+                }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -2738,6 +2891,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error queueing YouTube Music song", e)
+            logScreenAgentError(
+                reason = "ytmusic_queue_error",
+                errorMessage = "Exception queueing YouTube Music song '$query': ${e.message}",
+                packageName = "com.google.android.apps.youtube.music"
+            )
             return MusicActionResult(
                 success = false,
                 action = "queue_song",
@@ -2770,6 +2928,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for searchGoogleMapsLocation",
+                    packageName = "com.google.android.apps.maps"
+                )
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -2826,6 +2989,12 @@ class ScreenAgentTools @Inject constructor(
             }
 
             if (!searchSuccess) {
+                // UI dump for search failure
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_search_not_found", "Could not find search box in Google Maps after $maxAttempts attempts")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -2898,6 +3067,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error searching Google Maps location", e)
+            logScreenAgentError(
+                reason = "gmaps_search_error",
+                errorMessage = "Exception searching Google Maps location '$address': ${e.message}",
+                packageName = "com.google.android.apps.maps"
+            )
             return MapsActionResult(
                 success = false,
                 action = "search_location",
@@ -2945,6 +3119,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for getGoogleMapsDirections",
+                    packageName = "com.google.android.apps.maps"
+                )
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",
@@ -3150,6 +3329,12 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode.recycle()
 
                 if (!directionsClicked) {
+                    // UI dump for directions button not found
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_directions_button_not_found", "Could not find Directions button in Google Maps")
+                        dumpRoot.recycle()
+                    }
                     return MapsActionResult(
                         success = false,
                         action = "get_directions",
@@ -3189,6 +3374,12 @@ class ScreenAgentTools @Inject constructor(
 
             if (!startButtonFound || modeRootNode == null) {
                 Log.w(TAG, "Directions screen did not fully load - Start button not found after 5 attempts")
+                // UI dump for Start button not found
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_start_button_not_found", "Start button not found after 5 attempts on directions screen")
+                    dumpRoot.recycle()
+                }
                 modeRootNode?.recycle()
                 return MapsActionResult(
                     success = false,
@@ -3219,6 +3410,11 @@ class ScreenAgentTools @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error getting Google Maps directions", e)
+            logScreenAgentError(
+                reason = "gmaps_directions_error",
+                errorMessage = "Exception getting Google Maps directions: ${e.message}",
+                packageName = "com.google.android.apps.maps"
+            )
             return MapsActionResult(
                 success = false,
                 action = "get_directions",
@@ -3386,15 +3582,17 @@ class ScreenAgentTools @Inject constructor(
 
             // Find and click the location from the list
             val locationClicked = clickLocationFromList(rootNode, position, fragment, accessibilityService)
-            rootNode.recycle()
 
             if (!locationClicked) {
+                dumpUIHierarchy(rootNode, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
+                rootNode.recycle()
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
                     error = "Could not find or click location: $selectionDesc"
                 )
             }
+            rootNode.recycle()
 
             // Wait for location to load
             delay(1000)
@@ -6555,7 +6753,7 @@ class ScreenAgentTools @Inject constructor(
     private fun uploadUiDumpToServer(
         dumpReason: String,
         errorMessage: String?,
-        uiHierarchy: String,
+        uiHierarchy: String?,
         packageName: String?
     ) {
         CoroutineScope(Dispatchers.IO).launch {
@@ -6588,6 +6786,19 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Failed to upload UI dump to server (non-fatal): ${e.message}")
             }
         }
+    }
+
+    /**
+     * Log a screen agent error without UI dump. For failures where UI context isn't useful
+     * (app launch failures, accessibility service issues, generic exceptions).
+     */
+    private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null) {
+        uploadUiDumpToServer(
+            dumpReason = reason,
+            errorMessage = errorMessage,
+            uiHierarchy = null,
+            packageName = packageName
+        )
     }
 
     private fun dumpNodeRecursive(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
