@@ -1,2 +1,3 @@
 android-accessibility-tester @ file:///Users/ruthgracewong/android_accessibility_tester
 pytest
+supabase

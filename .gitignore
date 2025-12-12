@@ -25,6 +25,6 @@ current_screen.png
 adb_tests/screenshots/*
 __pycache__/
 screen_agent_test_output/*
-my-release-key.jks
 debug_apk_checksum
 production_apk_checksum
+constants.py
