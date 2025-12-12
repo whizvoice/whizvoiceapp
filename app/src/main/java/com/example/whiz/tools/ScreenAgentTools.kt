@@ -3579,16 +3579,9 @@ class ScreenAgentTools @Inject constructor(
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
         }
 
-        // Check for "Arriving at" screen (post-navigation arrival state)
-        // This screen appears when navigation completes and shows "Arriving at [address]"
-        // Treat this the same as ACTIVE_NAVIGATION since user has arrived at destination
-        val arrivingAtNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Arriving at", arrivingAtNodes)
-        if (arrivingAtNodes.isNotEmpty()) {
-            arrivingAtNodes.forEach { it.recycle() }
-            Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (Arriving at screen found)")
-            return GoogleMapsScreenState.ACTIVE_NAVIGATION
-        }
+        // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
+        // because pressing back from it goes to the main search page, not a useful state.
+        // When UNKNOWN, the code will search for the address using the search bar.
 
         Log.d(TAG, "Detected Google Maps screen state: UNKNOWN")
         return GoogleMapsScreenState.UNKNOWN

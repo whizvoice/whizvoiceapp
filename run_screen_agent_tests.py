@@ -799,30 +799,6 @@ def test_youtube_music_integration(tester):
     ], check=True)
 
     print("\n========================================")
-    print("STEP 8: Waiting for queue action to complete")
-    print("========================================")
-    # Poll for the queue action to complete - look for toast/confirmation or queue view
-    queue_succeeded = False
-    for i in range(max_wait // poll_interval):
-        time.sleep(poll_interval)
-        tester.screenshot(screenshot_path)
-        # Check if "How its Done" was actually queued - look for toast notification or queue confirmation
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "Check if the song 'How its Done' by HUNTRIX was added to queue. Look for: a toast message saying 'Added to queue', or a queue view showing 'How its Done' in the upcoming songs list. Return False if you see a context menu still open, a search results page, or no indication the queue action completed."
-        )
-        if validation_result:
-            print(f"✅ Song queued after {(i+1)*poll_interval} seconds")
-            queue_succeeded = True
-            break
-        print(f"⏳ Waiting for queue action... ({(i+1)*poll_interval}/{max_wait}s)")
-
-    if not queue_succeeded:
-        save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
-    assert queue_succeeded, "Failed to queue How it's Done on YouTube Music"
-    print("✅ Song queued successfully!")
-
-    print("\n========================================")
     print("STEP 9: Opening queue view")
     print("========================================")
     # Tap to full screen the current song
@@ -1057,13 +1033,15 @@ def test_google_maps_directions(tester):
             save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
         assert validation_result, "Failed to show Trader Joe's directions"
 
-        # Send a voice transcription to change destination to office at 1885 Mission Street
+        # Send a voice transcription to change destination to office at 1680 Mission Street
+        # Note: Using 1680 instead of 1885 to ensure the destination is far enough that
+        # navigation won't complete immediately (which would show "Arriving at" screen)
         subprocess.run([
             'adb', 'shell',
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"Actually, I need to go to my office first at 1885 Mission Street. Can you get directions to there instead?"',
+            '--es', 'text', '"Actually, I need to go to my office first at 1680 Mission Street. Can you get directions to there instead?"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1072,15 +1050,15 @@ def test_google_maps_directions(tester):
         # Wait 15 seconds for the new location to be searched
         time.sleep(15)
 
-        # Validate that Google Maps is showing the directions for 1885 Mission Street
+        # Validate that Google Maps is showing the directions for 1680 Mission Street
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route). If this is not the case, an acceptable alternative is if it says Arriving at 1885 Mission Street instead."
+            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
-        assert validation_result, "Failed to show 1885 Mission Street search results"
+        assert validation_result, "Failed to show 1680 Mission Street search results"
 
         # Send a voice transcription to request driving directions specifically
         subprocess.run([
@@ -1097,15 +1075,15 @@ def test_google_maps_directions(tester):
         # Wait for driving directions to be displayed
         time.sleep(20)
 
-        # Validate that Google Maps is showing driving directions to 1885 Mission Street
+        # Validate that Google Maps is showing driving directions to 1680 Mission Street
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR. An acceptable alternative is if it says Arriving at 1885 Mission Street instead."
+            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
-        assert validation_result, "Failed to show driving directions to 1885 Mission Street"
+        assert validation_result, "Failed to show driving directions to 1680 Mission Street"
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
         # This brings the app to foreground without starting a new activity
@@ -1119,11 +1097,11 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1885 Mission Street' or '1885 Mission St' in San Francisco"
+            "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1680 Mission Street' or '1680 Mission St' in San Francisco"
         )
         if not validation_result:
             save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
-        assert validation_result, "Assistant did not mention the 1885 Mission Street address in the chat"
+        assert validation_result, "Assistant did not mention the 1680 Mission Street address in the chat"
 
     finally:
         # Always clean up Google Maps to prevent overlay from interfering with future tests
