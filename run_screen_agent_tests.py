@@ -114,10 +114,10 @@ def start_logcat():
     # Clear logcat buffer
     subprocess.run(['adb', 'logcat', '-c'], check=False)
 
-    # Start logcat and capture output
+    # Start logcat and capture output (filtered to WhizVoice app to avoid buffer overflow)
     logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
     _logcat_process = subprocess.Popen(
-        ['adb', 'logcat'],
+        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
@@ -798,6 +798,10 @@ def test_youtube_music_integration(tester):
         '--ez', 'autoSend', 'true'
     ], check=True)
 
+    # Wait for the queue action to complete on the device
+    print(f"⏳ Waiting {max_wait} seconds for queue action to complete...")
+    time.sleep(max_wait)
+
     print("\n========================================")
     print("STEP 9: Opening queue view")
     print("========================================")
@@ -940,6 +944,10 @@ def test_youtube_music_integration(tester):
     assert podcast_succeeded, "Failed to play 99% Invisible podcast"
     print("✅ 99% Invisible podcast playing successfully!")
 
+    # Pause the podcast so it doesn't keep playing after the test
+    print("⏸️  Pausing podcast...")
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE'], check=True)
+
     print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")
     print("========================================")
@@ -957,6 +965,9 @@ def test_google_maps_directions(tester):
             'adb', 'shell', 'am', 'force-stop', 'com.google.android.apps.maps'
         ], capture_output=True)
         time.sleep(1)
+
+    # Clean up Google Maps at the start to ensure fresh state
+    cleanup_google_maps()
 
     try:
         # Open WhizVoice Debug app
