@@ -15,9 +15,6 @@ On my phone, which is what I use for testing as well as running the production a
 
 ## Testing
 
-### code analysis
-Use Recurse MCP for code analysis: call init() before starting, sync() after changes, then check() for results.
-
 ### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.
@@ -28,7 +25,7 @@ cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test "com.example.whiz.
 
 the tests take a long time so please run it with your max timeout (10mins)
 
-**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete.
+**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete. Also, there is no need to build with Gradle or install the app before testing; the test will build and install already, so just run the test directly.
 
 When investigating test failures, check these log files for detailed information:
 

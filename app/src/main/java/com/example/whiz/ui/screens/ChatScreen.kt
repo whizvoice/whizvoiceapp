@@ -46,7 +46,9 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -699,16 +701,8 @@ fun ChatScreen(
         }
     }
 
-    // Scroll to bottom when new messages arrive
-    LaunchedEffect(messages.size) { // Trigger scroll based on message count change
-        if (messages.isNotEmpty() && messages.size > 0) {
-            delay(100L) // Allow layout
-            val targetIndex = messages.size - 1
-            if (targetIndex >= 0) { // Extra safety check to prevent crash
-                listState.animateScrollToItem(targetIndex)
-            }
-        }
-    }
+    // 🔧 AUTO-SCROLL: Moved to MessagesList composable to use deduplicatedMessages.size
+    // (Scrolling based on messages.size can fail if UI deduplication changes the count)
 
     // Show speech recognition errors
     LaunchedEffect(speechError) {
@@ -1027,6 +1021,7 @@ fun ChatScreen(
     }
 }
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
@@ -1035,60 +1030,46 @@ fun MessagesList(
     showTypingIndicator: Boolean = false,
     onLongPressMessage: ((MessageEntity) -> Unit)? = null
 ) {
-    // 🔧 DEDUPLICATION FIX: Remove duplicate messages during chat ID migration race condition
-    // The test countMessageOccurrences() uses UI Automator to scan screen text - during optimistic
-    // to server chat ID migration, same content can appear in two UI contexts simultaneously
-    val deduplicatedMessages = remember(messages) {
-        val originalSize = messages.size
-        
-        // Group by content+type+timestamp (rounded to 2 seconds) to catch migration duplicates
-        val grouped = messages.groupBy { message ->
-            Triple(
-                message.content.trim(),
-                message.type,
-                message.timestamp / 2000L // Round to 2-second window for migration overlap
-            )
-        }
-        
-        // For each group, prefer the message with positive chat ID (server-backed)
-        val deduplicated = grouped.mapNotNull { (_, duplicateList) ->
-            when {
-                duplicateList.size == 1 -> duplicateList.first()
-                duplicateList.size > 1 -> {
-                    // Prefer positive chat ID (server) over negative (optimistic)
-                    val serverMessage = duplicateList.find { it.chatId > 0 }
-                    val chosenMessage = serverMessage ?: duplicateList.first()
-                    
-                    android.util.Log.w("MessagesList", "🔧 UI DEDUPLICATION: Found ${duplicateList.size} duplicates for content '${chosenMessage.content.take(30)}...', chose ${if (serverMessage != null) "server" else "optimistic"} message (ID:${chosenMessage.id}, ChatID:${chosenMessage.chatId})")
-                    android.util.Log.d("MessagesList", "🔧 UI DEDUPLICATION: Duplicate list: ${duplicateList.map { "ID:${it.id} ChatID:${it.chatId}" }}")
-                    
-                    chosenMessage
+    android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
+
+    // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
+
+    // 🔧 AUTO-SCROLL FIX: Use rememberUpdatedState to ensure snapshotFlow always reads current messages
+    // Without this, LaunchedEffect(Unit) captures the initial messages reference and never sees updates
+    val currentMessages by rememberUpdatedState(messages)
+
+    // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
+    // Use snapshotFlow + debounce to avoid cancellation when messages arrive rapidly
+    // (Previous approach with LaunchedEffect keys + delay would cancel on each new message)
+    android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
+    LaunchedEffect(Unit) {
+        snapshotFlow { Triple(currentMessages.size, currentMessages.lastOrNull()?.id, currentMessages.lastOrNull()?.timestamp) }
+            .debounce(100L)
+            .collect { (size, lastId, _) ->
+                android.util.Log.d("MessagesList", "🔥 DEBOUNCE_COLLECTED: messages.size=$size, lastId=$lastId")
+                if (currentMessages.isNotEmpty()) {
+                    val targetIndex = currentMessages.size - 1
+                    if (targetIndex >= 0) {
+                        listState.scrollToItem(targetIndex)
+                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${currentMessages.size})")
+                    }
                 }
-                else -> null
             }
-        }.sortedBy { it.timestamp } // Maintain chronological order
-        
-        if (deduplicated.size != originalSize) {
-            android.util.Log.w("MessagesList", "🔧 UI DEDUPLICATION: Fixed chat migration race condition - removed ${originalSize - deduplicated.size} duplicate messages (${originalSize} -> ${deduplicated.size})")
-        }
-        
-        deduplicated
     }
-    
+
     LazyColumn(
         state = listState,
         modifier = modifier
             .fillMaxWidth() // Only fill width, not height - prevents overlay
-            .semantics { 
+            .semantics {
                 contentDescription = "Chat messages list"
             },
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(deduplicatedMessages, key = { message -> 
-            // 🔧 SAFETY FIX: Create unique key from content+timestamp to prevent any LazyColumn duplication
-            // This ensures even if somehow duplicates slip through, they won't render as separate items
-            "${message.content.hashCode()}_${message.timestamp}_${message.type}"
+        items(messages, key = { message ->
+            // Use message ID as key for stable identity
+            message.id
         }) { message ->
             MessageItem(
                 message = message,

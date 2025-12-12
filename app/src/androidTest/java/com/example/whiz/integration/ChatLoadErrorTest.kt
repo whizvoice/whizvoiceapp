@@ -104,11 +104,24 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
             
             // Reset persistent disconnect flag if it was set
             if (whizServerRepository.persistentDisconnectForTest()) {
-                // Just reset the flag, don't try to connect
                 whizServerRepository.connect(turnOffPersistentDisconnect = true)
+
+                // Wait for WebSocket to actually connect before proceeding
+                // This prevents race conditions where the next test starts before
+                // the WebSocket is fully connected
+                val connectTimeout = 5000L
+                val startTime = System.currentTimeMillis()
+                while (!whizServerRepository.isConnected() &&
+                       System.currentTimeMillis() - startTime < connectTimeout) {
+                    delay(100)
+                }
+
+                if (!whizServerRepository.isConnected()) {
+                    Log.w(TAG, "WebSocket did not reconnect within timeout during cleanup")
+                }
             }
-            
-            // Reset TestInterceptor state
+
+            // Reset TestInterceptor state AFTER connection is established
             TestInterceptor.persistentDisconnectForTestCheck = null
             TestInterceptor.simulateNetworkErrorForManualDisconnect = true
             

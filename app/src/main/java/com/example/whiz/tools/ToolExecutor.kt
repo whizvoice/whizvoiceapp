@@ -64,53 +64,56 @@ class ToolExecutor @Inject constructor(
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
 
                 when (toolName) {
-                    "launch_app" -> {
-                        Log.i(TAG, "🎯 Matched launch_app tool, calling executeAppLauncher")
+                    "agent_launch_app" -> {
+                        Log.i(TAG, "🎯 Matched agent_launch_app tool, calling executeAppLauncher")
                         executeAppLauncher(requestId, params)
                     }
-                    "whatsapp_select_chat" -> {
+                    "agent_whatsapp_select_chat" -> {
                         executeWhatsAppSelectChat(requestId, params)
                     }
-                    "whatsapp_send_message" -> {
+                    "agent_whatsapp_send_message" -> {
                         executeWhatsAppSendMessage(requestId, params)
                     }
-                    "whatsapp_draft_message" -> {
+                    "agent_whatsapp_draft_message" -> {
                         executeWhatsAppDraftMessage(requestId, params)
                     }
-                    "sms_select_chat" -> {
+                    "agent_sms_select_chat" -> {
                         executeSMSSelectChat(requestId, params)
                     }
-                    "sms_draft_message" -> {
+                    "agent_sms_draft_message" -> {
                         executeSMSDraftMessage(requestId, params)
                     }
-                    "sms_send_message" -> {
+                    "agent_sms_send_message" -> {
                         executeSMSSendMessage(requestId, params)
                     }
-                    "disable_continuous_listening" -> {
+                    "agent_disable_continuous_listening" -> {
                         executeDisableContinuousListening(requestId, voiceManager)
                     }
-                    "set_tts_enabled" -> {
+                    "agent_set_tts_enabled" -> {
                         executeSetTTSEnabled(requestId, params, chatViewModel)
                     }
-                    "play_youtube_music" -> {
+                    "agent_play_youtube_music" -> {
                         executePlayYouTubeMusic(requestId, params)
                     }
-                    "queue_youtube_music" -> {
+                    "agent_queue_youtube_music" -> {
                         executeQueueYouTubeMusic(requestId, params)
                     }
-                    "search_google_maps_location" -> {
+                    "agent_search_google_maps_location" -> {
                         executeSearchGoogleMapsLocation(requestId, params)
                     }
-                    "search_google_maps_phrase" -> {
+                    "agent_search_google_maps_phrase" -> {
                         executeSearchGoogleMapsPhrase(requestId, params)
                     }
-                    "get_google_maps_directions" -> {
+                    "agent_get_google_maps_directions" -> {
                         executeGetGoogleMapsDirections(requestId, params)
                     }
-                    "recenter_google_maps" -> {
+                    "agent_recenter_google_maps" -> {
                         executeRecenterGoogleMaps(requestId, params)
                     }
-                    "select_location_from_list" -> {
+                    "agent_fullscreen_google_maps" -> {
+                        executeFullscreenGoogleMaps(requestId, params)
+                    }
+                    "agent_select_location_from_list" -> {
                         executeSelectLocationFromList(requestId, params)
                     }
                     else -> {
@@ -156,47 +159,51 @@ class ToolExecutor @Inject constructor(
         return when (packageName) {
             "com.google.android.apps.maps" -> listOf(
                 JSONObject().apply {
-                    put("name", "search_google_maps_location")
+                    put("name", "agent_search_google_maps_location")
                     put("description", "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.")
                 },
                 JSONObject().apply {
-                    put("name", "search_google_maps_phrase")
+                    put("name", "agent_search_google_maps_phrase")
                     put("description", "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps")
                 },
                 JSONObject().apply {
-                    put("name", "get_google_maps_directions")
+                    put("name", "agent_get_google_maps_directions")
                     put("description", "Get directions to the currently selected location. Must call search first.")
                 },
                 JSONObject().apply {
-                    put("name", "select_location_from_list")
+                    put("name", "agent_select_location_from_list")
                     put("description", "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.")
                 },
                 JSONObject().apply {
-                    put("name", "recenter_google_maps")
+                    put("name", "agent_recenter_google_maps")
                     put("description", "Re-center the map to your current location")
+                },
+                JSONObject().apply {
+                    put("name", "agent_fullscreen_google_maps")
+                    put("description", "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay")
                 }
             )
             "com.google.android.apps.youtube.music" -> listOf(
                 JSONObject().apply {
-                    put("name", "play_youtube_music")
+                    put("name", "agent_play_youtube_music")
                     put("description", "Play a song or artist in YouTube Music")
                 },
                 JSONObject().apply {
-                    put("name", "queue_youtube_music")
+                    put("name", "agent_queue_youtube_music")
                     put("description", "Add a song or artist to the YouTube Music queue")
                 }
             )
             "com.whatsapp" -> listOf(
                 JSONObject().apply {
-                    put("name", "whatsapp_select_chat")
+                    put("name", "agent_whatsapp_select_chat")
                     put("description", "Select a specific chat in WhatsApp by contact/group name")
                 },
                 JSONObject().apply {
-                    put("name", "whatsapp_draft_message")
+                    put("name", "agent_whatsapp_draft_message")
                     put("description", "Draft a message for user review before sending")
                 },
                 JSONObject().apply {
-                    put("name", "whatsapp_send_message")
+                    put("name", "agent_whatsapp_send_message")
                     put("description", "Send the drafted message (must draft first)")
                 }
             )
@@ -210,15 +217,15 @@ class ToolExecutor @Inject constructor(
 
                     listOf(
                         JSONObject().apply {
-                            put("name", "sms_select_chat")
+                            put("name", "agent_sms_select_chat")
                             put("description", "Select a specific SMS conversation by contact name")
                         },
                         JSONObject().apply {
-                            put("name", "sms_draft_message")
+                            put("name", "agent_sms_draft_message")
                             put("description", "Draft an SMS message for user review before sending")
                         },
                         JSONObject().apply {
-                            put("name", "sms_send_message")
+                            put("name", "agent_sms_send_message")
                             put("description", "Send the drafted SMS message (must draft first)")
                         }
                     )
@@ -259,7 +266,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "launch_app",
+                    toolName = "agent_launch_app",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -271,7 +278,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing app launcher", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "launch_app",
+                    toolName = "agent_launch_app",
                     requestId = requestId,
                     error = "Failed to launch app: ${e.message}"
                 )
@@ -298,17 +305,17 @@ class ToolExecutor @Inject constructor(
             
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "whatsapp_select_chat",
+                    toolName = "agent_whatsapp_select_chat",
                     requestId = requestId,
                     result = resultJson
                 )
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp select chat", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "whatsapp_select_chat",
+                    toolName = "agent_whatsapp_select_chat",
                     requestId = requestId,
                     error = "Failed to select WhatsApp chat: ${e.message}"
                 )
@@ -322,32 +329,35 @@ class ToolExecutor @Inject constructor(
         try {
             val message = params.getString("message")
             val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
-            Log.i(TAG, "Drafting WhatsApp message: message='$message', previousText='$previousText'")
-            
-            val result = screenAgentTools.draftWhatsAppMessage(message, previousText)
-            
+            val chatName = if (params.has("chat_name")) params.getString("chat_name") else null
+            Log.i(TAG, "Drafting WhatsApp message: message='$message', previousText='$previousText', chatName='$chatName'")
+
+            val result = screenAgentTools.draftWhatsAppMessage(message, previousText, chatName)
+
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
+                // Add reminder for the LLM to wait for user confirmation
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
             }
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
             
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "whatsapp_draft_message",
+                    toolName = "agent_whatsapp_draft_message",
                     requestId = requestId,
                     result = resultJson
                 )
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp draft message", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "whatsapp_draft_message",
+                    toolName = "agent_whatsapp_draft_message",
                     requestId = requestId,
                     error = "Failed to draft WhatsApp message: ${e.message}"
                 )
@@ -373,7 +383,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "whatsapp_send_message",
+                    toolName = "agent_whatsapp_send_message",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -383,7 +393,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing WhatsApp send message", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "whatsapp_send_message",
+                    toolName = "agent_whatsapp_send_message",
                     requestId = requestId,
                     error = "Failed to send WhatsApp message: ${e.message}"
                 )
@@ -411,7 +421,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "sms_select_chat",
+                    toolName = "agent_sms_select_chat",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -421,7 +431,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing SMS select chat", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "sms_select_chat",
+                    toolName = "agent_sms_select_chat",
                     requestId = requestId,
                     error = "Failed to select SMS chat: ${e.message}"
                 )
@@ -435,23 +445,26 @@ class ToolExecutor @Inject constructor(
         try {
             val message = params.getString("message")
             val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+            val contactName = if (params.has("contact_name")) params.getString("contact_name") else null
 
-            Log.i(TAG, "Drafting SMS message: message='$message', previousText='$previousText'")
+            Log.i(TAG, "Drafting SMS message: message='$message', previousText='$previousText', contactName='$contactName'")
 
-            val result = screenAgentTools.draftSMSMessage(message, previousText)
+            val result = screenAgentTools.draftSMSMessage(message, previousText, contactName)
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
+                // Add reminder for the LLM to wait for user confirmation
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
             }
 
             Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "sms_draft_message",
+                    toolName = "agent_sms_draft_message",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -461,7 +474,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing SMS draft message", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "sms_draft_message",
+                    toolName = "agent_sms_draft_message",
                     requestId = requestId,
                     error = "Failed to draft SMS message: ${e.message}"
                 )
@@ -486,7 +499,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "sms_send_message",
+                    toolName = "agent_sms_send_message",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -496,7 +509,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing SMS send message", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "sms_send_message",
+                    toolName = "agent_sms_send_message",
                     requestId = requestId,
                     error = "Failed to send SMS message: ${e.message}"
                 )
@@ -513,7 +526,7 @@ class ToolExecutor @Inject constructor(
                 Log.e(TAG, "VoiceManager not provided for disable_continuous_listening")
                 _toolResults.emit(
                     ToolExecutionResult.Error(
-                        toolName = "disable_continuous_listening",
+                        toolName = "agent_disable_continuous_listening",
                         requestId = requestId,
                         error = "VoiceManager not available"
                     )
@@ -544,7 +557,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "disable_continuous_listening",
+                    toolName = "agent_disable_continuous_listening",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -554,7 +567,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error disabling continuous listening", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "disable_continuous_listening",
+                    toolName = "agent_disable_continuous_listening",
                     requestId = requestId,
                     error = "Failed to disable continuous listening: ${e.message}"
                 )
@@ -572,7 +585,7 @@ class ToolExecutor @Inject constructor(
                 Log.e(TAG, "ChatViewModel not provided for set_tts_enabled")
                 _toolResults.emit(
                     ToolExecutionResult.Error(
-                        toolName = "set_tts_enabled",
+                        toolName = "agent_set_tts_enabled",
                         requestId = requestId,
                         error = "ChatViewModel not available"
                     )
@@ -613,7 +626,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "set_tts_enabled",
+                    toolName = "agent_set_tts_enabled",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -623,7 +636,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error setting TTS enabled", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "set_tts_enabled",
+                    toolName = "agent_set_tts_enabled",
                     requestId = requestId,
                     error = "Failed to set TTS enabled: ${e.message}"
                 )
@@ -634,11 +647,12 @@ class ToolExecutor @Inject constructor(
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
-            Log.i(TAG, "Playing song on YouTube Music: $query")
+            val contentType = params.optString("content_type", "song")
+            Log.i(TAG, "Playing on YouTube Music: $query (contentType=$contentType)")
 
             // The server has already decided to use YouTube Music by calling this tool
             // No need to check preferences here - just execute the action
-            val result = screenAgentTools.playYouTubeMusicSong(query)
+            val result = screenAgentTools.playYouTubeMusicSong(query, contentType)
 
             Log.i(TAG, "YouTube Music play result: success=${result.success}, error=${result.error}")
 
@@ -654,7 +668,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "play_youtube_music",
+                    toolName = "agent_play_youtube_music",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -664,7 +678,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing music play", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "play_youtube_music",
+                    toolName = "agent_play_youtube_music",
                     requestId = requestId,
                     error = "Failed to play song: ${e.message}"
                 )
@@ -695,7 +709,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "queue_youtube_music",
+                    toolName = "agent_queue_youtube_music",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -705,7 +719,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing music queue", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "queue_youtube_music",
+                    toolName = "agent_queue_youtube_music",
                     requestId = requestId,
                     error = "Failed to queue song: ${e.message}"
                 )
@@ -733,7 +747,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "search_google_maps_location",
+                    toolName = "agent_search_google_maps_location",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -743,7 +757,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing Google Maps search", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "search_google_maps_location",
+                    toolName = "agent_search_google_maps_location",
                     requestId = requestId,
                     error = "Failed to search location: ${e.message}"
                 )
@@ -771,7 +785,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "search_google_maps_phrase",
+                    toolName = "agent_search_google_maps_phrase",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -781,7 +795,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing Google Maps phrase search", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "search_google_maps_phrase",
+                    toolName = "agent_search_google_maps_phrase",
                     requestId = requestId,
                     error = "Failed to search phrase: ${e.message}"
                 )
@@ -792,10 +806,11 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
             val mode = if (params.has("mode")) params.getString("mode") else null
-            val alreadyInDirections = if (params.has("already_in_directions")) params.getBoolean("already_in_directions") else false
-            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, alreadyInDirections: $alreadyInDirections")
+            val position = if (params.has("position")) params.getInt("position") else null
+            val fragment = if (params.has("fragment")) params.getString("fragment") else null
+            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, position: $position, fragment: $fragment")
 
-            val result = screenAgentTools.getGoogleMapsDirections(mode, alreadyInDirections)
+            val result = screenAgentTools.getGoogleMapsDirections(mode, position, fragment)
 
             Log.i(TAG, "Google Maps directions result: success=${result.success}, error=${result.error}")
 
@@ -810,7 +825,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "get_google_maps_directions",
+                    toolName = "agent_get_google_maps_directions",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -820,7 +835,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing Google Maps directions", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "get_google_maps_directions",
+                    toolName = "agent_get_google_maps_directions",
                     requestId = requestId,
                     error = "Failed to get directions: ${e.message}"
                 )
@@ -846,7 +861,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "recenter_google_maps",
+                    toolName = "agent_recenter_google_maps",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -856,9 +871,45 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing Google Maps recenter", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "recenter_google_maps",
+                    toolName = "agent_recenter_google_maps",
                     requestId = requestId,
                     error = "Failed to recenter map: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeFullscreenGoogleMaps(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Fullscreening Google Maps")
+
+            val result = screenAgentTools.fullscreenGoogleMaps()
+
+            Log.i(TAG, "Google Maps fullscreen result: success=${result.success}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Google Maps fullscreen result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_fullscreen_google_maps",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Google Maps fullscreen", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_fullscreen_google_maps",
+                    requestId = requestId,
+                    error = "Failed to fullscreen map: ${e.message}"
                 )
             )
         }
@@ -891,7 +942,7 @@ class ToolExecutor @Inject constructor(
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "select_location_from_list",
+                    toolName = "agent_select_location_from_list",
                     requestId = requestId,
                     result = resultJson
                 )
@@ -901,7 +952,7 @@ class ToolExecutor @Inject constructor(
             Log.e(TAG, "Error executing select location from list", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "select_location_from_list",
+                    toolName = "agent_select_location_from_list",
                     requestId = requestId,
                     error = "Failed to select location: ${e.message}"
                 )
@@ -911,15 +962,15 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("launch_app", "whatsapp_select_chat", "whatsapp_draft_message", "whatsapp_send_message", "sms_select_chat", "sms_draft_message", "sms_send_message", "disable_continuous_listening", "set_tts_enabled", "play_youtube_music", "queue_youtube_music", "search_google_maps_location", "search_google_maps_phrase", "get_google_maps_directions", "recenter_google_maps", "select_location_from_list")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
     fun getToolSchema(toolName: String): JSONObject? {
         return when (toolName) {
-            "launch_app" -> {
+            "agent_launch_app" -> {
                 JSONObject().apply {
-                    put("name", "launch_app")
+                    put("name", "agent_launch_app")
                     put("description", "Launch an application by its name. The return value includes an 'available_tools' array listing specialized tools that can control the launched app (e.g., for Maps, YouTube Music, WhatsApp). Check the return value and use those tools to complete the user's request.")
                     put("parameters", JSONObject().apply {
                         put("app_name", JSONObject().apply {
@@ -930,9 +981,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "whatsapp_select_chat" -> {
+            "agent_whatsapp_select_chat" -> {
                 JSONObject().apply {
-                    put("name", "whatsapp_select_chat")
+                    put("name", "agent_whatsapp_select_chat")
                     put("description", "Select a specific chat in WhatsApp")
                     put("parameters", JSONObject().apply {
                         put("chat_name", JSONObject().apply {
@@ -943,9 +994,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "whatsapp_send_message" -> {
+            "agent_whatsapp_send_message" -> {
                 JSONObject().apply {
-                    put("name", "whatsapp_send_message")
+                    put("name", "agent_whatsapp_send_message")
                     put("description", "Send a message in WhatsApp. MUST have already drafted the message and received user confirmation.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {
@@ -956,9 +1007,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "whatsapp_draft_message" -> {
+            "agent_whatsapp_draft_message" -> {
                 JSONObject().apply {
-                    put("name", "whatsapp_draft_message")
+                    put("name", "agent_whatsapp_draft_message")
                     put("description", "Draft a message in WhatsApp. Shows overlay for user review. ALWAYS use this before sending to let user confirm the message text.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {
@@ -969,9 +1020,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "sms_select_chat" -> {
+            "agent_sms_select_chat" -> {
                 JSONObject().apply {
-                    put("name", "sms_select_chat")
+                    put("name", "agent_sms_select_chat")
                     put("description", "Select a specific contact/conversation in Google Messages app")
                     put("parameters", JSONObject().apply {
                         put("contact_name", JSONObject().apply {
@@ -982,9 +1033,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "sms_draft_message" -> {
+            "agent_sms_draft_message" -> {
                 JSONObject().apply {
-                    put("name", "sms_draft_message")
+                    put("name", "agent_sms_draft_message")
                     put("description", "Draft an SMS/text message in Google Messages. Shows overlay for user review. ALWAYS use this before sending to let user confirm the message text.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {
@@ -995,9 +1046,9 @@ class ToolExecutor @Inject constructor(
                     })
                 }
             }
-            "sms_send_message" -> {
+            "agent_sms_send_message" -> {
                 JSONObject().apply {
-                    put("name", "sms_send_message")
+                    put("name", "agent_sms_send_message")
                     put("description", "Send an SMS/text message in Google Messages. MUST have already drafted the message and received user confirmation.")
                     put("parameters", JSONObject().apply {
                         put("message", JSONObject().apply {

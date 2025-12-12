@@ -219,15 +219,39 @@ abstract class BaseIntegrationTest {
      */
     protected fun isMicrophoneGranted(): Boolean {
         return ContextCompat.checkSelfPermission(
-            context, 
+            context,
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
     }
-    
+
+    /**
+     * Detects if the current test is running on an emulator.
+     * Emulators typically have "generic", "sdk", or "emulator" in their device/model names.
+     */
+    protected fun isRunningOnEmulator(): Boolean {
+        val brand = android.os.Build.BRAND
+        val device = android.os.Build.DEVICE
+        val model = android.os.Build.MODEL
+        val product = android.os.Build.PRODUCT
+        val hardware = android.os.Build.HARDWARE
+
+        val isEmulator = (brand.startsWith("generic") && device.startsWith("generic"))
+            || "google_sdk" == product
+            || model.contains("google_sdk")
+            || model.contains("Emulator")
+            || model.contains("Android SDK built for")
+            || hardware.contains("goldfish")
+            || hardware.contains("ranchu")
+
+        android.util.Log.d("BaseIntegrationTest", "Emulator detection: brand=$brand, device=$device, model=$model, product=$product, hardware=$hardware -> isEmulator=$isEmulator")
+
+        return isEmulator
+    }
+
     // Note: Accessibility mocking is now handled by TestAccessibilityChecker
     // Tests should inject AccessibilityChecker and cast to TestAccessibilityChecker
     // to access setMockServiceEnabled() method
-    
+
     /**
      * Set up screenshot directory - ensure it exists but preserve existing screenshots from other tests
      */

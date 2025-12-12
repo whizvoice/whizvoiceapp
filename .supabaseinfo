@@ -70,6 +70,39 @@ the combination of user_id, entity_type, and entity_id is unique.
 
 This table also has indexes
 
+screen_agent_ui_dumps table:
+
+id | int8
+created_at | timestamp with time zone | now()
+user_id | text | foreign key to users.user_id
+dump_reason | text | NOT NULL | tag like 'whatsapp_unknown_screen', 'ytmusic_no_play_button'
+error_message | text | human-readable error description
+ui_hierarchy | text | NOT NULL | full UI dump text content
+package_name | text | app package where error occurred (e.g., 'com.whatsapp')
+device_model | text | e.g., 'Pixel 7'
+device_manufacturer | text | e.g., 'Google'
+android_version | text | e.g., '14'
+screen_width | integer | screen width in pixels
+screen_height | integer | screen height in pixels
+app_version | text | Whiz app version
+conversation_id | int8 | foreign key to conversations.id (nullable)
+recent_actions | jsonb | default '[]' | last 5 screen agent actions
+screen_agent_context | jsonb | optional extra debug info
+
+This table stores UI hierarchy dumps captured when the screen agent encounters navigation failures, used for debugging and improving screen agent code.
+
+This table has indexes:
+- idx_ui_dumps_user_id on screen_agent_ui_dumps(user_id)
+- idx_ui_dumps_dump_reason on screen_agent_ui_dumps(dump_reason)
+- idx_ui_dumps_created_at on screen_agent_ui_dumps(created_at DESC)
+
+policies:
+
+CREATE POLICY "Service role can do everything" ON screen_agent_ui_dumps
+    FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
 Note that supabase has had some SQL editor functions for the encryption and decryption of the encrypted_preferences column in the user_preferences table; that looks like this:
 
 function for getting a specific key's value from regular (not encrypted) preferences

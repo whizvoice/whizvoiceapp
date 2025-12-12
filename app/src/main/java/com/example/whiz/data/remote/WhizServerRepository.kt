@@ -75,7 +75,7 @@ class WhizServerRepository @Inject constructor(
     private val authRepository: AuthRepository,
     private val connectionStateManager: ConnectionStateManager
 ) {
-    private val TAG = "WhizServerRepo"
+    private val TAG = "com.example.whiz.WebSocket"
     private var webSocket: WebSocket? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
@@ -272,6 +272,7 @@ class WhizServerRepository @Inject constructor(
     
     suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
         Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
+        Log.d(TAG, "🔌 WEBSOCKET CONNECT CALLED - conversationId: $conversationId", Exception("connect() stack trace"))
 
         // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
         if (turnOffPersistentDisconnect && conversationId == null) {
@@ -326,6 +327,15 @@ class WhizServerRepository @Inject constructor(
                     Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
                     return
                 }
+
+                // Check if this is just a migration from optimistic to real ID
+                if (connectionState == ConnectionState.CONNECTED &&
+                    currentConversationId != null && conversationId != null &&
+                    connectionStateManager.areChatsMigrated(currentConversationId, conversationId)) {
+                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server already updated subscription)")
+                    return
+                }
+
                 // Different conversation or still connecting - close and reconnect
                 Log.d(TAG, "Currently ${connectionState.name.lowercase()} to conversation $currentConversationId, need to connect to $conversationId - closing old connection")
                 // Continue below to close old connection and open new one
@@ -397,14 +407,25 @@ class WhizServerRepository @Inject constructor(
             
             val request = requestBuilder.build()
             Log.d(TAG, "Creating new WebSocket with URL: $websocketUrl, persistentDisconnect=$persistentDisconnectForTest")
-            
+
+            // Check if we should simulate connection failure for testing
+            if (persistentDisconnectForTest) {
+                Log.d(TAG, "Simulating WebSocket connection failure due to persistentDisconnectForTest flag")
+                // Reset connection state
+                connectionState = ConnectionState.IDLE
+                // Throw IOException to simulate network failure - this will trigger scheduleReconnect()
+                throw IOException("Network unavailable - WebSocket persistently disconnected for testing")
+            }
+
             // Create the WebSocket first
+            Log.d(TAG, "🔥 Creating WebSocket with URL: $websocketUrl, thisGeneration=$thisGeneration")
             val newWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.d(TAG, "🔥 onOpen ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration")
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
-                            Log.d(TAG, "onOpen: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            Log.w(TAG, "🔥 onOpen: IGNORING callback - generation mismatch! thisGen=$thisGeneration, currentGen=$currentGeneration")
                             webSocket.close(1000, "Superseded by newer connection")
                             return
                         }
@@ -578,6 +599,8 @@ class WhizServerRepository @Inject constructor(
                                     val lastActiveId = connectionStateManager.getLastActiveConversationId()
                                     if (lastActiveId == clientConversationId) {
                                         Log.d(TAG, "Updating ConnectionStateManager: migration from $clientConversationId to $conversationId")
+                                        // Register migration FIRST so areChatsMigrated() check in connect() will work
+                                        connectionStateManager.registerChatMigration(clientConversationId, conversationId)
                                         connectionStateManager.setActiveConversation(conversationId)
                                     }
                                 }
@@ -647,6 +670,7 @@ class WhizServerRepository @Inject constructor(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.d(TAG, "🔥 onClosed ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration, code=$code, reason=$reason")
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
@@ -687,10 +711,11 @@ class WhizServerRepository @Inject constructor(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.e(TAG, "🔥 onFailure ENTRY - thisGeneration=$thisGeneration, currentGeneration=$currentGeneration, error=${t.message}", t)
                     try {
                         // Check if this callback is from the current generation
                         if (thisGeneration != currentGeneration) {
-                            Log.d(TAG, "onFailure: Ignoring callback from old generation $thisGeneration (current: $currentGeneration)")
+                            Log.w(TAG, "🔥 onFailure: IGNORING callback - generation mismatch! thisGen=$thisGeneration, currentGen=$currentGeneration")
                             return
                         }
                         
@@ -745,12 +770,12 @@ class WhizServerRepository @Inject constructor(
                     webSocket?.cancel() // Cancel the hanging connection
                     webSocket = null
                     emitEvent(WebSocketEvent.Error(Exception("WebSocket connection timeout - server may not recognize conversation_id=$conversationId")))
-                    
-                    // Only attempt reconnect if not manually disconnected
-                    if (!persistentDisconnectForTest) {
-                        Log.d(TAG, "Scheduling reconnect after timeout")
-                        scheduleReconnect()
-                    }
+
+                    // Always schedule reconnect after timeout - the retry mechanism should continue
+                    // even during test-induced disconnections. The flag will block the actual connection
+                    // attempt in connect(), but the retry loop should keep running.
+                    Log.d(TAG, "Scheduling reconnect after timeout (persistentDisconnect=$persistentDisconnectForTest)")
+                    scheduleReconnect()
                 }
             }
             

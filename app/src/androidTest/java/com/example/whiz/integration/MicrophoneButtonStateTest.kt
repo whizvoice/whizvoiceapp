@@ -50,7 +50,6 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     lateinit var ttsManager: com.example.whiz.services.TTSManager
 
     private val createdChatIds = mutableListOf<Long>()
-    private var createdNewChatThisTest = false
 
     companion object {
         private const val TAG = "MicrophoneButtonStateTest"
@@ -72,19 +71,25 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     @After
     fun cleanup() {
         runBlocking {
-            Log.d(TAG, "Cleaning up test chats")
-            if (createdNewChatThisTest && createdChatIds.isNotEmpty()) {
+            Log.d(TAG, "🧹 Cleaning up test chats")
+            try {
+                Log.d(TAG, "🔍 About to cleanup. Tracked chat IDs: $createdChatIds")
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = emptyList(),
+                    additionalPatterns = listOf(
+                        "Explain E=mc²",
+                        "Explain E=mc² in detail"
+                    ),
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
-            }
 
-            ComposeTestHelper.cleanup()
-            Log.d(TAG, "Test cleanup completed")
+                ComposeTestHelper.cleanup()
+                Log.d(TAG, "✅ Test cleanup completed")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Error during test chat cleanup", e)
+            }
         }
     }
 
@@ -228,8 +233,6 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
                 failWithScreenshot("new_chat_navigation_failed", "Failed to navigate to new chat")
                 return@runBlocking
             }
-
-            createdNewChatThisTest = true
 
             // Enable voice response (TTS) by clicking the button in top-right
             Log.d(TAG, "Enabling voice response for bot to respond with TTS")

@@ -105,7 +105,7 @@ fun ChatsListScreen(
         },
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("My Chats") },
+                title = { Text("My Chats", modifier = Modifier.semantics { contentDescription = "My Chats Title" }) },
                 actions = {
                     if (!hasPermission) {
                         IconButton(

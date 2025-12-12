@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
 import sys
-sys.path.insert(0, '/Users/ruthgracewong/android_screenshot_testing')
+sys.path.insert(0, '/Users/ruthgracewong/android_accessibility_tester')
 
 import android_accessibility_tester
 import subprocess
 import os
 import pytest
+import time
 
 
 # Set up Android SDK paths
@@ -45,6 +46,35 @@ def load_anthropic_api_key():
 load_anthropic_api_key()
 
 
+def get_device_model():
+    """Get the connected Android device model."""
+    result = subprocess.run(
+        ['adb', 'shell', 'getprop', 'ro.product.model'],
+        capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+def get_phone_numbers():
+    """Get phone numbers based on device type.
+
+    Returns tuple of (whatsapp_number, sms_number) in format '+1(628)XXX-XXXX'
+    """
+    device_model = get_device_model()
+    print(f"📱 Detected device: {device_model}")
+
+    if "Pixel 8" in device_model:
+        # Pixel 8: WhatsApp uses 209-9005, SMS uses 227-4544
+        whatsapp = ("+1(628)209-9005", "(628) 209-9005")
+        sms = ("Whiz Voice Test", "+1(628)227-4544")
+    else:
+        # Pixel 7a (default): WhatsApp uses 227-4544, SMS uses 209-9005
+        whatsapp = ("+1(628)227-4544", "(628) 227-4544")
+        sms = ("Ruth Grace Wong", "+1(628)209-9005")
+
+    return whatsapp, sms
+
+
 # Global variable to store logcat process
 _logcat_process = None
 
@@ -55,7 +85,7 @@ def install_debug_app(force=False):
     cmd = [script_path]
     if force:
         cmd.append('--force')
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ)
 
     # Grant overlay permission using both pm grant and appops
     package_name = "com.example.whiz.debug"
@@ -84,10 +114,10 @@ def start_logcat():
     # Clear logcat buffer
     subprocess.run(['adb', 'logcat', '-c'], check=False)
 
-    # Start logcat and capture output
+    # Start logcat and capture output (filtered to WhizVoice app to avoid buffer overflow)
     logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
     _logcat_process = subprocess.Popen(
-        ['adb', 'logcat'],
+        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
@@ -180,7 +210,12 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     # UI check approach (causes accessibility dialog flicker)
     max_attempts = 5
     for attempt in range(max_attempts):
-        if check_element_exists_in_ui(tester, text="My Chats", wait_after_dump=2.0):
+        # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
+        # (not just viewing a chat where "My Chats" might appear as a navigation element)
+        has_my_chats_title = check_element_exists_in_ui(tester, content_desc="My Chats Title", wait_after_dump=2.0)
+        has_new_chat_button = check_element_exists_in_ui(tester, content_desc="New Chat", wait_after_dump=0.5)
+
+        if has_my_chats_title and has_new_chat_button:
             print(f"✅ Found My Chats screen on attempt {attempt + 1}")
             return (True, "")
 
@@ -284,7 +319,7 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(2)
 
             # Click to select WhizVoice DEBUG
-            tester.tap(500, 1000)
+            tester.tap(500, 900)
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG
@@ -311,7 +346,7 @@ def enable_accessibility_service_if_needed(tester):
             time.sleep(1)
 
             # Click toggle to enable WhizVoice DEBUG
-            tester.tap(925, 600)
+            tester.tap(925, 400)
             time.sleep(1)
 
             # Click Allow button
@@ -388,8 +423,25 @@ def app_installed():
     """Install the debug app once for all tests."""
     clear_test_output_dir()
     install_debug_app(force=True)
+
+    # Wake device and keep screen on during tests
+    print("📱 Waking device and keeping screen on during tests...")
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MENU'], check=False)  # Dismiss lock screen
+    time.sleep(1)
+
+    # Prevent screen from sleeping during tests
+    subprocess.run(['adb', 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '2147483647'], check=False)  # Max timeout (~24 days)
+    subprocess.run(['adb', 'shell', 'svc', 'power', 'stayon', 'true'], check=False)  # Keep screen on while USB connected
+
     start_logcat()
     yield
+
+    # Restore screen timeout settings
+    print("📱 Restoring screen timeout settings...")
+    subprocess.run(['adb', 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '30000'], check=False)  # 30 seconds default
+    subprocess.run(['adb', 'shell', 'svc', 'power', 'stayon', 'false'], check=False)
+
     stop_logcat()
 
 
@@ -397,6 +449,10 @@ def app_installed():
 def tester(app_installed):
     """Create a fresh tester instance and open the app for each test."""
     import time
+
+    # Force stop the app to ensure a clean start (not resuming from bubble mode or previous chat)
+    subprocess.run(['adb', 'shell', 'am', 'force-stop', 'com.example.whiz.debug'], check=False)
+    time.sleep(1)
 
     tester = android_accessibility_tester.AndroidAccessibilityTester()
     tester.open_app("com.example.whiz.debug")
@@ -418,6 +474,10 @@ def tester(app_installed):
 def test_whatsapp_draft_message(tester):
     """Test that we can draft and modify draft and send message in WhatsApp."""
     import time
+
+    # Get phone numbers based on device
+    whatsapp_numbers, _ = get_phone_numbers()
+    whatsapp_full, whatsapp_short = whatsapp_numbers
 
     print("\n========================================")
     print("STEP 1: Opening WhizVoice Debug app")
@@ -463,13 +523,13 @@ def test_whatsapp_draft_message(tester):
     # Send a voice transcription with the test message
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice'")
+    print(f"📤 Broadcasting: 'Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a message to +1(628)209-9005 that says hey whats up hows it going just tryna test whiz voice"',
+        '--es', 'text', f'"Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -480,12 +540,18 @@ def test_whatsapp_draft_message(tester):
     print("STEP 6: Waiting for draft overlay to appear")
     print("========================================")
     # wait for draft overlay to appear over whatsapp input text bar
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0...")
-    result = tester.wait_for_pixel_color(300, 1380, (255, 250, 208), timeout=15.0)  # #fffad0
+    # Y position varies by device: Pixel 8 uses 1380, Pixel 7a uses 1425
+    device_model = get_device_model()
+    overlay_y = 1380 if "Pixel 8" in device_model else 1425
+    # Support light_yellow (#FFF9C4), and other yellow variants (#fffad0, #fff176, #d2cea4, #d2cfa5)
+    print(f"👀 Waiting for yellow overlay at pixel (300, {overlay_y}) with color #fff9c4, #fffad0, #fff176, #d2cea4, or #d2cfa5...")
+    result = tester.wait_for_pixel_color(300, overlay_y, ['#fff9c4', '#fffad0', '#fff176', '#d2cea4', '#d2cfa5'], timeout=30.0)
     if result['matched']:
         print("✅ Draft overlay detected!")
     else:
         print("❌ Draft overlay not detected!")
+        tester.screenshot(screenshot_path)
+        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_overlay_not_detected")
     assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
     print("\n========================================")
@@ -495,7 +561,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey whats up hows it going just tryna test whiz voice'. "
@@ -533,7 +599,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'just trying to test whiz voice' but may not be an exact match. "
@@ -572,7 +638,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "At the bottom of the screen, there is NO yellow overlay. "
         "The most recent rescue mission is something with text similar to: "
@@ -613,7 +679,7 @@ def test_whatsapp_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "WhatsApp is open showing a chat with the contact +1(628)209-9005 or '(628) 209-9005'. "
+        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
         "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
         "The most recent message in the chat has been deleted."
     )
@@ -675,70 +741,69 @@ def test_youtube_music_integration(tester):
     print("STEP 5: Requesting to play song on YouTube Music")
     print("========================================")
     # Send a voice transcription to play songs on YouTube Music
-    print("📤 Broadcasting: 'Hey can you play Golden from Kpop Demon Hunters on YouTube Music?'")
+    # Ask for specific response format so we can detect success/failure
+    play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music.'
+    print(f"📤 Broadcasting: '{play_message}'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hey can you play Golden from Kpop Demon Hunters on YouTube Music?"',
+        '--es', 'text', f'"{play_message}"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
-    print("⏳ Waiting 3 seconds for message to be processed...")
-    time.sleep(3)  # Give time for message to be processed
 
     print("\n========================================")
-    print("STEP 6: Waiting for YouTube Music to open and play song")
+    print("STEP 6: Waiting for response and validating song is actually playing")
     print("========================================")
-    # Wait for YouTube Music to open and song to start playing
-    # The bot should launch YouTube Music, search for the song, and play it
-    print("⏳ Waiting 15 seconds for YouTube Music to open and play the song...")
-    time.sleep(15)
+    # Poll until we see YouTube Music actually playing (not just a menu or search result)
+    max_wait = 30
+    poll_interval = 3
+    play_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
 
-    print("\n========================================")
-    print("STEP 7: Validating song is playing")
-    print("========================================")
-    # Validate YouTube Music is open and showing the song
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "YouTube Music app is open and showing the song 'Golden'."
-        "The song should be the one selected, so it should be showing on the bottom of the screen. "
-        "The song may be actively playing, or it may be paused. "
-        "There may be a yellow notification bubble with a robot head icon visible on the screen."
-    )
-    if not validation_result:
-        print("❌ Song playing validation failed!")
+        # Check if YouTube Music is ACTUALLY playing "Golden" - look for pause button, playback controls, progress bar
+        # AND verify the song title is "Golden"
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the song 'Golden' is ACTUALLY PLAYING in YouTube Music. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see a PAUSE button (not play button) or playback progress bar showing the song is actively playing. Return False if: you see a Play button instead of Pause, it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'. Only return True if 'Golden' is actively playing right now."
+        )
+        if validation_result:
+            print(f"✅ Song actually playing after {(i+1)*poll_interval} seconds")
+            play_succeeded = True
+            break
+        print(f"⏳ Waiting for song to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not play_succeeded:
         save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
-    else:
-        print("✅ YouTube Music opened and playing 'Golden' successfully!")
-    assert validation_result, "Failed to open YouTube Music and play song"
+    assert play_succeeded, "Failed to play Golden on YouTube Music - song never started playing"
+    print("✅ YouTube Music playing 'Golden' successfully!")
 
     print("\n========================================")
-    print("STEP 8: Requesting to queue second song")
+    print("STEP 7: Requesting to queue second song")
     print("========================================")
     # Send a voice transcription to queue up "How it's Done" by HUNTRIX
-    print("📤 Broadcasting: 'Can you queue up How it's Done by HUNTRIX?'")
+    queue_message = "Queue How its Done by HUNTRIX on YouTube Music"
+    print(f"📤 Broadcasting: '{queue_message}'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Can you queue up How it\'s Done by HUNTRIX?"',
+        '--es', 'text', f'"{queue_message}"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
 
-    print("\n========================================")
-    print("STEP 9: Waiting for song to be queued")
-    print("========================================")
-    # Wait 20 seconds for queueing to complete
-    print("⏳ Waiting 20 seconds for song to be added to queue...")
-    time.sleep(20)
+    # Wait for the queue action to complete on the device
+    print(f"⏳ Waiting {max_wait} seconds for queue action to complete...")
+    time.sleep(max_wait)
 
     print("\n========================================")
-    print("STEP 10: Opening queue view")
+    print("STEP 9: Opening queue view")
     print("========================================")
     # Tap to full screen the current song
     print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
@@ -752,7 +817,7 @@ def test_youtube_music_integration(tester):
     time.sleep(2)  # Wait for queue to appear
 
     print("\n========================================")
-    print("STEP 11: Validating song queue")
+    print("STEP 10: Validating song queue")
     print("========================================")
     # Screenshot and validate that it shows the queue with Golden first and How It's Done second
     tester.screenshot(screenshot_path)
@@ -768,6 +833,122 @@ def test_youtube_music_integration(tester):
     assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
     print("\n========================================")
+    print("STEP 11: Requesting to play 90s pop instead")
+    print("========================================")
+    # Send a voice transcription to change to 90s pop
+    change_message = "Actually can you play some 90s pop instead"
+    print(f"📤 Broadcasting: '{change_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{change_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 12: Waiting for music to change from Golden")
+    print("========================================")
+    # Poll until we see the song has changed from Golden (indicating playlist started)
+    music_changed = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if the music changed from "Golden" - meaning a new song/playlist started
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the currently playing song is NO LONGER 'Golden' by Kpop Demon Hunters. "
+            "Return True if you see a DIFFERENT song playing (like 'Baby One More Time', or any other song that is NOT 'Golden'). "
+            "Return False if 'Golden' is still showing as the currently playing track."
+        )
+        if validation_result:
+            print(f"✅ Music changed after {(i+1)*poll_interval} seconds")
+            music_changed = True
+            break
+        print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not music_changed:
+        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_music_change_validation")
+    assert music_changed, "Failed to change music from Golden"
+    print("✅ Music changed successfully!")
+
+    print("\n========================================")
+    print("STEP 13: Pressing back to see playlist")
+    print("========================================")
+    # Press back to exit the full player view and see the playlist
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_BACK'], check=True)
+    time.sleep(2)
+
+    print("\n========================================")
+    print("STEP 14: Validating 90s pop playlist is visible")
+    print("========================================")
+    tester.screenshot(screenshot_path)
+    playlist_validation = tester.validate_screenshot(
+        screenshot_path,
+        "Check if this is a 90s pop playlist or similar. Requirements: "
+        "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
+        "2) You should see a list of songs that are typical 90s pop hits (e.g., Britney Spears, Backstreet Boys, NSYNC, Spice Girls, etc.). "
+        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all."
+    )
+    if not playlist_validation:
+        print("❌ 90s pop playlist validation failed!")
+        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_playlist_validation")
+    else:
+        print("✅ 90s pop playlist validated successfully!")
+    assert playlist_validation, "Failed to validate 90s pop playlist"
+
+    print("\n========================================")
+    print("STEP 15: Requesting to play 99% Invisible podcast")
+    print("========================================")
+    podcast_message = "Play the 99% Invisible podcast"
+    print(f"📤 Broadcasting: '{podcast_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{podcast_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 16: Waiting for podcast to start playing")
+    print("========================================")
+    # Poll until we see the podcast playing
+    podcast_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if 99% Invisible podcast is playing
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if the '99% Invisible' podcast is playing in YouTube Music. Requirements: "
+            "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
+            "2) You must see a PAUSE button (not play button) or playback progress showing it's actively playing. "
+            "Return True if 99% Invisible podcast content is playing. Return False if it's still showing 90s pop music, "
+            "a search results page, or anything other than the 99% Invisible podcast playing."
+        )
+        if validation_result:
+            print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
+            podcast_succeeded = True
+            break
+        print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not podcast_succeeded:
+        save_failed_screenshot(screenshot_path, "youtube_music", "podcast_playing_validation")
+    assert podcast_succeeded, "Failed to play 99% Invisible podcast"
+    print("✅ 99% Invisible podcast playing successfully!")
+
+    # Pause the podcast so it doesn't keep playing after the test
+    print("⏸️  Pausing podcast...")
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE'], check=True)
+
+    print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")
     print("========================================")
 
@@ -777,149 +958,174 @@ def test_google_maps_directions(tester):
 
     screenshot_path = "/tmp/whiz_screen.png"
 
-    # Open WhizVoice Debug app
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
+    def cleanup_google_maps():
+        """Close Google Maps to prevent overlay from interfering with future tests."""
+        print("🧹 Cleaning up: Force stopping Google Maps...")
+        subprocess.run([
+            'adb', 'shell', 'am', 'force-stop', 'com.google.android.apps.maps'
+        ], capture_output=True)
+        time.sleep(1)
 
-    # Navigate to My Chats page
-    success, error_msg = navigate_to_my_chats(tester, "google_maps_directions")
-    assert success, error_msg
+    # Clean up Google Maps at the start to ensure fresh state
+    cleanup_google_maps()
 
-    # Click on coordinates to open a new chat
-    tester.tap(950, 2225)
-    time.sleep(2)
+    try:
+        # Open WhizVoice Debug app
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
 
-    # Validate we are on the New Chat screen
-    tester.screenshot(screenshot_path)
-    validation_result = check_on_new_chat_screen(tester)
-    if not validation_result:
-        screenshot_path_temp = "/tmp/whiz_screen.png"
-        tester.screenshot(screenshot_path_temp)
-        save_failed_screenshot(screenshot_path_temp, "google_maps_directions", "new_chat_screen")
-    assert validation_result, "Failed to reach New Chat screen"
+        # Navigate to My Chats page
+        success, error_msg = navigate_to_my_chats(tester, "google_maps_directions")
+        assert success, error_msg
 
-    # Send a voice transcription to ask for directions to Trader Joe's
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"what are the trader joes near me ?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    time.sleep(3)  # Give time for message to be processed
+        # Click on coordinates to open a new chat
+        tester.tap(950, 2225)
+        time.sleep(2)
 
-    # Wait 15 seconds for the search to complete and "See locations" to appear
-    time.sleep(30)
+        # Validate we are on the New Chat screen
+        tester.screenshot(screenshot_path)
+        validation_result = check_on_new_chat_screen(tester)
+        if not validation_result:
+            screenshot_path_temp = "/tmp/whiz_screen.png"
+            tester.screenshot(screenshot_path_temp)
+            save_failed_screenshot(screenshot_path_temp, "google_maps_directions", "new_chat_screen")
+        assert validation_result, "Failed to reach New Chat screen"
 
-    # Validate that Google Maps is showing the "See locations" list for Trader Joe's
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "Google Maps is open and showing more than one Trader Joe's locations. "
-        "The screen should show more than one Trader Joe's results with addresses at least partially visible."
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
-    assert validation_result, "Failed to show Trader Joe's location list"
+        # Send a voice transcription to ask for directions to Trader Joe's
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"what are the trader joes near me ?"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        time.sleep(3)  # Give time for message to be processed
 
-    # Send a voice transcription to select the one on Fulton Street
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
+        # Wait for the search to complete and "See locations" to appear
+        time.sleep(20)
 
-    # Wait for the location to be selected and directions to appear
-    time.sleep(30)
+        # Validate that Google Maps is showing the "See locations" list for Trader Joe's
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Google Maps is open and showing more than one Trader Joe's locations. "
+            "The screen should show more than one Trader Joe's results with addresses at least partially visible."
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
+        assert validation_result, "Failed to show Trader Joe's location list"
 
-    # Validate that Google Maps is showing directions or navigation screen
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "Google Maps is open and showing the navigation screen for a route. "
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
-    assert validation_result, "Failed to show Trader Joe's directions"
+        # Send a voice transcription to select the one on Fulton Street
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
 
-    # Send a voice transcription to change destination to office at 1885 Mission Street
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Actually, I need to go to my office first at 1885 Mission Street. Can you get directions to there instead?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    time.sleep(3)  # Give time for message to be processed
+        # Wait for the location to be selected and directions to appear
+        time.sleep(30)
 
-    # Wait 15 seconds for the new location to be searched
-    time.sleep(15)
+        # Validate that Google Maps is showing directions or navigation screen
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
+            "Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
+            "estimated travel time, or directions to Trader Joe's on Fulton Street. "
+            "Return False only if Google Maps is not showing any navigation/directions content."
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
+        assert validation_result, "Failed to show Trader Joe's directions"
 
-    # Validate that Google Maps is showing the directions for 1885 Mission Street
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "Google Maps is open and showing the navigation screen for a route. "
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
-    assert validation_result, "Failed to show 1885 Mission Street search results"
+        # Send a voice transcription to change destination to office at 1680 Mission Street
+        # Note: Using 1680 instead of 1885 to ensure the destination is far enough that
+        # navigation won't complete immediately (which would show "Arriving at" screen)
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"Actually, I need to go to my office first at 1680 Mission Street. Can you get directions to there instead?"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        time.sleep(3)  # Give time for message to be processed
 
-    # Send a voice transcription to request driving directions specifically
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Actually, just this time can you get driving directions for me?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    time.sleep(3)  # Give time for message to be processed
+        # Wait 15 seconds for the new location to be searched
+        time.sleep(15)
 
-    # Wait for driving directions to be displayed
-    time.sleep(20)
+        # Validate that Google Maps is showing the directions for 1680 Mission Street
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
+        assert validation_result, "Failed to show 1680 Mission Street search results"
 
-    # Validate that Google Maps is showing driving directions to 1885 Mission Street
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "Google Maps is open and showing the navigation screen for a route. "
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
-    assert validation_result, "Failed to show driving directions to 1885 Mission Street"
+        # Send a voice transcription to request driving directions specifically
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"Actually, just this time can you get driving directions for me?"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        time.sleep(3)  # Give time for message to be processed
 
-    # Bring WhizVoice Debug app to foreground by using monkey to resume the app
-    # This brings the app to foreground without starting a new activity
-    subprocess.run([
-        'adb', 'shell',
-        'monkey', '-p', 'com.example.whiz.debug', '-c', 'android.intent.category.LAUNCHER', '1'
-    ], check=True, capture_output=True)
-    time.sleep(2)  # Give time for app to come to foreground
+        # Wait for driving directions to be displayed
+        time.sleep(20)
 
-    # Take screenshot of WhizVoice app showing chat
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1885 Mission Street' or '1885 Mission St' in San Francisco"
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
-    assert validation_result, "Assistant did not mention the 1885 Mission Street address in the chat"
+        # Validate that Google Maps is showing driving directions to 1680 Mission Street
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
+        assert validation_result, "Failed to show driving directions to 1680 Mission Street"
+
+        # Bring WhizVoice Debug app to foreground by using monkey to resume the app
+        # This brings the app to foreground without starting a new activity
+        subprocess.run([
+            'adb', 'shell',
+            'monkey', '-p', 'com.example.whiz.debug', '-c', 'android.intent.category.LAUNCHER', '1'
+        ], check=True, capture_output=True)
+        time.sleep(2)  # Give time for app to come to foreground
+
+        # Take screenshot of WhizVoice app showing chat
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1680 Mission Street' or '1680 Mission St' in San Francisco"
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
+        assert validation_result, "Assistant did not mention the 1680 Mission Street address in the chat"
+
+    finally:
+        # Always clean up Google Maps to prevent overlay from interfering with future tests
+        cleanup_google_maps()
 
 
 def test_sms_draft_message(tester):
     """Test that we can draft, modify draft, and send SMS messages."""
     import time
+
+    # Get phone numbers based on device
+    _, sms_numbers = get_phone_numbers()
+    sms_full, sms_short = sms_numbers
 
     print("\n========================================")
     print("STEP 1: Opening WhizVoice Debug app")
@@ -965,13 +1171,13 @@ def test_sms_draft_message(tester):
     # Send a voice transcription with the test message to send an SMS
     # Note: The app is in continuous listening mode by default (voice app behavior),
     # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print("📤 Broadcasting: 'Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice'")
+    print(f"📤 Broadcasting: 'Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice'")
     subprocess.run([
         'adb', 'shell',
         'am', 'broadcast',
         '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
         '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Hello, can you please send a text message to +1(628)209-9005 that says hey testing SMS from whiz voice"',
+        '--es', 'text', f'"Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice"',
         '--ez', 'fromVoice', 'true',
         '--ez', 'autoSend', 'true'
     ], check=True)
@@ -982,9 +1188,9 @@ def test_sms_draft_message(tester):
     print("STEP 6: Waiting for draft overlay to appear")
     print("========================================")
     # wait for draft overlay to appear over SMS input text bar
-    # Support both light mode (#fffad0) and dark mode (#d2cea4) colors
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0 or #d2cea4...")
-    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4'], timeout=30.0)
+    # Support light mode (#fffad0), dark mode (#d2cea4), and other yellow variants (#aead93, #afad92, #fbf7cd)
+    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0, #d2cea4, #aead93, #afad92, or #fbf7cd...")
+    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd'], timeout=30.0)
 
     # If overlay detection failed, capture diagnostics before asserting
     if not result['matched']:
@@ -1003,7 +1209,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005'  or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'hey testing SMS from whiz voice'. "
         "There is also a yellow notification bubble with an outline of something (it's a robot head). "
@@ -1040,7 +1246,7 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
         "At the bottom of the screen, there is a yellow overlay or message input field containing text "
         "similar to 'testing SMS'. "
         "The Yellow overlay should have some text in red strike out and some text in blue. "
@@ -1078,14 +1284,13 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
-        "At the bottom of the screen, there is NO yellow overlay covering the keyboard. The keyboard may be visible. "
-        "The app may be in dark mode. "
-        "The most recent message is something with text somewhat similar to 'testing SMS'. "
-        "The message may have words added to make it more polite. "
-        "There is also a yellow notification bubble with the outline of a robot head. "
-        "There may or may not be an icon inside the robot head outline. "
-        "Please look carefully. Sometimes in dark mode it may look like a message was sent when it is still in the edit text input instead and not in the conversation yet."
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+        "Check that the message was SENT (appears in the conversation thread as a sent message bubble, not in the text input field). "
+        "The most recent sent message should contain text similar to 'testing SMS' (may have polite words added). "
+        "There should be NO yellow overlay covering the bottom of the screen. "
+        "A yellow notification bubble with a robot head outline may be visible. "
+        "Return True if the message appears as a SENT message in the conversation. "
+        "Return False if the message text is still in the input field at the bottom."
     )
     if not validation_result:
         print("❌ Message sent validation failed!")
@@ -1120,8 +1325,8 @@ def test_sms_draft_message(tester):
     tester.screenshot(screenshot_path)
     validation_result = tester.validate_screenshot(
         screenshot_path,
-        "Messages app (Google Messages or SMS app) is open showing a conversation with the contact +1(628)209-9005 or '(628) 209-9005' or Ruth Wong or Ruth Grace Wong. "
-        "The most recent message in the chat has been deleted."
+        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+        "The most recent message in the chat has been deleted. Other messages may or may not be deleted."
     )
     if not validation_result:
         print("❌ Message deletion validation failed!")

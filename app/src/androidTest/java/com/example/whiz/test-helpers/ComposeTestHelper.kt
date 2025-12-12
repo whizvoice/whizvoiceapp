@@ -654,24 +654,69 @@ object ComposeTestHelper {
                 return false
             }
             Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 2: Send button clicked successfully")
-            
-            // Step 3: Wait for message to appear in chat
+
+            // Step 2.5: Verify input field is empty (send succeeded) - retry if needed
+            Log.d(TAG, "🔍 Compose: sendMessageAndVerifyDisplay - Step 2.5: Verifying input field is empty after send...")
+            Thread.sleep(200) // Brief wait for send to process
+
+            var inputFieldEmpty = false
+            var retryAttempt = 0
+            val maxRetries = 2
+
+            while (!inputFieldEmpty && retryAttempt < maxRetries) {
+                val inputFieldCheck = findMessageInputField(composeTestRule)
+                if (inputFieldCheck != null) {
+                    val currentText = inputFieldCheck.fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text ?: ""
+                    Log.d(TAG, "🔍 Input field text after send: '$currentText'")
+
+                    if (currentText.trim().isEmpty()) {
+                        inputFieldEmpty = true
+                        Log.d(TAG, "✅ Input field is empty - send succeeded")
+                    } else {
+                        retryAttempt++
+                        if (retryAttempt < maxRetries) {
+                            Log.w(TAG, "⚠️ Input field still contains text - send may have failed, retrying (attempt $retryAttempt/$maxRetries)...")
+                            // Click send button again
+                            val retrySuccess = clickSendButton(composeTestRule)
+                            if (!retrySuccess) {
+                                Log.e(TAG, "❌ Retry send button click failed")
+                                return false
+                            }
+                            Thread.sleep(300) // Wait a bit longer for retry to process
+                        } else {
+                            Log.e(TAG, "❌ Input field still has text after $maxRetries send attempts: '$currentText'")
+                            return false
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "❌ Cannot check input field - it disappeared")
+                    break
+                }
+            }
+
+            if (!inputFieldEmpty) {
+                Log.e(TAG, "❌ Send failed - input field never became empty")
+                return false
+            }
+
+            // Step 3: Wait for message to appear as USER message in chat
             val chatTimeout = if (rapid) 400L else 1000L
-            Log.d(TAG, "⏳ Compose: sendMessageAndVerifyDisplay - Step 3: Waiting for message to appear in chat (timeout: ${chatTimeout}ms)...")
-            
+            Log.d(TAG, "⏳ Compose: sendMessageAndVerifyDisplay - Step 3: Waiting for message to appear as USER message in chat (timeout: ${chatTimeout}ms)...")
+
+            // Look specifically for USER message to avoid matching text in input field
             val messageAppeared = waitForElement(
                 composeTestRule = composeTestRule,
-                selector = { composeTestRule.onNodeWithText(message) },
+                selector = { composeTestRule.onNodeWithContentDescription("User message: $message") },
                 timeoutMs = chatTimeout,
-                description = "message '${message.take(30)}...' to appear in chat"
+                description = "USER message '${message.take(30)}...' to appear in chat"
             )
-            
+
             if (messageAppeared) {
-                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 3: Message appeared in chat successfully")
+                Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - Step 3: Message appeared as USER message in chat successfully")
                 Log.d(TAG, "✅ Compose: sendMessageAndVerifyDisplay - All steps completed successfully")
                 true
             } else {
-                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 3 - message did not appear in chat within ${chatTimeout}ms")
+                Log.e(TAG, "❌ Compose: sendMessageAndVerifyDisplay - FAILED at Step 3 - message did not appear as USER message in chat within ${chatTimeout}ms")
                 false
             }
             
@@ -1074,7 +1119,7 @@ object ComposeTestHelper {
     fun countTextOccurrences(composeTestRule: ComposeTestRule, text: String): Int {
         return try {
             // Try to find all nodes with the text
-            val nodes = composeTestRule.onAllNodesWithText(text, substring = false, ignoreCase = true)
+            val nodes = composeTestRule.onAllNodesWithText(text, substring = true, ignoreCase = true)
             val count = nodes.fetchSemanticsNodes().size
             Log.d(TAG, "🔍 Compose: Found $count occurrences of text '$text'")
             count

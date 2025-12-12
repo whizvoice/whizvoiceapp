@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -63,9 +64,15 @@ class SpeechRecognitionService @Inject constructor(
     // Note: Continuous listening state is now managed by VoiceManager
     // This callback provides the current state when needed
     var continuousListeningCallback: (() -> Boolean)? = null
-    
+
     // Callback to check if we should actually restart listening (considers all conditions)
     var shouldRestartCallback: (() -> Boolean)? = null
+
+    // --- Test Support ---
+    // Allow tests to simulate partial transcriptions without real speech recognizer
+    @Volatile
+    private var testModeEnabled = false
+    private var isTestInjectedCallback = false
 
     fun initialize() {
         // Ensure initialization always happens on the main thread
@@ -131,7 +138,18 @@ class SpeechRecognitionService @Inject constructor(
     fun startListening(callback: (String) -> Unit) {
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
-        
+
+        // 🧪 TEST MODE: If test mode is enabled, skip initialization checks and just set listening state
+        // This allows tests to inject simulated transcriptions on devices without speech recognition (e.g., CI emulators)
+        if (testModeEnabled) {
+            Log.d(TAG, "[TEST] Test mode enabled - setting isListening=true without real speech recognizer")
+            _isListening.value = true
+            _errorState.value = null
+            utteranceFinalized = false
+            manualStopInProgress = false
+            return
+        }
+
         if (!isInitialized) {
             initialize() // Try to initialize if not initialized
             if (!isInitialized) {
@@ -177,10 +195,10 @@ class SpeechRecognitionService @Inject constructor(
             _errorState.value = "Error starting speech recognition: ${e.message}"
             _isListening.value = false // Reset listening state on error
             recognitionCallback = null
-            
+
             // Force cleanup and reinitialize on error
             cleanup()
-            
+
             // Try to reinitialize for next attempt
             initialize()
         }
@@ -371,17 +389,20 @@ class SpeechRecognitionService @Inject constructor(
                     Log.e(TAG, "Speech recognition error: $errorMessage (code $error)")
                     _errorState.value = errorMessage
                 }
-                
-                _isListening.value = false
 
                 // --- Continuous listening auto-restart logic with smart rate limiting ---
                 val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
                 // Use shouldRestartCallback if available, otherwise fall back to continuousListeningEnabled
                 val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
-                
-                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)}")
-                
-                if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) && shouldRestart && !manualStopInProgress) {
+
+                Log.d(TAG, "🔄 RESTART_DEBUG: Checking auto-restart conditions - continuousListeningEnabled=$continuousListeningEnabled, shouldRestart=$shouldRestart, error matches=${(error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT)}")
+
+                // Auto-restart for NO_MATCH, SPEECH_TIMEOUT, and ERROR_CLIENT
+                // ERROR_CLIENT typically occurs when restarting too quickly (race condition with previous session cleanup)
+                // and should be retried automatically in continuous listening mode
+                val willRestart = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) && shouldRestart && !manualStopInProgress
+
+                if (willRestart) {
                     // Smart rate limiting: only prevent restart if too many rapid errors
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
@@ -395,12 +416,25 @@ class SpeechRecognitionService @Inject constructor(
                     
                     if (errorRestartCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
-                        startListening(recognitionCallback ?: { })
+
+                        // Add small delay for ERROR_CLIENT to allow Android to clean up previous session
+                        if (error == SpeechRecognizer.ERROR_CLIENT) {
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Adding 100ms delay before restart (ERROR_CLIENT)")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                startListening(recognitionCallback ?: { })
+                            }, 100)
+                        } else {
+                            startListening(recognitionCallback ?: { })
+                        }
                     } else {
                         Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms or shouldRestart=$shouldRestart")
+                        // Set listening to false only when we're NOT restarting (rate limited)
+                        _isListening.value = false
                     }
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restart conditions not met - skipping restart")
+                    // Set listening to false only when we're NOT restarting (conditions not met)
+                    _isListening.value = false
                 }
             }
 
@@ -410,14 +444,14 @@ class SpeechRecognitionService @Inject constructor(
                 val finalText = matches?.firstOrNull() ?: ""
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
                 _transcriptionState.value = finalText
-                
+
                 // Send to bubble overlay if active
                 try {
                     BubbleOverlayService.updateUserTranscription(finalText)
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not update bubble overlay: ${e.message}")
                 }
-                
+
                 if (recognitionCallback != null) {
                     if (finalText.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
@@ -442,16 +476,31 @@ class SpeechRecognitionService @Inject constructor(
                 }
                 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
+                Log.d(TAG, "[DEBUG] 🧹 CLEARING transcription state (was: '$finalText', partial may have been: '${_transcriptionState.value}')")
                 _transcriptionState.value = ""
                 Log.d(TAG, "[DEBUG] Cleared transcription state after processing results")
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
                 Log.d(TAG, "[DEBUG] onPartialResults")
+
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer partial callback")
+                    return
+                }
+
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val partialText = matches?.firstOrNull() ?: ""
-                Log.d(TAG, "[DEBUG] Partial transcription: '$partialText'")
-                _transcriptionState.value = partialText
+                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
+
+                // Ignore empty partial results to prevent clearing user's spoken text
+                // Empty partials can occur due to TTS interference, pauses, or recognition resets
+                if (partialText.isNotBlank()) {
+                    _transcriptionState.value = partialText
+                } else {
+                    Log.d(TAG, "[DEBUG] Ignoring empty partial result to preserve previous transcription")
+                }
 
                 // Note: We only update the transcription state for UI display.
                 // We do NOT send partial results to bubble overlay to avoid creating
@@ -528,6 +577,81 @@ class SpeechRecognitionService @Inject constructor(
 
             // Show unknown errors
             else -> true
+        }
+    }
+
+    // ==================== TEST SUPPORT METHODS ====================
+
+    /**
+     * Enable test mode to allow simulating speech recognition through real callbacks.
+     * In test mode, we inject results through the actual onPartialResults/onResults callbacks,
+     * allowing the real SpeechRecognizer to run (and fail gracefully) while tests control the input.
+     */
+    fun enableTestMode() {
+        testModeEnabled = true
+        Log.d(TAG, "[TEST] Test mode enabled - will inject results through real callbacks")
+    }
+
+    /**
+     * Disable test mode and return to normal operation.
+     */
+    fun disableTestMode() {
+        testModeEnabled = false
+        Log.d(TAG, "[TEST] Test mode disabled")
+    }
+
+    /**
+     * Simulate a partial transcription result by injecting through the real onPartialResults callback.
+     * This goes through the exact same code path as real speech recognition.
+     *
+     * @param partialText The partial transcription text to simulate
+     */
+    fun testSetPartialTranscription(partialText: String) {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testSetPartialTranscription called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Injecting partial result through real callback: '$partialText'")
+
+        // Create a Bundle like Android's SpeechRecognizer would
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(partialText))
+        }
+
+        // Inject through the REAL onPartialResults callback
+        Handler(Looper.getMainLooper()).post {
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onPartialResults(bundle)
+            } finally {
+                isTestInjectedCallback = false
+            }
+        }
+    }
+
+    /**
+     * Simulate a final transcription result by injecting through the real onResults callback.
+     * This goes through the exact same code path as real speech recognition.
+     *
+     * @param finalText The final transcription text to simulate
+     */
+    suspend fun testSendFinalTranscription(finalText: String) {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testSendFinalTranscription called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Injecting final result through real callback: '$finalText'")
+
+        // Create a Bundle like Android's SpeechRecognizer would
+        val bundle = Bundle().apply {
+            putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(finalText))
+        }
+
+        // Inject through the REAL onResults callback on main thread
+        withContext(Dispatchers.Main) {
+            recognitionListener?.onResults(bundle)
         }
     }
 }

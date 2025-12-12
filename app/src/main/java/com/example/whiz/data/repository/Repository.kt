@@ -129,11 +129,6 @@ class WhizRepository @Inject constructor(
             // Use deduplication helper to prevent multiple concurrent API calls
             val result = fetchConversationsWithDeduplication(forceFullSync)
             Log.d(TAG, "🔍 getAllChats: Got ${result.size} chats from fetchConversationsWithDeduplication")
-            result.forEach { chat ->
-                if (chat.id > 0 && chat.id < 10000) {
-                    Log.w(TAG, "🚨 WARNING: Chat ${chat.id} has suspiciously low positive ID - might be locally generated!")
-                }
-            }
             _conversations.value = result
             result
         } catch (e: Exception) {

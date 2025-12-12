@@ -1,1 +1,2 @@
-android-accessibility-tester @ file:///Users/ruthgracewong/android_screenshot_testing
+android-accessibility-tester @ file:///Users/ruthgracewong/android_accessibility_tester
+pytest

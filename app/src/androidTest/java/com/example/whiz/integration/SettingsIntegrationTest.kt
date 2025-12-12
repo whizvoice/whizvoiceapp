@@ -1554,7 +1554,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Scroll down to find Subscription section
         Log.d(TAG, "Scrolling to find Subscription section")
         try {
-            composeTestRule.onNodeWithContentDescription("Subscription section header")
+            composeTestRule.onNodeWithContentDescription("Subscription section")
                 .performScrollTo()
         } catch (e: Exception) {
             Log.w(TAG, "Could not scroll to Subscription: ${e.message}")
@@ -1620,7 +1620,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Scroll down to find Subscription section
         Log.d(TAG, "Scrolling to find Subscription section")
         try {
-            composeTestRule.onNodeWithContentDescription("Subscription section header")
+            composeTestRule.onNodeWithContentDescription("Subscription section")
                 .performScrollTo()
         } catch (e: Exception) {
             Log.w(TAG, "Could not scroll to Subscription: ${e.message}")
@@ -1685,7 +1685,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
         // Scroll down to find Subscription section
         Log.d(TAG, "Scrolling to find Subscription section")
         try {
-            composeTestRule.onNodeWithContentDescription("Subscription section header")
+            composeTestRule.onNodeWithContentDescription("Subscription section")
                 .performScrollTo()
         } catch (e: Exception) {
             Log.w(TAG, "Could not scroll to Subscription: ${e.message}")

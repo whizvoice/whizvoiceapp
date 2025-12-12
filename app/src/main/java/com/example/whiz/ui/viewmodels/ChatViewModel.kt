@@ -117,10 +117,9 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG:   [$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                 }
                 
-                // 🔧 DEDUPLICATION FIX: Remove duplicate messages based on request ID
-                val deduplicatedMessages = messagesList.distinctBy { message ->
-                    // Use request ID for ALL messages (when available) to handle optimistic UI transitions
-                    // Both USER and ASSISTANT messages have requestIds that pair them together
+                // 🔧 DEDUPLICATION FIX: Remove duplicate messages, keeping the LATEST (highest timestamp)
+                // Group messages by their dedup key
+                val grouped = messagesList.groupBy { message ->
                     val key = when {
                         message.requestId != null -> {
                             // For messages with request ID (both USER and ASSISTANT): use requestId + type as unique key
@@ -134,6 +133,13 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔍 DEDUP_DEBUG: Creating key for message ID:${message.id} RequestID:${message.requestId} -> $key")
                     key
                 }
+
+                // For each group, keep the LATEST message (highest timestamp, then LOWEST id as tiebreaker)
+                // Using lowest id when timestamps are equal keeps the first-arriving message,
+                // which is more stable as new duplicates arrive (prevents UI flickering)
+                val deduplicatedMessages = grouped.values.mapNotNull { duplicates ->
+                    duplicates.maxWithOrNull(compareBy({ it.timestamp }, { -it.id }))
+                }.sortedBy { it.timestamp }  // Re-sort by timestamp for display order
                 
                 if (deduplicatedMessages.size != messagesList.size) {
                     Log.w(TAG, "🔍 DEDUP_DEBUG: Removed ${messagesList.size - deduplicatedMessages.size} duplicate messages")
@@ -144,10 +150,10 @@ class ChatViewModel @Inject constructor(
                         Log.w(TAG, "🔍 DEDUP_DEBUG: REMOVED -> ID:${removed.id} Type:${removed.type} RequestID:${removed.requestId} Timestamp:${removed.timestamp} Content:'${removed.content.take(30)}...'")
                     }
                     
-                    // Log final deduplicated list
-                    Log.d(TAG, "🔍 DEDUP_DEBUG: Final deduplicated list (${deduplicatedMessages.size} messages):")
+                    // Log final deduplicated list (using Log.w so it shows in test logcat)
+                    Log.w(TAG, "🔍 DEDUP_DEBUG: Final deduplicated list (${deduplicatedMessages.size} messages):")
                     deduplicatedMessages.forEachIndexed { index, message ->
-                        Log.d(TAG, "🔍 DEDUP_DEBUG:   FINAL[$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
+                        Log.w(TAG, "🔍 DEDUP_DEBUG:   FINAL[$index] ID:${message.id} Type:${message.type} RequestID:${message.requestId} Timestamp:${message.timestamp} Content:'${message.content.take(30)}...'")
                     }
                 }
                 deduplicatedMessages
@@ -197,6 +203,7 @@ class ChatViewModel @Inject constructor(
     val speechError = voiceManager.speechError
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
+    private var pendingTTSMessage: String? = null  // Queue TTS message if user is speaking
     
     // Track when app was last backgrounded to prevent TTS replay of old messages
     private var lastBackgroundedTime = 0L
@@ -907,8 +914,15 @@ class ChatViewModel @Inject constructor(
                     } else {
                                         // Request ID provided but not found in pending requests
                                         Log.w(TAG, "Request ID ${event.requestId} not found in pending requests")
-                                        // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
-                                        if (event.clientConversationId != null) {
+
+                                        // 🔧 FIX: Accept message if it's for the current chat, even if request completed
+                                        // This prevents race condition where request is removed from pendingRequests
+                                        // before all WebSocket messages for that request arrive
+                                        if (effectiveConversationId != null && effectiveConversationId == _chatId.value) {
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: Message is for current chat (conversationId=$effectiveConversationId matches _chatId=${_chatId.value}) - accepting despite request not in pendingRequests")
+                                            effectiveConversationId
+                                        } else if (event.clientConversationId != null) {
+                                            // 🔧 RECONNECTION FIX: Use client_conversation_id if available when pendingRequests is lost
                                             Log.d(TAG, "🐛 VOICE_DEBUG: Using clientConversationId from server: ${event.clientConversationId}")
                                             // Check if this optimistic chat has been migrated to a server-backed ID
                                             val migratedId = repository.getMigratedChatId(event.clientConversationId)
@@ -919,7 +933,7 @@ class ChatViewModel @Inject constructor(
                                                 event.clientConversationId
                                             }
                                         } else {
-                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests and no clientConversationId - discarding message to prevent cross-chat contamination")
+                                            Log.d(TAG, "🐛 VOICE_DEBUG: RequestId not in pendingRequests, conversationId doesn't match current chat, and no clientConversationId - discarding message to prevent cross-chat contamination")
                                             // Discard the message by returning null - will be handled below
                                             null
                                         }
@@ -1109,13 +1123,24 @@ class ChatViewModel @Inject constructor(
                                         "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
-                                    if (isListening.value) {
-                                        wasListeningBeforeTTS = true
-                                        voiceManager.stopListening() // Stop STT before TTS speaks
+                                    // Check if user has active partial transcription
+                                    val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+
+                                    if (hasPartialTranscription) {
+                                        Log.d(TAG, "User is speaking - queueing TTS instead of starting immediately: '$messageContentForChat'")
+                                        // Always update to the latest message - replaces any existing queued message
+                                        pendingTTSMessage = messageContentForChat
+                                        // Don't stop listening, let user finish
+                                    } else {
+                                        // No active speech - start TTS immediately
+                                        if (isListening.value) {
+                                            wasListeningBeforeTTS = true
+                                            voiceManager.stopListening() // Stop STT before TTS speaks
+                                        }
+                                        val utteranceId = UUID.randomUUID().toString()
+                                        ttsManager.speak(messageContentForChat, "chat_message")
+                                        // TTSManager will handle the isSpeaking state
                                     }
-                                    val utteranceId = UUID.randomUUID().toString()
-                                    ttsManager.speak(messageContentForChat, "chat_message")
-                                    // TTSManager will handle the isSpeaking state
                                 } else {
                                     // Always restart continuous listening after assistant reply if enabled and not speaking
                                     if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
@@ -1264,6 +1289,7 @@ class ChatViewModel @Inject constructor(
     
     fun loadChatWithVoiceMode(chatId: Long, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
+        Log.d(TAG, "🔥 STACK TRACE for loadChatWithVoiceMode:", Exception("Stack trace"))
         Log.d(TAG, "[RACE_DEBUG] loadChatWithVoiceMode: Current input text: '${_inputText.value}'")
         // Clear any previous chat load error when starting to load a new chat
         _chatLoadError.value = null
@@ -1375,13 +1401,19 @@ class ChatViewModel @Inject constructor(
                 }
                 
                 try {
-                    Log.d(TAG, "loadChat: Stopping speech recognition service (isListening: ${isListening.value})")
-                    voiceManager.stopListening()
+                    // Don't stop continuous listening - let it keep running across chat navigation
+                    if (voiceManager.isListening.value && !voiceManager.isContinuousListeningEnabled.value) {
+                        // Only stop if it's a one-time listening session (not continuous)
+                        Log.d(TAG, "loadChat: Stopping one-time listening session")
+                        voiceManager.stopListening()
+                    } else {
+                        Log.d(TAG, "loadChat: Keeping listening state as-is (continuous or not listening)")
+                    }
                     Log.d(TAG, "loadChat: Stopping TTS (isSpeaking: ${isSpeaking.value})")
                     ttsManager.stop()
-                    Log.d(TAG, "loadChat: Speech services stopped successfully")
+                    Log.d(TAG, "loadChat: Speech services handled successfully")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error stopping speech services during loadChat", e)
+                    Log.e(TAG, "Error managing speech services during loadChat", e)
                 }
 
                 // Refresh messages to ensure we have latest data
@@ -1412,6 +1444,7 @@ class ChatViewModel @Inject constructor(
                 if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
                         Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat for chat ${_chatId.value}...")
+                        Log.d(TAG, "🔌 WEBSOCKET CONNECT TRACE - chatId: ${_chatId.value}, requested chatId: $chatId", Exception("WebSocket connect stack trace"))
                         delay(100) // Small delay to ensure state propagation
                         // Connect with the specific chat ID
                         whizServerRepository.connect(_chatId.value)
@@ -1430,15 +1463,17 @@ class ChatViewModel @Inject constructor(
                     checkAndRetryOrphanedMessages(_chatId.value)
                 }
 
-                // 🎙️ VOICE APP BEHAVIOR: Update permission state and let UI layer control all microphone behavior
-                // Since this is a voice app, the UI always enables continuous listening by default
+                // 🎙️ VOICE APP BEHAVIOR: Update permission state
                 val actualPermissionState = PermissionHandler.hasMicrophonePermission(context)
                 if (_micPermissionGranted.value != actualPermissionState) {
                     Log.d(TAG, "[LOG] Updating permission state from ${_micPermissionGranted.value} to $actualPermissionState")
                     _micPermissionGranted.value = actualPermissionState
                 }
-                
-                Log.d(TAG, "[LOG] Chat load complete - UI layer will handle voice app default behavior (always enable microphone)")
+
+                // Note: We no longer stop/restart continuous listening in loadChat
+                // If continuous listening is enabled, it stays running throughout the chat load
+                // This avoids race conditions with async stop/start IPC calls
+                Log.d(TAG, "[LOG] Chat load complete - continuous listening preserved if it was enabled")
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error in loadChat", e)
                 _errorState.value = "Failed to load chat: ${e.message}"
@@ -1842,6 +1877,9 @@ class ChatViewModel @Inject constructor(
             if (!configUseRemoteAgent && currentChatId > 0) {
                 schedulePersistenceCheck(currentChatId)
             }
+
+            // Start queued TTS if user was speaking when assistant message arrived
+            startQueuedTTS()
             } catch (e: Exception) {
                 Log.e(TAG, "Error in sendUserInput", e)
             }
@@ -2197,6 +2235,20 @@ class ChatViewModel @Inject constructor(
         sendUserInput(currentInput)
     }
 
+    /**
+     * Start queued TTS message after user finishes speaking.
+     * Called when user's message is sent via sendUserInput().
+     */
+    private fun startQueuedTTS() {
+        pendingTTSMessage?.let { message ->
+            Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
+            viewModelScope.launch(Dispatchers.Main) {
+                ttsManager.speak(message, "chat_message")
+            }
+            pendingTTSMessage = null  // Clear the queue
+        }
+    }
+
     private fun initializeTTS() {
         // Use event-driven approach without delays
         ttsManager.initialize { success ->
@@ -2213,15 +2265,37 @@ class ChatViewModel @Inject constructor(
                 ttsManager.setAudioEventCallbacks(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
+
+                        // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
+                        // Must run on main thread for speech recognizer
+                        if (!ttsManager.areHeadphonesConnected()) {
+                            // Check if continuous listening is ENABLED (the user's intent)
+                            // not if we're currently listening (which can be transiently false during restarts)
+                            if (voiceManager.isContinuousListeningEnabled.value) {
+                                Log.d(TAG, "Stopping listening to prevent TTS echo (no headphones)")
+                                wasListeningBeforeTTS = true
+                            }
+                            viewModelScope.launch(Dispatchers.Main) {
+                                voiceManager.stopListening()
+                            }
+                        }
                         // TTSManager handles its own isSpeaking state
                     },
                     onCompleted = {
                         Log.d(TAG, "TTS completed - audio focus released")
                         // TTSManager handles its own isSpeaking state
-                        // Handle continuous listening if enabled and headphones are connected
-                        if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
-                            Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
-                            startContinuousListening()
+                        // Restart listening if we stopped it when TTS started
+                        // Must run on main thread for speech recognizer
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
+                                Log.d(TAG, "TTS completed - restarting listening that was paused for TTS")
+                                wasListeningBeforeTTS = false
+                                startContinuousListening()
+                            } else if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
+                                // Headphones case: always restart
+                                Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                                startContinuousListening()
+                            }
                         }
                     },
                     onError = {

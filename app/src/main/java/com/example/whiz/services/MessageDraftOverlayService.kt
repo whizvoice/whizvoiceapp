@@ -145,11 +145,19 @@ class MessageDraftOverlayService : Service() {
         // Use the width from bounds (which now contains the app's width)
         val overlayWidth = bounds.width()
         
-        // Get screen height to calculate how much space we have from input field to bottom
-        val screenHeight = resources.displayMetrics.heightPixels
-        
-        // Calculate height from the input field position to bottom of screen
-        val overlayHeight = screenHeight - (bounds.top - 10)
+        // Get the real screen height including navigation bar
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val realScreenHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds.height()
+        } else {
+            val realSize = android.graphics.Point()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealSize(realSize)
+            realSize.y
+        }
+
+        // Calculate height from the input field position to actual bottom of screen
+        val overlayHeight = realScreenHeight - bounds.top
         
         // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
@@ -167,11 +175,11 @@ class MessageDraftOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.left  // Start from app's left edge
-            // Position the overlay below the input field (keep it where it currently appears)
-            y = bounds.top - 10  // Positioned relative to input field
+            // Position the overlay at the input field's top position
+            y = bounds.top  // Positioned at input field
         }
         
-        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - 10}, width=$overlayWidth (app width), height=$overlayHeight")
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top}, width=$overlayWidth (app width), height=$overlayHeight, realScreenHeight=$realScreenHeight")
         
         // Make the overlay clickable to dismiss
         overlayView?.findViewById<CardView>(R.id.draft_card)?.setOnTouchListener { _, event ->

@@ -71,6 +71,7 @@ trap cleanup_and_ensure_debug_installed EXIT ERR
 CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
 SKIP_APP_INSTALL=false
+VERBOSE_LOGGING=false
 SINGLE_TEST=""
 
 while [[ $# -gt 0 ]]; do
@@ -91,13 +92,18 @@ while [[ $# -gt 0 ]]; do
             SINGLE_TEST="$2"
             shift 2
             ;;
+        -v|--verbose)
+            VERBOSE_LOGGING=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [-v|--verbose] [--test <test_class_or_method>]"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
             echo "  $0 --skip-app-install --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
+            echo "  $0 -v --test <test>  # Run with verbose WebSocket logging (adds WhizServerRepo:V to logcat)"
             exit 1
             ;;
     esac
@@ -386,18 +392,42 @@ run_unit_tests() {
 read_test_credentials() {
     local credentials_file="test_credentials.json"
     if [[ ! -f "$credentials_file" ]]; then
-        log_with_time "❌ ERROR: $credentials_file not found. Please create it with test credentials."
+        log_with_time "❌ ERROR: $credentials_file not found."
+        log_with_time ""
+        log_with_time "   Please create $credentials_file with the following format:"
+        log_with_time ""
+        log_with_time '   {'
+        log_with_time '     "google_test_account": {'
+        log_with_time '       "email": "your-test-email@gmail.com",'
+        log_with_time '       "password": "your-test-password",'
+        log_with_time '       "display_name": "Test User",'
+        log_with_time '       "user_id": "your-google-user-id"'
+        log_with_time '     },'
+        log_with_time '     "test_environment": {'
+        log_with_time '       "use_real_auth": true,'
+        log_with_time '       "api_base_url": "https://whizvoice.com/api"'
+        log_with_time '     }'
+        log_with_time '   }'
+        log_with_time ""
         exit 1
     fi
-    
+
+    # Try nested format first (google_test_account.email), then flat format
     TEST_USERNAME=$(grep -o '"email": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
     TEST_PASSWORD=$(grep -o '"password": "[^"]*"' "$credentials_file" | head -1 | cut -d'"' -f4)
-    
-    if [[ -z "$TEST_USERNAME" || -z "$TEST_PASSWORD" || "$TEST_PASSWORD" == "REPLACE_WITH_ACTUAL_PASSWORD" ]]; then
-        log_with_time "❌ ERROR: Test credentials incomplete"
+
+    if [[ -z "$TEST_USERNAME" ]]; then
+        log_with_time "❌ ERROR: Could not find 'email' field in $credentials_file"
+        log_with_time "   File contents:"
+        cat "$credentials_file" | head -20 | while read line; do log_with_time "   $line"; done
         exit 1
     fi
-    
+
+    if [[ -z "$TEST_PASSWORD" || "$TEST_PASSWORD" == "REPLACE_WITH_ACTUAL_PASSWORD" ]]; then
+        log_with_time "❌ ERROR: 'password' field is missing or has placeholder value in $credentials_file"
+        exit 1
+    fi
+
     log_with_time "🔑 Successfully read test credentials for user: $TEST_USERNAME"
 }
 
@@ -492,14 +522,20 @@ run_integration_tests_with_logcat() {
     echo "🔍 Discovered test log tags: $(echo $discovered_tags | tr '\n' ' ')" >> test_summary.log
     echo "📱 Starting logcat with tags: $discovered_tags" >> test_summary.log
     
-    # Start logcat capture with NO FILTER to see everything during the 3-second gaps
-    # TEMPORARILY REMOVED FILTER to debug UI blocking during server processing time
+    # Start logcat capture with filter for app-specific logs
+    # Filter: Show all logs from com.example.whiz, TestRunner, and errors/warnings from all sources
+    # When VERBOSE_LOGGING is enabled, also capture WhizServerRepo Info logs for WebSocket debugging
     {
-        adb logcat -v time >> test_logcat_output.log 2>&1 &
+        if [[ "$VERBOSE_LOGGING" == "true" ]]; then
+            echo "📱 Verbose logging enabled - adding WhizServerRepo:V to logcat filter" >> test_summary.log
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        else
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+        fi
         local logcat_pid=$!
     }
-    echo "📱 Logcat started with PID: $logcat_pid (NO FILTER - showing ALL logs)" >> test_summary.log
-    echo "🔍 Capturing ALL system activity to debug 3-second UI blocking" >> test_summary.log
+    echo "📱 Logcat started with PID: $logcat_pid (filtered for app logs + errors/warnings)" >> test_summary.log
+    echo "🔍 Capturing app-specific logs, test runner output, and system errors/warnings" >> test_summary.log
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
     local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
@@ -887,6 +923,10 @@ log_with_time "🧪 Running tests SEQUENTIALLY for maximum reliability..."
 # Read test credentials
 read_test_credentials
 
+# Wake device before any adb operations to prevent hanging
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+sleep 0.5
+
 # Push test credentials to device for tests to load
 log_with_time "📲 Pushing test credentials to device..."
 adb shell mkdir -p /data/local/tmp >/dev/null 2>&1 || true
@@ -936,6 +976,17 @@ if [[ "$enabled_check" == "1" ]] && [[ "$services_check" == *"WhizAccessibilityS
 else
     log_with_time "⚠️  Granted permissions but accessibility may not be fully enabled (enabled=$enabled_check, services=$services_check)"
 fi
+
+# Wake device and ensure screen is on before tests
+log_with_time "📱 Waking device and ensuring screen is on..."
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true  # Wake the device
+adb shell input keyevent KEYCODE_MENU >/dev/null 2>&1 || true    # Dismiss lock screen if no security
+sleep 1
+
+# Prevent screen from sleeping during tests
+log_with_time "📱 Disabling screen timeout and keeping screen on during tests..."
+adb shell settings put system screen_off_timeout 2147483647 >/dev/null 2>&1 || true  # Max timeout (~24 days)
+adb shell svc power stayon true >/dev/null 2>&1 || true  # Keep screen on while charging/USB connected
 
 # Run tests sequentially for maximum reliability
 if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
@@ -1065,6 +1116,11 @@ else
 fi
 
 log_summary_only "✅ Test execution completed. Check test_gradle_output.log (gradle), test_logcat_output.log (logcat), and test_summary.log (summaries)."
+
+# Restore original screen timeout settings
+log_with_time "📱 Restoring screen timeout to normal settings..."
+adb shell settings put system screen_off_timeout 30000 >/dev/null 2>&1 || true  # 30 seconds default
+adb shell svc power stayon false >/dev/null 2>&1 || true  # Restore normal power behavior
 
 # Disable trap before normal exit (trap will only run on abnormal exits now)
 trap - EXIT ERR
