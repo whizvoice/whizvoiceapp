@@ -3098,11 +3098,29 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun getGoogleMapsDirections(mode: String? = null, position: Int? = null, fragment: String? = null): MapsActionResult {
-        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, position: $position, fragment: $fragment")
-        trackAction("getGoogleMapsDirections: mode=${mode ?: "default"}")
+    suspend fun getGoogleMapsDirections(mode: String? = null, search: String? = null, position: Int? = null, fragment: String? = null): MapsActionResult {
+        Log.d(TAG, "Attempting to get directions in Google Maps with mode: ${mode ?: "default"}, search: $search, position: $position, fragment: $fragment")
+        trackAction("getGoogleMapsDirections: mode=${mode ?: "default"}, search=$search")
 
         try {
+            // If search is provided, search for the location first
+            if (search != null) {
+                Log.d(TAG, "Searching for location before getting directions: $search")
+                val searchResult = searchGoogleMapsLocation(search)
+                if (!searchResult.success) {
+                    Log.e(TAG, "Failed to search for location: ${searchResult.error}")
+                    return MapsActionResult(
+                        success = false,
+                        action = "get_directions",
+                        mode = mode,
+                        error = "Failed to search for '$search': ${searchResult.error}"
+                    )
+                }
+                Log.i(TAG, "Successfully searched and selected location: ${searchResult.location}")
+                // searchGoogleMapsLocation already selects the first non-sponsored result
+                // so we can proceed directly to getting directions
+            }
+
             // If position or fragment is provided, first select the location from the list
             // For directions, skip sponsored results and scroll if needed
             if (position != null || fragment != null) {
