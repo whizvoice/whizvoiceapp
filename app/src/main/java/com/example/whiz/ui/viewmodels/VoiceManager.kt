@@ -108,8 +108,9 @@ class VoiceManager @Inject constructor(
                     Log.d(TAG, "Screen unlocked (user present)")
                     _isScreenLocked.value = false
                     // Restart listening if continuous mode was enabled
-                    if (continuousListeningEnabled && appLifecycleService.isInForeground()) {
-                        Log.d(TAG, "Screen unlocked - restarting continuous listening")
+                    // Check both foreground AND bubble active - in bubble mode the app isn't in foreground
+                    if (continuousListeningEnabled && (appLifecycleService.isInForeground() || BubbleOverlayService.isActive)) {
+                        Log.d(TAG, "Screen unlocked - restarting continuous listening (foreground=${appLifecycleService.isInForeground()}, bubble=${BubbleOverlayService.isActive})")
                         coroutineScope.launch {
                             delay(100L) // Small delay to ensure state is settled
                             if (shouldBeListening()) {
