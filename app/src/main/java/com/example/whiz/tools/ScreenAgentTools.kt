@@ -3033,16 +3033,33 @@ class ScreenAgentTools @Inject constructor(
             // Wait for results to load
             delay(1500)
 
-            // After pressing Enter, we get a list of results - select the first one
-            Log.d(TAG, "Search submitted, selecting first location from results")
+            // After pressing Enter, we get a list of results - select the first non-sponsored one
+            Log.d(TAG, "Search submitted, selecting first non-sponsored location from results")
             val listRootNode = accessibilityService.getCurrentRootNode()
             if (listRootNode != null) {
-                val locationClicked = clickLocationFromList(listRootNode, 1, null, accessibilityService)
+                val locationClicked = clickLocationFromList(listRootNode, 1, null, accessibilityService, skipSponsored = true)
                 listRootNode.recycle()
 
                 if (!locationClicked) {
-                    // It's possible the search went directly to a single result, which is fine
-                    Log.d(TAG, "Could not click location from list - may have gone directly to result")
+                    // Check if we actually ended up on location details or still on search results
+                    val checkRootNode = accessibilityService.getCurrentRootNode()
+                    if (checkRootNode != null) {
+                        val screenState = detectGoogleMapsScreenState(checkRootNode)
+                        checkRootNode.recycle()
+
+                        if (screenState == GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
+                            // Still on search results - the click actually failed
+                            Log.w(TAG, "Could not select location from search results (still on results list)")
+                            return MapsActionResult(
+                                success = false,
+                                action = "search_location",
+                                location = address,
+                                error = "Could not select a non-sponsored location from search results"
+                            )
+                        }
+                        // Otherwise we may have gone directly to a single result, which is fine
+                        Log.d(TAG, "Click returned false but screen state is $screenState - may have gone directly to result")
+                    }
                 } else {
                     // Wait for location to load
                     delay(1000)
@@ -3087,19 +3104,51 @@ class ScreenAgentTools @Inject constructor(
 
         try {
             // If position or fragment is provided, first select the location from the list
+            // For directions, skip sponsored results and scroll if needed
             if (position != null || fragment != null) {
-                Log.d(TAG, "Selecting location from list before getting directions")
-                val selectResult = selectLocationFromList(position, fragment)
-                if (!selectResult.success) {
-                    Log.e(TAG, "Failed to select location from list: ${selectResult.error}")
+                Log.d(TAG, "Selecting location from list before getting directions (skipping sponsored)")
+
+                val maxScrollAttempts = 3
+                var selectResult: MapsActionResult? = null
+
+                for (scrollAttempt in 0 until maxScrollAttempts) {
+                    if (scrollAttempt > 0) {
+                        Log.d(TAG, "All visible results may be sponsored, scrolling down (attempt $scrollAttempt)")
+                        // Scroll down to reveal more results
+                        val scrollSuccess = scrollGoogleMapsResultsList()
+                        if (!scrollSuccess) {
+                            Log.w(TAG, "Failed to scroll results list")
+                            break
+                        }
+                        delay(1000) // Wait for scroll to complete
+                    }
+
+                    selectResult = selectLocationFromList(position, fragment, skipSponsored = true)
+                    if (selectResult.success) {
+                        Log.i(TAG, "Successfully selected non-sponsored location from list")
+                        break
+                    }
+
+                    // Check if the error indicates no non-sponsored results found
+                    if (selectResult.error?.contains("non-sponsored") == true) {
+                        Log.d(TAG, "No non-sponsored results found, will try scrolling")
+                        continue
+                    } else {
+                        // Different error, don't retry
+                        break
+                    }
+                }
+
+                if (selectResult == null || !selectResult.success) {
+                    Log.e(TAG, "Failed to select location from list: ${selectResult?.error}")
                     return MapsActionResult(
                         success = false,
                         action = "get_directions",
                         mode = mode,
-                        error = "Failed to select location: ${selectResult.error}"
+                        error = "Failed to select location: ${selectResult?.error ?: "unknown error"}"
                     )
                 }
-                Log.i(TAG, "Successfully selected location from list")
+
                 delay(1500) // Wait for location details screen to fully load
             }
 
@@ -3249,6 +3298,40 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                 }
+                GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
+                    // We're on the search results list - need to select a result first
+                    Log.d(TAG, "On search results list, selecting first non-sponsored result")
+                    rootNode.recycle()
+
+                    // Select the first non-sponsored result
+                    val selectResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
+                    if (!selectResult.success) {
+                        // If no non-sponsored results found, try scrolling
+                        Log.d(TAG, "No non-sponsored results found, trying to scroll")
+                        val scrollSuccess = scrollGoogleMapsResultsList()
+                        if (scrollSuccess) {
+                            delay(1000)
+                            val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
+                            if (!retryResult.success) {
+                                return MapsActionResult(
+                                    success = false,
+                                    action = "get_directions",
+                                    mode = mode,
+                                    error = "Could not find non-sponsored result in search list: ${retryResult.error}"
+                                )
+                            }
+                        } else {
+                            return MapsActionResult(
+                                success = false,
+                                action = "get_directions",
+                                mode = mode,
+                                error = "Could not find non-sponsored result in search list: ${selectResult.error}"
+                            )
+                        }
+                    }
+                    Log.i(TAG, "Successfully selected location from search results list")
+                    delay(1500) // Wait for location details to load
+                }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
                     // Dump UI hierarchy for debugging unknown states
@@ -3280,6 +3363,10 @@ class ScreenAgentTools @Inject constructor(
                                     Log.d(TAG, "In active navigation, pressing back again to exit")
                                     // Continue the loop to press back again
                                 }
+                                GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
+                                    Log.d(TAG, "Now on search results list, can proceed to select result")
+                                    break // Exit the loop, we're in a good state
+                                }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
                                     // Continue the loop to try again
@@ -3291,7 +3378,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Get fresh root node after handling screen states (especially important after UNKNOWN pressed back)
-            val currentRootNode = accessibilityService.getCurrentRootNode()
+            var currentRootNode = accessibilityService.getCurrentRootNode()
             if (currentRootNode == null) {
                 return MapsActionResult(
                     success = false,
@@ -3299,6 +3386,52 @@ class ScreenAgentTools @Inject constructor(
                     mode = mode,
                     error = "Could not get root node after screen state handling"
                 )
+            }
+
+            // After pressing back from UNKNOWN, we might now be on SEARCH_RESULTS_LIST
+            // Need to check and select a result if so
+            val stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
+            if (stateAfterHandling == GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
+                Log.d(TAG, "After handling, now on search results list - selecting first non-sponsored result")
+                currentRootNode.recycle()
+
+                val selectResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
+                if (!selectResult.success) {
+                    Log.d(TAG, "No non-sponsored results found after handling, trying to scroll")
+                    val scrollSuccess = scrollGoogleMapsResultsList()
+                    if (scrollSuccess) {
+                        delay(1000)
+                        val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
+                        if (!retryResult.success) {
+                            return MapsActionResult(
+                                success = false,
+                                action = "get_directions",
+                                mode = mode,
+                                error = "Could not find non-sponsored result after handling: ${retryResult.error}"
+                            )
+                        }
+                    } else {
+                        return MapsActionResult(
+                            success = false,
+                            action = "get_directions",
+                            mode = mode,
+                            error = "Could not find non-sponsored result after handling: ${selectResult.error}"
+                        )
+                    }
+                }
+                Log.i(TAG, "Successfully selected location from search results list after handling")
+                delay(1500) // Wait for location details to load
+
+                // Get fresh root node after selecting
+                currentRootNode = accessibilityService.getCurrentRootNode()
+                if (currentRootNode == null) {
+                    return MapsActionResult(
+                        success = false,
+                        action = "get_directions",
+                        mode = mode,
+                        error = "Could not get root node after selecting from search list"
+                    )
+                }
             }
 
             // Re-check if we're now on the directions screen (in case we were already there)
@@ -3530,9 +3663,9 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    suspend fun selectLocationFromList(position: Int? = null, fragment: String? = null): MapsActionResult {
+    suspend fun selectLocationFromList(position: Int? = null, fragment: String? = null, skipSponsored: Boolean = false): MapsActionResult {
         val selectionDesc = if (position != null) "position $position" else "fragment '$fragment'"
-        Log.d(TAG, "Attempting to select location from list: $selectionDesc")
+        Log.d(TAG, "Attempting to select location from list: $selectionDesc, skipSponsored=$skipSponsored")
 
         try {
             // Auto-launch Google Maps to bring it to foreground
@@ -3581,7 +3714,8 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Find and click the location from the list
-            val locationClicked = clickLocationFromList(rootNode, position, fragment, accessibilityService)
+            val locationClicked = clickLocationFromList(rootNode, position, fragment, accessibilityService, skipSponsored)
+            rootNode.recycle()
 
             if (!locationClicked) {
                 dumpUIHierarchy(rootNode, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
@@ -3589,7 +3723,7 @@ class ScreenAgentTools @Inject constructor(
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
-                    error = "Could not find or click location: $selectionDesc"
+                    error = "Could not find or click location: $selectionDesc" + if (skipSponsored) " (non-sponsored)" else ""
                 )
             }
             rootNode.recycle()
@@ -3755,6 +3889,7 @@ class ScreenAgentTools @Inject constructor(
         LOCATION_DETAILS,      // place_page_view exists - showing a location with Directions button
         DIRECTIONS_INPUT,      // directions_mode_tabs exists - directions/choose destination screen
         ACTIVE_NAVIGATION,     // Turn-by-turn navigation is active
+        SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         UNKNOWN
     }
 
@@ -3785,6 +3920,14 @@ class ScreenAgentTools @Inject constructor(
             navContainerNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (nav_container found)")
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Check for search results list by looking for search_list_layout
+        val searchListNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_list_layout")
+        if (searchListNodes != null && searchListNodes.isNotEmpty()) {
+            searchListNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: SEARCH_RESULTS_LIST (search_list_layout found)")
+            return GoogleMapsScreenState.SEARCH_RESULTS_LIST
         }
 
         // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
@@ -4027,6 +4170,42 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
+    /**
+     * Scroll the Google Maps search results list down to reveal more results.
+     * Used when all visible results are sponsored ads.
+     * @return true if scroll was performed successfully
+     */
+    private suspend fun scrollGoogleMapsResultsList(): Boolean {
+        val accessibilityService = WhizAccessibilityService.getInstance()
+        if (accessibilityService == null) {
+            Log.w(TAG, "Accessibility service not available for scrolling")
+            return false
+        }
+
+        // Get screen dimensions for gesture coordinates
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+
+        // Calculate swipe coordinates (swipe UP from bottom to top to scroll DOWN and reveal more results)
+        val centerX = screenWidth / 2f
+        val startY = screenHeight * 0.7f  // Start at 70% down the screen
+        val endY = screenHeight * 0.3f    // End at 30% down the screen (swipe upward to scroll down)
+
+        Log.d(TAG, "Performing scroll gesture on Maps results list (swipe from $startY to $endY)")
+        val scrolled = accessibilityService.performScrollGesture(
+            centerX, startY, centerX, endY, duration = 300
+        )
+
+        if (scrolled) {
+            Log.d(TAG, "Successfully scrolled Maps results list")
+        } else {
+            Log.w(TAG, "Failed to scroll Maps results list")
+        }
+
+        return scrolled
+    }
+
     private fun clickGoogleMapsDirections(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
         // Look for "Directions" button
         val directionNodes = mutableListOf<AccessibilityNodeInfo>()
@@ -4242,7 +4421,7 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickLocationFromList(rootNode: AccessibilityNodeInfo, position: Int?, fragment: String?, accessibilityService: WhizAccessibilityService): Boolean {
+    private fun clickLocationFromList(rootNode: AccessibilityNodeInfo, position: Int?, fragment: String?, accessibilityService: WhizAccessibilityService, skipSponsored: Boolean = false): Boolean {
         // Find the RecyclerView containing the location list
         // Try typed_suggest_container first (search results), then search_list_layout (other views)
         var listNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/typed_suggest_container")
@@ -4259,35 +4438,76 @@ class ScreenAgentTools @Inject constructor(
         }
 
         val listNode = listNodes[0]
-        Log.d(TAG, "Found list with ${listNode.childCount} children")
+        Log.d(TAG, "Found list with ${listNode.childCount} children, skipSponsored=$skipSponsored")
 
         // Position takes precedence over fragment
         if (position != null) {
-            // Select by position (1-indexed, convert to 0-indexed)
-            val targetIndex = position - 1
+            if (skipSponsored) {
+                // Find the Nth non-sponsored result (1-indexed position)
+                var nonSponsoredCount = 0
+                for (i in 0 until listNode.childCount) {
+                    val child = listNode.getChild(i) ?: continue
 
-            if (targetIndex >= 0 && targetIndex < listNode.childCount) {
-                val child = listNode.getChild(targetIndex)
-                if (child != null) {
-                    // Find the clickable parent (RelativeLayout)
-                    var clickableNode = child
-                    if (!child.isClickable && child.parent != null) {
-                        clickableNode = child.parent
+                    if (isResultSponsored(child)) {
+                        Log.d(TAG, "Child $i is sponsored, skipping")
+                        child.recycle()
+                        continue
                     }
 
-                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    nonSponsoredCount++
+                    if (nonSponsoredCount == position) {
+                        Log.d(TAG, "Found non-sponsored result at index $i (position $position)")
+
+                        // Find the clickable parent (RelativeLayout)
+                        var clickableNode = child
+                        if (!child.isClickable && child.parent != null) {
+                            clickableNode = child.parent
+                        }
+
+                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        child.recycle()
+                        listNodes.forEach { it.recycle() }
+
+                        if (clicked) {
+                            Log.d(TAG, "Clicked non-sponsored location at position $position (actual index $i)")
+                            return true
+                        }
+                        return false
+                    }
                     child.recycle()
-                    listNodes.forEach { it.recycle() }
-
-                    if (clicked) {
-                        Log.d(TAG, "Clicked location at position $position (index $targetIndex)")
-                        return true
-                    }
                 }
-            } else {
-                Log.w(TAG, "Invalid position $position (list has ${listNode.childCount} items)")
+
+                // If we get here, we didn't find enough non-sponsored results
+                Log.w(TAG, "Could not find non-sponsored result at position $position (found $nonSponsoredCount non-sponsored)")
                 listNodes.forEach { it.recycle() }
                 return false
+            } else {
+                // Original behavior: Select by position (1-indexed, convert to 0-indexed)
+                val targetIndex = position - 1
+
+                if (targetIndex >= 0 && targetIndex < listNode.childCount) {
+                    val child = listNode.getChild(targetIndex)
+                    if (child != null) {
+                        // Find the clickable parent (RelativeLayout)
+                        var clickableNode = child
+                        if (!child.isClickable && child.parent != null) {
+                            clickableNode = child.parent
+                        }
+
+                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        child.recycle()
+                        listNodes.forEach { it.recycle() }
+
+                        if (clicked) {
+                            Log.d(TAG, "Clicked location at position $position (index $targetIndex)")
+                            return true
+                        }
+                    }
+                } else {
+                    Log.w(TAG, "Invalid position $position (list has ${listNode.childCount} items)")
+                    listNodes.forEach { it.recycle() }
+                    return false
+                }
             }
         } else if (fragment != null) {
             // Select by fragment match
@@ -4381,6 +4601,29 @@ class ScreenAgentTools @Inject constructor(
             }
         }
         return null
+    }
+
+    /**
+     * Check if a search result node is a sponsored/ad result.
+     * Sponsored results in Google Maps have an "About this ad" button.
+     * IMPORTANT: This function does NOT recycle any nodes - caller is responsible for recycling.
+     */
+    private fun isResultSponsored(node: AccessibilityNodeInfo): Boolean {
+        // Check if this node has "About this ad" content description
+        if (node.contentDescription?.toString()?.equals("About this ad", ignoreCase = true) == true) {
+            return true
+        }
+
+        // Check all descendants for "About this ad"
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (isResultSponsored(child)) {
+                // Do NOT recycle child here - keep node tree intact
+                return true
+            }
+        }
+
+        return false
     }
 
     /**

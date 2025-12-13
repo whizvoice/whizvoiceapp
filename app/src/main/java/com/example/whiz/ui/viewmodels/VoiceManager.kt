@@ -73,6 +73,19 @@ class VoiceManager @Inject constructor(
                         speechRecognitionService.release()
                         speechRecognitionService.initialize()
                     }
+
+                    // If bubble is active, restart listening after a short delay
+                    // This allows listening to continue in bubble mode even when screen is off
+                    if (BubbleOverlayService.isActive && continuousListeningEnabled) {
+                        Log.d(TAG, "Screen off but bubble is active - restarting listening")
+                        coroutineScope.launch {
+                            delay(200L) // Allow recognizer to fully initialize
+                            if (shouldBeListening()) {
+                                Log.d(TAG, "Restarting continuous listening for bubble mode after screen off")
+                                startContinuousListening()
+                            }
+                        }
+                    }
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     Log.d(TAG, "Screen turned on - updating lock state")
