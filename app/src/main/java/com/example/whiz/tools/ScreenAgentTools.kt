@@ -3100,6 +3100,12 @@ class ScreenAgentTools @Inject constructor(
 
             if (!locationSelected) {
                 Log.w(TAG, "Could not select location from search results after $maxScrollAttempts scroll attempts")
+                // Dump UI hierarchy to help debug why no non-sponsored result could be selected
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsored_result", "Could not select non-sponsored location for '$address' after $maxScrollAttempts scroll attempts")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -4517,11 +4523,39 @@ class ScreenAgentTools @Inject constructor(
                     nonSponsoredCount++
                     if (nonSponsoredCount == position) {
                         Log.d(TAG, "Found non-sponsored result at index $i (position $position)")
+                        Log.d(TAG, "Child $i: isClickable=${child.isClickable}, className=${child.className}")
 
-                        // Find the clickable parent (RelativeLayout)
-                        var clickableNode = child
-                        if (!child.isClickable && child.parent != null) {
-                            clickableNode = child.parent
+                        // Find a clickable node - prefer descendants (e.g., Button inside FrameLayout)
+                        var clickableNode: AccessibilityNodeInfo? = if (child.isClickable) child else null
+
+                        // First try to find a clickable descendant
+                        if (clickableNode == null) {
+                            Log.d(TAG, "Child not clickable, searching for clickable descendant")
+                            clickableNode = findClickableDescendant(child)
+                            if (clickableNode != null) {
+                                Log.d(TAG, "Found clickable descendant: ${clickableNode.className}")
+                            }
+                        }
+
+                        // If no descendant, try walking up the parent tree
+                        if (clickableNode == null) {
+                            var parent = child.parent
+                            var depth = 0
+                            while (parent != null && clickableNode == null && depth < 5) {
+                                Log.d(TAG, "  Parent depth $depth: isClickable=${parent.isClickable}, className=${parent.className}")
+                                if (parent.isClickable) {
+                                    clickableNode = parent
+                                } else {
+                                    parent = parent.parent
+                                }
+                                depth++
+                            }
+                        }
+
+                        // If still nothing, try clicking the child directly anyway
+                        if (clickableNode == null) {
+                            Log.w(TAG, "No clickable node found, trying click on child directly")
+                            clickableNode = child
                         }
 
                         val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -4548,10 +4582,39 @@ class ScreenAgentTools @Inject constructor(
                 if (targetIndex >= 0 && targetIndex < listNode.childCount) {
                     val child = listNode.getChild(targetIndex)
                     if (child != null) {
-                        // Find the clickable parent (RelativeLayout)
-                        var clickableNode = child
-                        if (!child.isClickable && child.parent != null) {
-                            clickableNode = child.parent
+                        Log.d(TAG, "Child at index $targetIndex: isClickable=${child.isClickable}, className=${child.className}")
+
+                        // Find a clickable node - prefer descendants (e.g., Button inside FrameLayout)
+                        var clickableNode: AccessibilityNodeInfo? = if (child.isClickable) child else null
+
+                        // First try to find a clickable descendant
+                        if (clickableNode == null) {
+                            Log.d(TAG, "Child not clickable, searching for clickable descendant")
+                            clickableNode = findClickableDescendant(child)
+                            if (clickableNode != null) {
+                                Log.d(TAG, "Found clickable descendant: ${clickableNode.className}")
+                            }
+                        }
+
+                        // If no descendant, try walking up the parent tree
+                        if (clickableNode == null) {
+                            var parent = child.parent
+                            var depth = 0
+                            while (parent != null && clickableNode == null && depth < 5) {
+                                Log.d(TAG, "  Parent depth $depth: isClickable=${parent.isClickable}, className=${parent.className}")
+                                if (parent.isClickable) {
+                                    clickableNode = parent
+                                } else {
+                                    parent = parent.parent
+                                }
+                                depth++
+                            }
+                        }
+
+                        // If still nothing, try clicking the child directly anyway
+                        if (clickableNode == null) {
+                            Log.w(TAG, "No clickable node found, trying click on child directly")
+                            clickableNode = child
                         }
 
                         val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
