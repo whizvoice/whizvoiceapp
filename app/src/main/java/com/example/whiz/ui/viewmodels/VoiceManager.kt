@@ -74,18 +74,7 @@ class VoiceManager @Inject constructor(
                         speechRecognitionService.initialize()
                     }
 
-                    // If bubble is active, restart listening after a short delay
-                    // This allows listening to continue in bubble mode even when screen is off
-                    if (BubbleOverlayService.isActive && continuousListeningEnabled) {
-                        Log.d(TAG, "Screen off but bubble is active - restarting listening")
-                        coroutineScope.launch {
-                            delay(200L) // Allow recognizer to fully initialize
-                            if (shouldBeListening()) {
-                                Log.d(TAG, "Restarting continuous listening for bubble mode after screen off")
-                                startContinuousListening()
-                            }
-                        }
-                    }
+                    // Don't restart listening when screen is off - mic should stay off until screen comes back on
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     Log.d(TAG, "Screen turned on - updating lock state")
@@ -198,10 +187,10 @@ class VoiceManager @Inject constructor(
             (bubbleMode == ListeningMode.CONTINUOUS_LISTENING || bubbleMode == ListeningMode.TTS_WITH_LISTENING)
 
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
-        // BUT only if screen is NOT locked (unless bubble is active)
+        // BUT only if screen is NOT locked - mic should always stop when screen is off
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    (screenNotLocked || isBubbleActive) // Allow listening when screen locked ONLY if bubble is active
+                    screenNotLocked // Never listen when screen is locked/off
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +

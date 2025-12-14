@@ -354,6 +354,8 @@ class SpeechRecognitionService @Inject constructor(
                 if (shouldRestart) {
                     try {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech (continuous mode)")
+                        // Cancel first to ensure previous session is cleaned up before restarting
+                        speechRecognizer?.cancel()
                         speechRecognizer?.startListening(recognizerIntent)
                         Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech")
                         // Don't set _isListening to false when we're restarting!
@@ -421,12 +423,12 @@ class SpeechRecognitionService @Inject constructor(
                         // Without this, startListening() early-returns because _isListening is still true
                         _isListening.value = false
 
-                        // Add small delay for ERROR_CLIENT to allow Android to clean up previous session
+                        // Add delay for ERROR_CLIENT to allow Android to clean up previous session
                         if (error == SpeechRecognizer.ERROR_CLIENT) {
-                            Log.d(TAG, "🔄 RESTART_DEBUG: Adding 100ms delay before restart (ERROR_CLIENT)")
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Adding 500ms delay before restart (ERROR_CLIENT)")
                             Handler(Looper.getMainLooper()).postDelayed({
                                 startListening(recognitionCallback ?: { })
-                            }, 100)
+                            }, 500)
                         } else {
                             startListening(recognitionCallback ?: { })
                         }

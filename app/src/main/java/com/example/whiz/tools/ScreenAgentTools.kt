@@ -3034,36 +3034,78 @@ class ScreenAgentTools @Inject constructor(
             delay(1500)
 
             // After pressing Enter, we get a list of results - select the first non-sponsored one
+            // If all visible results are sponsored, scroll down and retry
             Log.d(TAG, "Search submitted, selecting first non-sponsored location from results")
-            val listRootNode = accessibilityService.getCurrentRootNode()
-            if (listRootNode != null) {
+
+            val maxScrollAttempts = 3
+            var locationSelected = false
+
+            for (scrollAttempt in 0 until maxScrollAttempts) {
+                if (scrollAttempt > 0) {
+                    Log.d(TAG, "All visible results may be sponsored, scrolling down (attempt $scrollAttempt)")
+                    val scrollSuccess = scrollGoogleMapsResultsList()
+                    if (!scrollSuccess) {
+                        Log.w(TAG, "Failed to scroll results list")
+                        break
+                    }
+                    delay(1000) // Wait for scroll to complete
+                }
+
+                val listRootNode = accessibilityService.getCurrentRootNode()
+                if (listRootNode == null) {
+                    Log.w(TAG, "Could not get root node for location selection")
+                    continue
+                }
+
                 val locationClicked = clickLocationFromList(listRootNode, 1, null, accessibilityService, skipSponsored = true)
                 listRootNode.recycle()
 
-                if (!locationClicked) {
-                    // Check if we actually ended up on location details or still on search results
-                    val checkRootNode = accessibilityService.getCurrentRootNode()
-                    if (checkRootNode != null) {
-                        val screenState = detectGoogleMapsScreenState(checkRootNode)
-                        checkRootNode.recycle()
-
-                        if (screenState == GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
-                            // Still on search results - the click actually failed
-                            Log.w(TAG, "Could not select location from search results (still on results list)")
-                            return MapsActionResult(
-                                success = false,
-                                action = "search_location",
-                                location = address,
-                                error = "Could not select a non-sponsored location from search results"
-                            )
-                        }
-                        // Otherwise we may have gone directly to a single result, which is fine
-                        Log.d(TAG, "Click returned false but screen state is $screenState - may have gone directly to result")
-                    }
-                } else {
+                if (locationClicked) {
                     // Wait for location to load
                     delay(1000)
+                    locationSelected = true
+                    break
                 }
+
+                // Check if we actually ended up on location details or still on search results
+                val checkRootNode = accessibilityService.getCurrentRootNode()
+                if (checkRootNode != null) {
+                    val screenState = detectGoogleMapsScreenState(checkRootNode)
+                    checkRootNode.recycle()
+
+                    if (screenState != GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
+                        // We may have gone directly to a single result, which is fine
+                        Log.d(TAG, "Click returned false but screen state is $screenState - may have gone directly to result")
+                        locationSelected = true
+                        break
+                    }
+                    // Still on search results - try scrolling to find non-sponsored results
+                    Log.d(TAG, "Still on search results list, will try scrolling (attempt ${scrollAttempt + 1}/$maxScrollAttempts)")
+                }
+            }
+
+            if (!locationSelected) {
+                // Check final screen state before returning error
+                val finalCheckRoot = accessibilityService.getCurrentRootNode()
+                if (finalCheckRoot != null) {
+                    val finalState = detectGoogleMapsScreenState(finalCheckRoot)
+                    finalCheckRoot.recycle()
+                    if (finalState != GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
+                        // Actually succeeded despite click returning false
+                        Log.d(TAG, "Final state is $finalState - treating as success")
+                        locationSelected = true
+                    }
+                }
+            }
+
+            if (!locationSelected) {
+                Log.w(TAG, "Could not select location from search results after $maxScrollAttempts scroll attempts")
+                return MapsActionResult(
+                    success = false,
+                    action = "search_location",
+                    location = address,
+                    error = "Could not select a non-sponsored location from search results after scrolling"
+                )
             }
 
             // Extract the actual address from the place details
