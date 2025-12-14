@@ -417,6 +417,10 @@ class SpeechRecognitionService @Inject constructor(
                     if (errorRestartCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
 
+                        // FIX: Reset listening state before restart - the recognizer is dead after an error
+                        // Without this, startListening() early-returns because _isListening is still true
+                        _isListening.value = false
+
                         // Add small delay for ERROR_CLIENT to allow Android to clean up previous session
                         if (error == SpeechRecognizer.ERROR_CLIENT) {
                             Log.d(TAG, "🔄 RESTART_DEBUG: Adding 100ms delay before restart (ERROR_CLIENT)")
