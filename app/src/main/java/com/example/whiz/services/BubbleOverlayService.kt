@@ -86,6 +86,11 @@ class BubbleOverlayService : Service() {
         @Volatile
         var bubbleListeningMode: ListeningMode = ListeningMode.CONTINUOUS_LISTENING
 
+        // Track whether keep-screen-on flag is set (for testing)
+        @Volatile
+        var isKeepScreenOnEnabled: Boolean = false
+            private set
+
         // Store service instance for programmatic mode changes
         @Volatile
         private var serviceInstance: BubbleOverlayService? = null
@@ -651,6 +656,9 @@ class BubbleOverlayService : Service() {
     private fun updateKeepScreenOnFlag() {
         val shouldKeepScreenOn = currentMode == ListeningMode.CONTINUOUS_LISTENING ||
                                   currentMode == ListeningMode.TTS_WITH_LISTENING
+
+        // Update companion object property for testing
+        isKeepScreenOnEnabled = shouldKeepScreenOn
 
         chatHeadView?.let { view ->
             val params = view.layoutParams as WindowManager.LayoutParams
