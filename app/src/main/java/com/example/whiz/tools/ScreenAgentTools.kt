@@ -3060,27 +3060,58 @@ class ScreenAgentTools @Inject constructor(
                 val locationClicked = clickLocationFromList(listRootNode, 1, null, accessibilityService, skipSponsored = true)
                 listRootNode.recycle()
 
-                if (locationClicked) {
-                    // Wait for location to load
-                    delay(1000)
-                    locationSelected = true
-                    break
+                // Wait for screen to change from SEARCH_RESULTS_LIST
+                waitForCondition(maxWaitMs = 2000) {
+                    val node = accessibilityService.getCurrentRootNode()
+                    if (node != null) {
+                        val state = detectGoogleMapsScreenState(node)
+                        node.recycle()
+                        state != GoogleMapsScreenState.SEARCH_RESULTS_LIST
+                    } else false
                 }
 
-                // Check if we actually ended up on location details or still on search results
+                // Check what screen we're on after the click
                 val checkRootNode = accessibilityService.getCurrentRootNode()
                 if (checkRootNode != null) {
                     val screenState = detectGoogleMapsScreenState(checkRootNode)
                     checkRootNode.recycle()
 
-                    if (screenState != GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
-                        // We may have gone directly to a single result, which is fine
-                        Log.d(TAG, "Click returned false but screen state is $screenState - may have gone directly to result")
-                        locationSelected = true
-                        break
+                    when (screenState) {
+                        GoogleMapsScreenState.LOCATION_DETAILS -> {
+                            // Successfully selected a location
+                            Log.d(TAG, "Successfully navigated to location details")
+                            locationSelected = true
+                            break
+                        }
+                        GoogleMapsScreenState.FILTERS_SCREEN -> {
+                            // Accidentally opened Filters - press Back to close it and retry
+                            Log.w(TAG, "Accidentally opened Filters screen - pressing Back to close")
+                            accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                            waitForCondition(maxWaitMs = 1500) {
+                                val node = accessibilityService.getCurrentRootNode()
+                                if (node != null) {
+                                    val state = detectGoogleMapsScreenState(node)
+                                    node.recycle()
+                                    state != GoogleMapsScreenState.FILTERS_SCREEN
+                                } else false
+                            }
+                            // Continue to next scroll attempt
+                        }
+                        GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
+                            // Still on search results - try scrolling to find non-sponsored results
+                            Log.d(TAG, "Still on search results list, will try scrolling (attempt ${scrollAttempt + 1}/$maxScrollAttempts)")
+                        }
+                        else -> {
+                            // Some other state (could be direct navigation to a single result, etc.)
+                            Log.d(TAG, "Click resulted in screen state $screenState - treating as success")
+                            locationSelected = true
+                            break
+                        }
                     }
-                    // Still on search results - try scrolling to find non-sponsored results
-                    Log.d(TAG, "Still on search results list, will try scrolling (attempt ${scrollAttempt + 1}/$maxScrollAttempts)")
+                } else if (locationClicked) {
+                    // Couldn't get root node but click succeeded - assume success
+                    locationSelected = true
+                    break
                 }
             }
 
@@ -3090,10 +3121,22 @@ class ScreenAgentTools @Inject constructor(
                 if (finalCheckRoot != null) {
                     val finalState = detectGoogleMapsScreenState(finalCheckRoot)
                     finalCheckRoot.recycle()
-                    if (finalState != GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
-                        // Actually succeeded despite click returning false
-                        Log.d(TAG, "Final state is $finalState - treating as success")
+                    // Only treat LOCATION_DETAILS as success, not FILTERS_SCREEN or other states
+                    if (finalState == GoogleMapsScreenState.LOCATION_DETAILS) {
+                        Log.d(TAG, "Final state is LOCATION_DETAILS - treating as success")
                         locationSelected = true
+                    } else if (finalState == GoogleMapsScreenState.FILTERS_SCREEN) {
+                        // Still on filters screen - press Back and try one more time
+                        Log.w(TAG, "Still on Filters screen after retries - pressing Back")
+                        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                        waitForCondition(maxWaitMs = 1500) {
+                            val node = accessibilityService.getCurrentRootNode()
+                            if (node != null) {
+                                val state = detectGoogleMapsScreenState(node)
+                                node.recycle()
+                                state != GoogleMapsScreenState.FILTERS_SCREEN
+                            } else false
+                        }
                     }
                 }
             }
@@ -3398,6 +3441,21 @@ class ScreenAgentTools @Inject constructor(
                     Log.i(TAG, "Successfully selected location from search results list")
                     delay(1500) // Wait for location details to load
                 }
+                GoogleMapsScreenState.FILTERS_SCREEN -> {
+                    // Accidentally on the Filters screen - press Back to close it
+                    Log.w(TAG, "On Filters screen, pressing back to close")
+                    rootNode.recycle()
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    waitForCondition(maxWaitMs = 1500) {
+                        val node = accessibilityService.getCurrentRootNode()
+                        if (node != null) {
+                            val state = detectGoogleMapsScreenState(node)
+                            node.recycle()
+                            state != GoogleMapsScreenState.FILTERS_SCREEN
+                        } else false
+                    }
+                    // Continue to the Directions button click logic below
+                }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
                     // Dump UI hierarchy for debugging unknown states
@@ -3433,6 +3491,10 @@ class ScreenAgentTools @Inject constructor(
                                     Log.d(TAG, "Now on search results list, can proceed to select result")
                                     break // Exit the loop, we're in a good state
                                 }
+                                GoogleMapsScreenState.FILTERS_SCREEN -> {
+                                    Log.d(TAG, "On Filters screen, pressing back again to close")
+                                    // Continue the loop to press back again
+                                }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
                                     // Continue the loop to try again
@@ -3454,12 +3516,32 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // After pressing back from UNKNOWN, we might now be on SEARCH_RESULTS_LIST
-            // Need to check and select a result if so
-            val stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
+            // After pressing back from UNKNOWN, we might now be on SEARCH_RESULTS_LIST or FILTERS_SCREEN
+            // Need to check and handle appropriately
+            var stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
+
+            // If still on Filters screen, press Back to close it
+            if (stateAfterHandling == GoogleMapsScreenState.FILTERS_SCREEN) {
+                Log.w(TAG, "Still on Filters screen after handling - pressing back to close")
+                currentRootNode?.recycle()
+                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                waitForCondition(maxWaitMs = 1500) {
+                    val node = accessibilityService.getCurrentRootNode()
+                    if (node != null) {
+                        val state = detectGoogleMapsScreenState(node)
+                        node.recycle()
+                        state != GoogleMapsScreenState.FILTERS_SCREEN
+                    } else false
+                }
+                currentRootNode = accessibilityService.getCurrentRootNode()
+                if (currentRootNode != null) {
+                    stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
+                }
+            }
+
             if (stateAfterHandling == GoogleMapsScreenState.SEARCH_RESULTS_LIST) {
                 Log.d(TAG, "After handling, now on search results list - selecting first non-sponsored result")
-                currentRootNode.recycle()
+                currentRootNode?.recycle()
 
                 val selectResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                 if (!selectResult.success) {
@@ -3496,6 +3578,19 @@ class ScreenAgentTools @Inject constructor(
                         action = "get_directions",
                         mode = mode,
                         error = "Could not get root node after selecting from search list"
+                    )
+                }
+            }
+
+            // Ensure we have a valid root node for direction checks
+            if (currentRootNode == null) {
+                currentRootNode = accessibilityService.getCurrentRootNode()
+                if (currentRootNode == null) {
+                    return MapsActionResult(
+                        success = false,
+                        action = "get_directions",
+                        mode = mode,
+                        error = "Could not get root node for directions check"
                     )
                 }
             }
@@ -3956,6 +4051,7 @@ class ScreenAgentTools @Inject constructor(
         DIRECTIONS_INPUT,      // directions_mode_tabs exists - directions/choose destination screen
         ACTIVE_NAVIGATION,     // Turn-by-turn navigation is active
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
+        FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
         UNKNOWN
     }
 
@@ -3994,6 +4090,23 @@ class ScreenAgentTools @Inject constructor(
             searchListNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: SEARCH_RESULTS_LIST (search_list_layout found)")
             return GoogleMapsScreenState.SEARCH_RESULTS_LIST
+        }
+
+        // Check for Filters screen by looking for "Sort by" description and Clear/Apply buttons
+        // The Filters screen has a unique combination of these elements
+        val filtersIndicators = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "Sort by", filtersIndicators)
+        if (filtersIndicators.isNotEmpty()) {
+            // Also verify there's a "Clear" or "Apply" button
+            val clearNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByContentDescription(rootNode, "Clear", clearNodes)
+            val applyNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByContentDescription(rootNode, "Apply", applyNodes)
+
+            if (clearNodes.isNotEmpty() || applyNodes.isNotEmpty()) {
+                Log.d(TAG, "Detected Google Maps screen state: FILTERS_SCREEN (Sort by + Clear/Apply found)")
+                return GoogleMapsScreenState.FILTERS_SCREEN
+            }
         }
 
         // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
@@ -4520,6 +4633,13 @@ class ScreenAgentTools @Inject constructor(
                         continue
                     }
 
+                    // Skip filter chip rows (e.g., "Open now", "Top rated" filter buttons)
+                    if (isFilterChipRow(child)) {
+                        Log.d(TAG, "Child $i is a filter chip row, skipping")
+                        child.recycle()
+                        continue
+                    }
+
                     nonSponsoredCount++
                     if (nonSponsoredCount == position) {
                         Log.d(TAG, "Found non-sponsored result at index $i (position $position)")
@@ -4746,6 +4866,51 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
+        return false
+    }
+
+    /**
+     * Check if a node looks like a filter chip row rather than a search result.
+     * Filter chip rows have text like "Open now", "Top rated", "Filters" but no "Directions" button.
+     * Real search results have a "Directions" button inside them.
+     * IMPORTANT: This function does NOT recycle any nodes - caller is responsible for recycling.
+     */
+    private fun isFilterChipRow(node: AccessibilityNodeInfo): Boolean {
+        // A real search result should have a "Directions" button inside
+        val directionsNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByContentDescription(node, "Directions", directionsNodes)
+
+        if (directionsNodes.isNotEmpty()) {
+            // Has Directions button - this is a real search result, not a filter chip row
+            Log.d(TAG, "Node has Directions button - is a search result")
+            return false
+        }
+
+        // Check for filter-related text that indicates this is a filter chip row
+        val filterIndicators = listOf("Open now", "Top rated", "Filters", "Sort by", "Price", "Rating")
+        for (indicator in filterIndicators) {
+            val indicatorNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(node, indicator, indicatorNodes)
+            if (indicatorNodes.isNotEmpty()) {
+                Log.d(TAG, "Node contains filter indicator '$indicator' - is a filter chip row")
+                return true
+            }
+        }
+
+        // Also check content descriptions for filter indicators
+        for (indicator in filterIndicators) {
+            val indicatorNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByContentDescription(node, indicator, indicatorNodes)
+            if (indicatorNodes.isNotEmpty()) {
+                Log.d(TAG, "Node contains filter indicator desc '$indicator' - is a filter chip row")
+                return true
+            }
+        }
+
+        // No Directions button and no obvious filter indicators
+        // Could be either - check if it looks like a search result by having business info
+        // For now, assume it's safe if no filter indicators found
+        Log.d(TAG, "Node has no Directions button but no filter indicators - treating as result")
         return false
     }
 
