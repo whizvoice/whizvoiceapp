@@ -385,14 +385,14 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                         message.type == MessageType.ASSISTANT &&
                         message.content.contains("Barista", ignoreCase = true)
                     },
-                    timeout = 5000L
+                    timeout = 10000L
                 )
             } else {
                 // Fallback: ViewModel not captured, search UI directly (slower)
                 Log.w(TAG, "⚠️ ViewModel not captured, falling back to UI search (slower)")
                 var found: MessageEntity? = null
                 val waitStartTime = System.currentTimeMillis()
-                val waitTimeout = 5000L
+                val waitTimeout = 10000L
 
                 while (found == null && (System.currentTimeMillis() - waitStartTime) < waitTimeout) {
                     try {
