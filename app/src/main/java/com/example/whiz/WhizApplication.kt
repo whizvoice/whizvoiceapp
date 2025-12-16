@@ -1,11 +1,14 @@
 package com.example.whiz
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import kotlin.system.exitProcess
 import dagger.hilt.android.HiltAndroidApp
 import com.example.whiz.services.SpeechRecognitionService
+import org.json.JSONObject
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -26,6 +29,26 @@ class WhizApplication : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 Log.e("WhizApplication", "Uncaught exception in thread ${thread.name}", throwable)
+
+                // Save crash data to file for upload on next launch
+                try {
+                    val crashData = JSONObject().apply {
+                        put("thread_name", thread.name)
+                        put("stack_trace", Log.getStackTraceString(throwable))
+                        put("timestamp", System.currentTimeMillis())
+                        put("device_model", Build.MODEL)
+                        put("device_manufacturer", Build.MANUFACTURER)
+                        put("android_version", Build.VERSION.RELEASE)
+                        put("app_version", BuildConfig.VERSION_NAME)
+                    }
+
+                    // Write to internal storage (survives crash, doesn't need permissions)
+                    val crashFile = File(filesDir, "pending_crash.json")
+                    crashFile.writeText(crashData.toString())
+                    Log.e("WhizApplication", "Crash saved to file: ${crashFile.absolutePath}")
+                } catch (e: Exception) {
+                    Log.e("WhizApplication", "Failed to save crash to file", e)
+                }
 
                 // Show toast on main thread
                 android.os.Handler(mainLooper).post {
