@@ -5311,67 +5311,106 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun clickYouTubeMusicSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
-        try {
-            // Look for search button - try various possible IDs and descriptions
-            val searchViewIds = listOf(
-                "com.google.android.apps.youtube.music:id/action_search_button",
-                "com.google.android.apps.youtube.music:id/action_bar_search"
-            )
+    private suspend fun clickYouTubeMusicSearch(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+        val maxAttempts = 3
+        val delayBetweenAttempts = 300L
 
-            // Try by view ID first
-            for (viewId in searchViewIds) {
-                val nodes = rootNode.findAccessibilityNodeInfosByViewId(viewId)
-                if (nodes != null && nodes.isNotEmpty()) {
-                    Log.d(TAG, "Found YouTube Music search button with ID: $viewId")
-                    for (node in nodes) {
-                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
-                        if (clickableNode != null) {
-                            val clicked = accessibilityService.clickNode(clickableNode)
-                            if (clickableNode != node) {
-                                clickableNode.recycle()
+        for (attempt in 1..maxAttempts) {
+            try {
+                // Get fresh root node on retry attempts (first attempt uses passed-in node)
+                val currentRoot = if (attempt == 1) {
+                    rootNode
+                } else {
+                    Log.d(TAG, "Retry attempt $attempt: getting fresh root node")
+                    delay(delayBetweenAttempts)
+                    accessibilityService.getCurrentRootNode() ?: continue
+                }
+
+                // Look for search button - try various possible IDs and descriptions
+                val searchViewIds = listOf(
+                    "com.google.android.apps.youtube.music:id/action_search_button",
+                    "com.google.android.apps.youtube.music:id/action_bar_search"
+                )
+
+                var foundButClickFailed = false
+
+                // Try by view ID first
+                for (viewId in searchViewIds) {
+                    val nodes = currentRoot.findAccessibilityNodeInfosByViewId(viewId)
+                    if (nodes != null && nodes.isNotEmpty()) {
+                        Log.d(TAG, "Found YouTube Music search button with ID: $viewId (attempt $attempt)")
+                        for (node in nodes) {
+                            val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                            if (clickableNode != null) {
+                                val clicked = accessibilityService.clickNode(clickableNode)
+                                if (clickableNode != node) {
+                                    clickableNode.recycle()
+                                }
+                                if (clicked) {
+                                    Log.d(TAG, "Successfully clicked YouTube Music search button (attempt $attempt)")
+                                    nodes.forEach { it.recycle() }
+                                    if (attempt > 1 && currentRoot != rootNode) {
+                                        currentRoot.recycle()
+                                    }
+                                    return true
+                                } else {
+                                    Log.w(TAG, "Click returned false for search button (attempt $attempt)")
+                                    foundButClickFailed = true
+                                }
                             }
-                            if (clicked) {
-                                Log.d(TAG, "Successfully clicked YouTube Music search button")
-                                nodes.forEach { it.recycle() }
-                                return true
+                        }
+                        nodes.forEach { it.recycle() }
+                    }
+                }
+
+                // Try by content description if view ID didn't work
+                val searchNodes = currentRoot.findAccessibilityNodeInfosByText("Search")
+                if (searchNodes != null && searchNodes.isNotEmpty()) {
+                    Log.d(TAG, "Found YouTube Music search button by text/description (attempt $attempt)")
+                    for (node in searchNodes) {
+                        // Make sure this is actually a search button (ImageButton), not just any text containing "Search"
+                        if (node.className == "android.widget.ImageButton") {
+                            val clickableNode = if (node.isClickable) node else findClickableParent(node)
+                            if (clickableNode != null) {
+                                val clicked = accessibilityService.clickNode(clickableNode)
+                                if (clickableNode != node) {
+                                    clickableNode.recycle()
+                                }
+                                if (clicked) {
+                                    Log.d(TAG, "Successfully clicked YouTube Music search ImageButton (attempt $attempt)")
+                                    searchNodes.forEach { it.recycle() }
+                                    if (attempt > 1 && currentRoot != rootNode) {
+                                        currentRoot.recycle()
+                                    }
+                                    return true
+                                } else {
+                                    Log.w(TAG, "Click returned false for search ImageButton (attempt $attempt)")
+                                    foundButClickFailed = true
+                                }
                             }
                         }
                     }
-                    nodes.forEach { it.recycle() }
+                    searchNodes.forEach { it.recycle() }
                 }
-            }
 
-            // Try by content description if view ID didn't work
-            val searchNodes = rootNode.findAccessibilityNodeInfosByText("Search")
-            if (searchNodes != null && searchNodes.isNotEmpty()) {
-                Log.d(TAG, "Found YouTube Music search button by text/description")
-                for (node in searchNodes) {
-                    // Make sure this is actually a search button (ImageButton), not just any text containing "Search"
-                    if (node.className == "android.widget.ImageButton") {
-                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
-                        if (clickableNode != null) {
-                            val clicked = accessibilityService.clickNode(clickableNode)
-                            if (clickableNode != node) {
-                                clickableNode.recycle()
-                            }
-                            if (clicked) {
-                                Log.d(TAG, "Successfully clicked YouTube Music search ImageButton")
-                                searchNodes.forEach { it.recycle() }
-                                return true
-                            }
-                        }
-                    }
+                // Recycle fresh root node if we got one
+                if (attempt > 1 && currentRoot != rootNode) {
+                    currentRoot.recycle()
                 }
-                searchNodes.forEach { it.recycle() }
-            }
 
-            Log.w(TAG, "Could not find YouTube Music search button")
-            return false
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clicking YouTube Music search", e)
-            return false
+                if (foundButClickFailed) {
+                    Log.w(TAG, "Found YouTube Music search button but click failed (attempt $attempt/$maxAttempts)")
+                } else {
+                    Log.w(TAG, "Could not find YouTube Music search button (attempt $attempt/$maxAttempts)")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error clicking YouTube Music search (attempt $attempt)", e)
+            }
         }
+
+        Log.w(TAG, "Failed to click YouTube Music search button after $maxAttempts attempts")
+        return false
     }
 
     private suspend fun enterYouTubeMusicSearchQuery(
@@ -5559,7 +5598,7 @@ class ScreenAgentTools @Inject constructor(
             val searchSuccess = clickYouTubeMusicSearch(rootNode, accessibilityService)
 
             if (!searchSuccess) {
-                return YouTubeMusicSearchResult.Error("Could not find search button in YouTube Music")
+                return YouTubeMusicSearchResult.Error("Failed to open search in YouTube Music (button may not be found or click may have failed)")
             }
 
             // Wait for search field to appear
