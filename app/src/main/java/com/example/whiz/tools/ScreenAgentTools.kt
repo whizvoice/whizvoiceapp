@@ -2600,6 +2600,12 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (searchResult is YouTubeMusicSearchResult.Error) {
+                // UI dump for search failure
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_search_failed", searchResult.message)
+                    dumpRoot.recycle()
+                }
                 return MusicActionResult(
                     success = false,
                     action = "play_song",
@@ -2831,6 +2837,12 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (searchResult is YouTubeMusicSearchResult.Error) {
+                // UI dump for search failure
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_queue_search_failed", searchResult.message)
+                    dumpRoot.recycle()
+                }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",

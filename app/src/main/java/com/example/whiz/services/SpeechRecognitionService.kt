@@ -495,8 +495,14 @@ class SpeechRecognitionService @Inject constructor(
 
                 // 🔧 If we have a saved partial from a previous session, prepend it
                 if (savedPartialForConcatenation.isNotBlank() && finalText.isNotBlank()) {
-                    finalText = "$savedPartialForConcatenation $finalText"
-                    Log.d(TAG, "[DEBUG] 🔗 CONCATENATED final result: '$finalText' (saved: '$savedPartialForConcatenation')")
+                    // Only concatenate if the final result doesn't already start with the saved partial
+                    // This prevents duplication when the speech recognizer provides the full phrase
+                    if (!finalText.startsWith(savedPartialForConcatenation, ignoreCase = true)) {
+                        finalText = "$savedPartialForConcatenation $finalText"
+                        Log.d(TAG, "[DEBUG] 🔗 CONCATENATED final result: '$finalText' (saved: '$savedPartialForConcatenation')")
+                    } else {
+                        Log.d(TAG, "[DEBUG] 🔗 SKIPPED concatenation - final result already contains saved partial: '$finalText'")
+                    }
                     savedPartialForConcatenation = "" // Clear after use
                     savedPartialTimeoutJob?.cancel()
                 }
@@ -555,8 +561,14 @@ class SpeechRecognitionService @Inject constructor(
                 // 🔧 If we have a saved partial from a previous session (premature end-of-speech),
                 // prepend it to the new partial
                 if (savedPartialForConcatenation.isNotBlank() && partialText.isNotBlank()) {
-                    partialText = "$savedPartialForConcatenation $partialText"
-                    Log.d(TAG, "[DEBUG] 🔗 CONCATENATED partial: '$partialText' (saved: '$savedPartialForConcatenation')")
+                    // Only concatenate if the partial doesn't already start with the saved partial
+                    // This prevents duplication when the speech recognizer provides the full phrase
+                    if (!partialText.startsWith(savedPartialForConcatenation, ignoreCase = true)) {
+                        partialText = "$savedPartialForConcatenation $partialText"
+                        Log.d(TAG, "[DEBUG] 🔗 CONCATENATED partial: '$partialText' (saved: '$savedPartialForConcatenation')")
+                    } else {
+                        Log.d(TAG, "[DEBUG] 🔗 SKIPPED concatenation - partial already contains saved partial: '$partialText'")
+                    }
                 }
 
                 Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
