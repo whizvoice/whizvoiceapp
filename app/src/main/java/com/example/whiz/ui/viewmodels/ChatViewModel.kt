@@ -1647,7 +1647,8 @@ class ChatViewModel @Inject constructor(
         if (voiceManager.isContinuousListeningEnabled.value) {
             Log.d(TAG, "[LOG] Continuous listening already enabled, ensuring it's active")
             // If not currently listening and not busy, start listening
-            if (!isListening.value && !isSpeaking.value && !_isResponding.value) {
+            // Note: We don't check isResponding here - user should be able to speak while waiting for response
+            if (!isListening.value && !isSpeaking.value) {
                 startContinuousListening()
             }
             return
@@ -1662,8 +1663,8 @@ class ChatViewModel @Inject constructor(
         voiceManager.updateContinuousListeningEnabled(true)
         // continuousListeningEnabled is already set via voiceManager
         
-        // Start listening if not busy
-        if (!isSpeaking.value && !_isResponding.value) {
+        // Start listening if not busy (only check isSpeaking, not isResponding)
+        if (!isSpeaking.value) {
             startContinuousListening()
         }
     }
@@ -1903,11 +1904,11 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop() // Stop speaking if toggled off
 
             // If continuous listening is enabled, restart it immediately when TTS is stopped
-            if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
+            if (voiceManager.isContinuousListeningEnabled.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
                 viewModelScope.launch {
                     delay(50L) // Very short delay to ensure TTS stop is processed
-                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
@@ -1922,11 +1923,11 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop() // Stop speaking if disabled
 
             // If continuous listening is enabled, restart it immediately when TTS is stopped
-            if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
+            if (voiceManager.isContinuousListeningEnabled.value) {
                 Log.d(TAG, "[LOG] Voice response disabled via setter, restarting continuous listening immediately")
                 viewModelScope.launch {
                     delay(50L) // Very short delay to ensure TTS stop is processed
-                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
