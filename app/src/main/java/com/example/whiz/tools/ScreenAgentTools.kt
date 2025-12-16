@@ -515,7 +515,7 @@ class ScreenAgentTools @Inject constructor(
                             
                             if (success) {
                                 // Wait to verify we're in the chat
-                                waitForCondition(maxWaitMs = 2000) {
+                                val inChat = waitForCondition(maxWaitMs = 2000) {
                                     val rootNode = accessibilityService.getCurrentRootNode()
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
@@ -526,16 +526,24 @@ class ScreenAgentTools @Inject constructor(
                                         false
                                     }
                                 }
-                                
-                                // Clean up
-                                chatNodes.forEach { it.recycle() }
-                                rootNode.recycle()
-                                
-                                return WhatsAppResult(
-                                    success = true,
-                                    action = "select_chat",
-                                    chatName = chatName
-                                )
+
+                                if (inChat) {
+                                    // Clean up
+                                    chatNodes.forEach { it.recycle() }
+                                    rootNode.recycle()
+
+                                    return WhatsAppResult(
+                                        success = true,
+                                        action = "select_chat",
+                                        chatName = chatName
+                                    )
+                                } else {
+                                    // Click succeeded but we're not in the chat (e.g., profile popup opened)
+                                    // Press back and try the next node
+                                    Log.w(TAG, "Click succeeded but not in chat - pressing back to retry")
+                                    accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                                    delay(300)
+                                }
                             }
                             clickableNode.recycle()
                         }
@@ -7798,7 +7806,7 @@ class ScreenAgentTools @Inject constructor(
     private fun isProfilePictureNode(node: AccessibilityNodeInfo): Boolean {
         // Check resource ID for profile picture indicators
         val viewId = node.viewIdResourceName ?: ""
-        if (viewId.contains("picture") || viewId.contains("photo") || viewId.contains("avatar") || viewId.contains("contact_photo")) {
+        if (viewId.contains("picture") || viewId.contains("photo") || viewId.contains("avatar") || viewId.contains("contact_photo") || viewId.contains("contact_selector")) {
             return true
         }
 
