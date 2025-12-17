@@ -115,7 +115,20 @@ class WhizServerRepository @Inject constructor(
     fun isConnected(): Boolean {
         return connectionState == ConnectionState.CONNECTED && webSocket != null
     }
-    
+
+    /**
+     * Convert epoch milliseconds to ISO timestamp string with exactly 3 decimal places.
+     * This ensures consistent format that Python's datetime.fromisoformat() can parse.
+     * Format: "2025-12-17T02:10:24.400Z" (always 3 decimal places)
+     */
+    private fun formatTimestamp(epochMillis: Long): String {
+        val instant = java.time.Instant.ofEpochMilli(epochMillis)
+        val formatter = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+            .withZone(java.time.ZoneOffset.UTC)
+        return formatter.format(instant)
+    }
+
     // Expose persistent disconnect state for testing
     fun persistentDisconnectForTest(): Boolean {
         return persistentDisconnectForTest
@@ -814,12 +827,18 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long): Boolean {
+    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long, timestamp: Long? = null): Boolean {
         Log.i(TAG, "📤📤📤 SENDING TOOL RESULT TO SERVER")
         Log.i(TAG, "📤 Tool: $toolName")
         Log.i(TAG, "📤 Request ID: $requestId")
         Log.i(TAG, "📤 Chat ID: $chatId")
+        Log.i(TAG, "📤 Timestamp: $timestamp")
         Log.i(TAG, "📤 Result: ${result.toString(2)}")
+
+        // Warn if timestamp is missing - helps debug message ordering issues
+        if (timestamp == null) {
+            Log.w(TAG, "⚠️ TIMESTAMP_MISSING: sendToolResult called without timestamp! requestId=$requestId, tool=$toolName")
+        }
         
         return try {
             val currentSocket = webSocket
@@ -840,6 +859,11 @@ class WhizServerRepository @Inject constructor(
                         } else if (chatId < 0) {
                             put("client_conversation_id", chatId)
                         }
+                        // Include timestamp if provided
+                        timestamp?.let {
+                            val isoTimestamp = formatTimestamp(it)
+                            put("timestamp", isoTimestamp)
+                        }
                     }
                     queueMessageForRetry(resultJson.toString(), requestId, chatId)
                     return false
@@ -851,12 +875,18 @@ class WhizServerRepository @Inject constructor(
                     put("tool", toolName)
                     put("request_id", requestId)
                     put("result", result)
-                    
+
                     // Include conversation ID
                     if (chatId > 0) {
                         put("conversation_id", chatId)
                     } else if (chatId < 0) {
                         put("client_conversation_id", chatId)
+                    }
+
+                    // Include timestamp if provided
+                    timestamp?.let {
+                        val isoTimestamp = formatTimestamp(it)
+                        put("timestamp", isoTimestamp)
                     }
                 }
                 val jsonMessage = resultJson.toString()
@@ -886,6 +916,11 @@ class WhizServerRepository @Inject constructor(
                     } else if (chatId < 0) {
                         put("client_conversation_id", chatId)
                     }
+                    // Include timestamp if provided
+                    timestamp?.let {
+                        val isoTimestamp = formatTimestamp(it)
+                        put("timestamp", isoTimestamp)
+                    }
                 }
                 queueMessageForRetry(resultJson.toString(), requestId, chatId)
                 false
@@ -902,6 +937,11 @@ class WhizServerRepository @Inject constructor(
                     put("conversation_id", chatId)
                 } else if (chatId < 0) {
                     put("client_conversation_id", chatId)
+                }
+                // Include timestamp if provided
+                timestamp?.let {
+                    val isoTimestamp = formatTimestamp(it)
+                    put("timestamp", isoTimestamp)
                 }
             }
             queueMessageForRetry(resultJson.toString(), requestId, chatId)
@@ -946,7 +986,7 @@ class WhizServerRepository @Inject constructor(
                     // Include timestamp if provided
                     timestamp?.let { 
                         // Convert milliseconds to ISO format string for server
-                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                        val isoTimestamp = formatTimestamp(it)
                         put("timestamp", isoTimestamp)
                     }
                 }
@@ -1092,7 +1132,7 @@ class WhizServerRepository @Inject constructor(
                         // Include timestamp if provided
                         pendingMessage.timestamp?.let { 
                             // Convert milliseconds to ISO format string for server
-                            val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                            val isoTimestamp = formatTimestamp(it)
                             put("timestamp", isoTimestamp)
                         }
                     }

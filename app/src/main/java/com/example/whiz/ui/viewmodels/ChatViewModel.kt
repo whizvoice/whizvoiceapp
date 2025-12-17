@@ -1211,15 +1211,17 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         
-                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
+                        val toolResultTimestamp = System.currentTimeMillis()
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId, timestamp=$toolResultTimestamp")
                         Log.i(TAG, "📮 [TOOL_COLLECTOR] Tool name: ${result.toolName}")
                         Log.i(TAG, "📮 [TOOL_COLLECTOR] Result: ${resultWithStatus.toString(2)}")
-                        
+
                         val success = whizServerRepository.sendToolResult(
                             toolName = result.toolName,
                             requestId = result.requestId,
                             result = resultWithStatus,
-                            chatId = currentChatId
+                            chatId = currentChatId,
+                            timestamp = toolResultTimestamp
                         )
                         if (!success) {
                             Log.e(TAG, "❌ [TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
@@ -1236,7 +1238,8 @@ class ChatViewModel @Inject constructor(
                             toolName = result.toolName,
                             requestId = result.requestId,
                             result = errorResult,
-                            chatId = currentChatId
+                            chatId = currentChatId,
+                            timestamp = System.currentTimeMillis()
                         )
                         if (!success) {
                             Log.e(TAG, "Failed to send tool error result to server")
