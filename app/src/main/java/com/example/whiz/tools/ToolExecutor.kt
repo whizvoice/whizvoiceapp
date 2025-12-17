@@ -1,12 +1,14 @@
 package com.example.whiz.tools
 
 import android.content.Context
+import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -91,6 +93,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_set_tts_enabled" -> {
                         executeSetTTSEnabled(requestId, params, chatViewModel)
+                    }
+                    "agent_close_app" -> {
+                        executeCloseApp(requestId)
                     }
                     "agent_play_youtube_music" -> {
                         executePlayYouTubeMusic(requestId, params)
@@ -643,7 +648,45 @@ class ToolExecutor @Inject constructor(
             )
         }
     }
-    
+
+    private suspend fun executeCloseApp(requestId: String) {
+        try {
+            Log.i(TAG, "Executing close app command")
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "App closing")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Close app result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_close_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+            // Short delay to allow the result to be sent before closing
+            delay(100)
+
+            // Send broadcast to close the app
+            val closeIntent = Intent("com.example.whiz.ACTION_CLOSE_APP")
+            context.sendBroadcast(closeIntent)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing close app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_close_app",
+                    requestId = requestId,
+                    error = "Failed to close app: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")

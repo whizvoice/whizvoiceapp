@@ -912,7 +912,12 @@ class WhizServerRepository @Inject constructor(
     fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
         Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
-        
+
+        // Warn if timestamp is missing - helps debug message ordering issues
+        if (timestamp == null) {
+            Log.w(TAG, "⚠️ TIMESTAMP_MISSING: sendMessage called without timestamp! requestId=$requestId, content='${message.take(50)}...'")
+        }
+
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !persistentDisconnectForTest) {

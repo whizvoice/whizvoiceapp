@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var navController: NavHostController
     private var testTranscriptionReceiver: BroadcastReceiver? = null
+    private var closeAppReceiver: BroadcastReceiver? = null
 
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
@@ -120,6 +121,22 @@ class MainActivity : ComponentActivity() {
 
         // Upload any pending crash report from previous session
         uploadPendingCrashReport()
+
+        // Register close app broadcast receiver
+        closeAppReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == "com.example.whiz.ACTION_CLOSE_APP") {
+                    Log.d(TAG, "Received close app broadcast")
+                    closeApp()
+                }
+            }
+        }
+        val closeAppFilter = IntentFilter("com.example.whiz.ACTION_CLOSE_APP")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(closeAppReceiver, closeAppFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(closeAppReceiver, closeAppFilter)
+        }
 
         setContent {
             WhizTheme {
@@ -683,6 +700,16 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
 
+        // Unregister close app broadcast receiver
+        closeAppReceiver?.let {
+            try {
+                unregisterReceiver(it)
+                Log.d(TAG, "Close app receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering close app receiver", e)
+            }
+        }
+
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
             try {
@@ -692,6 +719,34 @@ class MainActivity : ComponentActivity() {
                 Log.w(TAG, "Error unregistering test receiver", e)
             }
         }
+    }
+
+    private fun closeApp() {
+        Log.d(TAG, "closeApp() called - initiating full app shutdown")
+
+        // Stop the bubble overlay service if active
+        if (BubbleOverlayService.isActive) {
+            Log.d(TAG, "Stopping bubble overlay service")
+            BubbleOverlayService.stop(this)
+        }
+
+        // Stop TTS
+        try {
+            ttsManager.stop()
+            Log.d(TAG, "TTS stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping TTS", e)
+        }
+
+        // Stop voice manager / microphone
+        if (voiceManager.isListening.value) {
+            Log.d(TAG, "Stopping voice manager")
+            voiceManager.stopListening()
+        }
+
+        // Finish the activity and all parent activities
+        Log.d(TAG, "Finishing MainActivity")
+        finishAffinity()
     }
 
     private fun setupTestTranscriptionReceiver() {
