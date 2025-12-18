@@ -493,16 +493,11 @@ class SpeechRecognitionService @Inject constructor(
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 var finalText = matches?.firstOrNull() ?: ""
 
-                // 🔧 If we have a saved partial from a previous session, prepend it
+                // 🔧 If we have a saved partial from a previous session, merge it with the final result
                 if (savedPartialForConcatenation.isNotBlank() && finalText.isNotBlank()) {
-                    // Only concatenate if the final result doesn't already start with the saved partial
-                    // This prevents duplication when the speech recognizer provides the full phrase
-                    if (!finalText.startsWith(savedPartialForConcatenation, ignoreCase = true)) {
-                        finalText = "$savedPartialForConcatenation $finalText"
-                        Log.d(TAG, "[DEBUG] 🔗 CONCATENATED final result: '$finalText' (saved: '$savedPartialForConcatenation')")
-                    } else {
-                        Log.d(TAG, "[DEBUG] 🔗 SKIPPED concatenation - final result already contains saved partial: '$finalText'")
-                    }
+                    val originalFinal = finalText
+                    finalText = mergeOverlapping(savedPartialForConcatenation, finalText)
+                    Log.d(TAG, "[DEBUG] 🔗 MERGED final result: saved='$savedPartialForConcatenation' + final='$originalFinal' -> '$finalText'")
                     savedPartialForConcatenation = "" // Clear after use
                     savedPartialTimeoutJob?.cancel()
                 }
@@ -559,16 +554,11 @@ class SpeechRecognitionService @Inject constructor(
                 var partialText = matches?.firstOrNull() ?: ""
 
                 // 🔧 If we have a saved partial from a previous session (premature end-of-speech),
-                // prepend it to the new partial
+                // merge it with the new partial using overlap detection
                 if (savedPartialForConcatenation.isNotBlank() && partialText.isNotBlank()) {
-                    // Only concatenate if the partial doesn't already start with the saved partial
-                    // This prevents duplication when the speech recognizer provides the full phrase
-                    if (!partialText.startsWith(savedPartialForConcatenation, ignoreCase = true)) {
-                        partialText = "$savedPartialForConcatenation $partialText"
-                        Log.d(TAG, "[DEBUG] 🔗 CONCATENATED partial: '$partialText' (saved: '$savedPartialForConcatenation')")
-                    } else {
-                        Log.d(TAG, "[DEBUG] 🔗 SKIPPED concatenation - partial already contains saved partial: '$partialText'")
-                    }
+                    val originalPartial = partialText
+                    partialText = mergeOverlapping(savedPartialForConcatenation, partialText)
+                    Log.d(TAG, "[DEBUG] 🔗 MERGED partial: saved='$savedPartialForConcatenation' + partial='$originalPartial' -> '$partialText'")
                 }
 
                 Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
@@ -629,6 +619,54 @@ class SpeechRecognitionService @Inject constructor(
     }
 
     // --- Helper methods getErrorMessage, shouldShowError remain the same ---
+    /**
+     * Merges two strings by finding the longest overlap between the suffix of the first
+     * and the prefix of the second. This handles cases where speech recognition splits
+     * a phrase and the partial doesn't exactly match the start of the final result.
+     *
+     * Examples:
+     * - mergeOverlapping("the quick brown", "quick brown fox") -> "the quick brown fox"
+     * - mergeOverlapping("hello world", "world is great") -> "hello world is great"
+     * - mergeOverlapping("no overlap", "different text") -> "no overlap different text"
+     */
+    private fun mergeOverlapping(first: String, second: String): String {
+        if (first.isBlank()) return second
+        if (second.isBlank()) return first
+
+        // If second already starts with first, no merging needed
+        if (second.startsWith(first, ignoreCase = true)) {
+            return second
+        }
+
+        // If first already ends with second (second is substring of first's end), just return first
+        if (first.endsWith(second, ignoreCase = true)) {
+            return first
+        }
+
+        val firstLower = first.lowercase()
+        val secondLower = second.lowercase()
+
+        // Find the longest suffix of first that matches a prefix of second
+        // Start from the longest possible overlap and work down
+        val maxOverlap = minOf(first.length, second.length)
+
+        for (overlapLen in maxOverlap downTo 1) {
+            val suffix = firstLower.takeLast(overlapLen)
+            val prefix = secondLower.take(overlapLen)
+
+            if (suffix == prefix) {
+                // Found overlap - merge by taking first + remainder of second
+                val result = first + second.drop(overlapLen)
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_OVERLAP: '$first' + '$second' -> '$result' (overlap: '$suffix')")
+                return result
+            }
+        }
+
+        // No overlap found - simple concatenation with space
+        Log.d(TAG, "[DEBUG] 🔗 MERGE_NO_OVERLAP: '$first' + '$second' (no overlap found)")
+        return "$first $second"
+    }
+
     private fun getErrorMessage(error: Int): String {
         return when (error) {
             SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
