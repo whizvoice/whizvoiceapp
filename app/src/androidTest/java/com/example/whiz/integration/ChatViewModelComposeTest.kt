@@ -322,25 +322,25 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             // Step 4: Send rapid interruption messages using Compose Testing
             Log.d(TAG, "📨 Step 4: Sending interrupt messages RAPIDLY while bot is responding...")
-            val interruptMessageCount = MESSAGE_COUNT - 1
-            
-            for (i in 1..interruptMessageCount) {
-                val interruptMessage = "hi $i"
-                
-                Log.d(TAG, "🚀 RAPID MESSAGE $i: Testing rapid send during bot response...")
-                
+            // Use conversational noise that won't change Claude's response to the original question
+            val interruptMessages = listOf("sorry", "what?", "i can't hear you", "what'd you say?")
+
+            for ((i, interruptMessage) in interruptMessages.withIndex()) {
+
+                Log.d(TAG, "🚀 RAPID MESSAGE ${i + 1}: Testing rapid send during bot response...")
+
                 if (!ComposeTestHelper.sendMessage(composeTestRule, interruptMessage, rapid = true)) {
-                    Log.e(TAG, "❌ RAPID: Message $i failed during rapid send!")
+                    Log.e(TAG, "❌ RAPID: Message ${i + 1} failed during rapid send!")
                     Log.e(TAG, "   🚨 PRODUCTION BUG DETECTED: Cannot send messages rapidly during bot response")
-                    failWithScreenshot("rapid_message_${i}_failed", "Rapid message $i failed to send within timeout")
+                    failWithScreenshot("rapid_message_${i + 1}_failed", "Rapid message ${i + 1} failed to send within timeout")
                     return@runBlocking
                 }
                 
-                Log.d(TAG, "✅ RAPID MESSAGE $i sent successfully")
+                Log.d(TAG, "✅ RAPID MESSAGE ${i + 1} sent successfully")
                 sentMessages.add(interruptMessage)
             }
             
-            Log.d(TAG, "🚀 RAPID PHASE COMPLETE: All ${interruptMessageCount} interrupt messages sent rapidly!")
+            Log.d(TAG, "🚀 RAPID PHASE COMPLETE: All ${interruptMessages.size} interrupt messages sent rapidly!")
             
             // Step 5: Check for assistant interruption bug immediately after rapid send
             Log.d(TAG, "🔍 Step 5: Checking for assistant interruption bug after rapid send...")
@@ -518,7 +518,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             Log.d(TAG, "📊 Test summary:")
             Log.d(TAG, "   ✅ Sent 1 initial message asking for coffee-making professional")
-            Log.d(TAG, "   ✅ Successfully interrupted bot with ${MESSAGE_COUNT - 1} additional messages")
+            Log.d(TAG, "   ✅ Successfully interrupted bot with 4 additional messages")
             Log.d(TAG, "   ✅ All messages appeared immediately (optimistic UI)")
             Log.d(TAG, "   ✅ Barista response appeared in correct order after first message")
             Log.d(TAG, "   ✅ Rapid send working correctly - user can interrupt assistant")
