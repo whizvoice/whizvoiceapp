@@ -728,9 +728,12 @@ class SpeechRecognitionService @Inject constructor(
      * Simulate a partial transcription result by injecting through the real onPartialResults callback.
      * This goes through the exact same code path as real speech recognition.
      *
+     * This is a suspend function that waits for the main thread to process the callback,
+     * matching production behavior where callbacks run synchronously on the main thread.
+     *
      * @param partialText The partial transcription text to simulate
      */
-    fun testSetPartialTranscription(partialText: String) {
+    suspend fun testSetPartialTranscription(partialText: String) {
         if (!testModeEnabled) {
             Log.w(TAG, "[TEST] testSetPartialTranscription called but test mode not enabled!")
             return
@@ -743,8 +746,9 @@ class SpeechRecognitionService @Inject constructor(
             putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(partialText))
         }
 
-        // Inject through the REAL onPartialResults callback
-        Handler(Looper.getMainLooper()).post {
+        // Inject through the REAL onPartialResults callback on main thread and WAIT for it
+        // This matches production behavior where callbacks run synchronously on main thread
+        withContext(Dispatchers.Main) {
             isTestInjectedCallback = true
             try {
                 recognitionListener?.onPartialResults(bundle)
