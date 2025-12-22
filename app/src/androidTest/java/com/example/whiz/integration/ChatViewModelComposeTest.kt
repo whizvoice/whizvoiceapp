@@ -322,8 +322,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             // Step 4: Send rapid interruption messages using Compose Testing
             Log.d(TAG, "📨 Step 4: Sending interrupt messages RAPIDLY while bot is responding...")
-            // Use conversational noise that won't change Claude's response to the original question
-            val interruptMessages = listOf("sorry", "what?", "i can't hear you", "what'd you say?")
+            // Use conversational noise that won't prompt Claude to repeat itself
+            val interruptMessages = listOf("also", "hmm", "ok", "thank you")
 
             for ((i, interruptMessage) in interruptMessages.withIndex()) {
 
