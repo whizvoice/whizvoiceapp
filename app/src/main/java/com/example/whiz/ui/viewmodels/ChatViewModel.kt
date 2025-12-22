@@ -616,8 +616,9 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
                         Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
-                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        updateRespondingStateForCurrentChat()
+                        // 🔧 DON'T update responding state here - animation should continue until
+                        // a real (non-cancelled) response arrives. This prevents the typing indicator
+                        // from stopping when a request is cancelled but no response text was shown.
                     }
                     is WebSocketEvent.Interrupted -> {
                         Log.d(TAG, "Previous request was interrupted: ${event.message}")
