@@ -349,6 +349,12 @@ class SpeechRecognitionService @Inject constructor(
             override fun onBufferReceived(buffer: ByteArray?) { /* ... */ }
 
             override fun onEndOfSpeech() {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-speech callback")
+                    return
+                }
+
                 val continuousListeningEnabled = continuousListeningCallback?.invoke() ?: false
                 val shouldRestart = shouldRestartCallback?.invoke() ?: continuousListeningEnabled
                 val timeSinceLastPartial = System.currentTimeMillis() - lastPartialTimestamp
@@ -415,6 +421,12 @@ class SpeechRecognitionService @Inject constructor(
             }
 
             override fun onError(error: Int) {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer error callback (error=$error)")
+                    return
+                }
+
                 val errorMessage = when (error) {
                     SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
                     SpeechRecognizer.ERROR_CLIENT -> "Client side error"
