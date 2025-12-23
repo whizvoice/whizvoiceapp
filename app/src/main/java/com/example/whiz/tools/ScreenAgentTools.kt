@@ -5076,72 +5076,24 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
         try {
-            // Look for common pop-up text indicators
-            val popupIndicators = listOf(
-                "Save with family plan",
-                "family plan",
-                "Premium",
-                "Music Premium",
-                "Free trial"
-            )
+            // Look for Close button by content-description (case-insensitive)
+            val allNodes = mutableListOf<AccessibilityNodeInfo>()
+            collectAllNodes(rootNode, allNodes)
 
-            var hasPopup = false
-            for (indicator in popupIndicators) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(indicator)
-                if (nodes != null && nodes.isNotEmpty()) {
-                    Log.d(TAG, "Detected YouTube Music pop-up with text: $indicator")
-                    hasPopup = true
-                    nodes.forEach { it.recycle() }
-                    break
-                }
-            }
-
-            if (!hasPopup) {
-                return false
-            }
-
-            // Look for "No thanks" button
-            val noThanksNodes = rootNode.findAccessibilityNodeInfosByText("No thanks")
-            if (noThanksNodes != null && noThanksNodes.isNotEmpty()) {
-                for (node in noThanksNodes) {
-                    // Find the clickable parent (the Button element)
-                    val clickableNode = if (node.isClickable) node else findClickableParent(node)
-                    if (clickableNode != null) {
-                        Log.d(TAG, "Found 'No thanks' button, clicking to dismiss pop-up")
-                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        clickableNode.recycle()
-                        noThanksNodes.forEach { it.recycle() }
-
-                        if (clicked) {
-                            Log.d(TAG, "Successfully dismissed YouTube Music pop-up")
-                            return true
-                        } else {
-                            Log.w(TAG, "Failed to click 'No thanks' button")
-                        }
+            for (node in allNodes) {
+                if (!node.isClickable) continue
+                val contentDesc = node.contentDescription?.toString() ?: ""
+                if (contentDesc.equals("Close", ignoreCase = true)) {
+                    Log.d(TAG, "Found Close button, clicking to dismiss pop-up")
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    allNodes.forEach { it.recycle() }
+                    if (clicked) {
+                        Log.d(TAG, "Successfully dismissed YouTube Music pop-up")
+                        return true
                     }
                 }
-                noThanksNodes.forEach { it.recycle() }
             }
-
-            // Alternative: Look for dismiss/close buttons by content description
-            val dismissDescriptions = listOf("No thanks", "Dismiss", "Close", "Not now")
-            for (desc in dismissDescriptions) {
-                val nodes = rootNode.findAccessibilityNodeInfosByText(desc)
-                if (nodes != null && nodes.isNotEmpty()) {
-                    for (node in nodes) {
-                        val clickableNode = if (node.isClickable) node else findClickableParent(node)
-                        if (clickableNode != null && clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                            Log.d(TAG, "Dismissed pop-up using button: $desc")
-                            clickableNode.recycle()
-                            nodes.forEach { it.recycle() }
-                            return true
-                        }
-                    }
-                    nodes.forEach { it.recycle() }
-                }
-            }
-
-            Log.w(TAG, "Detected pop-up but could not find dismiss button")
+            allNodes.forEach { it.recycle() }
             return false
         } catch (e: Exception) {
             Log.e(TAG, "Error dismissing YouTube Music pop-up", e)
