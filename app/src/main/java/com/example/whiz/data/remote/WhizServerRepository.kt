@@ -161,7 +161,6 @@ class WhizServerRepository @Inject constructor(
             is WebSocketEvent.Error,
             is WebSocketEvent.AuthError,
             is WebSocketEvent.Cancelled,
-            is WebSocketEvent.Interrupted,
             is WebSocketEvent.DeleteMessage -> {
                 _messageEvents.emit(event)
             }
@@ -196,7 +195,6 @@ class WhizServerRepository @Inject constructor(
                 is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
                 is WebSocketEvent.ToolExecution -> "TOOL_EXECUTION(requestId=${e.requestId}): ${e.toolRequest.optString("tool")}"
                 is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
-                is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
                 is WebSocketEvent.DeleteMessage -> "DELETE_MESSAGE(requestId=${e.requestId}, messageId=${e.messageId})"
             }
             Log.d(tag, "[$time] $eventStr")
@@ -957,7 +955,20 @@ class WhizServerRepository @Inject constructor(
                     queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
                     return false
                 }
-                
+
+                // Check if message's chatId matches the connected WebSocket's conversation
+                val connectedConvId = getConnectedConversationId()
+                if (connectedConvId != null) {
+                    // Resolve both IDs to handle optimistic ID migrations
+                    val effectiveMessageChatId = connectionStateManager.getEffectiveChatId(chatId) ?: chatId
+                    val effectiveConnectedId = connectionStateManager.getEffectiveChatId(connectedConvId) ?: connectedConvId
+                    if (effectiveMessageChatId != effectiveConnectedId) {
+                        Log.w(TAG, "Message chatId $chatId (effective: $effectiveMessageChatId) doesn't match connected conversation $connectedConvId (effective: $effectiveConnectedId) - queueing for retry")
+                        queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                        return false
+                    }
+                }
+
                 // Send structured JSON with request ID and optional client context
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
@@ -1041,12 +1052,15 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun processRetryQueue(conversationId: Long? = null) {
+        // Use provided conversationId, or fall back to the WebSocket's connected conversation
+        val effectiveConversationId = conversationId ?: getConnectedConversationId()
+
         if (messageRetryQueue.isEmpty()) {
             Log.d(TAG, "Retry queue is empty")
             return
         }
-        
-        Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages")
+
+        Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages (effectiveConversationId=$effectiveConversationId)")
         val currentSocket = webSocket
         
         if (currentSocket == null || persistentDisconnectForTest) {
@@ -1057,25 +1071,25 @@ class WhizServerRepository @Inject constructor(
         // Only process messages that match the conversation we're connected to
         // Discard messages for other conversations (they'll be synced from local DB when those chats are opened)
         val allMessages = messageRetryQueue.toList()
-        val messagesToRetry = if (conversationId != null) {
+        val messagesToRetry = if (effectiveConversationId != null) {
             allMessages.filter { msg ->
                 // Resolve both the queued message's chatId and the current conversationId
                 // to handle optimistic ID migrations (e.g., -1759344504803 → 5127)
                 val effectiveQueuedChatId = connectionStateManager.getEffectiveChatId(msg.chatId) ?: msg.chatId
-                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(conversationId) ?: conversationId
+                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(effectiveConversationId) ?: effectiveConversationId
 
                 // Log migration resolution for debugging
                 if (effectiveQueuedChatId != msg.chatId) {
                     Log.d(TAG, "Resolved queued message chatId ${msg.chatId} → $effectiveQueuedChatId")
                 }
-                if (effectiveCurrentChatId != conversationId) {
-                    Log.d(TAG, "Resolved current conversationId $conversationId → $effectiveCurrentChatId")
+                if (effectiveCurrentChatId != effectiveConversationId) {
+                    Log.d(TAG, "Resolved current conversationId $effectiveConversationId → $effectiveCurrentChatId")
                 }
 
                 effectiveQueuedChatId == effectiveCurrentChatId
             }
         } else {
-            // If no conversationId specified, process all messages
+            // If no conversationId specified and no WebSocket connected, process all messages
             allMessages
         }
         
@@ -1085,13 +1099,13 @@ class WhizServerRepository @Inject constructor(
         }
         
         if (messagesToRetry.isEmpty()) {
-            Log.d(TAG, "No messages in retry queue for conversation $conversationId")
+            Log.d(TAG, "No messages in retry queue for conversation $effectiveConversationId")
             // Clear the queue since we're discarding messages for other conversations
             messageRetryQueue.clear()
             return
         }
-        
-        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $conversationId")
+
+        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $effectiveConversationId")
         
         // Clear the entire queue (we're not keeping messages for other conversations)
         messageRetryQueue.clear()
