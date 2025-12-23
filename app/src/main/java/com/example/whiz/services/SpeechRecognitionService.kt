@@ -51,10 +51,10 @@ class SpeechRecognitionService @Inject constructor(
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) // Scope for delays
     private var _isInitialized = false
     
-    // 🔧 Smart rate limiting - only for error-based restarts
-    private var lastErrorTime = 0L
-    private var errorRestartCount = 0
-    private val ERROR_RESTART_WINDOW_MS = 5000L // Window for counting rapid errors
+    // 🔧 Smart rate limiting - only for error-based restarts (using sliding window)
+    // Only throttle truly rapid errors (multiple per second), not normal NO_SPEECH timeouts
+    private val recentErrorTimestamps = mutableListOf<Long>()
+    private val ERROR_RESTART_WINDOW_MS = 1000L // 1 second window - only block truly rapid errors
     private val MAX_ERROR_RESTARTS = 3 // Max error restarts within window
 
     // 🔧 Partial concatenation for premature end-of-speech detection
@@ -145,6 +145,10 @@ class SpeechRecognitionService @Inject constructor(
     fun startListening(callback: (String) -> Unit) {
         // 🔧 ALWAYS set the callback first, even if rate limited, in case speech recognition is already active
         recognitionCallback = callback
+
+        // 🔧 Clear stale error history when starting a fresh listening session
+        // This prevents old errors from blocking new listening attempts after a pause
+        recentErrorTimestamps.clear()
 
         // 🧪 TEST MODE: If test mode is enabled, skip initialization checks and just set listening state
         // This allows tests to inject simulated transcriptions on devices without speech recognition (e.g., CI emulators)
@@ -461,19 +465,18 @@ class SpeechRecognitionService @Inject constructor(
                 val willRestart = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) && shouldRestart && !manualStopInProgress
 
                 if (willRestart) {
-                    // Smart rate limiting: only prevent restart if too many rapid errors
+                    // Smart rate limiting using sliding window: count errors within the last N milliseconds
                     val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastErrorTime > ERROR_RESTART_WINDOW_MS) {
-                        // Reset error count if outside the window
-                        errorRestartCount = 0
-                    }
-                    lastErrorTime = currentTime
-                    errorRestartCount++
-                    
-                    Log.d(TAG, "🔄 RESTART_DEBUG: Error qualifies for restart - errorRestartCount=$errorRestartCount, MAX_ERROR_RESTARTS=$MAX_ERROR_RESTARTS")
-                    
-                    if (errorRestartCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error (attempt $errorRestartCount)")
+                    // Remove timestamps older than the window
+                    recentErrorTimestamps.removeAll { currentTime - it > ERROR_RESTART_WINDOW_MS }
+                    // Add current error timestamp
+                    recentErrorTimestamps.add(currentTime)
+                    val errorCount = recentErrorTimestamps.size
+
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Error qualifies for restart - errors in last ${ERROR_RESTART_WINDOW_MS}ms: $errorCount, MAX_ERROR_RESTARTS=$MAX_ERROR_RESTARTS")
+
+                    if (errorCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error ($errorCount errors in window)")
 
                         // FIX: Reset listening state before restart - the recognizer is dead after an error
                         // Without this, startListening() early-returns because _isListening is still true
@@ -489,7 +492,7 @@ class SpeechRecognitionService @Inject constructor(
                             startListening(recognitionCallback ?: { })
                         }
                     } else {
-                        Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorRestartCount rapid errors within ${ERROR_RESTART_WINDOW_MS}ms or shouldRestart=$shouldRestart")
+                        Log.w(TAG, "🔄 RESTART_DEBUG: Auto-restart blocked: $errorCount errors within ${ERROR_RESTART_WINDOW_MS}ms (max=$MAX_ERROR_RESTARTS)")
                         // Set listening to false only when we're NOT restarting (rate limited)
                         _isListening.value = false
                     }
