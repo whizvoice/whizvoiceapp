@@ -620,27 +620,6 @@ class ChatViewModel @Inject constructor(
                         // a real (non-cancelled) response arrives. This prevents the typing indicator
                         // from stopping when a request is cancelled but no response text was shown.
                     }
-                    is WebSocketEvent.Interrupted -> {
-                        Log.d(TAG, "Previous request was interrupted: ${event.message}")
-
-                        // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
-                        // When multiple requests are sent rapidly, the server cancels previous ones
-                        // All user messages stay in chat but only the latest gets a response
-                        val interruptedRequests = pendingRequests.keys.toList()
-                        Log.d(TAG, "🔧 INTERRUPTION: ${interruptedRequests.size} user messages remain in chat (no assistant responses)")
-                        interruptedRequests.forEach { requestId ->
-                            Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
-                        }
-
-                        // The backend has cancelled previous requests automatically
-                        // Clear all pending requests since they were cancelled
-                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
-                        pendingRequests.clear()
-                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: $pendingRequests")
-                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        updateRespondingStateForCurrentChat()
-                        Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
-                    }
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
 

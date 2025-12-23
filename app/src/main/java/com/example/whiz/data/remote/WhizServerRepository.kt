@@ -46,7 +46,6 @@ sealed class WebSocketEvent {
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
-    data class Interrupted(val message: String, val requestId: String? = null) : WebSocketEvent()
     data class DeleteMessage(val messageId: Long, val conversationId: Long, val requestId: String?, val reason: String?) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
@@ -524,15 +523,6 @@ class WhizServerRepository @Inject constructor(
                                     Log.w(TAG, "Received cancellation confirmation without cancelled_request_id")
                                     scope.launch { emitEvent(WebSocketEvent.Cancelled("unknown", requestId)) }
                                 }
-                                messageHandled = true
-                            }
-                            // Check if this is an interruption confirmation
-                            else if (jsonObject.has("type") && jsonObject.getString("type") == "interrupted") {
-                                val interruptedMessage = if (jsonObject.has("message")) {
-                                    jsonObject.getString("message")
-                                } else "Request was interrupted"
-
-                                scope.launch { emitEvent(WebSocketEvent.Interrupted(interruptedMessage, requestId)) }
                                 messageHandled = true
                             }
                             // Handle delete_message notifications
