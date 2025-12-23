@@ -5076,20 +5076,24 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
         try {
-            // Look for Close button by content-description (case-insensitive)
+            // Look for dismiss buttons by text or content-description (case-insensitive)
+            val dismissLabels = listOf("Close", "No thanks")
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
             collectAllNodes(rootNode, allNodes)
 
             for (node in allNodes) {
                 if (!node.isClickable) continue
+                val text = node.text?.toString() ?: ""
                 val contentDesc = node.contentDescription?.toString() ?: ""
-                if (contentDesc.equals("Close", ignoreCase = true)) {
-                    Log.d(TAG, "Found Close button, clicking to dismiss pop-up")
-                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    allNodes.forEach { it.recycle() }
-                    if (clicked) {
-                        Log.d(TAG, "Successfully dismissed YouTube Music pop-up")
-                        return true
+                for (label in dismissLabels) {
+                    if (text.equals(label, ignoreCase = true) || contentDesc.equals(label, ignoreCase = true)) {
+                        Log.d(TAG, "Found dismiss button: text='$text', contentDesc='$contentDesc', clicking")
+                        val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        allNodes.forEach { it.recycle() }
+                        if (clicked) {
+                            Log.d(TAG, "Successfully dismissed YouTube Music pop-up")
+                            return true
+                        }
                     }
                 }
             }
