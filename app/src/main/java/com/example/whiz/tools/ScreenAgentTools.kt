@@ -3663,35 +3663,52 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode.recycle()
             }
 
-            // Wait for directions screen to be fully loaded (look for Start button)
+            // Wait for directions screen to be fully loaded
+            // Look for Start button OR directions_mode_tabs (for transit mode which has no Start button initially)
             var modeRootNode: AccessibilityNodeInfo? = null
-            var startButtonFound = false
+            var directionsScreenFound = false
+            var hasStartButton = false
             for (attempt in 1..5) {
                 modeRootNode = accessibilityService.getCurrentRootNode()
                 if (modeRootNode != null) {
+                    // Check for Start button
                     val startNodes = mutableListOf<AccessibilityNodeInfo>()
                     findNodesByContentDesc(modeRootNode, "Start", startNodes)
-                    val hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
+                    hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
                     startNodes.forEach { it.recycle() }
 
                     if (hasStartButton) {
-                        startButtonFound = true
+                        directionsScreenFound = true
                         Log.d(TAG, "Found Start button on attempt $attempt")
                         break
                     }
+
+                    // If no Start button, check for mode tabs (indicates we're on directions screen)
+                    // This is important for transit mode which doesn't show Start button until a route is selected
+                    val modeTabNodes = mutableListOf<AccessibilityNodeInfo>()
+                    findNodesByResourceId(modeRootNode, "com.google.android.apps.maps:id/directions_mode_tabs", modeTabNodes)
+                    val hasModeTabs = modeTabNodes.isNotEmpty()
+                    modeTabNodes.forEach { it.recycle() }
+
+                    if (hasModeTabs) {
+                        directionsScreenFound = true
+                        Log.d(TAG, "Found directions mode tabs on attempt $attempt (no Start button yet - likely transit mode)")
+                        break
+                    }
+
                     modeRootNode.recycle()
                     modeRootNode = null
                 }
-                Log.d(TAG, "Start button not found, waiting... (attempt $attempt/5)")
+                Log.d(TAG, "Directions screen indicators not found, waiting... (attempt $attempt/5)")
                 delay(1000)
             }
 
-            if (!startButtonFound || modeRootNode == null) {
-                Log.w(TAG, "Directions screen did not fully load - Start button not found after 5 attempts")
+            if (!directionsScreenFound || modeRootNode == null) {
+                Log.w(TAG, "Directions screen did not fully load - neither Start button nor mode tabs found after 5 attempts")
                 // UI dump for Start button not found
                 val dumpRoot = accessibilityService.getCurrentRootNode()
                 if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_start_button_not_found", "Start button not found after 5 attempts on directions screen")
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", "Neither Start button nor mode tabs found after 5 attempts on directions screen")
                     dumpRoot.recycle()
                 }
                 modeRootNode?.recycle()
