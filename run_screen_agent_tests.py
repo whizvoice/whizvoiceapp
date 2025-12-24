@@ -958,6 +958,26 @@ def test_google_maps_directions(tester):
 
     screenshot_path = "/tmp/whiz_screen.png"
 
+    # Detect location based on timezone to use appropriate test data
+    is_pacific = any(tz in time.tzname for tz in ["Pacific", "PST", "PDT"])
+
+    if is_pacific:
+        # San Francisco config
+        store_name = "Trader Joe's"
+        search_query = "what are the trader joes near me ?"
+        location_selector = "Can you give me directions to the one on Fulton Street"
+        secondary_address = "1680 Mission Street"
+        secondary_address_short = "1680 Mission St"
+        city_name = "San Francisco"
+    else:
+        # Toronto config (or any non-Pacific timezone)
+        store_name = "Shoppers Drug Mart"
+        search_query = "what are the shoppers drug mart near me ?"
+        location_selector = "Can you give me directions to the closest one"
+        secondary_address = "220 Yonge Street"
+        secondary_address_short = "220 Yonge St"
+        city_name = "Toronto"
+
     def cleanup_google_maps():
         """Close Google Maps to prevent overlay from interfering with future tests."""
         print("🧹 Cleaning up: Force stopping Google Maps...")
@@ -997,7 +1017,7 @@ def test_google_maps_directions(tester):
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"what are the trader joes near me ?"',
+            '--es', 'text', f'"{search_query}"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1010,12 +1030,13 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing more than one Trader Joe's locations. "
-            "The screen should show more than one Trader Joe's results with addresses at least partially visible."
+            f"Google Maps is open and showing more than one {store_name} locations. "
+            f"The screen should show more than one {store_name} results with addresses at least partially visible."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
-        assert validation_result, "Failed to show Trader Joe's location list"
+            store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
+            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_see_locations")
+        assert validation_result, f"Failed to show {store_name} location list"
 
         # Send a voice transcription to select the one on Fulton Street
         subprocess.run([
@@ -1023,7 +1044,7 @@ def test_google_maps_directions(tester):
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
+            '--es', 'text', f'"{location_selector}"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1035,24 +1056,24 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
-            "Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
-            "estimated travel time, or directions to Trader Joe's on Fulton Street. "
-            "Return False only if Google Maps is not showing any navigation/directions content."
+            f"This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
+            f"Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
+            f"estimated travel time, or directions to {store_name}. "
+            f"Return False only if Google Maps is not showing any navigation/directions content."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
-        assert validation_result, "Failed to show Trader Joe's directions"
+            store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
+            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_directions")
+        assert validation_result, f"Failed to show {store_name} directions"
 
-        # Send a voice transcription to change destination to office at 1680 Mission Street
-        # Note: Using 1680 instead of 1885 to ensure the destination is far enough that
-        # navigation won't complete immediately (which would show "Arriving at" screen)
+        # Send a voice transcription to change destination to secondary address
+        # Note: Using a destination that's far enough that navigation won't complete immediately
         subprocess.run([
             'adb', 'shell',
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"Actually, I need to go to my office first at 1680 Mission Street. Can you get directions to there instead?"',
+            '--es', 'text', f'"Actually, I need to go to {secondary_address} first. Can you get directions to there instead?"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1068,8 +1089,8 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
-        assert validation_result, "Failed to show 1680 Mission Street search results"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_search")
+        assert validation_result, f"Failed to show {secondary_address} search results"
 
         # Send a voice transcription to request driving directions specifically
         subprocess.run([
@@ -1093,8 +1114,8 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
-        assert validation_result, "Failed to show driving directions to 1680 Mission Street"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_driving_directions")
+        assert validation_result, f"Failed to show driving directions to {secondary_address}"
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
         # This brings the app to foreground without starting a new activity
@@ -1108,11 +1129,11 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1680 Mission Street' or '1680 Mission St' in San Francisco"
+            f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}"
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
-        assert validation_result, "Assistant did not mention the 1680 Mission Street address in the chat"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_address_confirmation")
+        assert validation_result, f"Assistant did not mention the {secondary_address} address in the chat"
 
     finally:
         # Always clean up Google Maps to prevent overlay from interfering with future tests
