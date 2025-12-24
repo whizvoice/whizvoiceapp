@@ -198,21 +198,32 @@ class VoiceManager @Inject constructor(
         }
 
         audioFocusManager.onFocusLostTransient = {
-            Log.d(TAG, "Audio focus lost transiently - pausing microphone")
-            if (isListening.value) {
-                pausedDueToAudioFocusLoss = true
-                stopListening()
+            Log.d(TAG, "Audio focus lost transiently")
+            // Only pause if we actually had focus and are listening
+            // This prevents spurious callbacks from affecting the mic
+            when {
+                pausedDueToAudioFocusLoss -> {
+                    Log.d(TAG, "Already paused due to focus loss, ignoring")
+                }
+                !isListening.value -> {
+                    Log.d(TAG, "Not currently listening, ignoring focus loss")
+                }
+                else -> {
+                    Log.d(TAG, "Pausing microphone due to transient focus loss")
+                    pausedDueToAudioFocusLoss = true
+                    stopListening()
 
-                // Start timeout fallback for misbehaving apps that don't release focus
-                focusRegainTimeoutJob?.cancel()
-                focusRegainTimeoutJob = coroutineScope.launch {
-                    delay(FOCUS_REGAIN_TIMEOUT_MS)
-                    if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
-                        Log.d(TAG, "Focus regain timeout - forcing focus request")
-                        if (audioFocusManager.requestFocus()) {
-                            pausedDueToAudioFocusLoss = false
-                            if (shouldBeListening()) {
-                                startContinuousListening()
+                    // Start timeout fallback for misbehaving apps that don't release focus
+                    focusRegainTimeoutJob?.cancel()
+                    focusRegainTimeoutJob = coroutineScope.launch {
+                        delay(FOCUS_REGAIN_TIMEOUT_MS)
+                        if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
+                            Log.d(TAG, "Focus regain timeout - forcing focus request")
+                            if (audioFocusManager.requestFocus()) {
+                                pausedDueToAudioFocusLoss = false
+                                if (shouldBeListening()) {
+                                    startContinuousListening()
+                                }
                             }
                         }
                     }
@@ -221,11 +232,17 @@ class VoiceManager @Inject constructor(
         }
 
         audioFocusManager.onFocusLostPermanent = {
-            Log.d(TAG, "Audio focus lost permanently - stopping microphone")
-            focusRegainTimeoutJob?.cancel()
-            pausedDueToAudioFocusLoss = false
-            stopListening()
-            // Note: We keep continuousListeningEnabled=true so user can restart manually
+            Log.d(TAG, "Audio focus lost permanently")
+            // Only stop if we were actively using focus
+            if (!isListening.value && !pausedDueToAudioFocusLoss) {
+                Log.d(TAG, "Not listening and not paused, ignoring permanent focus loss")
+            } else {
+                Log.d(TAG, "Stopping microphone due to permanent focus loss")
+                focusRegainTimeoutJob?.cancel()
+                pausedDueToAudioFocusLoss = false
+                stopListening()
+                // Note: We keep continuousListeningEnabled=true so user can restart manually
+            }
         }
     }
     
@@ -239,7 +256,6 @@ class VoiceManager @Inject constructor(
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
         val screenNotLocked = !isScreenLocked.value
-        val hasAudioFocus = audioFocusManager.isHoldingFocus()
 
         // Check bubble mode - if bubble is active and mic is off, don't listen
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
@@ -248,15 +264,16 @@ class VoiceManager @Inject constructor(
 
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
         // BUT only if screen is NOT locked - mic should always stop when screen is off
-        // AND we must have audio focus
+        // Note: Audio focus is NOT required here - it's cooperative, not enforced.
+        // We request focus to notify other apps, but don't block listening if not granted.
+        // The onFocusLostTransient callback will pause listening when another app takes focus.
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    screenNotLocked && hasAudioFocus
+                    screenNotLocked
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
-                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, " +
-                "hasAudioFocus=$hasAudioFocus, result=$should")
+                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, result=$should")
 
         return should
     }
@@ -631,21 +648,26 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
 
         if (enabled) {
-            // Request audio focus before starting continuous listening
-            val focusGranted = audioFocusManager.requestFocus()
-            Log.d(TAG, "Requested audio focus for continuous listening: granted=$focusGranted")
-
-            if (focusGranted) {
-                Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
-                startContinuousListening()
-                Log.d(TAG, "[DEBUG] startContinuousListening() returned")
-            } else {
-                Log.w(TAG, "Could not get audio focus - continuous listening will start when focus is available")
+            // Request audio focus to notify other apps (best-effort, doesn't affect listening)
+            try {
+                val focusGranted = audioFocusManager.requestFocus()
+                Log.d(TAG, "Requested audio focus for continuous listening: granted=$focusGranted")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to request audio focus, continuing anyway", e)
             }
+
+            // Start listening regardless of focus result - focus is cooperative, not enforced
+            Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
+            startContinuousListening()
+            Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
             // Stop listening and release audio focus
             stopListening()
-            audioFocusManager.abandonFocus()
+            try {
+                audioFocusManager.abandonFocus()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to abandon audio focus", e)
+            }
             focusRegainTimeoutJob?.cancel()
             pausedDueToAudioFocusLoss = false
         }
