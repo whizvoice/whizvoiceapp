@@ -6933,7 +6933,9 @@ class ScreenAgentTools @Inject constructor(
                 "com.whatsapp:id/my_search_bar",
                 "com.whatsapp:id/menuitem_search",
                 "com.whatsapp:id/search_button",
-                "com.whatsapp:id/action_search"
+                "com.whatsapp:id/action_search",
+                "com.whatsapp:id/search_input",    // Already in search mode
+                "com.whatsapp:id/search_fragment"  // Already in search mode
             )
 
             for (searchId in searchBarIds) {
