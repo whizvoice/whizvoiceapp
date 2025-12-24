@@ -4688,6 +4688,23 @@ class ScreenAgentTools @Inject constructor(
         val listNode = listNodes[0]
         Log.d(TAG, "Found list with ${listNode.childCount} children, skipSponsored=$skipSponsored")
 
+        // Debug: Log details of first few children to understand list structure
+        if (skipSponsored) {
+            Log.d(TAG, "=== DEBUG: Analyzing first 5 children of list ===")
+            for (debugIdx in 0 until minOf(listNode.childCount, 5)) {
+                val debugChild = listNode.getChild(debugIdx)
+                if (debugChild != null) {
+                    val isSponsored = isResultSponsored(debugChild)
+                    val isFilter = isFilterChipRow(debugChild)
+                    Log.d(TAG, "DEBUG Child $debugIdx: class=${debugChild.className}, clickable=${debugChild.isClickable}, sponsored=$isSponsored, filterRow=$isFilter, desc=${debugChild.contentDescription?.toString()?.take(50)}")
+                    debugChild.recycle()
+                } else {
+                    Log.d(TAG, "DEBUG Child $debugIdx: NULL")
+                }
+            }
+            Log.d(TAG, "=== END DEBUG ===")
+        }
+
         // Position takes precedence over fragment
         if (position != null) {
             if (skipSponsored) {
