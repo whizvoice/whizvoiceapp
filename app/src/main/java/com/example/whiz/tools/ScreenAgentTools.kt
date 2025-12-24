@@ -4529,10 +4529,21 @@ class ScreenAgentTools @Inject constructor(
         if (mode?.lowercase() == "transit") {
             Log.d(TAG, "Transit mode: looking for route options to click first")
 
+            // Wait for transit UI to fully load after mode switch
+            Thread.sleep(500)
+
+            // Get fresh root node - the UI has changed since switching to transit mode
+            val transitRoot = accessibilityService.getCurrentRootNode()
+            if (transitRoot == null) {
+                Log.w(TAG, "Transit mode: could not get fresh root node")
+                return false
+            }
+
             // Find route cards by looking for trip_card_main_header resource ID
             // This is more robust than searching by content-desc text
             val tripCardNodes = mutableListOf<AccessibilityNodeInfo>()
-            findNodesByResourceId(rootNode, "com.google.android.apps.maps:id/trip_card_main_header", tripCardNodes)
+            findNodesByResourceId(transitRoot, "com.google.android.apps.maps:id/trip_card_main_header", tripCardNodes)
+            Log.d(TAG, "Transit mode: found ${tripCardNodes.size} trip card nodes")
 
             if (tripCardNodes.isNotEmpty()) {
                 val tripCardNode = tripCardNodes[0]
@@ -4550,6 +4561,7 @@ class ScreenAgentTools @Inject constructor(
                     if (newRoot != null) {
                         val glanceableNodes = mutableListOf<AccessibilityNodeInfo>()
                         findNodesByContentDesc(newRoot, "Start glanceable directions", glanceableNodes)
+                        Log.d(TAG, "Transit mode: found ${glanceableNodes.size} glanceable directions buttons")
 
                         for (node in glanceableNodes) {
                             val clickableStart = findClickableParent(node)
@@ -4561,6 +4573,7 @@ class ScreenAgentTools @Inject constructor(
                                     glanceableNodes.forEach { it.recycle() }
                                     newRoot.recycle()
                                     tripCardNodes.forEach { it.recycle() }
+                                    transitRoot.recycle()
                                     return true
                                 }
                             }
@@ -4568,9 +4581,14 @@ class ScreenAgentTools @Inject constructor(
                         glanceableNodes.forEach { it.recycle() }
                         newRoot.recycle()
                     }
+                } else {
+                    Log.w(TAG, "Transit mode: could not find clickable parent for trip card")
                 }
+            } else {
+                Log.w(TAG, "Transit mode: no trip cards found in UI")
             }
             tripCardNodes.forEach { it.recycle() }
+            transitRoot.recycle()
         }
 
         return false
@@ -5010,11 +5028,11 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
-        // No Directions button and no obvious filter indicators
-        // Could be either - check if it looks like a search result by having business info
-        // For now, assume it's safe if no filter indicators found
-        Log.d(TAG, "Node has no Directions button but no filter indicators - treating as result")
-        return false
+        // No Directions button means this is NOT a valid search result
+        // It could be an info card (e.g., "Christmas Eve hours"), an alert, or other non-result UI element
+        // Only nodes with a Directions button are valid search results
+        Log.d(TAG, "Node has no Directions button - skipping (not a valid search result)")
+        return true
     }
 
     /**
