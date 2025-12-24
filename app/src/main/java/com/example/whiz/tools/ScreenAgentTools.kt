@@ -4507,6 +4507,55 @@ class ScreenAgentTools @Inject constructor(
         }
 
         Log.w(TAG, "Could not find or click Start button")
+
+        // For transit mode, we need to click a route first, then find the Start button
+        if (mode?.lowercase() == "transit") {
+            Log.d(TAG, "Transit mode: looking for route options to click first")
+
+            // Find route cards by looking for trip_card_main_header resource ID
+            // This is more robust than searching by content-desc text
+            val tripCardNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByResourceId(rootNode, "com.google.android.apps.maps:id/trip_card_main_header", tripCardNodes)
+
+            if (tripCardNodes.isNotEmpty()) {
+                val tripCardNode = tripCardNodes[0]
+                val clickableRoute = findClickableParent(tripCardNode)
+                if (clickableRoute != null) {
+                    clickableRoute.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickableRoute.recycle()
+                    Log.d(TAG, "Clicked first transit route option")
+
+                    // Wait for detail screen to load
+                    Thread.sleep(500)
+
+                    // Get fresh root node and look for "Start glanceable directions"
+                    val newRoot = accessibilityService.getCurrentRootNode()
+                    if (newRoot != null) {
+                        val glanceableNodes = mutableListOf<AccessibilityNodeInfo>()
+                        findNodesByContentDesc(newRoot, "Start glanceable directions", glanceableNodes)
+
+                        for (node in glanceableNodes) {
+                            val clickableStart = findClickableParent(node)
+                            if (clickableStart != null) {
+                                val clicked = clickableStart.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                clickableStart.recycle()
+                                if (clicked) {
+                                    Log.d(TAG, "Clicked Start glanceable directions button")
+                                    glanceableNodes.forEach { it.recycle() }
+                                    newRoot.recycle()
+                                    tripCardNodes.forEach { it.recycle() }
+                                    return true
+                                }
+                            }
+                        }
+                        glanceableNodes.forEach { it.recycle() }
+                        newRoot.recycle()
+                    }
+                }
+            }
+            tripCardNodes.forEach { it.recycle() }
+        }
+
         return false
     }
 
