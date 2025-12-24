@@ -9,6 +9,7 @@ import android.util.Log
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.AppLifecycleService
+import com.example.whiz.services.AudioFocusManager
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
@@ -16,6 +17,7 @@ import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -37,7 +39,8 @@ class VoiceManager @Inject constructor(
     private val speechRecognitionService: SpeechRecognitionService,
     val ttsManager: TTSManager,  // Make public for bubble access
     private val userPreferences: UserPreferences,
-    private val appLifecycleService: AppLifecycleService
+    private val appLifecycleService: AppLifecycleService,
+    private val audioFocusManager: AudioFocusManager
 ) {
 
     private val TAG = "VoiceManager"
@@ -149,6 +152,11 @@ class VoiceManager @Inject constructor(
             _isContinuousListeningEnabled.value = value
         }
 
+    // Audio focus management
+    private val FOCUS_REGAIN_TIMEOUT_MS = 10_000L // 10 seconds timeout for misbehaving apps
+    private var pausedDueToAudioFocusLoss = false
+    private var focusRegainTimeoutJob: Job? = null
+
     init {
         initializeTTS()
         observeVoiceSettings()
@@ -168,6 +176,57 @@ class VoiceManager @Inject constructor(
         // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
         speechRecognitionService.shouldRestartCallback = { shouldBeListening() }
+
+        // Set up audio focus callbacks
+        setupAudioFocusCallbacks()
+    }
+
+    private fun setupAudioFocusCallbacks() {
+        audioFocusManager.onFocusGained = {
+            Log.d(TAG, "Audio focus regained - checking if should restart listening")
+            focusRegainTimeoutJob?.cancel()
+            if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
+                pausedDueToAudioFocusLoss = false
+                coroutineScope.launch {
+                    delay(100L) // Small delay for audio system to settle
+                    if (shouldBeListening()) {
+                        Log.d(TAG, "Restarting continuous listening after audio focus regained")
+                        startContinuousListening()
+                    }
+                }
+            }
+        }
+
+        audioFocusManager.onFocusLostTransient = {
+            Log.d(TAG, "Audio focus lost transiently - pausing microphone")
+            if (isListening.value) {
+                pausedDueToAudioFocusLoss = true
+                stopListening()
+
+                // Start timeout fallback for misbehaving apps that don't release focus
+                focusRegainTimeoutJob?.cancel()
+                focusRegainTimeoutJob = coroutineScope.launch {
+                    delay(FOCUS_REGAIN_TIMEOUT_MS)
+                    if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
+                        Log.d(TAG, "Focus regain timeout - forcing focus request")
+                        if (audioFocusManager.requestFocus()) {
+                            pausedDueToAudioFocusLoss = false
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        audioFocusManager.onFocusLostPermanent = {
+            Log.d(TAG, "Audio focus lost permanently - stopping microphone")
+            focusRegainTimeoutJob?.cancel()
+            pausedDueToAudioFocusLoss = false
+            stopListening()
+            // Note: We keep continuousListeningEnabled=true so user can restart manually
+        }
     }
     
     /**
@@ -180,6 +239,7 @@ class VoiceManager @Inject constructor(
         val hasPermission = permissionManager.microphonePermissionGranted.value
         val notSpeaking = !isSpeaking.value
         val screenNotLocked = !isScreenLocked.value
+        val hasAudioFocus = audioFocusManager.isHoldingFocus()
 
         // Check bubble mode - if bubble is active and mic is off, don't listen
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
@@ -188,13 +248,15 @@ class VoiceManager @Inject constructor(
 
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
         // BUT only if screen is NOT locked - mic should always stop when screen is off
+        // AND we must have audio focus
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    screenNotLocked // Never listen when screen is locked/off
+                    screenNotLocked && hasAudioFocus
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
-                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, result=$should")
+                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, " +
+                "hasAudioFocus=$hasAudioFocus, result=$should")
 
         return should
     }
@@ -558,29 +620,34 @@ class VoiceManager @Inject constructor(
     }
 
     fun toggleContinuousListening() {
-        continuousListeningEnabled = !continuousListeningEnabled
-        Log.d(TAG, "Continuous listening toggled to: $continuousListeningEnabled")
-        
-        if (continuousListeningEnabled) {
-            startContinuousListening()
-        } else {
-            stopListening()
-        }
+        val newState = !continuousListeningEnabled
+        Log.d(TAG, "Continuous listening toggled to: $newState")
+        updateContinuousListeningEnabled(newState)
     }
 
     fun updateContinuousListeningEnabled(enabled: Boolean) {
         Log.d(TAG, "[DEBUG] updateContinuousListeningEnabled called with: $enabled (was: $continuousListeningEnabled)")
         continuousListeningEnabled = enabled
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
-        
+
         if (enabled) {
-            Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
-            // Start continuous listening immediately
-            startContinuousListening()
-            Log.d(TAG, "[DEBUG] startContinuousListening() returned")
+            // Request audio focus before starting continuous listening
+            val focusGranted = audioFocusManager.requestFocus()
+            Log.d(TAG, "Requested audio focus for continuous listening: granted=$focusGranted")
+
+            if (focusGranted) {
+                Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
+                startContinuousListening()
+                Log.d(TAG, "[DEBUG] startContinuousListening() returned")
+            } else {
+                Log.w(TAG, "Could not get audio focus - continuous listening will start when focus is available")
+            }
         } else {
-            // Stop listening if disabled
+            // Stop listening and release audio focus
             stopListening()
+            audioFocusManager.abandonFocus()
+            focusRegainTimeoutJob?.cancel()
+            pausedDueToAudioFocusLoss = false
         }
     }
     
@@ -623,6 +690,8 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
+        focusRegainTimeoutJob?.cancel()
+        audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()
