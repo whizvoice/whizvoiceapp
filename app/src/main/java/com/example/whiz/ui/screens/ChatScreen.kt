@@ -485,7 +485,7 @@ fun ChatLoadErrorView(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ChatScreen(
     chatId: Long,
@@ -588,7 +588,21 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
-    
+
+    // 🔧 AUTO-SCROLL FIX: Collect scroll events from ViewModel instead of using unreliable snapshotFlow
+    // This is triggered when user sends a message or bot responds (not during sync/load)
+    LaunchedEffect(Unit) {
+        viewModel.scrollToBottomEvent
+            .debounce(100L)
+            .collect {
+                if (messages.isNotEmpty()) {
+                    val targetIndex = messages.size - 1
+                    listState.scrollToItem(targetIndex)
+                    android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${messages.size})")
+                }
+            }
+    }
+
     // Observe permission state directly from PermissionManager for reactive UI updates
     val hasPermissionReactive by permissionManager.microphonePermissionGranted.collectAsState()
     
@@ -1041,7 +1055,6 @@ fun ChatScreen(
     }
 }
 
-@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
@@ -1053,29 +1066,7 @@ fun MessagesList(
     android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
 
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
-
-    // 🔧 AUTO-SCROLL FIX: Use rememberUpdatedState to ensure snapshotFlow always reads current messages
-    // Without this, LaunchedEffect(Unit) captures the initial messages reference and never sees updates
-    val currentMessages by rememberUpdatedState(messages)
-
-    // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
-    // Use snapshotFlow + debounce to avoid cancellation when messages arrive rapidly
-    // (Previous approach with LaunchedEffect keys + delay would cancel on each new message)
-    android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
-    LaunchedEffect(Unit) {
-        snapshotFlow { Triple(currentMessages.size, currentMessages.lastOrNull()?.id, currentMessages.lastOrNull()?.timestamp) }
-            .debounce(100L)
-            .collect { (size, lastId, _) ->
-                android.util.Log.d("MessagesList", "🔥 DEBOUNCE_COLLECTED: messages.size=$size, lastId=$lastId")
-                if (currentMessages.isNotEmpty()) {
-                    val targetIndex = currentMessages.size - 1
-                    if (targetIndex >= 0) {
-                        listState.scrollToItem(targetIndex)
-                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${currentMessages.size})")
-                    }
-                }
-            }
-    }
+    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollToBottomEvent
 
     LazyColumn(
         state = listState,
