@@ -1,8 +1,8 @@
 package com.example.whiz.tools
 
 import android.content.Context
-import android.content.Intent
 import android.provider.Telephony
+import com.example.whiz.services.BubbleOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -671,9 +671,16 @@ class ToolExecutor @Inject constructor(
             // Short delay to allow the result to be sent before closing
             delay(100)
 
-            // Send broadcast to close the app
-            val closeIntent = Intent("com.example.whiz.ACTION_CLOSE_APP")
-            context.sendBroadcast(closeIntent)
+            // Stop bubble overlay service if active
+            Log.i(TAG, "Stopping BubbleOverlayService")
+            BubbleOverlayService.stop(context)
+
+            // Short delay to allow service to stop cleanly
+            delay(50)
+
+            // Kill the process to close everything
+            Log.i(TAG, "Killing process to close app")
+            android.os.Process.killProcess(android.os.Process.myPid())
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing close app", e)

@@ -156,6 +156,7 @@ class VoiceManager @Inject constructor(
     private val FOCUS_REGAIN_TIMEOUT_MS = 10_000L // 10 seconds timeout for misbehaving apps
     private var pausedDueToAudioFocusLoss = false
     private var focusRegainTimeoutJob: Job? = null
+    private var hadAudioFocusGrant = false  // Track if we actually got focus from the system
 
     init {
         initializeTTS()
@@ -184,6 +185,7 @@ class VoiceManager @Inject constructor(
     private fun setupAudioFocusCallbacks() {
         audioFocusManager.onFocusGained = {
             Log.d(TAG, "Audio focus regained - checking if should restart listening")
+            hadAudioFocusGrant = true  // We now have focus from the system
             focusRegainTimeoutJob?.cancel()
             if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
                 pausedDueToAudioFocusLoss = false
@@ -205,8 +207,8 @@ class VoiceManager @Inject constructor(
                 pausedDueToAudioFocusLoss -> {
                     Log.d(TAG, "Already paused due to focus loss, ignoring")
                 }
-                !isListening.value -> {
-                    Log.d(TAG, "Not currently listening, ignoring focus loss")
+                !hadAudioFocusGrant -> {
+                    Log.d(TAG, "Never had focus grant, ignoring spurious callback")
                 }
                 else -> {
                     Log.d(TAG, "Pausing microphone due to transient focus loss")
@@ -233,13 +235,14 @@ class VoiceManager @Inject constructor(
 
         audioFocusManager.onFocusLostPermanent = {
             Log.d(TAG, "Audio focus lost permanently")
-            // Only stop if we were actively using focus
-            if (!isListening.value && !pausedDueToAudioFocusLoss) {
-                Log.d(TAG, "Not listening and not paused, ignoring permanent focus loss")
+            // Only respond if we actually had focus
+            if (!hadAudioFocusGrant) {
+                Log.d(TAG, "Never had focus grant, ignoring spurious callback")
             } else {
                 Log.d(TAG, "Stopping microphone due to permanent focus loss")
                 focusRegainTimeoutJob?.cancel()
                 pausedDueToAudioFocusLoss = false
+                hadAudioFocusGrant = false  // We no longer have focus
                 stopListening()
                 // Note: We keep continuousListeningEnabled=true so user can restart manually
             }
@@ -651,8 +654,10 @@ class VoiceManager @Inject constructor(
             // Request audio focus to notify other apps (best-effort, doesn't affect listening)
             try {
                 val focusGranted = audioFocusManager.requestFocus()
+                hadAudioFocusGrant = focusGranted  // Track if we actually got focus
                 Log.d(TAG, "Requested audio focus for continuous listening: granted=$focusGranted")
             } catch (e: Exception) {
+                hadAudioFocusGrant = false
                 Log.w(TAG, "Failed to request audio focus, continuing anyway", e)
             }
 
@@ -670,6 +675,7 @@ class VoiceManager @Inject constructor(
             }
             focusRegainTimeoutJob?.cancel()
             pausedDueToAudioFocusLoss = false
+            hadAudioFocusGrant = false  // We no longer have focus
         }
     }
     
@@ -713,6 +719,8 @@ class VoiceManager @Inject constructor(
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
         focusRegainTimeoutJob?.cancel()
+        pausedDueToAudioFocusLoss = false
+        hadAudioFocusGrant = false
         audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
