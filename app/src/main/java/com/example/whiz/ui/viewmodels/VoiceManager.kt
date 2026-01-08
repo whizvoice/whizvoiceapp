@@ -17,7 +17,6 @@ import com.example.whiz.services.TTSManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -152,11 +151,8 @@ class VoiceManager @Inject constructor(
             _isContinuousListeningEnabled.value = value
         }
 
-    // Audio focus management
-    private val FOCUS_REGAIN_TIMEOUT_MS = 10_000L // 10 seconds timeout for misbehaving apps
-    private var pausedDueToAudioFocusLoss = false
-    private var focusRegainTimeoutJob: Job? = null
-    private var hadAudioFocusGrant = false  // Track if we actually got focus from the system
+    // Audio focus management - kept for potential future use (e.g., phone call detection)
+    // Note: We no longer request/use audio focus for mic recording
 
     init {
         initializeTTS()
@@ -183,69 +179,21 @@ class VoiceManager @Inject constructor(
     }
 
     private fun setupAudioFocusCallbacks() {
+        // Note: We no longer use audio focus for mic recording.
+        // Audio focus is for coordinating playback, not recording.
+        // These callbacks are kept but do nothing for mic - they may be useful
+        // in the future if we need to respond to other apps' audio (e.g., pause
+        // mic when a phone call comes in, which would be detected differently).
         audioFocusManager.onFocusGained = {
-            Log.d(TAG, "Audio focus regained - checking if should restart listening")
-            hadAudioFocusGrant = true  // We now have focus from the system
-            focusRegainTimeoutJob?.cancel()
-            if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
-                pausedDueToAudioFocusLoss = false
-                coroutineScope.launch {
-                    delay(100L) // Small delay for audio system to settle
-                    if (shouldBeListening()) {
-                        Log.d(TAG, "Restarting continuous listening after audio focus regained")
-                        startContinuousListening()
-                    }
-                }
-            }
+            Log.d(TAG, "Audio focus regained (ignored - not used for mic recording)")
         }
 
         audioFocusManager.onFocusLostTransient = {
-            Log.d(TAG, "Audio focus lost transiently")
-            // Only pause if we actually had focus and are listening
-            // This prevents spurious callbacks from affecting the mic
-            when {
-                pausedDueToAudioFocusLoss -> {
-                    Log.d(TAG, "Already paused due to focus loss, ignoring")
-                }
-                !hadAudioFocusGrant -> {
-                    Log.d(TAG, "Never had focus grant, ignoring spurious callback")
-                }
-                else -> {
-                    Log.d(TAG, "Pausing microphone due to transient focus loss")
-                    pausedDueToAudioFocusLoss = true
-                    stopListening()
-
-                    // Start timeout fallback for misbehaving apps that don't release focus
-                    focusRegainTimeoutJob?.cancel()
-                    focusRegainTimeoutJob = coroutineScope.launch {
-                        delay(FOCUS_REGAIN_TIMEOUT_MS)
-                        if (pausedDueToAudioFocusLoss && continuousListeningEnabled) {
-                            Log.d(TAG, "Focus regain timeout - forcing focus request")
-                            if (audioFocusManager.requestFocus()) {
-                                pausedDueToAudioFocusLoss = false
-                                if (shouldBeListening()) {
-                                    startContinuousListening()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Log.d(TAG, "Audio focus lost transiently (ignored - not used for mic recording)")
         }
 
         audioFocusManager.onFocusLostPermanent = {
-            Log.d(TAG, "Audio focus lost permanently")
-            // Only respond if we actually had focus
-            if (!hadAudioFocusGrant) {
-                Log.d(TAG, "Never had focus grant, ignoring spurious callback")
-            } else {
-                Log.d(TAG, "Stopping microphone due to permanent focus loss")
-                focusRegainTimeoutJob?.cancel()
-                pausedDueToAudioFocusLoss = false
-                hadAudioFocusGrant = false  // We no longer have focus
-                stopListening()
-                // Note: We keep continuousListeningEnabled=true so user can restart manually
-            }
+            Log.d(TAG, "Audio focus lost permanently (ignored - not used for mic recording)")
         }
     }
     
@@ -651,31 +599,15 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
 
         if (enabled) {
-            // Request audio focus to notify other apps (best-effort, doesn't affect listening)
-            try {
-                val focusGranted = audioFocusManager.requestFocus()
-                hadAudioFocusGrant = focusGranted  // Track if we actually got focus
-                Log.d(TAG, "Requested audio focus for continuous listening: granted=$focusGranted")
-            } catch (e: Exception) {
-                hadAudioFocusGrant = false
-                Log.w(TAG, "Failed to request audio focus, continuing anyway", e)
-            }
-
-            // Start listening regardless of focus result - focus is cooperative, not enforced
+            // Note: We don't request audio focus for mic recording.
+            // Audio focus is for coordinating playback, not recording.
+            // SpeechRecognizer handles its own audio capture internally.
             Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
             startContinuousListening()
             Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
-            // Stop listening and release audio focus
+            // Stop listening
             stopListening()
-            try {
-                audioFocusManager.abandonFocus()
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to abandon audio focus", e)
-            }
-            focusRegainTimeoutJob?.cancel()
-            pausedDueToAudioFocusLoss = false
-            hadAudioFocusGrant = false  // We no longer have focus
         }
     }
     
@@ -718,10 +650,6 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
-        focusRegainTimeoutJob?.cancel()
-        pausedDueToAudioFocusLoss = false
-        hadAudioFocusGrant = false
-        audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()
