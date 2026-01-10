@@ -94,6 +94,10 @@ class WhizServerRepository @Inject constructor(
     // Callbacks from old connections are ignored based on generation mismatch
     private val connectionGeneration = java.util.concurrent.atomic.AtomicInteger(0)
     private var currentGeneration = 0
+
+    // Track the conversation ID we're currently connecting to (needed during CONNECTING state
+    // when webSocket reference is null but we need to know what we're connecting to for migration checks)
+    private var connectingToConversationId: Long? = null
     
     // Debug: Track event history for troubleshooting
     private val eventHistory = mutableListOf<TimestampedEvent>()
@@ -331,8 +335,11 @@ class WhizServerRepository @Inject constructor(
             
             // Check if we're already connected/connecting
             if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
-                // Check if we're already connected to the same conversation
-                val currentConversationId = getConnectedConversationId()
+                // Get the conversation ID we're currently connected/connecting to
+                // Use getConnectedConversationId() for CONNECTED state (from websocket URL)
+                // Use connectingToConversationId for CONNECTING state (websocket not yet assigned)
+                val currentConversationId = getConnectedConversationId() ?: connectingToConversationId
+
                 if (connectionState == ConnectionState.CONNECTED && currentConversationId == conversationId) {
                     Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
                     return
@@ -340,10 +347,11 @@ class WhizServerRepository @Inject constructor(
 
                 // Check if this is just a migration from optimistic to real ID
                 // Case 1: Migration already registered
-                // Case 2: Currently connected to optimistic ID and being asked to connect to a positive ID
+                // Case 2: Currently connected/connecting to optimistic ID and being asked to connect to a positive ID
                 //         (migration may not be registered yet, but server handles routing via Redis)
-                if (connectionState == ConnectionState.CONNECTED &&
-                    currentConversationId != null && conversationId != null &&
+                // Note: Must check BOTH CONNECTED and CONNECTING states to handle race condition where
+                //       server responds with real ID before the optimistic connection fully opens
+                if (currentConversationId != null && conversationId != null &&
                     (connectionStateManager.areChatsMigrated(currentConversationId, conversationId) ||
                      (currentConversationId < 0 && conversationId > 0))) {
                     Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server handles routing)")
@@ -378,9 +386,10 @@ class WhizServerRepository @Inject constructor(
             
             // NO WAITING - proceed immediately with new connection
             // The generation tracking will ensure old callbacks are ignored
-            
-            // Update state to CONNECTING
+
+            // Update state to CONNECTING and track the conversation ID we're connecting to
             connectionState = ConnectionState.CONNECTING
+            connectingToConversationId = conversationId
             
             // Only reset persistent disconnect flag if explicitly requested
             if (turnOffPersistentDisconnect) {
