@@ -339,10 +339,14 @@ class WhizServerRepository @Inject constructor(
                 }
 
                 // Check if this is just a migration from optimistic to real ID
+                // Case 1: Migration already registered
+                // Case 2: Currently connected to optimistic ID and being asked to connect to a positive ID
+                //         (migration may not be registered yet, but server handles routing via Redis)
                 if (connectionState == ConnectionState.CONNECTED &&
                     currentConversationId != null && conversationId != null &&
-                    connectionStateManager.areChatsMigrated(currentConversationId, conversationId)) {
-                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server already updated subscription)")
+                    (connectionStateManager.areChatsMigrated(currentConversationId, conversationId) ||
+                     (currentConversationId < 0 && conversationId > 0))) {
+                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server handles routing)")
                     return
                 }
 
