@@ -56,6 +56,16 @@ class ChatViewModel @Inject constructor(
     private val toolExecutor: ToolExecutor,
 ) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
+    companion object {
+        /**
+         * Flag to prevent old ChatViewModel from disabling continuous listening
+         * when transitioning to a new chat via assistant long-press.
+         * Set to true by AssistantActivity before launching MainActivity.
+         */
+        @Volatile
+        var isTransitioning = false
+    }
+
     private val TAG = "ChatViewModel"
 
     // Config state
@@ -2010,8 +2020,16 @@ class ChatViewModel @Inject constructor(
         _isResponding.value = false
         _isConnectedToServer.value = false
         isReconnectingAfterDisconnect = false
-        voiceManager.updateContinuousListeningEnabled(false)
-        
+
+        // Only disable continuous listening if we're NOT transitioning to a new chat
+        // (e.g., via assistant long-press while app is open)
+        if (isTransitioning) {
+            Log.d(TAG, "onCleared: Skipping continuous listening disable - transitioning to new chat")
+            isTransitioning = false // Reset flag for future use
+        } else {
+            voiceManager.updateContinuousListeningEnabled(false)
+        }
+
         Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
     }
 

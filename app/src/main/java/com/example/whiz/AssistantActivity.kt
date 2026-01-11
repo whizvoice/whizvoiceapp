@@ -12,6 +12,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import javax.inject.Inject
 import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.services.AppLifecycleService
+import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.ui.viewmodels.ChatViewModel
 
 @AndroidEntryPoint
 class AssistantActivity : AppCompatActivity() {
@@ -26,6 +29,9 @@ class AssistantActivity : AppCompatActivity() {
 
     @Inject
     lateinit var authRepository: AuthRepository
+
+    @Inject
+    lateinit var appLifecycleService: AppLifecycleService
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,35 +56,61 @@ class AssistantActivity : AppCompatActivity() {
                         Log.d(TAG, "Assistant launch - user authenticated: $isAuthenticated")
 
                         if (isAuthenticated) {
-                            Log.d(TAG, "User is authenticated, creating new optimistic chat for assistant launch...")
-                            val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
-                            Log.d(TAG, "New optimistic chat created with ID: $newChatId")
-                            if (newChatId != -1L) { // Optimistic chats have negative IDs, so check for failure (-1)
-                                // Navigate directly to the chat screen
+                            // Stop bubble overlay if active to prevent cleanup interference
+                            if (BubbleOverlayService.isActive) {
+                                Log.d(TAG, "Stopping bubble overlay before launching MainActivity")
+                                BubbleOverlayService.stop(this@AssistantActivity)
+                                delay(100) // Wait for cleanup
+                            }
+
+                            // Set transition flag to prevent old ChatViewModel from disabling listening
+                            ChatViewModel.isTransitioning = true
+                            Log.d(TAG, "Set ChatViewModel.isTransitioning = true")
+
+                            // Check if app is already in foreground - reuse existing MainActivity
+                            val isAppInForeground = appLifecycleService.isInForeground()
+                            Log.d(TAG, "App in foreground: $isAppInForeground")
+
+                            if (isAppInForeground) {
+                                // App is visible - reuse existing MainActivity, just create new chat
+                                Log.d(TAG, "App in foreground - reusing existing MainActivity")
                                 val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                    putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
-                                    putExtra("FROM_ASSISTANT", true)
-                                    putExtra("FORCE_NAVIGATION", true)
-                                    putExtra("ENABLE_VOICE_MODE", true)
-                                    // Add transcription if available
-                                    transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
-                                }
-                                Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
-                                startMainActivityAndFinish(intent)
-                            } else {
-                                Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
-                                // Fallback: Start MainActivity with voice mode enabled and let it handle creating a chat
-                                val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                                     putExtra("FROM_ASSISTANT", true)
                                     putExtra("ENABLE_VOICE_MODE", true)
                                     putExtra("CREATE_NEW_CHAT_ON_START", true)
-                                    // Add transcription if available
                                     transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                 }
-                                Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                                Log.d(TAG, "Starting MainActivity with SINGLE_TOP and CREATE_NEW_CHAT_ON_START")
                                 startMainActivityAndFinish(intent)
+                            } else {
+                                // App not in foreground - create fresh MainActivity with new chat
+                                Log.d(TAG, "App not in foreground - creating new optimistic chat")
+                                val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
+                                Log.d(TAG, "New optimistic chat created with ID: $newChatId")
+                                if (newChatId != -1L) {
+                                    val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                        putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
+                                        putExtra("FROM_ASSISTANT", true)
+                                        putExtra("FORCE_NAVIGATION", true)
+                                        putExtra("ENABLE_VOICE_MODE", true)
+                                        transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                                    }
+                                    Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
+                                    startMainActivityAndFinish(intent)
+                                } else {
+                                    Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
+                                    val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                        putExtra("FROM_ASSISTANT", true)
+                                        putExtra("ENABLE_VOICE_MODE", true)
+                                        putExtra("CREATE_NEW_CHAT_ON_START", true)
+                                        transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
+                                    }
+                                    Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
+                                    startMainActivityAndFinish(intent)
+                                }
                             }
                         } else {
                             Log.d(TAG, "User not authenticated, starting MainActivity without creating chat")
