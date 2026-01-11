@@ -325,7 +325,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             // Use minimal messages that won't change the semantic context
             // so Claude still responds to the original "coffee-making professional" question with "Barista"
             // Each message is unique to avoid duplicate detection
-            val interruptMessages = listOf("-", "--", "---", "----")
+            val interruptMessages = listOf(".", "..", "...", "....")
 
             for ((i, interruptMessage) in interruptMessages.withIndex()) {
 
