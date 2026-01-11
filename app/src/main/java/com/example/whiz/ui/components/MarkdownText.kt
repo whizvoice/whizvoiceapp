@@ -199,7 +199,8 @@ private fun AnnotatedString.Builder.processNode(
             }
 
             is ThematicBreak -> {
-                append("\n───────────\n")
+                // Compact horizontal rule for chat - trailing newline only so following content starts on new line
+                append("───────────\n")
             }
 
             else -> {
