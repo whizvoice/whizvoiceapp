@@ -636,6 +636,48 @@ class SpeechRecognitionService @Inject constructor(
     }
 
     // --- Helper methods getErrorMessage, shouldShowError remain the same ---
+
+    /**
+     * Computes the Levenshtein (edit) distance between two strings.
+     * Returns the minimum number of single-character edits (insertions, deletions, substitutions)
+     * required to change one string into the other.
+     */
+    private fun levenshteinDistance(s1: String, s2: String): Int {
+        val m = s1.length
+        val n = s2.length
+
+        // Use single array optimization for space efficiency
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
+
+        for (i in 1..m) {
+            curr[0] = i
+            for (j in 1..n) {
+                curr[j] = if (s1[i - 1].lowercaseChar() == s2[j - 1].lowercaseChar()) {
+                    prev[j - 1]
+                } else {
+                    1 + minOf(prev[j], curr[j - 1], prev[j - 1])
+                }
+            }
+            val temp = prev
+            prev = curr
+            curr = temp
+        }
+        return prev[n]
+    }
+
+    /**
+     * Computes similarity ratio between two strings (0.0 to 1.0).
+     * 1.0 means identical, 0.0 means completely different.
+     */
+    private fun similarityRatio(s1: String, s2: String): Double {
+        if (s1.isEmpty() && s2.isEmpty()) return 1.0
+        if (s1.isEmpty() || s2.isEmpty()) return 0.0
+        val maxLen = maxOf(s1.length, s2.length)
+        val distance = levenshteinDistance(s1, s2)
+        return 1.0 - (distance.toDouble() / maxLen)
+    }
+
     /**
      * Merges two strings by finding the longest overlap between the suffix of the first
      * and the prefix of the second. This handles cases where speech recognition splits
@@ -658,6 +700,27 @@ class SpeechRecognitionService @Inject constructor(
         // If first already ends with second (second is substring of first's end), just return first
         if (first.endsWith(second, ignoreCase = true)) {
             return first
+        }
+
+        // Fuzzy prefix detection for duplicate detection
+        // If the beginnings of both strings are similar (>= 70% similarity), it's likely
+        // the recognizer restarted mid-sentence and recaptured the same beginning with
+        // slightly different transcription. In this case, prefer the newer (second).
+        val maxPrefixLength = 30 // Compare up to first 30 characters
+        val similarityThreshold = 0.70 // 70% similarity threshold
+        val minRequiredLength = 10 // Minimum characters needed for reliable comparison
+
+        // Use the shorter of: maxPrefixLength, or the length of the shorter string
+        val compareLength = minOf(maxPrefixLength, first.length, second.length)
+
+        if (compareLength >= minRequiredLength) {
+            val firstPrefix = first.take(compareLength).lowercase()
+            val secondPrefix = second.take(compareLength).lowercase()
+            val similarity = similarityRatio(firstPrefix, secondPrefix)
+            if (similarity >= similarityThreshold) {
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_FUZZY_PREFIX: Detected similar prefixes (${(similarity * 100).toInt()}% similarity >= ${(similarityThreshold * 100).toInt()}% over $compareLength chars), using newer transcription: '$second'")
+                return second
+            }
         }
 
         val firstLower = first.lowercase()
