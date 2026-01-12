@@ -1658,6 +1658,12 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: Input text cleared to: '${_inputText.value}'")
         voiceManager.updateContinuousListeningEnabled(true)
         // continuousListeningEnabled is already set via voiceManager
+
+        // Reset transition flag now that new ViewModel has successfully enabled listening
+        if (isTransitioning) {
+            Log.d(TAG, "Resetting isTransitioning flag after enabling continuous listening")
+            isTransitioning = false
+        }
         
         // Start listening if not busy (only check isSpeaking, not isResponding)
         if (!isSpeaking.value) {
@@ -2025,7 +2031,8 @@ class ChatViewModel @Inject constructor(
         // (e.g., via assistant long-press while app is open)
         if (isTransitioning) {
             Log.d(TAG, "onCleared: Skipping continuous listening disable - transitioning to new chat")
-            isTransitioning = false // Reset flag for future use
+            // DON'T reset flag here - multiple ViewModels may be cleared during transition
+            // Flag will be reset when new ViewModel enables continuous listening
         } else {
             voiceManager.updateContinuousListeningEnabled(false)
         }

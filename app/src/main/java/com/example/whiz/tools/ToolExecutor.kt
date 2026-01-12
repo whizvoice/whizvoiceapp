@@ -671,6 +671,22 @@ class ToolExecutor @Inject constructor(
             // Short delay to allow the result to be sent before closing
             delay(100)
 
+            // Use static callback to tell MainActivity to finish and remove from recents
+            Log.i(TAG, "Invoking finishAndRemoveTaskCallback on MainActivity")
+            val callback = com.example.whiz.MainActivity.finishAndRemoveTaskCallback
+            if (callback != null) {
+                // Run on main thread since finishAndRemoveTask() must be called from main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    callback.invoke()
+                }
+                Log.i(TAG, "finishAndRemoveTaskCallback invoked")
+            } else {
+                Log.w(TAG, "finishAndRemoveTaskCallback is null - MainActivity may not be active")
+            }
+
+            // Short delay to allow MainActivity to finish
+            delay(150)
+
             // Stop bubble overlay service if active
             Log.i(TAG, "Stopping BubbleOverlayService")
             BubbleOverlayService.stop(context)

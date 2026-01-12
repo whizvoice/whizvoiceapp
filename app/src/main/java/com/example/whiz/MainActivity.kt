@@ -58,10 +58,14 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
-        
+
         // Test callback for capturing navigation-scoped ViewModels
         @Volatile
         var testViewModelCallback: ((com.example.whiz.ui.viewmodels.ChatViewModel) -> Unit)? = null
+
+        // Callback for self-close tool to finish the activity and remove from recents
+        @Volatile
+        var finishAndRemoveTaskCallback: (() -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -92,6 +96,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var navController: NavHostController
     private var testTranscriptionReceiver: BroadcastReceiver? = null
+    private var closeAppReceiver: BroadcastReceiver? = null
 
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
@@ -123,6 +128,15 @@ class MainActivity : ComponentActivity() {
 
         // Upload any pending crash report from previous session
         uploadPendingCrashReport()
+
+        // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
+        setupCloseAppReceiver()
+
+        // Set up static callback for self-close tool (more reliable than broadcast)
+        finishAndRemoveTaskCallback = {
+            Log.d(TAG, "finishAndRemoveTaskCallback invoked - calling finishAndRemoveTask()")
+            finishAndRemoveTask()
+        }
 
         setContent {
             WhizTheme {
@@ -713,6 +727,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
 
+        // Clear the static callback
+        finishAndRemoveTaskCallback = null
+
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
             try {
@@ -720,6 +737,16 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Test transcription receiver unregistered")
             } catch (e: Exception) {
                 Log.w(TAG, "Error unregistering test receiver", e)
+            }
+        }
+
+        // Unregister close app receiver
+        if (closeAppReceiver != null) {
+            try {
+                unregisterReceiver(closeAppReceiver)
+                Log.d(TAG, "Close app receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering close app receiver", e)
             }
         }
     }
@@ -799,6 +826,31 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG, "Test transcription receiver registered successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register test transcription receiver", e)
+        }
+    }
+
+    private fun setupCloseAppReceiver() {
+        Log.d(TAG, "Setting up close app receiver")
+
+        closeAppReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == "com.example.whiz.CLOSE_APP") {
+                    Log.d(TAG, "Close app broadcast received - calling finishAndRemoveTask()")
+                    finishAndRemoveTask()
+                }
+            }
+        }
+
+        val filter = IntentFilter("com.example.whiz.CLOSE_APP")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(closeAppReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(closeAppReceiver, filter)
+            }
+            Log.d(TAG, "Close app receiver registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register close app receiver", e)
         }
     }
 
