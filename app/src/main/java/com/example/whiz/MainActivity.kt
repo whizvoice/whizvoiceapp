@@ -344,11 +344,13 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "🎤 VOICE LAUNCH DETECTED ($source) - adding assistant flags")
                 // Add the assistant flags that would normally come from AssistantActivity
                 i.putExtra("FROM_ASSISTANT", true)
-                i.putExtra("ENABLE_VOICE_MODE", true) 
+                i.putExtra("ENABLE_VOICE_MODE", true)
                 i.putExtra("CREATE_NEW_CHAT_ON_START", true)
                 // Update the activity's intent so the flags are accessible
                 setIntent(i)
-                Log.d(TAG, "🎤 Updated activity intent with voice launch flags")
+                // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
+                com.example.whiz.ui.viewmodels.ChatViewModel.isTransitioning = true
+                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true")
             }
         }
         Log.d(TAG, "=== END INTENT ANALYSIS ===")

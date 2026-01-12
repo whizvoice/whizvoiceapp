@@ -272,6 +272,11 @@ object TestAppModule {
         accessibilityManager: com.example.whiz.accessibility.AccessibilityManager
     ): PermissionManager {
         Log.d(TAG, "🔧 Creating TestPermissionManager for testing...")
-        return TestPermissionManager(context, accessibilityChecker, accessibilityManager)
+        return TestPermissionManager(context, accessibilityChecker, accessibilityManager).apply {
+            // Default to microphone permission granted for tests
+            // Tests that need to test permission-denied scenarios can call simulateMicrophoneRevoke()
+            setMockMicrophonePermission(true)
+            Log.d(TAG, "🎙️ Defaulting microphone permission to GRANTED for tests")
+        }
     }
 } 
