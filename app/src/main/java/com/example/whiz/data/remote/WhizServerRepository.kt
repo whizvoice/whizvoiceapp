@@ -142,7 +142,40 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "Test: Resetting persistentDisconnectForTest flag to simulate network restoration")
         persistentDisconnectForTest = false
     }
-    
+
+    /**
+     * Reset connection state for testing. Called between tests to ensure clean state.
+     * This resets all internal state and the persistentDisconnectForTest flag.
+     */
+    suspend fun resetConnectionStateForTesting() {
+        connectionLock.withLock {
+            Log.d(TAG, "resetConnectionStateForTesting: Resetting from state=$connectionState, persistentDisconnect=$persistentDisconnectForTest")
+
+            // Cancel any pending jobs
+            connectionTimeoutJob?.cancel()
+            reconnectJob?.cancel()
+            retryJob?.cancel()
+
+            // Close existing WebSocket if any
+            webSocket?.let { ws ->
+                try {
+                    ws.close(1000, "Test cleanup")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error closing WebSocket during test cleanup", e)
+                }
+            }
+            webSocket = null
+
+            // Reset all connection state
+            connectionState = ConnectionState.IDLE
+            connectingToConversationId = null
+            persistentDisconnectForTest = false
+            currentReconnectAttempts = 0
+
+            Log.d(TAG, "resetConnectionStateForTesting: Complete")
+        }
+    }
+
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
         // Track event in history for debugging
