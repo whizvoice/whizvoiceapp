@@ -2579,9 +2579,9 @@ abstract class BaseIntegrationTest {
     ) {
         try {
             android.util.Log.d("BaseIntegrationTest", "🧹 Starting simplified test chat cleanup")
-            
+
             var chatsDeleted = 0
-            
+
             // Primary method: Delete tracked chats (most reliable)
             if (trackedChatIds.isNotEmpty()) {
                 android.util.Log.d("BaseIntegrationTest", "🗑️ Deleting ${trackedChatIds.size} tracked chat(s)")
@@ -2625,7 +2625,7 @@ abstract class BaseIntegrationTest {
             }
 
             android.util.Log.d("BaseIntegrationTest", "✅ Cleanup completed: $chatsDeleted chats deleted")
-            
+
         } catch (e: Exception) {
             android.util.Log.w("BaseIntegrationTest", "⚠️ Error during test chat cleanup", e)
         }

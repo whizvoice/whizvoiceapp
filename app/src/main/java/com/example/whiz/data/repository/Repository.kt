@@ -1896,37 +1896,48 @@ class WhizRepository @Inject constructor(
                 val optimisticChats = localChats.filter { it.id < -1 }
                 
                 // Check all server chats for any that reference our optimistic chats
+                // Build a set of local optimistic chat IDs for fast lookup
+                val localOptimisticIds = optimisticChats.map { it.id }.toSet()
+                var mappingsRegistered = 0
+                var migrationsTriggered = 0
+
                 serverChats.forEach { serverChat ->
                     // Check if this server chat has an optimistic_chat_id field
                     val optimisticId = serverChat.optimisticChatId
                     if (optimisticId != null && optimisticId < 0 && connectionStateManager.getMigratedChatId(optimisticId) == null) {
-                        // This server chat is linked to an optimistic chat that hasn't been migrated yet
-                        Log.e(TAG, "🚨 MIGRATION TRIGGER: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId")
-                        Log.e(TAG, "🚨 Is ${serverChat.id} a real server ID or locally generated? Stack trace:", Exception("Stack trace for migration trigger"))
-                        
-                        // Trigger migration asynchronously
-                        repositoryScope.launch {
-                            try {
-                                // Migrate the messages if the optimistic chat exists
-                                val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
-                                if (optimisticChatExists) {
-                                    Log.e(TAG, "🚨 CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
+                        // Check if the optimistic chat exists locally (needs actual migration)
+                        val optimisticChatExists = localOptimisticIds.contains(optimisticId)
+
+                        if (optimisticChatExists) {
+                            // This is a real migration - optimistic chat exists locally with messages to migrate
+                            Log.d(TAG, "🔄 Migration needed: Server chat ${serverChat.id} <- optimistic chat $optimisticId")
+                            migrationsTriggered++
+
+                            // Trigger migration asynchronously
+                            repositoryScope.launch {
+                                try {
                                     val migrationSuccess = migrateChatMessages(optimisticId, serverChat.id)
                                     if (migrationSuccess) {
                                         Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
                                     } else {
                                         Log.e(TAG, "getAllChatsFlow: Migration failed for $optimisticId -> ${serverChat.id}")
                                     }
-                                } else {
-                                    // If optimistic chat doesn't exist, we can safely register the mapping
-                                    // since there are no messages to migrate
-                                    registerChatMigration(optimisticId, serverChat.id)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
                             }
+                        } else {
+                            // Optimistic chat doesn't exist locally - just register the mapping silently
+                            // This handles chats from previous app sessions where migration already completed
+                            registerChatMigration(optimisticId, serverChat.id)
+                            mappingsRegistered++
                         }
                     }
+                }
+
+                // Log summary instead of per-chat spam
+                if (mappingsRegistered > 0 || migrationsTriggered > 0) {
+                    Log.d(TAG, "getAllChatsFlow: Registered $mappingsRegistered existing mappings, triggered $migrationsTriggered new migrations")
                 }
                 
                 // Check which optimistic chats haven't been migrated yet

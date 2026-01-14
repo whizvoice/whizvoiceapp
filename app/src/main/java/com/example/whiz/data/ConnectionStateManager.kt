@@ -24,8 +24,9 @@ class ConnectionStateManager @Inject constructor() {
     
     // Track optimistic chat ID → real chat ID migrations
     // This is the single source of truth for chat ID resolution
-    private val chatMigrationMapping = mutableMapOf<Long, Long>()
-    private val migrationTimestamps = mutableMapOf<Long, Long>() // Track when migrations happened for cleanup
+    // Using ConcurrentHashMap for thread-safety across coroutines
+    private val chatMigrationMapping = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+    private val migrationTimestamps = java.util.concurrent.ConcurrentHashMap<Long, Long>() // Track when migrations happened for cleanup
     
     /**
      * Set the currently active conversation.
@@ -157,23 +158,30 @@ class ConnectionStateManager @Inject constructor() {
     
     /**
      * Get the optimistic chat ID that was migrated to this real chat ID.
+     * Thread-safe: ConcurrentHashMap's entries iterator is weakly consistent.
      */
     fun getOptimisticChatId(realChatId: Long): Long? {
+        // ConcurrentHashMap's entries.find is safe - weakly consistent iterator
         return chatMigrationMapping.entries.find { it.value == realChatId }?.key
     }
     
     /**
      * Clean up old migration mappings to prevent memory leaks.
+     * Thread-safe: makes a snapshot copy before iterating.
      */
     private fun cleanupOldMigrations() {
         val oneHourAgo = System.currentTimeMillis() - 3600000 // 1 hour
-        val toRemove = migrationTimestamps.filterValues { it < oneHourAgo }.keys
+        // Take a snapshot copy to avoid ConcurrentModificationException
+        val timestampsCopy = migrationTimestamps.toMap()
+        val toRemove = timestampsCopy.filterValues { it < oneHourAgo }.keys
+        var cleanedCount = 0
         toRemove.forEach { optimisticChatId ->
             chatMigrationMapping.remove(optimisticChatId)
             migrationTimestamps.remove(optimisticChatId)
+            cleanedCount++
         }
-        if (toRemove.isNotEmpty()) {
-            Log.d(TAG, "cleanupOldMigrations: Cleaned up ${toRemove.size} old migration mappings")
+        if (cleanedCount > 0) {
+            Log.d(TAG, "cleanupOldMigrations: Cleaned up $cleanedCount old migration mappings")
         }
     }
 }
