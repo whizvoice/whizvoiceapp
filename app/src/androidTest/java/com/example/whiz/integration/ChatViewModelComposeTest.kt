@@ -322,10 +322,10 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             // Step 4: Send rapid interruption messages using Compose Testing
             Log.d(TAG, "📨 Step 4: Sending interrupt messages RAPIDLY while bot is responding...")
-            // Use minimal messages that won't change the semantic context
-            // so Claude still responds to the original "coffee-making professional" question with "Barista"
+            // Use explicit interrupt messages that won't confuse Claude's tool selection
+            // (dots like "." were causing Claude to call pick_random_color instead of answering)
             // Each message is unique to avoid duplicate detection
-            val interruptMessages = listOf(".", "..", "...", "....")
+            val interruptMessages = listOf("test_interrupt1", "test_interrupt2", "test_interrupt3", "test_interrupt4")
 
             for ((i, interruptMessage) in interruptMessages.withIndex()) {
 
