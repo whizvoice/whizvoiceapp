@@ -446,10 +446,13 @@ class MainActivity : ComponentActivity() {
             // Check if we're already at the target destination
             val currentRoute = navController.currentDestination?.route
             if (currentRoute == Screen.AssistantChat.route || currentRoute?.startsWith("chat/") == true) {
-                // Already at chat screen - WhizNavHost already handled initial navigation via startDestination
-                // Just set the voice mode flags in savedStateHandle, don't navigate again
-                // This prevents creating a duplicate ChatScreen/ViewModel
-                Log.d(TAG, "🔄 Already at chat screen ($currentRoute) - setting flags only, no navigation needed")
+                Log.d(TAG, "🔄 Already at chat screen ($currentRoute) - forcing new chat")
+
+                // Signal ChatScreen to create a new chat by setting a unique timestamp
+                navController.currentBackStackEntry?.savedStateHandle?.set(
+                    "FORCE_NEW_CHAT",
+                    System.currentTimeMillis()
+                )
 
                 if (enableVoiceMode) {
                     Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")

@@ -528,6 +528,13 @@ fun ChatScreen(
     val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
     Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
+
+    // Observe FORCE_NEW_CHAT signal from power button long-press
+    // Using getStateFlow to reactively observe savedStateHandle changes
+    val forceNewChatTimestamp by navController.currentBackStackEntry
+        ?.savedStateHandle
+        ?.getStateFlow("FORCE_NEW_CHAT", 0L)
+        ?.collectAsState() ?: remember { mutableStateOf(0L) }
     
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
@@ -697,7 +704,17 @@ fun ChatScreen(
             viewModel.loadChat(chatId)
         }
     }
-    
+
+    // React to force new chat signal from power button long-press while app is open
+    LaunchedEffect(forceNewChatTimestamp) {
+        if (forceNewChatTimestamp > 0L) {
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), resetting to new chat")
+            viewModel.loadChatWithVoiceMode(-1L, true)
+            // Clear the signal after handling
+            navController.currentBackStackEntry?.savedStateHandle?.remove<Long>("FORCE_NEW_CHAT")
+        }
+    }
+
     // Sync messages when returning to the screen (e.g., from chats list)
     // This ensures we get any messages that arrived while away
     // Track if this is the initial load to avoid double-syncing
@@ -825,6 +842,25 @@ fun ChatScreen(
 
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
+    }
+
+    // Re-enable voice when FORCE_NEW_CHAT signal is received (power button long-press while app is open)
+    // This must be after voiceInitialized is defined
+    LaunchedEffect(forceNewChatTimestamp) {
+        if (forceNewChatTimestamp > 0L) {
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling voice for new chat")
+
+            // Reset voice initialization flag so voice can be re-enabled
+            voiceInitialized.value = false
+
+            // Re-enable continuous listening for the new chat (same as initial voice launch)
+            if (effectiveHasPermission) {
+                Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling continuous listening")
+                voiceManager.updateContinuousListeningEnabled(true)
+                viewModel.ensureContinuousListeningEnabled()
+                voiceInitialized.value = true
+            }
+        }
     }
 
     // Collect transcriptions from VoiceManager flow
