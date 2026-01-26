@@ -1,12 +1,15 @@
 package com.example.whiz.integration
 
+import android.content.Intent
 import android.util.Log
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
+import com.example.whiz.AssistantActivity
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
@@ -91,7 +94,7 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
-                    additionalPatterns = listOf("power button test", "test message for power button"),
+                    additionalPatterns = listOf("power button test", "test message for power button", "This is a test", "TEST SUCCESSFUL"),
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
@@ -187,27 +190,34 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         val listeningBeforePowerButton = voiceManager.isContinuousListeningEnabled.value
         Log.d(TAG, "🎤 Continuous listening before power button: $listeningBeforePowerButton")
 
-        // Step 7: Simulate power button long-press by directly setting the FORCE_NEW_CHAT signal
-        // This is what MainActivity.handleVoiceLaunchIfNeeded() does when it detects
-        // the app is already on a chat screen and receives CREATE_NEW_CHAT_ON_START intent.
-        // By setting this signal directly, we test the ChatScreen's response to it.
-        Log.d(TAG, "🔘 Simulating power button long-press (setting FORCE_NEW_CHAT signal)")
+        // Step 7: Simulate power button long-press by launching AssistantActivity
+        // This is the actual production flow: system triggers AssistantActivity which then
+        // detects app is in foreground and launches MainActivity with CREATE_NEW_CHAT_ON_START
+        Log.d(TAG, "🔘 Simulating power button long-press (launching AssistantActivity)")
 
-        composeTestRule.runOnUiThread {
-            val navController = composeTestRule.activity.getNavController()
-            if (navController != null) {
-                // Set the FORCE_NEW_CHAT timestamp - same as MainActivity.handleVoiceLaunchIfNeeded()
-                navController.currentBackStackEntry?.savedStateHandle?.set(
-                    "FORCE_NEW_CHAT",
-                    System.currentTimeMillis()
-                )
-                // Also set ENABLE_VOICE_MODE as the real flow does
-                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
-                Log.d(TAG, "✅ Set FORCE_NEW_CHAT signal in savedStateHandle")
-            } else {
-                Log.e(TAG, "❌ NavController is null - cannot set FORCE_NEW_CHAT")
-            }
+        // Log current activity before launching AssistantActivity
+        val activityBefore = composeTestRule.activity
+        Log.d(TAG, "🔍 Activity before AssistantActivity: ${activityBefore.javaClass.simpleName}, hashCode=${activityBefore.hashCode()}")
+
+        val assistantIntent = Intent(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            AssistantActivity::class.java
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("IS_ASSISTANT_LAUNCH", true)
         }
+
+        // Launch AssistantActivity - it will detect app is in foreground and trigger the flow
+        InstrumentationRegistry.getInstrumentation().targetContext.startActivity(assistantIntent)
+        Log.d(TAG, "✅ Launched AssistantActivity with IS_ASSISTANT_LAUNCH=true")
+
+        // Wait for AssistantActivity to process and MainActivity to receive the intent
+        // AssistantActivity finishes quickly after launching MainActivity with SINGLE_TOP
+        composeTestRule.waitForIdle()
+
+        // Verify we're still on our test's MainActivity (SINGLE_TOP should reuse it)
+        val activityAfterAssistant = composeTestRule.activity
+        Log.d(TAG, "🔍 Activity after AssistantActivity: ${activityAfterAssistant.javaClass.simpleName}, hashCode=${activityAfterAssistant.hashCode()}")
 
         // Step 8: Wait for the new chat to be created and UI to update
         // The FORCE_NEW_CHAT signal triggers loadChatWithVoiceMode(-1), which resets the chat
@@ -217,7 +227,7 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         // Wait for old messages to disappear (most reliable indicator of new chat)
         val oldMessagesGone = runBlocking {
             var attempts = 0
-            while (attempts < 50) { // Wait up to 10 seconds (50 * 200ms)
+            while (attempts < 15) { // Wait up to 3 seconds (15 * 200ms)
                 composeTestRule.waitForIdle()
                 val oldMessageStillVisible = composeTestRule.onAllNodesWithText(testMessage)
                     .fetchSemanticsNodes().isNotEmpty()
@@ -237,7 +247,7 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
 
         if (!oldMessagesGone) {
             failWithScreenshot("stayed_on_old_chat",
-                "Power button should create NEW chat, but old chat messages are still visible after 10s")
+                "Power button should create NEW chat, but old chat messages are still visible after 3s")
             return
         }
 
@@ -293,13 +303,49 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
 
         Log.d(TAG, "✅ Microphone activated successfully")
 
-        // Step 10: Final verification - confirm we're NOT on the old chat
-        val oldMessageGone = composeTestRule.onAllNodesWithText(testMessage)
-            .fetchSemanticsNodes().isEmpty()
+        // Step 10: Verify the new chat is functional by sending a test message
+        Log.d(TAG, "📤 Sending verification message to confirm new chat works")
+        val verificationMessage = "This is a test. Please respond with TEST SUCCESSFUL only"
 
-        assertTrue("Old chat message should not be visible after power button creates new chat",
-            oldMessageGone)
+        val verificationSent = ComposeTestHelper.sendMessageAndVerifyDisplay(
+            composeTestRule,
+            verificationMessage,
+            rapid = false
+        )
 
+        if (!verificationSent) {
+            failWithScreenshot("verification_message_failed", "Failed to send verification message in new chat")
+            return
+        }
+
+        // Wait for and verify the response contains "TEST SUCCESSFUL"
+        val gotExpectedResponse = runBlocking {
+            var attempts = 0
+            while (attempts < 25) { // Wait up to 5 seconds
+                composeTestRule.waitForIdle()
+                val responseVisible = composeTestRule.onAllNodesWithText("TEST SUCCESSFUL", substring = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+
+                Log.d(TAG, "🔍 Response check attempt $attempts: found=$responseVisible")
+
+                if (responseVisible) {
+                    Log.d(TAG, "✅ Got TEST SUCCESSFUL response after ${attempts * 200}ms")
+                    return@runBlocking true
+                }
+                delay(200L)
+                attempts++
+            }
+            Log.d(TAG, "❌ TEST SUCCESSFUL response not found after ${attempts * 200}ms")
+            false
+        }
+
+        if (!gotExpectedResponse) {
+            failWithScreenshot("no_test_successful_response",
+                "New chat should be functional - expected TEST SUCCESSFUL response")
+            return
+        }
+
+        Log.d(TAG, "✅ New chat is functional - received expected response")
         Log.d(TAG, "✅ TEST PASSED: Power button on existing chat created new chat and activated microphone")
 
         // Track any new chats for cleanup
@@ -354,15 +400,15 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         for (i in 1..3) {
             Log.d(TAG, "🔘 Power button press #$i")
 
-            // Simulate power button by setting FORCE_NEW_CHAT signal directly
-            composeTestRule.runOnUiThread {
-                val navController = composeTestRule.activity.getNavController()
-                navController?.currentBackStackEntry?.savedStateHandle?.set(
-                    "FORCE_NEW_CHAT",
-                    System.currentTimeMillis()
-                )
-                navController?.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+            // Simulate power button by launching AssistantActivity (production flow)
+            val assistantIntent = Intent(
+                InstrumentationRegistry.getInstrumentation().targetContext,
+                AssistantActivity::class.java
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra("IS_ASSISTANT_LAUNCH", true)
             }
+            InstrumentationRegistry.getInstrumentation().targetContext.startActivity(assistantIntent)
 
             // Wait for voice activation - check UI indicator which is more reliable
             val activated = runBlocking {
