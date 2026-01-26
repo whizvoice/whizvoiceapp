@@ -129,11 +129,12 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         Log.d(TAG, "🧪 Testing power button long-press on existing chat")
 
         // Step 1: Launch MainActivity (simulating user manually opening the app)
-        Log.d(TAG, "📱 Launching MainActivity")
+        // Use CLEAR_TASK to ensure we start fresh without state from previous tests
+        Log.d(TAG, "📱 Launching MainActivity with fresh state")
         val launchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
             action = Intent.ACTION_MAIN
             addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         mainActivity = instrumentation.startActivitySync(launchIntent) as MainActivity
 
