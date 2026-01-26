@@ -200,17 +200,60 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         }
         editText.text = testMessage
 
-        // Find and click send button - wait for it to appear first
-        val sendButtonFound = device.wait(
-            Until.hasObject(By.desc("Send typed message").pkg("com.example.whiz.debug")),
-            3000
-        )
-        if (!sendButtonFound) {
-            failWithScreenshot("send_button_not_found", "Send button not found")
+        // Intelligently wait for send button to appear (Compose needs time to recompose after text change)
+        Log.d(TAG, "🔍 Waiting for send button to appear after text input")
+        val sendButtonClicked = runBlocking {
+            var attempts = 0
+            val maxAttempts = 25 // 5 seconds total (25 * 200ms)
+            while (attempts < maxAttempts) {
+                // Try By selector first (newer UIAutomator2 API)
+                val sendButton = device.findObject(By.desc("Send typed message").pkg("com.example.whiz.debug"))
+                if (sendButton != null) {
+                    Log.d(TAG, "✅ Send button found after ${attempts * 200}ms, clicking...")
+                    sendButton.click()
+                    return@runBlocking true
+                }
+
+                // Try UiSelector fallback (older API, sometimes more reliable on emulators)
+                try {
+                    val altSendButton = device.findObject(
+                        androidx.test.uiautomator.UiSelector()
+                            .descriptionContains("Send")
+                            .packageName("com.example.whiz.debug")
+                    )
+                    if (altSendButton.exists()) {
+                        Log.d(TAG, "✅ Send button found via UiSelector after ${attempts * 200}ms, clicking...")
+                        altSendButton.click()
+                        return@runBlocking true
+                    }
+                } catch (e: Exception) {
+                    // UiSelector threw, continue polling
+                }
+
+                delay(200)
+                attempts++
+                if (attempts % 5 == 0) {
+                    Log.d(TAG, "🔍 Still waiting for send button... (${attempts * 200}ms elapsed)")
+                }
+            }
+            false
+        }
+
+        if (!sendButtonClicked) {
+            // Debug: dump all clickable elements to understand what's on screen
+            Log.e(TAG, "❌ Send button not found after 5s, dumping UI state...")
+            val allClickable = device.findObjects(By.clickable(true).pkg("com.example.whiz.debug"))
+            Log.d(TAG, "🔍 Found ${allClickable.size} clickable elements:")
+            allClickable.forEachIndexed { index, element ->
+                try {
+                    Log.d(TAG, "  [$index] class='${element.className}', text='${element.text}', desc='${element.contentDescription}'")
+                } catch (e: Exception) {
+                    Log.d(TAG, "  [$index] Error reading element: ${e.message}")
+                }
+            }
+            failWithScreenshot("send_button_not_found", "Send button not found after 5s polling")
             return
         }
-        val sendButton = device.findObject(By.desc("Send typed message").pkg("com.example.whiz.debug"))
-        sendButton.click()
 
         // Wait for message to appear in the chat
         val messageVisible = device.wait(
