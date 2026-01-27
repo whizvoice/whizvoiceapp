@@ -1326,7 +1326,19 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = "New Chat"
                     _isResponding.value = false // 🔧 Immediately set to false for new chats
                     Log.d(TAG, "🔥 loadChat: Setup for new chat (ID: -1), responding state reset to false")
-                    
+
+                    // Prime WebSocket connection early for new chats - saves 150-250ms when user sends first message
+                    // Connection will be associated with conversation when first message includes client_conversation_id
+                    if (configUseRemoteAgent) {
+                        try {
+                            Log.d(TAG, "🔥 loadChat: Priming WebSocket connection for new chat")
+                            whizServerRepository.primeConnection()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to prime WebSocket connection", e)
+                            // Non-fatal - connection will be established on first message
+                        }
+                    }
+
                     // Refresh conversations list when going to home page
                     try {
                         repository.refreshConversations()
@@ -1354,6 +1366,16 @@ class ChatViewModel @Inject constructor(
                                 _chatTitle.value = "New Chat"
                                 Log.d(TAG, "🔥 loadChat: Optimistic chat ID $chatId - keeping it, not resetting to -1")
                                 updateRespondingStateForCurrentChat()
+
+                                // Prime WebSocket connection for optimistic chats too
+                                if (configUseRemoteAgent) {
+                                    try {
+                                        Log.d(TAG, "🔥 loadChat: Priming WebSocket connection for optimistic chat $chatId")
+                                        whizServerRepository.primeConnection()
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Failed to prime WebSocket connection", e)
+                                    }
+                                }
                             } else {
                                 // Only reset to -1 if we couldn't find a positive chat ID
                                 _chatId.value = -1

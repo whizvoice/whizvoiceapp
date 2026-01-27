@@ -120,6 +120,21 @@ class WhizServerRepository @Inject constructor(
     }
 
     /**
+     * Pre-establish WebSocket connection before user sends a message.
+     * This saves 150-250ms (SSL handshake + HTTP upgrade) from the critical path.
+     * Server supports this - creates session ws_{user_id}_new_{timestamp}.
+     * When first message is sent with client_conversation_id, server associates it.
+     */
+    suspend fun primeConnection() {
+        if (connectionState == ConnectionState.IDLE && !persistentDisconnectForTest) {
+            Log.d(TAG, "Priming WebSocket connection (no conversation_id)")
+            connect(conversationId = null, turnOffPersistentDisconnect = false, forPriming = true)
+        } else {
+            Log.d(TAG, "primeConnection() skipped - state=$connectionState, persistentDisconnect=$persistentDisconnectForTest")
+        }
+    }
+
+    /**
      * Convert epoch milliseconds to ISO timestamp string with exactly 3 decimal places.
      * This ensures consistent format that Python's datetime.fromisoformat() can parse.
      * Format: "2025-12-17T02:10:24.400Z" (always 3 decimal places)
@@ -317,12 +332,12 @@ class WhizServerRepository @Inject constructor(
         return clientConversationIdMatch?.groupValues?.get(1)?.toLongOrNull()
     }
     
-    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
-        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
+    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false, forPriming: Boolean = false) {
+        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, forPriming=$forPriming, currentPersistentDisconnect=$persistentDisconnectForTest")
         Log.d(TAG, "🔌 WEBSOCKET CONNECT CALLED - conversationId: $conversationId", Exception("connect() stack trace"))
 
         // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
-        if (turnOffPersistentDisconnect && conversationId == null) {
+        if (turnOffPersistentDisconnect && conversationId == null && !forPriming) {
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest flag only - no reconnection attempt")
                 persistentDisconnectForTest = false
@@ -335,7 +350,8 @@ class WhizServerRepository @Inject constructor(
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
-            if (conversationId == null) {
+            // Allow null conversationId for priming connections
+            if (conversationId == null && !forPriming) {
                 Log.d(TAG, "NULL conversation ID, returning without attempting connection.")
                 return
             }
@@ -356,16 +372,17 @@ class WhizServerRepository @Inject constructor(
                 }
             }
             
-            // Validate that conversationId is not null (except when just resetting the flag)
+            // Validate that conversationId is not null (except when priming or just resetting the flag)
             // In production, we should always have a valid conversation ID (either server-backed or optimistic)
-            if (conversationId == null && !turnOffPersistentDisconnect) {
+            // Exception: forPriming=true allows null conversationId to pre-establish connection
+            if (conversationId == null && !turnOffPersistentDisconnect && !forPriming) {
                 val errorMsg = "connect() called with null conversationId - this should not happen in production. " +
                                "All chats should have either a server-backed ID (>0) or optimistic ID (<-1). " +
                                "Current state: connectionState=$connectionState"
                 Log.e(TAG, errorMsg)
                 throw IllegalArgumentException(errorMsg)
             }
-            
+
             // Check if we're already connected/connecting
             if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
                 // Get the conversation ID we're currently connected/connecting to
@@ -375,6 +392,13 @@ class WhizServerRepository @Inject constructor(
 
                 if (connectionState == ConnectionState.CONNECTED && currentConversationId == conversationId) {
                     Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
+                    return
+                }
+
+                // If we have a primed connection (no conversation_id) and user wants to connect for a new chat,
+                // reuse the connection - server will associate it when first message includes client_conversation_id
+                if (connectionState == ConnectionState.CONNECTED && currentConversationId == null && conversationId != null && conversationId < 0) {
+                    Log.d(TAG, "Reusing primed connection for new chat $conversationId - server will associate on first message")
                     return
                 }
 

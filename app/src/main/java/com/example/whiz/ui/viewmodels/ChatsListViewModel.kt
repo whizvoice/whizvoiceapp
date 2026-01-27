@@ -58,6 +58,7 @@ class ChatsListViewModel @Inject constructor(
                 // Error is silently handled - we'll show cached data
             }
         }
+
     }
 
     // Create a new chat
