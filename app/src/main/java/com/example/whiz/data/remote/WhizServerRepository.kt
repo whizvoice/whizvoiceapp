@@ -135,16 +135,18 @@ class WhizServerRepository @Inject constructor(
     }
 
     /**
-     * Convert epoch milliseconds to ISO timestamp string with exactly 3 decimal places.
-     * This ensures consistent format that Python's datetime.fromisoformat() can parse.
-     * Format: "2025-12-17T02:10:24.400Z" (always 3 decimal places)
+     * Cached formatter for ISO timestamps - created once since this is a @Singleton class.
      */
-    private fun formatTimestamp(epochMillis: Long): String {
-        val instant = java.time.Instant.ofEpochMilli(epochMillis)
-        val formatter = java.time.format.DateTimeFormatter
+    private val isoTimestampFormatter: java.time.format.DateTimeFormatter =
+        java.time.format.DateTimeFormatter
             .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
             .withZone(java.time.ZoneOffset.UTC)
-        return formatter.format(instant)
+
+    /**
+     * Convert epoch milliseconds to ISO timestamp string with exactly 3 decimal places.
+     */
+    private fun formatTimestamp(epochMillis: Long): String {
+        return isoTimestampFormatter.format(java.time.Instant.ofEpochMilli(epochMillis))
     }
 
     // Expose persistent disconnect state for testing
