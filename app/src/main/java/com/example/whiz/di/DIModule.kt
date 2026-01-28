@@ -28,10 +28,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.GsonBuilder
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import okhttp3.Interceptor
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -118,12 +114,8 @@ object AppModule {
                 try {
                     // Get AuthRepository instance via provider
                     val authRepository = authRepositoryProvider.get()
-                    // Get token asynchronously but don't block if it's null
-                    val token: String? = runBlocking { 
-                        withContext(Dispatchers.IO) {
-                            authRepository.serverToken.first() // Get current token, could be null
-                        }
-                    }
+                    // Get current token value directly from StateFlow
+                    val token: String? = authRepository.serverToken.value
 
                     if (token != null) {
                         requestBuilder.header("Authorization", "Bearer $token")
