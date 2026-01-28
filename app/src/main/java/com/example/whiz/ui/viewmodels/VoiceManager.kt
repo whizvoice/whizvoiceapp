@@ -572,17 +572,8 @@ class VoiceManager @Inject constructor(
                 // Also call legacy callback if set (for backward compatibility)
                 transcriptionCallback?.invoke(finalText)
 
-                // Auto-restart continuous listening if still enabled
-                if (continuousListeningEnabled) {
-                    Log.d(TAG, "Continuous listening: restarting after result")
-                    coroutineScope.launch {
-                        // Small delay to ensure the previous listening session is fully stopped
-                        delay(100L)
-                        if (continuousListeningEnabled && !ttsManager.isSpeaking.value) {
-                            startContinuousListening() // This will check isSpeaking again
-                        }
-                    }
-                }
+                // Note: Auto-restart is handled by SpeechRecognitionService.onEndOfSpeech
+                // Removing redundant restart logic here to avoid duplicate startListening calls
             }
         }
     }

@@ -410,10 +410,16 @@ class SpeechRecognitionService @Inject constructor(
 
                     try {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech (continuous mode)")
-                        // 🔧 Don't cancel! Let onResults be delivered naturally
-                        // The new startListening will implicitly end the previous session
-                        speechRecognizer?.startListening(recognizerIntent)
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech")
+                        // Add minimal delay to allow previous session cleanup and avoid ERROR_CLIENT race condition
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            // Re-check conditions inside the delayed block in case they changed during the 20ms
+                            if (shouldRestartCallback?.invoke() != false && !manualStopInProgress) {
+                                speechRecognizer?.startListening(recognizerIntent)
+                                Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech (after 20ms delay)")
+                            } else {
+                                Log.d(TAG, "🔄 RESTART_DEBUG: Skipping restart - conditions changed during delay (shouldRestart=${shouldRestartCallback?.invoke()}, manualStop=$manualStopInProgress)")
+                            }
+                        }, 20)  // 20ms delay - enough to avoid race, short enough to not miss speech
                         // Don't set _isListening to false when we're restarting!
                     } catch (e: Exception) {
                         Log.e(TAG, "🔄 RESTART_DEBUG: Error restarting listening after end of speech", e)
