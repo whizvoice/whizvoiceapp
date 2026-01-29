@@ -61,7 +61,8 @@ class SpeechRecognitionService @Inject constructor(
     private var lastPartialTimestamp = 0L
     private var savedPartialForConcatenation = ""
     private val PREMATURE_END_THRESHOLD_MS = 1500L // If end-of-speech fires within this time of last partial, it's probably premature
-    private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Clear saved partial if no new speech within this time
+    private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Wait for user to continue speaking (premature end case)
+    private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
     private var savedPartialTimeoutJob: kotlinx.coroutines.Job? = null
     
     val isInitialized: Boolean
@@ -402,10 +403,30 @@ class SpeechRecognitionService @Inject constructor(
                             }
                         }
                     } else {
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Normal end-of-speech (${timeSinceLastPartial}ms >= ${PREMATURE_END_THRESHOLD_MS}ms or no partial), letting onResults deliver")
-                        // Clear any saved partial since this is a real pause
-                        savedPartialForConcatenation = ""
-                        savedPartialTimeoutJob?.cancel()
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Normal end-of-speech (${timeSinceLastPartial}ms >= ${PREMATURE_END_THRESHOLD_MS}ms or no partial)")
+                        // 🔧 BUG FIX: Also save partial for normal end-of-speech as backup
+                        // The 20ms restart can cancel onResults before it delivers, so we need a safety net
+                        if (currentPartial.isNotBlank()) {
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Saving partial as backup in case onResults is canceled: '$currentPartial'")
+                            savedPartialForConcatenation = currentPartial
+                            savedPartialTimeoutJob?.cancel()
+                            savedPartialTimeoutJob = serviceScope.launch {
+                                delay(BACKUP_RESULT_TIMEOUT_MS) // Short timeout - just catching race condition
+                                if (savedPartialForConcatenation.isNotBlank()) {
+                                    Log.d(TAG, "🔄 RESTART_DEBUG: Backup timeout fired (${BACKUP_RESULT_TIMEOUT_MS}ms) - onResults didn't deliver, sending partial as final: '$savedPartialForConcatenation'")
+                                    val partialToSend = savedPartialForConcatenation
+                                    savedPartialForConcatenation = ""
+                                    _transcriptionState.value = partialToSend
+                                    recognitionCallback?.invoke(partialToSend)
+                                    _transcriptionState.value = ""
+                                }
+                            }
+                        } else if (savedPartialForConcatenation.isBlank()) {
+                            // No current partial and no saved partial - safe to cancel timeout
+                            savedPartialTimeoutJob?.cancel()
+                        } else {
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Keeping saved partial from previous premature end: '$savedPartialForConcatenation'")
+                        }
                     }
 
                     try {
