@@ -277,13 +277,14 @@ class BubbleOverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = 20
             y = 200
         }
+        Log.d(TAG, "createChatHead: Setting initial FLAG_KEEP_SCREEN_ON in window params")
         
         setupChatHeadTouchListener(params)
         
@@ -659,6 +660,11 @@ class BubbleOverlayService : Service() {
 
         // Update companion object property for testing
         isKeepScreenOnEnabled = shouldKeepScreenOn
+
+        if (chatHeadView == null) {
+            Log.w(TAG, "updateKeepScreenOnFlag called but chatHeadView is null - flag not updated (mode: $currentMode, shouldKeepScreenOn: $shouldKeepScreenOn)")
+            return
+        }
 
         chatHeadView?.let { view ->
             val params = view.layoutParams as WindowManager.LayoutParams

@@ -585,6 +585,11 @@ fun ChatScreen(
             Log.d("ChatScreen", "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+        // Log actual flag state for debugging
+        val flags = window.attributes.flags
+        val isSet = (flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
+        Log.d("ChatScreen", "FLAG_KEEP_SCREEN_ON state after update: $isSet (full flags: $flags)")
+
         onDispose {
             Log.d("ChatScreen", "ChatScreen disposing - clearing FLAG_KEEP_SCREEN_ON")
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
