@@ -1307,13 +1307,19 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // 🔧 Clear pending requests and log what we're clearing
+                // 🔧 Clear pending requests for OTHER chats only - preserve requests for current chat
+                // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
                     if (pendingRequests.isNotEmpty()) {
-                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
-                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingRequests")
-                        pendingRequests.clear()
-                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: $pendingRequests")
+                        val requestsForOtherChats = pendingRequests.filter { it.value != chatId }
+                        if (requestsForOtherChats.isNotEmpty()) {
+                            Log.w(TAG, "🔥 loadChat: Clearing ${requestsForOtherChats.size} pending requests for other chats: ${requestsForOtherChats.keys}")
+                            pendingRequests.entries.removeIf { it.value != chatId }
+                        }
+                        val remainingRequests = pendingRequests.filter { it.value == chatId }
+                        if (remainingRequests.isNotEmpty()) {
+                            Log.d(TAG, "🔥 loadChat: Preserving ${remainingRequests.size} pending requests for current chat: ${remainingRequests.keys}")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
