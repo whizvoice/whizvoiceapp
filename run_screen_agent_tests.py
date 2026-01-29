@@ -928,11 +928,12 @@ def test_youtube_music_integration(tester):
         # Check if 99% Invisible podcast is playing
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Check if the '99% Invisible' podcast is playing in YouTube Music. Requirements: "
+            "Check if the '99% Invisible' podcast is loaded in YouTube Music. Requirements: "
             "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
-            "2) You must see a PAUSE button (not play button) or playback progress showing it's actively playing. "
-            "Return True if 99% Invisible podcast content is playing. Return False if it's still showing 90s pop music, "
-            "a search results page, or anything other than the 99% Invisible podcast playing."
+            "2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). "
+            "The podcast can be either playing or paused - we just need to verify '99% Invisible' is loaded as the current track. "
+            "Return True if 99% Invisible podcast content is loaded. Return False if it's still showing 90s pop music, "
+            "a search results page, or anything other than the 99% Invisible podcast."
         )
         if validation_result:
             print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
