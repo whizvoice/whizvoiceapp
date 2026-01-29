@@ -945,9 +945,50 @@ def test_youtube_music_integration(tester):
     assert podcast_succeeded, "Failed to play 99% Invisible podcast"
     print("✅ 99% Invisible podcast playing successfully!")
 
-    # Pause the podcast so it doesn't keep playing after the test
-    print("⏸️  Pausing podcast...")
-    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE'], check=True)
+    print("\n========================================")
+    print("STEP 17: Requesting to stop the music")
+    print("========================================")
+    # Send a voice transcription to pause the music
+    pause_message = "Stop the music"
+    print(f"📤 Broadcasting: '{pause_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{pause_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 18: Waiting for music to pause and validating")
+    print("========================================")
+    # Poll until we see the music is paused (play button visible instead of pause button)
+    pause_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if the music is paused (play button visible)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if YouTube Music is showing PAUSED state. Requirements: "
+            "1) You must see a PLAY button (triangle pointing right) NOT a pause button (two vertical bars), AND "
+            "2) The 99% Invisible podcast content should still be visible as the current track. "
+            "Return True if the music is paused (play button visible). "
+            "Return False if the music is still playing (pause button visible)."
+        )
+        if validation_result:
+            print(f"✅ Music paused after {(i+1)*poll_interval} seconds")
+            pause_succeeded = True
+            break
+        print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not pause_succeeded:
+        save_failed_screenshot(screenshot_path, "youtube_music", "pause_music_validation")
+    assert pause_succeeded, "Failed to pause music - play button never appeared"
+    print("✅ Music paused successfully!")
 
     print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")

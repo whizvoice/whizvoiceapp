@@ -2930,6 +2930,183 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    /**
+     * Pause or resume YouTube Music playback by clicking the play/pause button.
+     * This function toggles between playing and paused states.
+     */
+    suspend fun pauseYouTubeMusic(): MusicActionResult {
+        Log.d(TAG, "Attempting to pause/resume YouTube Music")
+        trackAction("pauseYouTubeMusic")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                logScreenAgentError(
+                    reason = "accessibility_unavailable",
+                    errorMessage = "Accessibility service not available for pauseYouTubeMusic",
+                    packageName = "com.google.android.apps.youtube.music"
+                )
+                return MusicActionResult(
+                    success = false,
+                    action = "pause_music",
+                    error = "Accessibility service not enabled"
+                )
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode()
+            if (rootNode == null) {
+                return MusicActionResult(
+                    success = false,
+                    action = "pause_music",
+                    error = "Could not get root node"
+                )
+            }
+
+            // Check if we're in YouTube Music
+            val currentPackage = rootNode.packageName?.toString()
+            if (currentPackage != "com.google.android.apps.youtube.music") {
+                rootNode.recycle()
+                return MusicActionResult(
+                    success = false,
+                    action = "pause_music",
+                    error = "YouTube Music is not the active app (current: $currentPackage)"
+                )
+            }
+
+            // Try to find the play/pause button by resource ID
+            val playPauseButton = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
+            )
+
+            if (playPauseButton != null && playPauseButton.isNotEmpty()) {
+                val button = playPauseButton.first()
+                val contentDesc = button.contentDescription?.toString() ?: ""
+                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
+
+                Log.d(TAG, "Found play/pause button with contentDesc: '$contentDesc', wasPlaying: $wasPlaying")
+
+                if (button.isClickable) {
+                    val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    playPauseButton.forEach { it.recycle() }
+                    rootNode.recycle()
+
+                    if (clicked) {
+                        // Wait briefly for the state to update
+                        delay(300)
+
+                        // Verify the new state
+                        val verifyRoot = accessibilityService.getCurrentRootNode()
+                        val newState = if (verifyRoot != null) {
+                            val newButton = verifyRoot.findAccessibilityNodeInfosByViewId(
+                                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
+                            )
+                            val newDesc = newButton?.firstOrNull()?.contentDescription?.toString() ?: ""
+                            newButton?.forEach { it.recycle() }
+                            verifyRoot.recycle()
+                            if (newDesc.contains("Pause", ignoreCase = true)) "playing" else "paused"
+                        } else {
+                            if (wasPlaying) "paused" else "playing"
+                        }
+
+                        Log.d(TAG, "Play/pause button clicked, new state: $newState")
+                        return MusicActionResult(
+                            success = true,
+                            action = "pause_music",
+                            nowPlaying = newState
+                        )
+                    } else {
+                        Log.w(TAG, "Failed to click play/pause button")
+                        return MusicActionResult(
+                            success = false,
+                            action = "pause_music",
+                            error = "Failed to click play/pause button"
+                        )
+                    }
+                } else {
+                    playPauseButton.forEach { it.recycle() }
+                    rootNode.recycle()
+                    return MusicActionResult(
+                        success = false,
+                        action = "pause_music",
+                        error = "Play/pause button is not clickable"
+                    )
+                }
+            }
+
+            // Fallback: search recursively for any node with "Pause video" or "Play video" content description
+            val foundButton = findPlayPauseButtonRecursive(rootNode)
+            rootNode.recycle()
+
+            if (foundButton != null) {
+                val contentDesc = foundButton.contentDescription?.toString() ?: ""
+                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
+
+                Log.d(TAG, "Found play/pause button via recursive search, contentDesc: '$contentDesc'")
+
+                val clicked = foundButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                foundButton.recycle()
+
+                if (clicked) {
+                    delay(300)
+                    val newState = if (wasPlaying) "paused" else "playing"
+                    Log.d(TAG, "Play/pause button clicked via fallback, new state: $newState")
+                    return MusicActionResult(
+                        success = true,
+                        action = "pause_music",
+                        nowPlaying = newState
+                    )
+                }
+            }
+
+            // UI dump for debugging
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "ytmusic_pause_button_not_found", "Could not find play/pause button in YouTube Music")
+                dumpRoot.recycle()
+            }
+
+            return MusicActionResult(
+                success = false,
+                action = "pause_music",
+                error = "Could not find play/pause button in YouTube Music"
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error pausing/resuming YouTube Music", e)
+            logScreenAgentError(
+                reason = "ytmusic_pause_error",
+                errorMessage = "Exception pausing/resuming YouTube Music: ${e.message}",
+                packageName = "com.google.android.apps.youtube.music"
+            )
+            return MusicActionResult(
+                success = false,
+                action = "pause_music",
+                error = "Error pausing/resuming music: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * Recursively search for a play/pause button by content description.
+     */
+    private fun findPlayPauseButtonRecursive(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        if ((contentDesc.contains("Pause video", ignoreCase = true) ||
+             contentDesc.contains("Play video", ignoreCase = true)) && node.isClickable) {
+            return AccessibilityNodeInfo.obtain(node)
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findPlayPauseButtonRecursive(child)
+            child.recycle()
+            if (found != null) {
+                return found
+            }
+        }
+        return null
+    }
+
     // ========== Google Maps Functions ==========
 
     suspend fun searchGoogleMapsLocation(address: String): MapsActionResult {

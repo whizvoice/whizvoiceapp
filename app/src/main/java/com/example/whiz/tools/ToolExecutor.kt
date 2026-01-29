@@ -103,6 +103,10 @@ class ToolExecutor @Inject constructor(
                     "agent_queue_youtube_music" -> {
                         executeQueueYouTubeMusic(requestId, params)
                     }
+                    "agent_pause_youtube_music" -> {
+                        Log.i(TAG, "Matched agent_pause_youtube_music tool")
+                        executePauseYouTubeMusic(requestId)
+                    }
                     "agent_search_google_maps_location" -> {
                         executeSearchGoogleMapsLocation(requestId, params)
                     }
@@ -196,6 +200,10 @@ class ToolExecutor @Inject constructor(
                 JSONObject().apply {
                     put("name", "agent_queue_youtube_music")
                     put("description", "Add a song or artist to the YouTube Music queue")
+                },
+                JSONObject().apply {
+                    put("name", "agent_pause_youtube_music")
+                    put("description", "Pause or resume YouTube Music playback")
                 }
             )
             "com.whatsapp" -> listOf(
@@ -788,6 +796,43 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_queue_youtube_music",
                     requestId = requestId,
                     error = "Failed to queue song: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executePauseYouTubeMusic(requestId: String) {
+        try {
+            Log.i(TAG, "Pausing/resuming YouTube Music")
+
+            val result = screenAgentTools.pauseYouTubeMusic()
+
+            Log.i(TAG, "YouTube Music pause result: success=${result.success}, state=${result.nowPlaying}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.nowPlaying?.let { put("state", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] YouTube Music pause result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_pause_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing YouTube Music pause", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_pause_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to pause/resume music: ${e.message}"
                 )
             )
         }
