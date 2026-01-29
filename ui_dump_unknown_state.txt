@@ -1,0 +1,74 @@
+=== UI Dump: google_maps_unknown_state ===
+Timestamp: 1765648955098
+Package: com.google.android.apps.maps
+
+=== Node Tree ===
+[FrameLayout] id= text="" desc="" bounds=Rect(0, 0 - 1080, 2400) clickable=false
+  [FrameLayout] id=com.google.android.apps.maps:id/fullscreens_group text="" desc="" bounds=Rect(0, 0 - 1080, 2400) clickable=false
+  [ScrollView] id= text="" desc="" bounds=Rect(0, 0 - 1080, 2400) clickable=false
+    [LinearLayout] id= text="" desc="" bounds=Rect(0, 657 - 902, 815) clickable=true
+      [TextView] id= text="Slice House" desc="" bounds=Rect(0, 714 - 364, 799) clickable=false
+    [Button] id=com.google.android.apps.maps:id/terra_navigation_header_close_button text="" desc="Close" bounds=Rect(923, 688 - 1049, 814) clickable=true
+      [View] id= text="" desc="Close" bounds=Rect(944, 709 - 1028, 793) clickable=false
+    [RecyclerView] id=com.google.android.apps.maps:id/search_list_layout text="" desc="" bounds=Rect(0, 815 - 1080, 2400) clickable=false
+      [LinearLayout] id= text="" desc="" bounds=Rect(0, 815 - 1080, 941) clickable=false
+        [RecyclerView] id=com.google.android.apps.maps:id/recycler_view text="" desc="" bounds=Rect(0, 815 - 1080, 941) clickable=false
+          [Button] id= text="" desc="More filters" bounds=Rect(21, 815 - 147, 941) clickable=true
+            [View] id= text="" desc="More filters" bounds=Rect(21, 815 - 147, 941) clickable=false
+          [Spinner] id= text="" desc="Relevance" bounds=Rect(147, 815 - 430, 941) clickable=true
+            [Button] id= text="Relevance" desc="Relevance" bounds=Rect(147, 815 - 430, 941) clickable=false
+          [CompoundButton] id= text="" desc="Open now" bounds=Rect(451, 815 - 688, 941) clickable=true
+            [Button] id= text="Open now" desc="Open now" bounds=Rect(451, 815 - 688, 941) clickable=false
+          [Spinner] id= text="" desc="Price" bounds=Rect(709, 815 - 902, 941) clickable=true
+            [Button] id= text="Price" desc="Price" bounds=Rect(709, 815 - 902, 941) clickable=false
+          [CompoundButton] id= text="" desc="Top rated" bounds=Rect(923, 815 - 1080, 941) clickable=true
+            [Button] id= text="Top rated" desc="Top rated" bounds=Rect(923, 815 - 1080, 941) clickable=false
+      [FrameLayout] id= text="" desc="" bounds=Rect(0, 941 - 1080, 1706) clickable=false
+        [ViewGroup] id= text="" desc="" bounds=Rect(0, 941 - 1080, 1706) clickable=true
+          [ImageView] id= text="" desc="About this ad" bounds=Rect(233, 983 - 280, 1030) clickable=true
+          [ImageView] id= text="" desc="Wheelchair accessible" bounds=Rect(283, 1109 - 325, 1151) clickable=false
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 1306 - 1080, 1526) clickable=true
+            [ViewGroup] id= text="" desc="Oakland Brewery, High-Quality and Great Tasting Pizza & Beer at Your Leisure. Visit Our Brewery Now!" bounds=Rect(53, 1306 - 746, 1526) clickable=true
+            [ViewGroup] id= text="" desc="About Us, Learn More About Our Business." bounds=Rect(767, 1306 - 1080, 1526) clickable=true
+            [ViewGroup] id= text="" desc="News & Updates, Find News and Updates Regarding our business." bounds=Rect(1481, 1306 - 1080, 1526) clickable=true
+            [ViewGroup] id= text="" desc="Photo Gallery, Take a look at our Photo Gallery." bounds=Rect(2195, 1306 - 1080, 1526) clickable=true
+            [ViewGroup] id= text="" desc="Services, Learn More About The Services We Offer." bounds=Rect(2909, 1306 - 1080, 1526) clickable=true
+            [ViewGroup] id= text="" desc="Testimonials, Read What Our Customers Have Said About Us." bounds=Rect(3623, 1306 - 1080, 1526) clickable=true
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 1548 - 1080, 1674) clickable=true
+            [ViewGroup] id= text="" desc="Directions" bounds=Rect(53, 1548 - 379, 1674) clickable=true
+            [ViewGroup] id= text="" desc="Call" bounds=Rect(400, 1548 - 614, 1674) clickable=true
+            [ViewGroup] id= text="" desc="Website" bounds=Rect(635, 1548 - 922, 1674) clickable=true
+            [ViewGroup] id= text="" desc="Reserve a table" bounds=Rect(943, 1548 - 1080, 1674) clickable=true
+            [ViewGroup] id= text="" desc="Menu" bounds=Rect(1379, 1548 - 1080, 1674) clickable=true
+      [FrameLayout] id= text="" desc="" bounds=Rect(0, 1727 - 1080, 2400) clickable=false
+        [ViewGroup] id= text="" desc="" bounds=Rect(0, 1727 - 1080, 2400) clickable=true
+          [ImageView] id= text="" desc="Wheelchair accessible" bounds=Rect(448, 1827 - 490, 1869) clickable=false
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 1947 - 1080, 2299) clickable=true
+            [FrameLayout] id= text="" desc="" bounds=Rect(447, 1947 - 820, 2299) clickable=false
+            [ViewGroup] id= text="" desc="" bounds=Rect(2023, 1947 - 1080, 2299) clickable=true
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 2455 - 1080, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Directions" bounds=Rect(53, 2455 - 379, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Order" bounds=Rect(400, 2455 - 650, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Menu" bounds=Rect(671, 2455 - 916, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Call" bounds=Rect(937, 2455 - 1080, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Share" bounds=Rect(1172, 2455 - 1080, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Save" bounds=Rect(1442, 2455 - 1080, 2400) clickable=true
+      [FrameLayout] id= text="" desc="" bounds=Rect(0, 2634 - 1080, 2400) clickable=false
+        [ViewGroup] id= text="" desc="" bounds=Rect(0, 2634 - 1080, 2400) clickable=true
+          [ImageView] id= text="" desc="Wheelchair accessible" bounds=Rect(451, 2734 - 493, 2400) clickable=false
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 2854 - 1080, 2400) clickable=true
+            [FrameLayout] id= text="" desc="" bounds=Rect(447, 2854 - 820, 2400) clickable=false
+            [ViewGroup] id= text="" desc="" bounds=Rect(2023, 2854 - 1080, 2400) clickable=true
+          [HorizontalScrollView] id= text="" desc="" bounds=Rect(0, 3362 - 1080, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Directions" bounds=Rect(53, 3362 - 379, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Menu" bounds=Rect(400, 3362 - 645, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Call" bounds=Rect(666, 3362 - 880, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Share" bounds=Rect(901, 3362 - 1080, 2400) clickable=true
+            [ViewGroup] id= text="" desc="Save" bounds=Rect(1171, 3362 - 1080, 2400) clickable=true
+  [FrameLayout] id=com.google.android.apps.maps:id/search_omnibox_container text="" desc="" bounds=Rect(0, 0 - 1080, 297) clickable=false
+    [EditText] id=com.google.android.apps.maps:id/search_omnibox_text_box text="" desc="Slice House" bounds=Rect(31, 139 - 923, 265) clickable=true
+      [TextView] id= text="Slice House" desc="" bounds=Rect(83, 163 - 921, 240) clickable=false
+    [Button] id=com.google.android.apps.maps:id/search_omnibox_text_clear text="" desc="" bounds=Rect(923, 139 - 1049, 265) clickable=true
+      [ImageView] id= text="" desc="Clear" bounds=Rect(954, 170 - 1017, 233) clickable=false
+  [ScrollView] id=com.google.android.apps.maps:id/expandingscrollview_container text="" desc="" bounds=Rect(0, 281 - 0, 2400) clickable=false
+  [Button] id=com.google.android.apps.maps:id/layers_fab text="" desc="Layers" bounds=Rect(933, 312 - 1080, 449) clickable=true

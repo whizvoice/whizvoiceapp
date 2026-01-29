@@ -56,6 +56,16 @@ class ChatViewModel @Inject constructor(
     private val toolExecutor: ToolExecutor,
 ) : ViewModel() { // Removed TextToSpeech.OnInitListener
 
+    companion object {
+        /**
+         * Flag to prevent old ChatViewModel from disabling continuous listening
+         * when transitioning to a new chat via assistant long-press.
+         * Set to true by AssistantActivity before launching MainActivity.
+         */
+        @Volatile
+        var isTransitioning = false
+    }
+
     private val TAG = "ChatViewModel"
 
     // Config state
@@ -102,7 +112,9 @@ class ChatViewModel @Inject constructor(
 
     // Track locally-saved interrupt messages to prevent server duplication
 
-
+    // Scroll-to-bottom event for UI - emitted when new messages are added (not during sync/load)
+    private val _scrollToBottomEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val scrollToBottomEvent: SharedFlow<Unit> = _scrollToBottomEvent.asSharedFlow()
 
     // Messages in the current chat with deduplication to handle optimistic UI transitions
     val messages = _chatId
@@ -616,29 +628,9 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
                         Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
-                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        updateRespondingStateForCurrentChat()
-                    }
-                    is WebSocketEvent.Interrupted -> {
-                        Log.d(TAG, "Previous request was interrupted: ${event.message}")
-
-                        // 🔧 INTERRUPTION HANDLING: All user messages remain in chat, no assistant responses
-                        // When multiple requests are sent rapidly, the server cancels previous ones
-                        // All user messages stay in chat but only the latest gets a response
-                        val interruptedRequests = pendingRequests.keys.toList()
-                        Log.d(TAG, "🔧 INTERRUPTION: ${interruptedRequests.size} user messages remain in chat (no assistant responses)")
-                        interruptedRequests.forEach { requestId ->
-                            Log.d(TAG, "🔧 INTERRUPTION: User message for request $requestId remains in chat (no assistant response)")
-                        }
-
-                        // The backend has cancelled previous requests automatically
-                        // Clear all pending requests since they were cancelled
-                        Log.d(TAG, "🔥 INTERRUPTION: CLEARING all pending requests: $pendingRequests")
-                        pendingRequests.clear()
-                        Log.d(TAG, "🔥 INTERRUPTION: Pending requests map after clearing: $pendingRequests")
-                        // 🔧 CONCURRENT MODE: Removed currentActiveRequestId tracking
-                        updateRespondingStateForCurrentChat()
-                        Log.d(TAG, "Cleared ${interruptedRequests.size} pending requests due to interrupt")
+                        // 🔧 DON'T update responding state here - animation should continue until
+                        // a real (non-cancelled) response arrives. This prevents the typing indicator
+                        // from stopping when a request is cancelled but no response text was shown.
                     }
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
@@ -1056,6 +1048,7 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
+                                            _scrollToBottomEvent.tryEmit(Unit) // Scroll to show bot response
                                         }
                                     } catch (e: Exception) {
                                     }
@@ -1211,15 +1204,17 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         
-                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId")
+                        val toolResultTimestamp = System.currentTimeMillis()
+                        Log.i(TAG, "📮 [TOOL_COLLECTOR] Sending tool result to server: requestId=${result.requestId}, chatId=$currentChatId, timestamp=$toolResultTimestamp")
                         Log.i(TAG, "📮 [TOOL_COLLECTOR] Tool name: ${result.toolName}")
                         Log.i(TAG, "📮 [TOOL_COLLECTOR] Result: ${resultWithStatus.toString(2)}")
-                        
+
                         val success = whizServerRepository.sendToolResult(
                             toolName = result.toolName,
                             requestId = result.requestId,
                             result = resultWithStatus,
-                            chatId = currentChatId
+                            chatId = currentChatId,
+                            timestamp = toolResultTimestamp
                         )
                         if (!success) {
                             Log.e(TAG, "❌ [TOOL_COLLECTOR] Failed to send tool result to server for requestId=${result.requestId}")
@@ -1236,7 +1231,8 @@ class ChatViewModel @Inject constructor(
                             toolName = result.toolName,
                             requestId = result.requestId,
                             result = errorResult,
-                            chatId = currentChatId
+                            chatId = currentChatId,
+                            timestamp = System.currentTimeMillis()
                         )
                         if (!success) {
                             Log.e(TAG, "Failed to send tool error result to server")
@@ -1311,13 +1307,19 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // 🔧 Clear pending requests and log what we're clearing
+                // 🔧 Clear pending requests for OTHER chats only - preserve requests for current chat
+                // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
                     if (pendingRequests.isNotEmpty()) {
-                        Log.w(TAG, "🔥 loadChat: CLEARING ${pendingRequests.size} pending requests: ${pendingRequests.keys}")
-                        Log.w(TAG, "🔥 loadChat: Pending requests map before clearing: $pendingRequests")
-                        pendingRequests.clear()
-                        Log.w(TAG, "🔥 loadChat: Pending requests map after clearing: $pendingRequests")
+                        val requestsForOtherChats = pendingRequests.filter { it.value != chatId }
+                        if (requestsForOtherChats.isNotEmpty()) {
+                            Log.w(TAG, "🔥 loadChat: Clearing ${requestsForOtherChats.size} pending requests for other chats: ${requestsForOtherChats.keys}")
+                            pendingRequests.entries.removeIf { it.value != chatId }
+                        }
+                        val remainingRequests = pendingRequests.filter { it.value == chatId }
+                        if (remainingRequests.isNotEmpty()) {
+                            Log.d(TAG, "🔥 loadChat: Preserving ${remainingRequests.size} pending requests for current chat: ${remainingRequests.keys}")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error clearing pending requests during loadChat", e)
@@ -1330,7 +1332,19 @@ class ChatViewModel @Inject constructor(
                     _chatTitle.value = "New Chat"
                     _isResponding.value = false // 🔧 Immediately set to false for new chats
                     Log.d(TAG, "🔥 loadChat: Setup for new chat (ID: -1), responding state reset to false")
-                    
+
+                    // Prime WebSocket connection early for new chats - saves 150-250ms when user sends first message
+                    // Connection will be associated with conversation when first message includes client_conversation_id
+                    if (configUseRemoteAgent) {
+                        try {
+                            Log.d(TAG, "🔥 loadChat: Priming WebSocket connection for new chat")
+                            whizServerRepository.primeConnection()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to prime WebSocket connection", e)
+                            // Non-fatal - connection will be established on first message
+                        }
+                    }
+
                     // Refresh conversations list when going to home page
                     try {
                         repository.refreshConversations()
@@ -1358,6 +1372,16 @@ class ChatViewModel @Inject constructor(
                                 _chatTitle.value = "New Chat"
                                 Log.d(TAG, "🔥 loadChat: Optimistic chat ID $chatId - keeping it, not resetting to -1")
                                 updateRespondingStateForCurrentChat()
+
+                                // Prime WebSocket connection for optimistic chats too
+                                if (configUseRemoteAgent) {
+                                    try {
+                                        Log.d(TAG, "🔥 loadChat: Priming WebSocket connection for optimistic chat $chatId")
+                                        whizServerRepository.primeConnection()
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Failed to prime WebSocket connection", e)
+                                    }
+                                }
                             } else {
                                 // Only reset to -1 if we couldn't find a positive chat ID
                                 _chatId.value = -1
@@ -1647,7 +1671,8 @@ class ChatViewModel @Inject constructor(
         if (voiceManager.isContinuousListeningEnabled.value) {
             Log.d(TAG, "[LOG] Continuous listening already enabled, ensuring it's active")
             // If not currently listening and not busy, start listening
-            if (!isListening.value && !isSpeaking.value && !_isResponding.value) {
+            // Note: We don't check isResponding here - user should be able to speak while waiting for response
+            if (!isListening.value && !isSpeaking.value) {
                 startContinuousListening()
             }
             return
@@ -1661,9 +1686,15 @@ class ChatViewModel @Inject constructor(
         Log.d(TAG, "[RACE_DEBUG] enableContinuousListening: Input text cleared to: '${_inputText.value}'")
         voiceManager.updateContinuousListeningEnabled(true)
         // continuousListeningEnabled is already set via voiceManager
+
+        // Reset transition flag now that new ViewModel has successfully enabled listening
+        if (isTransitioning) {
+            Log.d(TAG, "Resetting isTransitioning flag after enabling continuous listening")
+            isTransitioning = false
+        }
         
-        // Start listening if not busy
-        if (!isSpeaking.value && !_isResponding.value) {
+        // Start listening if not busy (only check isSpeaking, not isResponding)
+        if (!isSpeaking.value) {
             startContinuousListening()
         }
     }
@@ -1723,7 +1754,8 @@ class ChatViewModel @Inject constructor(
                 
                 // Add the message first with the captured timestamp
                 val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId, messageTimestamp)
-                
+                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+
                 // Now update the chat ID - the message is already in the database
                 _chatId.value = tempChatId
                 _chatTitle.value = tempTitle
@@ -1749,7 +1781,8 @@ class ChatViewModel @Inject constructor(
                 
                 // Always use optimistic UI since configUseRemoteAgent is always true
                 val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId, messageTimestamp)
-                
+                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+
                 // Ensure WebSocket is connected to the correct conversation
                 // This handles the case where we're switching between existing chats
                 if (!whizServerRepository.isConnected() && !whizServerRepository.persistentDisconnectForTest()) {
@@ -1903,11 +1936,11 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop() // Stop speaking if toggled off
 
             // If continuous listening is enabled, restart it immediately when TTS is stopped
-            if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
+            if (voiceManager.isContinuousListeningEnabled.value) {
                 Log.d(TAG, "[LOG] Voice response disabled, restarting continuous listening immediately")
                 viewModelScope.launch {
                     delay(50L) // Very short delay to ensure TTS stop is processed
-                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
@@ -1922,11 +1955,11 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop() // Stop speaking if disabled
 
             // If continuous listening is enabled, restart it immediately when TTS is stopped
-            if (voiceManager.isContinuousListeningEnabled.value && !_isResponding.value) {
+            if (voiceManager.isContinuousListeningEnabled.value) {
                 Log.d(TAG, "[LOG] Voice response disabled via setter, restarting continuous listening immediately")
                 viewModelScope.launch {
                     delay(50L) // Very short delay to ensure TTS stop is processed
-                    if (!_isResponding.value && !isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
+                    if (!isSpeaking.value && voiceManager.isContinuousListeningEnabled.value) {
                         startContinuousListening()
                     }
                 }
@@ -2021,8 +2054,17 @@ class ChatViewModel @Inject constructor(
         _isResponding.value = false
         _isConnectedToServer.value = false
         isReconnectingAfterDisconnect = false
-        voiceManager.updateContinuousListeningEnabled(false)
-        
+
+        // Only disable continuous listening if we're NOT transitioning to a new chat
+        // (e.g., via assistant long-press while app is open)
+        if (isTransitioning) {
+            Log.d(TAG, "onCleared: Skipping continuous listening disable - transitioning to new chat")
+            // DON'T reset flag here - multiple ViewModels may be cleared during transition
+            // Flag will be reset when new ViewModel enables continuous listening
+        } else {
+            voiceManager.updateContinuousListeningEnabled(false)
+        }
+
         Log.d(TAG, "ChatViewModel cleared, TTS shutdown, SpeechRecognitionService destroyed, WebSocket disconnected, pending requests cleared.")
     }
 

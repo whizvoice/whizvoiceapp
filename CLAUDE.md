@@ -83,10 +83,17 @@ All messages in a request/response cycle share the same `request_id`. Timestamps
    - This ensures the final ASSISTANT text (T+4ms) remains after the tool_result
 
 4. **Multiple Tool Uses**:
-   - If there are additional tool_use and tool_result pairs before the next USER text message, timestamps continue incrementing:
-   - Second tool_use: T+5ms
-   - Second placeholder tool_result: T+6ms
-   - Final ASSISTANT text: T+7ms
+
+   **Parallel** (Claude returns multiple tool_uses in ONE response):
+   - ASSISTANT: [text, tool_use_A, tool_use_B] at T+1ms
+   - USER: [tool_result_A, tool_result_B] at T+2ms (grouped together)
+   - Tool_results matched by `tool_use_id`, executed in parallel
+
+   **Sequential** (Claude calls one tool, waits, then calls another):
+   - ASSISTANT tool_use_A: T+1ms
+   - USER tool_result_A: T+2ms
+   - ASSISTANT tool_use_B: T+3ms (new Claude response)
+   - USER tool_result_B: T+4ms
 
 ### Message Merging Rules
 

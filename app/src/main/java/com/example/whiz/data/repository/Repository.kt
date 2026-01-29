@@ -32,9 +32,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -63,7 +65,7 @@ class WhizRepository @Inject constructor(
     
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = mutableMapOf<Long, kotlinx.coroutines.Deferred<List<MessageEntity>>>()
-    private val ongoingConversationRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<List<ChatEntity>>>()
+    private val ongoingConversationRequests = ConcurrentHashMap<String, Deferred<List<ChatEntity>>>()
     
     // Message fetch retry configuration (similar to WebSocket retry pattern)
     private val initialMessageRetryDelayMs = 500L  // Start with 500ms for message fetches
@@ -88,26 +90,25 @@ class WhizRepository @Inject constructor(
             // Remove arbitrary delay - initialize immediately
             isInitialized = true
         }
-        
+
         // Initialize reactive data loading
         setupReactiveLoading()
-        
+
         // Trigger initial conversations load so the UI shows existing chats on app startup
         // Use a small delay to ensure the app is fully initialized
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
                 delay(100) // Small delay to ensure app initialization is complete
-                
+
                 // Force a full sync on app startup to ensure we get all conversations
                 val conversations = getAllChatsIncremental(forceFullSync = true)
                 _conversations.value = conversations
-                
-                // Trigger refresh to notify any observers
-                triggerConversationsRefresh()
+                // Note: triggerConversationsRefresh() removed - _conversations.value update
+                // already notifies observers via StateFlow, and the deduplication fix
+                // prevents redundant API calls
             } catch (e: Exception) {
                 Log.e(TAG, "Error during initial conversations load", e)
-                // Fallback to normal trigger if initial load fails
-                triggerConversationsRefresh()
+                // Let ChatsListViewModel handle retry if needed
             }
         }
     }
@@ -1435,72 +1436,105 @@ class WhizRepository @Inject constructor(
     }
     
     // Deduplicated conversation fetching - prevents multiple concurrent API calls
+    // Uses CompletableDeferred with atomic putIfAbsent to avoid race conditions
     private suspend fun fetchConversationsWithDeduplication(
         forceFullSync: Boolean,
         useAggressiveSync: Boolean = false
     ): List<ChatEntity> {
         val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
-        
-        // Check if there's already an ongoing request
-        val ongoing = ongoingConversationRequests[requestKey]
-        if (ongoing != null && ongoing.isActive) {
-            Log.d(TAG, "fetchConversationsWithDeduplication: Reusing ongoing $requestKey request")
-            return ongoing.await()
-        }
-        
-        // Start a new request and track it
-        val deferred = CoroutineScope(Dispatchers.IO).async {
-            try {
-                Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request (aggressive: $useAggressiveSync)")
+
+        while (true) {
+            // Check if there's already an ongoing request
+            val existing = ongoingConversationRequests[requestKey]
+            if (existing != null) {
+                try {
+                    Log.d(TAG, "fetchConversationsWithDeduplication: Reusing ongoing $requestKey request")
+                    return existing.await()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Request was cancelled, try again
+                    Log.d(TAG, "fetchConversationsWithDeduplication: Ongoing $requestKey was cancelled, retrying")
+                    continue
+                }
+            }
+
+            // Create a new CompletableDeferred and try to claim ownership
+            val newDeferred = CompletableDeferred<List<ChatEntity>>()
+            val wasSet = ongoingConversationRequests.putIfAbsent(requestKey, newDeferred) == null
+
+            if (!wasSet) {
+                // Another coroutine won the race, use their deferred
+                Log.d(TAG, "fetchConversationsWithDeduplication: Lost race for $requestKey, using winner's deferred")
+                continue
+            }
+
+            // We own this request - execute it
+            Log.d(TAG, "fetchConversationsWithDeduplication: Starting new $requestKey API request (aggressive: $useAggressiveSync)")
+            return try {
                 val result = getAllChatsIncremental(forceFullSync, useAggressiveSync)
                 Log.d(TAG, "fetchConversationsWithDeduplication: Retrieved ${result.size} conversations via $requestKey")
+                newDeferred.complete(result)
                 result
             } catch (e: Exception) {
                 Log.e(TAG, "Error in fetchConversationsWithDeduplication for $requestKey", e)
-                emptyList<ChatEntity>()
+                val emptyResult = emptyList<ChatEntity>()
+                newDeferred.complete(emptyResult)
+                emptyResult
             } finally {
-                // Clean up the tracking when done
-                ongoingConversationRequests.remove(requestKey)
+                // Only remove our specific deferred (atomic remove with value check)
+                ongoingConversationRequests.remove(requestKey, newDeferred)
                 Log.d(TAG, "fetchConversationsWithDeduplication: Cleaned up $requestKey request tracking")
             }
         }
-        
-        ongoingConversationRequests[requestKey] = deferred
-        return deferred.await()
     }
     
     // Version that returns status about whether cached data was used
+    // Uses the same CompletableDeferred pattern for consistency
     private suspend fun fetchConversationsWithDeduplicationAndStatus(
         forceFullSync: Boolean,
         useAggressiveSync: Boolean = false
     ): SyncResult {
         val requestKey = if (forceFullSync) "full_sync" else "incremental_sync"
-        
-        // Check if there's already an ongoing request
-        val ongoing = ongoingConversationRequests[requestKey]
-        if (ongoing != null && ongoing.isActive) {
-            Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
-            val result = ongoing.await()
-            return SyncResult(result, isCachedData = false) // If request succeeded, it's not cached
-        }
-        
-        // Start a new request
-        val deferred = CoroutineScope(Dispatchers.IO).async {
-            fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
-        }
-        
-        // Store a deferred that extracts just the chats for other functions that need it
-        ongoingConversationRequests[requestKey] = CoroutineScope(Dispatchers.IO).async {
-            try {
-                deferred.await().chats
+
+        while (true) {
+            // Check if there's already an ongoing request
+            val existing = ongoingConversationRequests[requestKey]
+            if (existing != null) {
+                try {
+                    Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
+                    val result = existing.await()
+                    return SyncResult(result, isCachedData = false)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Ongoing $requestKey was cancelled, retrying")
+                    continue
+                }
+            }
+
+            // Create a new CompletableDeferred and try to claim ownership
+            val newDeferred = CompletableDeferred<List<ChatEntity>>()
+            val wasSet = ongoingConversationRequests.putIfAbsent(requestKey, newDeferred) == null
+
+            if (!wasSet) {
+                // Another coroutine won the race, use their deferred
+                Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Lost race for $requestKey, using winner's deferred")
+                continue
+            }
+
+            // We own this request - execute it
+            Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Starting new $requestKey API request")
+            return try {
+                val syncResult = fetchConversationsIncrementallyWithStatus(forceFullSync, useAggressiveSync)
+                newDeferred.complete(syncResult.chats)
+                syncResult
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in fetchConversationsWithDeduplicationAndStatus for $requestKey", e)
+                newDeferred.complete(emptyList())
+                SyncResult(emptyList(), isCachedData = true)
             } finally {
-                // Clean up the tracking when done
-                ongoingConversationRequests.remove(requestKey)
+                // Only remove our specific deferred (atomic remove with value check)
+                ongoingConversationRequests.remove(requestKey, newDeferred)
                 Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Cleaned up $requestKey request tracking")
             }
         }
-        
-        return deferred.await()
     }
     
     private suspend fun fetchConversationsIncrementallyWithStatus(
@@ -1862,37 +1896,48 @@ class WhizRepository @Inject constructor(
                 val optimisticChats = localChats.filter { it.id < -1 }
                 
                 // Check all server chats for any that reference our optimistic chats
+                // Build a set of local optimistic chat IDs for fast lookup
+                val localOptimisticIds = optimisticChats.map { it.id }.toSet()
+                var mappingsRegistered = 0
+                var migrationsTriggered = 0
+
                 serverChats.forEach { serverChat ->
                     // Check if this server chat has an optimistic_chat_id field
                     val optimisticId = serverChat.optimisticChatId
                     if (optimisticId != null && optimisticId < 0 && connectionStateManager.getMigratedChatId(optimisticId) == null) {
-                        // This server chat is linked to an optimistic chat that hasn't been migrated yet
-                        Log.e(TAG, "🚨 MIGRATION TRIGGER: Server chat ${serverChat.id} is linked to optimistic chat $optimisticId")
-                        Log.e(TAG, "🚨 Is ${serverChat.id} a real server ID or locally generated? Stack trace:", Exception("Stack trace for migration trigger"))
-                        
-                        // Trigger migration asynchronously
-                        repositoryScope.launch {
-                            try {
-                                // Migrate the messages if the optimistic chat exists
-                                val optimisticChatExists = optimisticChats.any { it.id == optimisticId }
-                                if (optimisticChatExists) {
-                                    Log.e(TAG, "🚨 CALLING migrateChatMessages($optimisticId, ${serverChat.id})")
+                        // Check if the optimistic chat exists locally (needs actual migration)
+                        val optimisticChatExists = localOptimisticIds.contains(optimisticId)
+
+                        if (optimisticChatExists) {
+                            // This is a real migration - optimistic chat exists locally with messages to migrate
+                            Log.d(TAG, "🔄 Migration needed: Server chat ${serverChat.id} <- optimistic chat $optimisticId")
+                            migrationsTriggered++
+
+                            // Trigger migration asynchronously
+                            repositoryScope.launch {
+                                try {
                                     val migrationSuccess = migrateChatMessages(optimisticId, serverChat.id)
                                     if (migrationSuccess) {
                                         Log.d(TAG, "getAllChatsFlow: Migration completed for $optimisticId -> ${serverChat.id}")
                                     } else {
                                         Log.e(TAG, "getAllChatsFlow: Migration failed for $optimisticId -> ${serverChat.id}")
                                     }
-                                } else {
-                                    // If optimistic chat doesn't exist, we can safely register the mapping
-                                    // since there are no messages to migrate
-                                    registerChatMigration(optimisticId, serverChat.id)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
                             }
+                        } else {
+                            // Optimistic chat doesn't exist locally - just register the mapping silently
+                            // This handles chats from previous app sessions where migration already completed
+                            registerChatMigration(optimisticId, serverChat.id)
+                            mappingsRegistered++
                         }
                     }
+                }
+
+                // Log summary instead of per-chat spam
+                if (mappingsRegistered > 0 || migrationsTriggered > 0) {
+                    Log.d(TAG, "getAllChatsFlow: Registered $mappingsRegistered existing mappings, triggered $migrationsTriggered new migrations")
                 }
                 
                 // Check which optimistic chats haven't been migrated yet

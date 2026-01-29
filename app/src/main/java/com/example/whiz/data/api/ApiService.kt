@@ -184,7 +184,7 @@ interface ApiService {
     data class UiDumpCreate(
         @SerializedName("dump_reason") val dumpReason: String,
         @SerializedName("error_message") val errorMessage: String? = null,
-        @SerializedName("ui_hierarchy") val uiHierarchy: String,
+        @SerializedName("ui_hierarchy") val uiHierarchy: String? = null,
         @SerializedName("package_name") val packageName: String? = null,
         @SerializedName("device_model") val deviceModel: String? = null,
         @SerializedName("device_manufacturer") val deviceManufacturer: String? = null,

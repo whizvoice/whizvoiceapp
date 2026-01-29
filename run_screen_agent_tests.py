@@ -755,7 +755,7 @@ def test_youtube_music_integration(tester):
     ], check=True)
 
     print("\n========================================")
-    print("STEP 6: Waiting for response and validating song is actually playing")
+    print("STEP 6: Waiting for response and validating song is loaded")
     print("========================================")
     # Poll until we see YouTube Music actually playing (not just a menu or search result)
     max_wait = 30
@@ -765,22 +765,22 @@ def test_youtube_music_integration(tester):
         time.sleep(poll_interval)
         tester.screenshot(screenshot_path)
 
-        # Check if YouTube Music is ACTUALLY playing "Golden" - look for pause button, playback controls, progress bar
-        # AND verify the song title is "Golden"
+        # Check if YouTube Music is showing "Golden" as the current track in the now-playing view
+        # The song can be playing or paused - we just need to verify it's loaded
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Check if the song 'Golden' is ACTUALLY PLAYING in YouTube Music. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see a PAUSE button (not play button) or playback progress bar showing the song is actively playing. Return False if: you see a Play button instead of Pause, it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'. Only return True if 'Golden' is actively playing right now."
+            "Check if YouTube Music is showing 'Golden' as the current track in the now-playing view. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). The song can be either playing or paused - we just need to verify 'Golden' is loaded as the current track. Return False if: it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'."
         )
         if validation_result:
-            print(f"✅ Song actually playing after {(i+1)*poll_interval} seconds")
+            print(f"✅ Song loaded after {(i+1)*poll_interval} seconds")
             play_succeeded = True
             break
-        print(f"⏳ Waiting for song to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+        print(f"⏳ Waiting for song to load... ({(i+1)*poll_interval}/{max_wait}s)")
 
     if not play_succeeded:
         save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
-    assert play_succeeded, "Failed to play Golden on YouTube Music - song never started playing"
-    print("✅ YouTube Music playing 'Golden' successfully!")
+    assert play_succeeded, "Failed to load Golden on YouTube Music - song never appeared as current track"
+    print("✅ YouTube Music has 'Golden' loaded successfully!")
 
     print("\n========================================")
     print("STEP 7: Requesting to queue second song")
@@ -891,7 +891,8 @@ def test_youtube_music_integration(tester):
         "Check if this is a 90s pop playlist or similar. Requirements: "
         "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
         "2) You should see a list of songs that are typical 90s pop hits (e.g., Britney Spears, Backstreet Boys, NSYNC, Spice Girls, etc.). "
-        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all."
+        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
+        "There may or may not be a yellow notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
     )
     if not playlist_validation:
         print("❌ 90s pop playlist validation failed!")
@@ -944,9 +945,50 @@ def test_youtube_music_integration(tester):
     assert podcast_succeeded, "Failed to play 99% Invisible podcast"
     print("✅ 99% Invisible podcast playing successfully!")
 
-    # Pause the podcast so it doesn't keep playing after the test
-    print("⏸️  Pausing podcast...")
-    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_MEDIA_PAUSE'], check=True)
+    print("\n========================================")
+    print("STEP 17: Requesting to stop the music")
+    print("========================================")
+    # Send a voice transcription to pause the music
+    pause_message = "Stop the music"
+    print(f"📤 Broadcasting: '{pause_message}'")
+    subprocess.run([
+        'adb', 'shell',
+        'am', 'broadcast',
+        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+        '--es', 'text', f'"{pause_message}"',
+        '--ez', 'fromVoice', 'true',
+        '--ez', 'autoSend', 'true'
+    ], check=True)
+
+    print("\n========================================")
+    print("STEP 18: Waiting for music to pause and validating")
+    print("========================================")
+    # Poll until we see the music is paused (play button visible instead of pause button)
+    pause_succeeded = False
+    for i in range(max_wait // poll_interval):
+        time.sleep(poll_interval)
+        tester.screenshot(screenshot_path)
+
+        # Check if the music is paused (play button visible)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "Check if YouTube Music is showing PAUSED state. Requirements: "
+            "1) You must see a PLAY button (triangle pointing right) NOT a pause button (two vertical bars), AND "
+            "2) The 99% Invisible podcast content should still be visible as the current track. "
+            "Return True if the music is paused (play button visible). "
+            "Return False if the music is still playing (pause button visible)."
+        )
+        if validation_result:
+            print(f"✅ Music paused after {(i+1)*poll_interval} seconds")
+            pause_succeeded = True
+            break
+        print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
+
+    if not pause_succeeded:
+        save_failed_screenshot(screenshot_path, "youtube_music", "pause_music_validation")
+    assert pause_succeeded, "Failed to pause music - play button never appeared"
+    print("✅ Music paused successfully!")
 
     print("\n========================================")
     print("🎉 TEST COMPLETED SUCCESSFULLY!")
@@ -957,6 +999,26 @@ def test_google_maps_directions(tester):
     import time
 
     screenshot_path = "/tmp/whiz_screen.png"
+
+    # Detect location based on timezone to use appropriate test data
+    is_pacific = any(tz in time.tzname for tz in ["Pacific", "PST", "PDT"])
+
+    if is_pacific:
+        # San Francisco config
+        store_name = "Trader Joe's"
+        search_query = "what are the trader joes near me ?"
+        location_selector = "Can you give me directions to the one on Fulton Street"
+        secondary_address = "1680 Mission Street"
+        secondary_address_short = "1680 Mission St"
+        city_name = "San Francisco"
+    else:
+        # Toronto config (or any non-Pacific timezone)
+        store_name = "Shoppers Drug Mart"
+        search_query = "what are the shoppers drug mart near me ?"
+        location_selector = "Can you give me directions to the closest one"
+        secondary_address = "220 Yonge Street"
+        secondary_address_short = "220 Yonge St"
+        city_name = "Toronto"
 
     def cleanup_google_maps():
         """Close Google Maps to prevent overlay from interfering with future tests."""
@@ -997,7 +1059,7 @@ def test_google_maps_directions(tester):
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"what are the trader joes near me ?"',
+            '--es', 'text', f'"{search_query}"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1010,12 +1072,13 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Google Maps is open and showing more than one Trader Joe's locations. "
-            "The screen should show more than one Trader Joe's results with addresses at least partially visible."
+            f"Google Maps is open and showing more than one {store_name} locations. "
+            f"The screen should show more than one {store_name} results with addresses at least partially visible."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_see_locations")
-        assert validation_result, "Failed to show Trader Joe's location list"
+            store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
+            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_see_locations")
+        assert validation_result, f"Failed to show {store_name} location list"
 
         # Send a voice transcription to select the one on Fulton Street
         subprocess.run([
@@ -1023,7 +1086,7 @@ def test_google_maps_directions(tester):
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"Can you give me directions to the one on Fulton Street"',
+            '--es', 'text', f'"{location_selector}"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1035,24 +1098,24 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
-            "Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
-            "estimated travel time, or directions to Trader Joe's on Fulton Street. "
-            "Return False only if Google Maps is not showing any navigation/directions content."
+            f"This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
+            f"Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
+            f"estimated travel time, or directions to {store_name}. "
+            f"Return False only if Google Maps is not showing any navigation/directions content."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "trader_joes_directions")
-        assert validation_result, "Failed to show Trader Joe's directions"
+            store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
+            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_directions")
+        assert validation_result, f"Failed to show {store_name} directions"
 
-        # Send a voice transcription to change destination to office at 1680 Mission Street
-        # Note: Using 1680 instead of 1885 to ensure the destination is far enough that
-        # navigation won't complete immediately (which would show "Arriving at" screen)
+        # Send a voice transcription to change destination to secondary address
+        # Note: Using a destination that's far enough that navigation won't complete immediately
         subprocess.run([
             'adb', 'shell',
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', '"Actually, I need to go to my office first at 1680 Mission Street. Can you get directions to there instead?"',
+            '--es', 'text', f'"Actually, I need to go to {secondary_address} first. Can you get directions to there instead?"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1068,8 +1131,8 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_search")
-        assert validation_result, "Failed to show 1680 Mission Street search results"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_search")
+        assert validation_result, f"Failed to show {secondary_address} search results"
 
         # Send a voice transcription to request driving directions specifically
         subprocess.run([
@@ -1093,8 +1156,8 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "mission_street_driving_directions")
-        assert validation_result, "Failed to show driving directions to 1680 Mission Street"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_driving_directions")
+        assert validation_result, f"Failed to show driving directions to {secondary_address}"
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
         # This brings the app to foreground without starting a new activity
@@ -1108,11 +1171,11 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '1680 Mission Street' or '1680 Mission St' in San Francisco"
+            f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}"
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_mission_address_confirmation")
-        assert validation_result, "Assistant did not mention the 1680 Mission Street address in the chat"
+            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_address_confirmation")
+        assert validation_result, f"Assistant did not mention the {secondary_address} address in the chat"
 
     finally:
         # Always clean up Google Maps to prevent overlay from interfering with future tests

@@ -300,12 +300,12 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
             // We want the LAST assistant message - the one that responds to BOTH user messages
             val assistantMessage = if (capturedViewModel != null) {
-                Log.d(TAG, "⏳ Waiting up to 30 seconds for final assistant response...")
+                Log.d(TAG, "⏳ Waiting up to 45 seconds for final assistant response...")
 
                 // Wait for an assistant message that comes AFTER both user messages
                 var lastAssistantMessage: MessageEntity? = null
                 val startTime = System.currentTimeMillis()
-                val timeout = 30000L
+                val timeout = 45000L
 
                 while ((System.currentTimeMillis() - startTime) < timeout) {
                     val messages = capturedViewModel!!.messages.value

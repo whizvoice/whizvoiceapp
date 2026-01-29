@@ -431,6 +431,31 @@ read_test_credentials() {
     log_with_time "🔑 Successfully read test credentials for user: $TEST_USERNAME"
 }
 
+# Function to check device network connectivity before tests
+check_device_network_connectivity() {
+    log_with_time "🌐 Checking device network connectivity..."
+
+    # Try to resolve whizvoice.com from the device
+    local dns_check=$(adb shell "ping -c 1 -W 5 whizvoice.com 2>&1" | head -5)
+
+    if echo "$dns_check" | grep -q "unknown host\|No address associated\|bad address\|Network is unreachable"; then
+        log_with_time "❌ NETWORK ERROR: Device cannot reach whizvoice.com"
+        log_with_time "   DNS resolution failed - check WiFi/mobile data connection"
+        log_with_time "   Error: $dns_check"
+        log_with_time ""
+        log_with_time "   Integration tests require network access to authenticate."
+        log_with_time "   Please ensure the device has internet connectivity and retry."
+        return 1
+    elif echo "$dns_check" | grep -q "1 packets transmitted"; then
+        log_with_time "✅ Network connectivity verified (whizvoice.com reachable)"
+        return 0
+    else
+        log_with_time "⚠️  Network check inconclusive, proceeding anyway..."
+        log_with_time "   Result: $dns_check"
+        return 0
+    fi
+}
+
 # Function to pull test screenshots and UI dumps from device to local folder
 pull_test_screenshots() {
     log_with_time "📸 Pulling test screenshots and UI dumps from device..."
@@ -528,9 +553,9 @@ run_integration_tests_with_logcat() {
     {
         if [[ "$VERBOSE_LOGGING" == "true" ]]; then
             echo "📱 Verbose logging enabled - adding WhizServerRepo:V to logcat filter" >> test_summary.log
-            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' >> test_logcat_output.log 2>&1 &
         else
-            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' >> test_logcat_output.log 2>&1 &
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' >> test_logcat_output.log 2>&1 &
         fi
         local logcat_pid=$!
     }
@@ -1017,6 +1042,12 @@ adb shell 'mkdir -p /sdcard/Download/test_screenshots' 2>/dev/null || true
 
 sleep 2
 log_with_time "✅ App state and device screenshots cleaned"
+
+# Check network connectivity before integration tests
+if ! check_device_network_connectivity; then
+    log_with_time "❌ Aborting tests due to network connectivity issues"
+    exit 1
+fi
 
 # Run integration tests with logcat capture (don't exit on failure)
 set +e  # Temporarily disable exit on error

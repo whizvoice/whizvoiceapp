@@ -86,6 +86,11 @@ class BubbleOverlayService : Service() {
         @Volatile
         var bubbleListeningMode: ListeningMode = ListeningMode.CONTINUOUS_LISTENING
 
+        // Track whether keep-screen-on flag is set (for testing)
+        @Volatile
+        var isKeepScreenOnEnabled: Boolean = false
+            private set
+
         // Store service instance for programmatic mode changes
         @Volatile
         private var serviceInstance: BubbleOverlayService? = null
@@ -272,13 +277,14 @@ class BubbleOverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = 20
             y = 200
         }
+        Log.d(TAG, "createChatHead: Setting initial FLAG_KEEP_SCREEN_ON in window params")
         
         setupChatHeadTouchListener(params)
         
@@ -643,8 +649,40 @@ class BubbleOverlayService : Service() {
             Log.d(TAG, "[APPLY_MODE] Mode change emitted successfully")
         }
         Log.d(TAG, "[APPLY_MODE] Completed applyCurrentMode")
+
+        // Update keep screen on flag based on new mode
+        updateKeepScreenOnFlag()
     }
-    
+
+    private fun updateKeepScreenOnFlag() {
+        val shouldKeepScreenOn = currentMode == ListeningMode.CONTINUOUS_LISTENING ||
+                                  currentMode == ListeningMode.TTS_WITH_LISTENING
+
+        // Update companion object property for testing
+        isKeepScreenOnEnabled = shouldKeepScreenOn
+
+        if (chatHeadView == null) {
+            Log.w(TAG, "updateKeepScreenOnFlag called but chatHeadView is null - flag not updated (mode: $currentMode, shouldKeepScreenOn: $shouldKeepScreenOn)")
+            return
+        }
+
+        chatHeadView?.let { view ->
+            val params = view.layoutParams as WindowManager.LayoutParams
+            if (shouldKeepScreenOn) {
+                Log.d(TAG, "Adding FLAG_KEEP_SCREEN_ON to bubble overlay")
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            } else {
+                Log.d(TAG, "Removing FLAG_KEEP_SCREEN_ON from bubble overlay")
+                params.flags = params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+            }
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating window flags", e)
+            }
+        }
+    }
+
     private fun returnToApp() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)

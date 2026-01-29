@@ -46,7 +46,6 @@ sealed class WebSocketEvent {
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
-    data class Interrupted(val message: String, val requestId: String? = null) : WebSocketEvent()
     data class DeleteMessage(val messageId: Long, val conversationId: Long, val requestId: String?, val reason: String?) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
@@ -95,6 +94,10 @@ class WhizServerRepository @Inject constructor(
     // Callbacks from old connections are ignored based on generation mismatch
     private val connectionGeneration = java.util.concurrent.atomic.AtomicInteger(0)
     private var currentGeneration = 0
+
+    // Track the conversation ID we're currently connecting to (needed during CONNECTING state
+    // when webSocket reference is null but we need to know what we're connecting to for migration checks)
+    private var connectingToConversationId: Long? = null
     
     // Debug: Track event history for troubleshooting
     private val eventHistory = mutableListOf<TimestampedEvent>()
@@ -115,7 +118,37 @@ class WhizServerRepository @Inject constructor(
     fun isConnected(): Boolean {
         return connectionState == ConnectionState.CONNECTED && webSocket != null
     }
-    
+
+    /**
+     * Pre-establish WebSocket connection before user sends a message.
+     * This saves 150-250ms (SSL handshake + HTTP upgrade) from the critical path.
+     * Server supports this - creates session ws_{user_id}_new_{timestamp}.
+     * When first message is sent with client_conversation_id, server associates it.
+     */
+    suspend fun primeConnection() {
+        if (connectionState == ConnectionState.IDLE && !persistentDisconnectForTest) {
+            Log.d(TAG, "Priming WebSocket connection (no conversation_id)")
+            connect(conversationId = null, turnOffPersistentDisconnect = false, forPriming = true)
+        } else {
+            Log.d(TAG, "primeConnection() skipped - state=$connectionState, persistentDisconnect=$persistentDisconnectForTest")
+        }
+    }
+
+    /**
+     * Cached formatter for ISO timestamps - created once since this is a @Singleton class.
+     */
+    private val isoTimestampFormatter: java.time.format.DateTimeFormatter =
+        java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+            .withZone(java.time.ZoneOffset.UTC)
+
+    /**
+     * Convert epoch milliseconds to ISO timestamp string with exactly 3 decimal places.
+     */
+    private fun formatTimestamp(epochMillis: Long): String {
+        return isoTimestampFormatter.format(java.time.Instant.ofEpochMilli(epochMillis))
+    }
+
     // Expose persistent disconnect state for testing
     fun persistentDisconnectForTest(): Boolean {
         return persistentDisconnectForTest
@@ -126,7 +159,40 @@ class WhizServerRepository @Inject constructor(
         Log.d(TAG, "Test: Resetting persistentDisconnectForTest flag to simulate network restoration")
         persistentDisconnectForTest = false
     }
-    
+
+    /**
+     * Reset connection state for testing. Called between tests to ensure clean state.
+     * This resets all internal state and the persistentDisconnectForTest flag.
+     */
+    suspend fun resetConnectionStateForTesting() {
+        connectionLock.withLock {
+            Log.d(TAG, "resetConnectionStateForTesting: Resetting from state=$connectionState, persistentDisconnect=$persistentDisconnectForTest")
+
+            // Cancel any pending jobs
+            connectionTimeoutJob?.cancel()
+            reconnectJob?.cancel()
+            retryJob?.cancel()
+
+            // Close existing WebSocket if any
+            webSocket?.let { ws ->
+                try {
+                    ws.close(1000, "Test cleanup")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error closing WebSocket during test cleanup", e)
+                }
+            }
+            webSocket = null
+
+            // Reset all connection state
+            connectionState = ConnectionState.IDLE
+            connectingToConversationId = null
+            persistentDisconnectForTest = false
+            currentReconnectAttempts = 0
+
+            Log.d(TAG, "resetConnectionStateForTesting: Complete")
+        }
+    }
+
     // Helper function to route events to appropriate flows
     private suspend fun emitEvent(event: WebSocketEvent) {
         // Track event in history for debugging
@@ -149,7 +215,6 @@ class WhizServerRepository @Inject constructor(
             is WebSocketEvent.Error,
             is WebSocketEvent.AuthError,
             is WebSocketEvent.Cancelled,
-            is WebSocketEvent.Interrupted,
             is WebSocketEvent.DeleteMessage -> {
                 _messageEvents.emit(event)
             }
@@ -184,7 +249,6 @@ class WhizServerRepository @Inject constructor(
                 is WebSocketEvent.Message -> "MESSAGE(requestId=${e.requestId}): ${e.text.take(50)}..."
                 is WebSocketEvent.ToolExecution -> "TOOL_EXECUTION(requestId=${e.requestId}): ${e.toolRequest.optString("tool")}"
                 is WebSocketEvent.Cancelled -> "CANCELLED(requestId=${e.cancelledRequestId})"
-                is WebSocketEvent.Interrupted -> "INTERRUPTED: ${e.message}"
                 is WebSocketEvent.DeleteMessage -> "DELETE_MESSAGE(requestId=${e.requestId}, messageId=${e.messageId})"
             }
             Log.d(tag, "[$time] $eventStr")
@@ -270,12 +334,12 @@ class WhizServerRepository @Inject constructor(
         return clientConversationIdMatch?.groupValues?.get(1)?.toLongOrNull()
     }
     
-    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false) {
-        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, currentPersistentDisconnect=$persistentDisconnectForTest")
+    suspend fun connect(conversationId: Long? = null, turnOffPersistentDisconnect: Boolean = false, forPriming: Boolean = false) {
+        Log.d(TAG, "connect() called with conversationId=$conversationId, turnOffPersistentDisconnect=$turnOffPersistentDisconnect, forPriming=$forPriming, currentPersistentDisconnect=$persistentDisconnectForTest")
         Log.d(TAG, "🔌 WEBSOCKET CONNECT CALLED - conversationId: $conversationId", Exception("connect() stack trace"))
 
         // If we're just resetting the flag without providing a conversation ID, only reset the flag and return
-        if (turnOffPersistentDisconnect && conversationId == null) {
+        if (turnOffPersistentDisconnect && conversationId == null && !forPriming) {
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Resetting persistentDisconnectForTest flag only - no reconnection attempt")
                 persistentDisconnectForTest = false
@@ -288,7 +352,8 @@ class WhizServerRepository @Inject constructor(
             if (persistentDisconnectForTest) {
                 Log.d(TAG, "Connection blocked by persistentDisconnectForTest flag - simulating network unavailable")
             }
-            if (conversationId == null) {
+            // Allow null conversationId for priming connections
+            if (conversationId == null && !forPriming) {
                 Log.d(TAG, "NULL conversation ID, returning without attempting connection.")
                 return
             }
@@ -309,30 +374,46 @@ class WhizServerRepository @Inject constructor(
                 }
             }
             
-            // Validate that conversationId is not null (except when just resetting the flag)
+            // Validate that conversationId is not null (except when priming or just resetting the flag)
             // In production, we should always have a valid conversation ID (either server-backed or optimistic)
-            if (conversationId == null && !turnOffPersistentDisconnect) {
+            // Exception: forPriming=true allows null conversationId to pre-establish connection
+            if (conversationId == null && !turnOffPersistentDisconnect && !forPriming) {
                 val errorMsg = "connect() called with null conversationId - this should not happen in production. " +
                                "All chats should have either a server-backed ID (>0) or optimistic ID (<-1). " +
                                "Current state: connectionState=$connectionState"
                 Log.e(TAG, errorMsg)
                 throw IllegalArgumentException(errorMsg)
             }
-            
+
             // Check if we're already connected/connecting
             if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.CONNECTED) {
-                // Check if we're already connected to the same conversation
-                val currentConversationId = getConnectedConversationId()
+                // Get the conversation ID we're currently connected/connecting to
+                // Use getConnectedConversationId() for CONNECTED state (from websocket URL)
+                // Use connectingToConversationId for CONNECTING state (websocket not yet assigned)
+                val currentConversationId = getConnectedConversationId() ?: connectingToConversationId
+
                 if (connectionState == ConnectionState.CONNECTED && currentConversationId == conversationId) {
                     Log.d(TAG, "Already connected to conversation $conversationId - no need to reconnect")
                     return
                 }
 
+                // If we have a primed connection (no conversation_id) and user wants to connect for a new chat,
+                // reuse the connection - server will associate it when first message includes client_conversation_id
+                if (connectionState == ConnectionState.CONNECTED && currentConversationId == null && conversationId != null && conversationId < 0) {
+                    Log.d(TAG, "Reusing primed connection for new chat $conversationId - server will associate on first message")
+                    return
+                }
+
                 // Check if this is just a migration from optimistic to real ID
-                if (connectionState == ConnectionState.CONNECTED &&
-                    currentConversationId != null && conversationId != null &&
-                    connectionStateManager.areChatsMigrated(currentConversationId, conversationId)) {
-                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server already updated subscription)")
+                // Case 1: Migration already registered
+                // Case 2: Currently connected/connecting to optimistic ID and being asked to connect to a positive ID
+                //         (migration may not be registered yet, but server handles routing via Redis)
+                // Note: Must check BOTH CONNECTED and CONNECTING states to handle race condition where
+                //       server responds with real ID before the optimistic connection fully opens
+                if (currentConversationId != null && conversationId != null &&
+                    (connectionStateManager.areChatsMigrated(currentConversationId, conversationId) ||
+                     (currentConversationId < 0 && conversationId > 0))) {
+                    Log.d(TAG, "Migration from $currentConversationId to $conversationId - keeping connection alive (server handles routing)")
                     return
                 }
 
@@ -364,9 +445,10 @@ class WhizServerRepository @Inject constructor(
             
             // NO WAITING - proceed immediately with new connection
             // The generation tracking will ensure old callbacks are ignored
-            
-            // Update state to CONNECTING
+
+            // Update state to CONNECTING and track the conversation ID we're connecting to
             connectionState = ConnectionState.CONNECTING
+            connectingToConversationId = conversationId
             
             // Only reset persistent disconnect flag if explicitly requested
             if (turnOffPersistentDisconnect) {
@@ -511,15 +593,6 @@ class WhizServerRepository @Inject constructor(
                                     Log.w(TAG, "Received cancellation confirmation without cancelled_request_id")
                                     scope.launch { emitEvent(WebSocketEvent.Cancelled("unknown", requestId)) }
                                 }
-                                messageHandled = true
-                            }
-                            // Check if this is an interruption confirmation
-                            else if (jsonObject.has("type") && jsonObject.getString("type") == "interrupted") {
-                                val interruptedMessage = if (jsonObject.has("message")) {
-                                    jsonObject.getString("message")
-                                } else "Request was interrupted"
-
-                                scope.launch { emitEvent(WebSocketEvent.Interrupted(interruptedMessage, requestId)) }
                                 messageHandled = true
                             }
                             // Handle delete_message notifications
@@ -814,12 +887,18 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
-    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long): Boolean {
+    fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long, timestamp: Long? = null): Boolean {
         Log.i(TAG, "📤📤📤 SENDING TOOL RESULT TO SERVER")
         Log.i(TAG, "📤 Tool: $toolName")
         Log.i(TAG, "📤 Request ID: $requestId")
         Log.i(TAG, "📤 Chat ID: $chatId")
+        Log.i(TAG, "📤 Timestamp: $timestamp")
         Log.i(TAG, "📤 Result: ${result.toString(2)}")
+
+        // Warn if timestamp is missing - helps debug message ordering issues
+        if (timestamp == null) {
+            Log.w(TAG, "⚠️ TIMESTAMP_MISSING: sendToolResult called without timestamp! requestId=$requestId, tool=$toolName")
+        }
         
         return try {
             val currentSocket = webSocket
@@ -840,6 +919,11 @@ class WhizServerRepository @Inject constructor(
                         } else if (chatId < 0) {
                             put("client_conversation_id", chatId)
                         }
+                        // Include timestamp if provided
+                        timestamp?.let {
+                            val isoTimestamp = formatTimestamp(it)
+                            put("timestamp", isoTimestamp)
+                        }
                     }
                     queueMessageForRetry(resultJson.toString(), requestId, chatId)
                     return false
@@ -851,12 +935,18 @@ class WhizServerRepository @Inject constructor(
                     put("tool", toolName)
                     put("request_id", requestId)
                     put("result", result)
-                    
+
                     // Include conversation ID
                     if (chatId > 0) {
                         put("conversation_id", chatId)
                     } else if (chatId < 0) {
                         put("client_conversation_id", chatId)
+                    }
+
+                    // Include timestamp if provided
+                    timestamp?.let {
+                        val isoTimestamp = formatTimestamp(it)
+                        put("timestamp", isoTimestamp)
                     }
                 }
                 val jsonMessage = resultJson.toString()
@@ -886,6 +976,11 @@ class WhizServerRepository @Inject constructor(
                     } else if (chatId < 0) {
                         put("client_conversation_id", chatId)
                     }
+                    // Include timestamp if provided
+                    timestamp?.let {
+                        val isoTimestamp = formatTimestamp(it)
+                        put("timestamp", isoTimestamp)
+                    }
                 }
                 queueMessageForRetry(resultJson.toString(), requestId, chatId)
                 false
@@ -903,6 +998,11 @@ class WhizServerRepository @Inject constructor(
                 } else if (chatId < 0) {
                     put("client_conversation_id", chatId)
                 }
+                // Include timestamp if provided
+                timestamp?.let {
+                    val isoTimestamp = formatTimestamp(it)
+                    put("timestamp", isoTimestamp)
+                }
             }
             queueMessageForRetry(resultJson.toString(), requestId, chatId)
             false
@@ -912,7 +1012,12 @@ class WhizServerRepository @Inject constructor(
     fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
         Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
-        
+
+        // Warn if timestamp is missing - helps debug message ordering issues
+        if (timestamp == null) {
+            Log.w(TAG, "⚠️ TIMESTAMP_MISSING: sendMessage called without timestamp! requestId=$requestId, content='${message.take(50)}...'")
+        }
+
         return try {
             val currentSocket = webSocket
             if (currentSocket != null && !persistentDisconnectForTest) {
@@ -922,7 +1027,20 @@ class WhizServerRepository @Inject constructor(
                     queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
                     return false
                 }
-                
+
+                // Check if message's chatId matches the connected WebSocket's conversation
+                val connectedConvId = getConnectedConversationId()
+                if (connectedConvId != null) {
+                    // Resolve both IDs to handle optimistic ID migrations
+                    val effectiveMessageChatId = connectionStateManager.getEffectiveChatId(chatId) ?: chatId
+                    val effectiveConnectedId = connectionStateManager.getEffectiveChatId(connectedConvId) ?: connectedConvId
+                    if (effectiveMessageChatId != effectiveConnectedId) {
+                        Log.w(TAG, "Message chatId $chatId (effective: $effectiveMessageChatId) doesn't match connected conversation $connectedConvId (effective: $effectiveConnectedId) - queueing for retry")
+                        queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                        return false
+                    }
+                }
+
                 // Send structured JSON with request ID and optional client context
                 val messageJson = org.json.JSONObject().apply {
                     put("message", message)
@@ -941,7 +1059,7 @@ class WhizServerRepository @Inject constructor(
                     // Include timestamp if provided
                     timestamp?.let { 
                         // Convert milliseconds to ISO format string for server
-                        val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                        val isoTimestamp = formatTimestamp(it)
                         put("timestamp", isoTimestamp)
                     }
                 }
@@ -1006,12 +1124,15 @@ class WhizServerRepository @Inject constructor(
     }
 
     private fun processRetryQueue(conversationId: Long? = null) {
+        // Use provided conversationId, or fall back to the WebSocket's connected conversation
+        val effectiveConversationId = conversationId ?: getConnectedConversationId()
+
         if (messageRetryQueue.isEmpty()) {
             Log.d(TAG, "Retry queue is empty")
             return
         }
-        
-        Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages")
+
+        Log.d(TAG, "Processing retry queue with ${messageRetryQueue.size} messages (effectiveConversationId=$effectiveConversationId)")
         val currentSocket = webSocket
         
         if (currentSocket == null || persistentDisconnectForTest) {
@@ -1022,25 +1143,25 @@ class WhizServerRepository @Inject constructor(
         // Only process messages that match the conversation we're connected to
         // Discard messages for other conversations (they'll be synced from local DB when those chats are opened)
         val allMessages = messageRetryQueue.toList()
-        val messagesToRetry = if (conversationId != null) {
+        val messagesToRetry = if (effectiveConversationId != null) {
             allMessages.filter { msg ->
                 // Resolve both the queued message's chatId and the current conversationId
                 // to handle optimistic ID migrations (e.g., -1759344504803 → 5127)
                 val effectiveQueuedChatId = connectionStateManager.getEffectiveChatId(msg.chatId) ?: msg.chatId
-                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(conversationId) ?: conversationId
+                val effectiveCurrentChatId = connectionStateManager.getEffectiveChatId(effectiveConversationId) ?: effectiveConversationId
 
                 // Log migration resolution for debugging
                 if (effectiveQueuedChatId != msg.chatId) {
                     Log.d(TAG, "Resolved queued message chatId ${msg.chatId} → $effectiveQueuedChatId")
                 }
-                if (effectiveCurrentChatId != conversationId) {
-                    Log.d(TAG, "Resolved current conversationId $conversationId → $effectiveCurrentChatId")
+                if (effectiveCurrentChatId != effectiveConversationId) {
+                    Log.d(TAG, "Resolved current conversationId $effectiveConversationId → $effectiveCurrentChatId")
                 }
 
                 effectiveQueuedChatId == effectiveCurrentChatId
             }
         } else {
-            // If no conversationId specified, process all messages
+            // If no conversationId specified and no WebSocket connected, process all messages
             allMessages
         }
         
@@ -1050,13 +1171,13 @@ class WhizServerRepository @Inject constructor(
         }
         
         if (messagesToRetry.isEmpty()) {
-            Log.d(TAG, "No messages in retry queue for conversation $conversationId")
+            Log.d(TAG, "No messages in retry queue for conversation $effectiveConversationId")
             // Clear the queue since we're discarding messages for other conversations
             messageRetryQueue.clear()
             return
         }
-        
-        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $conversationId")
+
+        Log.d(TAG, "Processing ${messagesToRetry.size} messages for conversation $effectiveConversationId")
         
         // Clear the entire queue (we're not keeping messages for other conversations)
         messageRetryQueue.clear()
@@ -1087,7 +1208,7 @@ class WhizServerRepository @Inject constructor(
                         // Include timestamp if provided
                         pendingMessage.timestamp?.let { 
                             // Convert milliseconds to ISO format string for server
-                            val isoTimestamp = java.time.Instant.ofEpochMilli(it).toString()
+                            val isoTimestamp = formatTimestamp(it)
                             put("timestamp", isoTimestamp)
                         }
                     }

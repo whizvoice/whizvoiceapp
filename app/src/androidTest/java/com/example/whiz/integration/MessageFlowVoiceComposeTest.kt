@@ -192,7 +192,10 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             }
             
             Log.d(TAG, "✅ ChatViewModel captured successfully")
-            
+
+            // Note: WebSocket connects on-demand when first message is sent
+            // Don't wait for it here - sendUserInput() handles connection internally
+
             // Track the chat ID from the ViewModel for cleanup
             try {
                 val currentChatId = capturedViewModel?.chatId?.value

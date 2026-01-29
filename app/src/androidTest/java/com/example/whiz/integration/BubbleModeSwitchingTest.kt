@@ -257,6 +257,12 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         if (BubbleOverlayService.bubbleListeningMode != ListeningMode.CONTINUOUS_LISTENING) {
             failWithScreenshot("Initial mode should be CONTINUOUS_LISTENING but is ${BubbleOverlayService.bubbleListeningMode}")
         }
+
+        // Verify keep-screen-on is enabled in CONTINUOUS_LISTENING mode
+        if (!BubbleOverlayService.isKeepScreenOnEnabled) {
+            failWithScreenshot("Keep-screen-on should be enabled in CONTINUOUS_LISTENING mode but isKeepScreenOnEnabled=${BubbleOverlayService.isKeepScreenOnEnabled}")
+        }
+        Log.d(TAG, "✅ Keep-screen-on is correctly enabled in CONTINUOUS_LISTENING mode")
         
         // Verify the mode indicator is visible (it shows the current mode icon)
         Log.d(TAG, "🎤 Verifying mode indicator is visible on bubble...")
@@ -353,7 +359,13 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         if (BubbleOverlayService.bubbleListeningMode != ListeningMode.MIC_OFF) {
             failWithScreenshot("Mode should be MIC_OFF after first cycle but is ${BubbleOverlayService.bubbleListeningMode}")
         }
-        
+
+        // Verify keep-screen-on is disabled in MIC_OFF mode
+        if (BubbleOverlayService.isKeepScreenOnEnabled) {
+            failWithScreenshot("Keep-screen-on should be disabled in MIC_OFF mode but isKeepScreenOnEnabled=${BubbleOverlayService.isKeepScreenOnEnabled}")
+        }
+        Log.d(TAG, "✅ Keep-screen-on is correctly disabled in MIC_OFF mode")
+
         // In MIC_OFF mode, the mode_indicator is hidden (View.GONE) per the production code
         // Instead, verify the mode change message appears and the bubble is still visible
         Log.d(TAG, "🔇 Verifying bubble appearance and mode message in MIC_OFF mode...")
@@ -436,7 +448,13 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         if (BubbleOverlayService.bubbleListeningMode != ListeningMode.TTS_WITH_LISTENING) {
             failWithScreenshot("Mode should be TTS_WITH_LISTENING after second cycle but is ${BubbleOverlayService.bubbleListeningMode}")
         }
-        
+
+        // Verify keep-screen-on is enabled in TTS_WITH_LISTENING mode
+        if (!BubbleOverlayService.isKeepScreenOnEnabled) {
+            failWithScreenshot("Keep-screen-on should be enabled in TTS_WITH_LISTENING mode but isKeepScreenOnEnabled=${BubbleOverlayService.isKeepScreenOnEnabled}")
+        }
+        Log.d(TAG, "✅ Keep-screen-on is correctly enabled in TTS_WITH_LISTENING mode")
+
         // Check for the "Speaking Mode" message that appears temporarily
         Log.d(TAG, "🔊 Checking for 'Speaking Mode' message...")
         val speakingModeMessageVisible = device.wait(
@@ -523,7 +541,13 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         if (BubbleOverlayService.bubbleListeningMode != ListeningMode.CONTINUOUS_LISTENING) {
             failWithScreenshot("Mode should be back to CONTINUOUS_LISTENING after third cycle but is ${BubbleOverlayService.bubbleListeningMode}")
         }
-        
+
+        // Verify keep-screen-on is enabled after cycling back to CONTINUOUS_LISTENING
+        if (!BubbleOverlayService.isKeepScreenOnEnabled) {
+            failWithScreenshot("Keep-screen-on should be enabled after cycling back to CONTINUOUS_LISTENING but isKeepScreenOnEnabled=${BubbleOverlayService.isKeepScreenOnEnabled}")
+        }
+        Log.d(TAG, "✅ Keep-screen-on is correctly enabled after cycling back to CONTINUOUS_LISTENING")
+
         // Check for the "Listening Mode" message that appears when cycling back
         Log.d(TAG, "🎤 Checking for 'Listening Mode' message...")
         val listeningModeMessageVisible = device.wait(

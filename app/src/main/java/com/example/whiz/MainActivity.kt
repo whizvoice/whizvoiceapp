@@ -48,17 +48,24 @@ import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import com.example.whiz.BuildConfig
+import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
+import org.json.JSONObject
+import java.io.File
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
-        
+
         // Test callback for capturing navigation-scoped ViewModels
         @Volatile
         var testViewModelCallback: ((com.example.whiz.ui.viewmodels.ChatViewModel) -> Unit)? = null
+
+        // Callback for self-close tool to finish the activity and remove from recents
+        @Volatile
+        var finishAndRemoveTaskCallback: (() -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -81,8 +88,15 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
 
+    @Inject
+    lateinit var apiService: ApiService
+
+    // ViewModel for creating new chats on assistant relaunch
+    private val chatsListViewModel: ChatsListViewModel by viewModels()
+
     private lateinit var navController: NavHostController
     private var testTranscriptionReceiver: BroadcastReceiver? = null
+    private var closeAppReceiver: BroadcastReceiver? = null
 
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
@@ -111,7 +125,19 @@ class MainActivity : ComponentActivity() {
         
         // Check for all permissions at startup
         checkAllPermissions()
-        
+
+        // Upload any pending crash report from previous session
+        uploadPendingCrashReport()
+
+        // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
+        setupCloseAppReceiver()
+
+        // Set up static callback for self-close tool (more reliable than broadcast)
+        finishAndRemoveTaskCallback = {
+            Log.d(TAG, "finishAndRemoveTaskCallback invoked - calling finishAndRemoveTask()")
+            finishAndRemoveTask()
+        }
+
         setContent {
             WhizTheme {
                 Surface(
@@ -318,11 +344,13 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "🎤 VOICE LAUNCH DETECTED ($source) - adding assistant flags")
                 // Add the assistant flags that would normally come from AssistantActivity
                 i.putExtra("FROM_ASSISTANT", true)
-                i.putExtra("ENABLE_VOICE_MODE", true) 
+                i.putExtra("ENABLE_VOICE_MODE", true)
                 i.putExtra("CREATE_NEW_CHAT_ON_START", true)
                 // Update the activity's intent so the flags are accessible
                 setIntent(i)
-                Log.d(TAG, "🎤 Updated activity intent with voice launch flags")
+                // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
+                com.example.whiz.ui.viewmodels.ChatViewModel.isTransitioning = true
+                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true")
             }
         }
         Log.d(TAG, "=== END INTENT ANALYSIS ===")
@@ -401,37 +429,45 @@ class MainActivity : ComponentActivity() {
         val fromAssistant = currentIntent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
         val enableVoiceMode = currentIntent?.getBooleanExtra("ENABLE_VOICE_MODE", false) ?: false
         val initialTranscription = currentIntent?.getStringExtra("INITIAL_TRANSCRIPTION")
-        
+
         if (createNewChatOnStart && ::navController.isInitialized) {
             Log.d(TAG, "🚨 CREATE_NEW_CHAT_ON_START flag detected, navigating to new chat screen")
-            
-            // Check if we're already at the target destination (idempotent navigation)
+
+            // IMMEDIATELY clear extras to prevent onResume from reprocessing
+            // This must happen BEFORE any async operations or navigation
+            // IMPORTANT: Also clear tracing_intent_id to prevent detectVoiceLaunch from re-adding extras
+            Log.d(TAG, "🧹 CLEARING intent extras IMMEDIATELY (before navigation)")
+            getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
+            getIntent().removeExtra("FROM_ASSISTANT")
+            getIntent().removeExtra("ENABLE_VOICE_MODE")
+            getIntent().removeExtra("INITIAL_TRANSCRIPTION")
+            getIntent().removeExtra("tracing_intent_id")
+
+            // Check if we're already at the target destination
             val currentRoute = navController.currentDestination?.route
-            if (currentRoute == Screen.AssistantChat.route) {
-                Log.d(TAG, "🔄 Already at assistant_chat screen - navigation is idempotent, no action needed")
-                
-                // Still need to clear intent extras and set voice mode flags even if we don't navigate
+            if (currentRoute == Screen.AssistantChat.route || currentRoute?.startsWith("chat/") == true) {
+                Log.d(TAG, "🔄 Already at chat screen ($currentRoute) - forcing new chat")
+
+                // Signal ChatScreen to create a new chat by setting a unique timestamp
+                navController.currentBackStackEntry?.savedStateHandle?.set(
+                    "FORCE_NEW_CHAT",
+                    System.currentTimeMillis()
+                )
+
                 if (enableVoiceMode) {
-                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle (idempotent)")
+                    Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
                     navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
                 }
                 initialTranscription?.let {
-                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle (idempotent): $it")
+                    Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
                     navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
                 }
-                
-                // Clear the extras to prevent future duplicate processing
-                Log.d(TAG, "🧹 CLEARING intent extras after idempotent navigation")
-                getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
-                getIntent().removeExtra("FROM_ASSISTANT")
-                getIntent().removeExtra("ENABLE_VOICE_MODE")
-                getIntent().removeExtra("INITIAL_TRANSCRIPTION")
                 return
             }
-            
+
             Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to ${Screen.AssistantChat.route}")
             Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
-            
+
             // Navigate to new chat screen without pre-creating optimistic chat
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
             Log.d(TAG, "🚨 About to call navigateWhenReady for ${Screen.AssistantChat.route}")
@@ -446,13 +482,6 @@ class MainActivity : ComponentActivity() {
                     Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
                     navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
                 }
-                // Clear the extras
-                Log.d(TAG, "🧹 CLEARING intent extras after new chat navigation")
-                getIntent().removeExtra("CREATE_NEW_CHAT_ON_START")
-                getIntent().removeExtra("FROM_ASSISTANT")
-                getIntent().removeExtra("ENABLE_VOICE_MODE")
-                getIntent().removeExtra("INITIAL_TRANSCRIPTION")
-                Log.d(TAG, "🧹 Intent extras cleared - future resume should not create new chat")
             }
         } else {
             currentIntent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
@@ -674,6 +703,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
 
+        // Clear the static callback
+        finishAndRemoveTaskCallback = null
+
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
             try {
@@ -681,6 +713,16 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Test transcription receiver unregistered")
             } catch (e: Exception) {
                 Log.w(TAG, "Error unregistering test receiver", e)
+            }
+        }
+
+        // Unregister close app receiver
+        if (closeAppReceiver != null) {
+            try {
+                unregisterReceiver(closeAppReceiver)
+                Log.d(TAG, "Close app receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering close app receiver", e)
             }
         }
     }
@@ -763,6 +805,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun setupCloseAppReceiver() {
+        Log.d(TAG, "Setting up close app receiver")
+
+        closeAppReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == "com.example.whiz.CLOSE_APP") {
+                    Log.d(TAG, "Close app broadcast received - calling finishAndRemoveTask()")
+                    finishAndRemoveTask()
+                }
+            }
+        }
+
+        val filter = IntentFilter("com.example.whiz.CLOSE_APP")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(closeAppReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(closeAppReceiver, filter)
+            }
+            Log.d(TAG, "Close app receiver registered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register close app receiver", e)
+        }
+    }
+
     private fun processTestTranscription(
         viewModel: com.example.whiz.ui.viewmodels.ChatViewModel,
         text: String,
@@ -782,6 +849,52 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing test transcription", e)
+        }
+    }
+
+    /**
+     * Upload any pending crash report from a previous app crash.
+     * Called on app startup to send crash data to Supabase.
+     */
+    private fun uploadPendingCrashReport() {
+        val crashFile = File(filesDir, "pending_crash.json")
+        if (!crashFile.exists()) return
+
+        Log.i(TAG, "Found pending crash report, uploading...")
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val crashData = JSONObject(crashFile.readText())
+                val stackTrace = crashData.optString("stack_trace", "Unknown")
+                val firstLine = stackTrace.lineSequence().firstOrNull() ?: "Unknown crash"
+
+                val request = ApiService.UiDumpCreate(
+                    dumpReason = "app_crash",
+                    errorMessage = firstLine,
+                    uiHierarchy = null,
+                    packageName = packageName,
+                    deviceModel = crashData.optString("device_model"),
+                    deviceManufacturer = crashData.optString("device_manufacturer"),
+                    androidVersion = crashData.optString("android_version"),
+                    screenWidth = null,
+                    screenHeight = null,
+                    appVersion = crashData.optString("app_version"),
+                    conversationId = null,
+                    recentActions = null,
+                    screenAgentContext = mapOf(
+                        "thread_name" to crashData.optString("thread_name"),
+                        "stack_trace" to stackTrace,
+                        "crash_timestamp" to crashData.optLong("timestamp")
+                    )
+                )
+
+                apiService.uploadUiDump(request)
+                crashFile.delete()  // Only delete after successful upload
+                Log.i(TAG, "Crash report uploaded successfully")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to upload crash report (will retry on next launch)", e)
+                // Keep file for retry on next launch
+            }
         }
     }
 }

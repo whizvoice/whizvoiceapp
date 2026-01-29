@@ -108,6 +108,9 @@ import android.provider.Settings
 import com.example.whiz.ui.components.OverlayPermissionDialog
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import android.app.Activity
+import android.view.WindowManager
+import androidx.compose.ui.platform.LocalView
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -482,7 +485,7 @@ fun ChatLoadErrorView(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ChatScreen(
     chatId: Long,
@@ -525,6 +528,13 @@ fun ChatScreen(
     val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
     Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
+
+    // Observe FORCE_NEW_CHAT signal from power button long-press
+    // Using getStateFlow to reactively observe savedStateHandle changes
+    val forceNewChatTimestamp by navController.currentBackStackEntry
+        ?.savedStateHandle
+        ?.getStateFlow("FORCE_NEW_CHAT", 0L)
+        ?.collectAsState() ?: remember { mutableStateOf(0L) }
     
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
@@ -564,11 +574,47 @@ fun ChatScreen(
     val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
     val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
+    // Keep screen on when continuous listening is enabled
+    val view = LocalView.current
+    DisposableEffect(isContinuousListeningEnabled) {
+        val window = (view.context as Activity).window
+        if (isContinuousListeningEnabled) {
+            Log.d("ChatScreen", "Enabling FLAG_KEEP_SCREEN_ON - continuous listening active")
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            Log.d("ChatScreen", "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        // Log actual flag state for debugging
+        val flags = window.attributes.flags
+        val isSet = (flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
+        Log.d("ChatScreen", "FLAG_KEEP_SCREEN_ON state after update: $isSet (full flags: $flags)")
+
+        onDispose {
+            Log.d("ChatScreen", "ChatScreen disposing - clearing FLAG_KEEP_SCREEN_ON")
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     // UI State
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
-    
+
+    // 🔧 AUTO-SCROLL FIX: Collect scroll events from ViewModel instead of using unreliable snapshotFlow
+    // This is triggered when user sends a message or bot responds (not during sync/load)
+    LaunchedEffect(Unit) {
+        viewModel.scrollToBottomEvent
+            .debounce(100L)
+            .collect {
+                if (messages.isNotEmpty()) {
+                    val targetIndex = messages.size - 1
+                    listState.scrollToItem(targetIndex)
+                    android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${messages.size})")
+                }
+            }
+    }
+
     // Observe permission state directly from PermissionManager for reactive UI updates
     val hasPermissionReactive by permissionManager.microphonePermissionGranted.collectAsState()
     
@@ -663,7 +709,17 @@ fun ChatScreen(
             viewModel.loadChat(chatId)
         }
     }
-    
+
+    // React to force new chat signal from power button long-press while app is open
+    LaunchedEffect(forceNewChatTimestamp) {
+        if (forceNewChatTimestamp > 0L) {
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), resetting to new chat")
+            viewModel.loadChatWithVoiceMode(-1L, true)
+            // Clear the signal after handling
+            navController.currentBackStackEntry?.savedStateHandle?.remove<Long>("FORCE_NEW_CHAT")
+        }
+    }
+
     // Sync messages when returning to the screen (e.g., from chats list)
     // This ensures we get any messages that arrived while away
     // Track if this is the initial load to avoid double-syncing
@@ -791,6 +847,25 @@ fun ChatScreen(
 
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
+    }
+
+    // Re-enable voice when FORCE_NEW_CHAT signal is received (power button long-press while app is open)
+    // This must be after voiceInitialized is defined
+    LaunchedEffect(forceNewChatTimestamp) {
+        if (forceNewChatTimestamp > 0L) {
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling voice for new chat")
+
+            // Reset voice initialization flag so voice can be re-enabled
+            voiceInitialized.value = false
+
+            // Re-enable continuous listening for the new chat (same as initial voice launch)
+            if (effectiveHasPermission) {
+                Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling continuous listening")
+                voiceManager.updateContinuousListeningEnabled(true)
+                viewModel.ensureContinuousListeningEnabled()
+                voiceInitialized.value = true
+            }
+        }
     }
 
     // Collect transcriptions from VoiceManager flow
@@ -1021,7 +1096,6 @@ fun ChatScreen(
     }
 }
 
-@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun MessagesList(
     messages: List<MessageEntity>,
@@ -1033,29 +1107,7 @@ fun MessagesList(
     android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
 
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
-
-    // 🔧 AUTO-SCROLL FIX: Use rememberUpdatedState to ensure snapshotFlow always reads current messages
-    // Without this, LaunchedEffect(Unit) captures the initial messages reference and never sees updates
-    val currentMessages by rememberUpdatedState(messages)
-
-    // 🔧 AUTO-SCROLL FIX: Scroll to bottom when new messages arrive
-    // Use snapshotFlow + debounce to avoid cancellation when messages arrive rapidly
-    // (Previous approach with LaunchedEffect keys + delay would cancel on each new message)
-    android.util.Log.d("MessagesList", "🔥 BEFORE_LAUNCHED_EFFECT: messages.size=${messages.size}, lastMsgId=${messages.lastOrNull()?.id}")
-    LaunchedEffect(Unit) {
-        snapshotFlow { Triple(currentMessages.size, currentMessages.lastOrNull()?.id, currentMessages.lastOrNull()?.timestamp) }
-            .debounce(100L)
-            .collect { (size, lastId, _) ->
-                android.util.Log.d("MessagesList", "🔥 DEBOUNCE_COLLECTED: messages.size=$size, lastId=$lastId")
-                if (currentMessages.isNotEmpty()) {
-                    val targetIndex = currentMessages.size - 1
-                    if (targetIndex >= 0) {
-                        listState.scrollToItem(targetIndex)
-                        android.util.Log.d("MessagesList", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${currentMessages.size})")
-                    }
-                }
-            }
-    }
+    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollToBottomEvent
 
     LazyColumn(
         state = listState,

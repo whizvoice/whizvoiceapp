@@ -17,34 +17,69 @@ class TTSManager @Inject constructor(
     private val context: Context
 ) {
     private val TAG = "TTSManager"
-    private var tts: TextToSpeech? = null
-    private var isInitialized = false
-    
+    @Volatile private var tts: TextToSpeech? = null
+    @Volatile private var isInitialized = false
+    @Volatile private var isInitializing = false
+
     // Expose isSpeaking state for testing and UI
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
-    
+
     // Expose initialization error state for testing (especially on emulators)
     private val _initializationError = MutableStateFlow(false)
     val initializationError: StateFlow<Boolean> = _initializationError.asStateFlow()
-    
+
     // Event callbacks for audio coordination
     private var onSpeechStarted: (() -> Unit)? = null
     private var onSpeechCompleted: (() -> Unit)? = null
     private var onSpeechError: (() -> Unit)? = null
-    
+
+    // Queue of callbacks waiting for initialization
+    private val pendingCallbacks = mutableListOf<(Boolean) -> Unit>()
+
     fun initialize(onInitialized: (Boolean) -> Unit) {
+        // If already initialized, immediately call back with success
+        if (isInitialized && tts != null) {
+            Log.d(TAG, "TTS already initialized, returning cached state")
+            onInitialized(true)
+            return
+        }
+
+        // If initialization is in progress, queue this callback
+        if (isInitializing) {
+            Log.d(TAG, "TTS initialization in progress, queuing callback")
+            synchronized(pendingCallbacks) {
+                pendingCallbacks.add(onInitialized)
+            }
+            return
+        }
+
+        // Start new initialization
+        isInitializing = true
+        Log.d(TAG, "Starting TTS initialization")
+
         tts = TextToSpeech(context) { status ->
+            isInitializing = false
             if (status == TextToSpeech.SUCCESS) {
                 isInitialized = true
                 _initializationError.value = false
                 setupUtteranceListener()
                 Log.d(TAG, "TTS initialized successfully")
                 onInitialized(true)
+                // Notify all pending callbacks
+                synchronized(pendingCallbacks) {
+                    pendingCallbacks.forEach { it(true) }
+                    pendingCallbacks.clear()
+                }
             } else {
-                Log.e(TAG, "TTS initialization failed")
+                Log.e(TAG, "TTS initialization failed with status: $status")
                 _initializationError.value = true
                 onInitialized(false)
+                // Notify all pending callbacks of failure
+                synchronized(pendingCallbacks) {
+                    pendingCallbacks.forEach { it(false) }
+                    pendingCallbacks.clear()
+                }
             }
         }
     }
@@ -88,21 +123,28 @@ class TTSManager @Inject constructor(
     }
     
     fun speak(text: String, utteranceId: String = "default") {
-        if (!isInitialized) {
-            Log.w(TAG, "TTS not initialized, cannot speak")
+        if (!isInitialized || tts == null) {
+            Log.w(TAG, "TTS not initialized or engine null (isInitialized=$isInitialized, tts=${tts != null}), cannot speak")
             onSpeechError?.invoke()
             return
         }
-        
+
+        Log.d(TAG, "Speaking text (${text.take(50)}...) with utteranceId=$utteranceId")
+
         // Send text to bubble overlay if it's running
         try {
             BubbleOverlayService.updateBotResponse(text)
         } catch (e: Exception) {
             Log.w(TAG, "Could not update bubble overlay: ${e.message}")
         }
-        
+
         try {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            Log.d(TAG, "TTS speak() returned: $result (SUCCESS=0, ERROR=-1)")
+            if (result != TextToSpeech.SUCCESS) {
+                Log.w(TAG, "TTS speak() failed with result: $result")
+                onSpeechError?.invoke()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error speaking text", e)
             onSpeechError?.invoke()
@@ -183,6 +225,10 @@ class TTSManager @Inject constructor(
         tts?.shutdown()
         tts = null
         isInitialized = false
+        isInitializing = false
+        synchronized(pendingCallbacks) {
+            pendingCallbacks.clear()
+        }
         onSpeechStarted = null
         onSpeechCompleted = null
         onSpeechError = null

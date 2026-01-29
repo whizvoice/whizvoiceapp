@@ -2,11 +2,13 @@ package com.example.whiz.tools
 
 import android.content.Context
 import android.provider.Telephony
+import com.example.whiz.services.BubbleOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -92,11 +94,18 @@ class ToolExecutor @Inject constructor(
                     "agent_set_tts_enabled" -> {
                         executeSetTTSEnabled(requestId, params, chatViewModel)
                     }
+                    "agent_close_app" -> {
+                        executeCloseApp(requestId)
+                    }
                     "agent_play_youtube_music" -> {
                         executePlayYouTubeMusic(requestId, params)
                     }
                     "agent_queue_youtube_music" -> {
                         executeQueueYouTubeMusic(requestId, params)
+                    }
+                    "agent_pause_youtube_music" -> {
+                        Log.i(TAG, "Matched agent_pause_youtube_music tool")
+                        executePauseYouTubeMusic(requestId)
                     }
                     "agent_search_google_maps_location" -> {
                         executeSearchGoogleMapsLocation(requestId, params)
@@ -191,6 +200,10 @@ class ToolExecutor @Inject constructor(
                 JSONObject().apply {
                     put("name", "agent_queue_youtube_music")
                     put("description", "Add a song or artist to the YouTube Music queue")
+                },
+                JSONObject().apply {
+                    put("name", "agent_pause_youtube_music")
+                    put("description", "Pause or resume YouTube Music playback")
                 }
             )
             "com.whatsapp" -> listOf(
@@ -643,7 +656,68 @@ class ToolExecutor @Inject constructor(
             )
         }
     }
-    
+
+    private suspend fun executeCloseApp(requestId: String) {
+        try {
+            Log.i(TAG, "Executing close app command")
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "App closing")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Close app result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_close_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+            // Short delay to allow the result to be sent before closing
+            delay(100)
+
+            // Use static callback to tell MainActivity to finish and remove from recents
+            Log.i(TAG, "Invoking finishAndRemoveTaskCallback on MainActivity")
+            val callback = com.example.whiz.MainActivity.finishAndRemoveTaskCallback
+            if (callback != null) {
+                // Run on main thread since finishAndRemoveTask() must be called from main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    callback.invoke()
+                }
+                Log.i(TAG, "finishAndRemoveTaskCallback invoked")
+            } else {
+                Log.w(TAG, "finishAndRemoveTaskCallback is null - MainActivity may not be active")
+            }
+
+            // Short delay to allow MainActivity to finish
+            delay(150)
+
+            // Stop bubble overlay service if active
+            Log.i(TAG, "Stopping BubbleOverlayService")
+            BubbleOverlayService.stop(context)
+
+            // Short delay to allow service to stop cleanly
+            delay(50)
+
+            // Kill the process to close everything
+            Log.i(TAG, "Killing process to close app")
+            android.os.Process.killProcess(android.os.Process.myPid())
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing close app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_close_app",
+                    requestId = requestId,
+                    error = "Failed to close app: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
@@ -722,6 +796,43 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_queue_youtube_music",
                     requestId = requestId,
                     error = "Failed to queue song: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executePauseYouTubeMusic(requestId: String) {
+        try {
+            Log.i(TAG, "Pausing/resuming YouTube Music")
+
+            val result = screenAgentTools.pauseYouTubeMusic()
+
+            Log.i(TAG, "YouTube Music pause result: success=${result.success}, state=${result.nowPlaying}, error=${result.error}")
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("action", result.action)
+                result.nowPlaying?.let { put("state", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] YouTube Music pause result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_pause_youtube_music",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing YouTube Music pause", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_pause_youtube_music",
+                    requestId = requestId,
+                    error = "Failed to pause/resume music: ${e.message}"
                 )
             )
         }
@@ -806,11 +917,12 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
             val mode = if (params.has("mode")) params.getString("mode") else null
+            val search = if (params.has("search")) params.getString("search") else null
             val position = if (params.has("position")) params.getInt("position") else null
             val fragment = if (params.has("fragment")) params.getString("fragment") else null
-            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, position: $position, fragment: $fragment")
+            Log.i(TAG, "Getting Google Maps directions with mode: ${mode ?: "default"}, search: $search, position: $position, fragment: $fragment")
 
-            val result = screenAgentTools.getGoogleMapsDirections(mode, position, fragment)
+            val result = screenAgentTools.getGoogleMapsDirections(mode, search, position, fragment)
 
             Log.i(TAG, "Google Maps directions result: success=${result.success}, error=${result.error}")
 
