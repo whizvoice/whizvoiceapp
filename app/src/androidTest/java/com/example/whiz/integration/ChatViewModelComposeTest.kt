@@ -280,7 +280,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
 
             // Step 3: Send first message to trigger bot response using Compose Testing
             val sentMessages = mutableListOf<String>()
-            val firstMessage = "Keep all responses to 1 word. Name of coffee-making professional? - $uniqueTestId"
+            val firstMessage = "Keep responses to 1 word for test $uniqueTestId. Name of coffee-making professional?"
             
             Log.d(TAG, "📨 Step 3: Sending initial message with Compose Testing...")
             
