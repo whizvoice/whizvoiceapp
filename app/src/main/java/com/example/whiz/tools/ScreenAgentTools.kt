@@ -7109,6 +7109,29 @@ class ScreenAgentTools @Inject constructor(
     
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
+            // Check for Archived screen first - it looks like a chat list but isn't the main one
+            // The Archived screen has "Archived" text in the toolbar
+            val toolbar = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/toolbar")
+            if (toolbar != null && toolbar.isNotEmpty()) {
+                for (toolbarNode in toolbar) {
+                    val archivedNodes = rootNode.findAccessibilityNodeInfosByText("Archived")
+                    if (archivedNodes != null && archivedNodes.isNotEmpty()) {
+                        for (archivedNode in archivedNodes) {
+                            // Check if "Archived" text is a direct title (not part of a chat name)
+                            if (archivedNode.className?.toString() == "android.widget.TextView" &&
+                                archivedNode.text?.toString() == "Archived") {
+                                archivedNodes.forEach { it.recycle() }
+                                toolbar.forEach { it.recycle() }
+                                Log.d(TAG, "On WhatsApp Archived screen - need to go back to main chat list")
+                                return WhatsAppScreen.UNKNOWN
+                            }
+                        }
+                        archivedNodes.forEach { it.recycle() }
+                    }
+                }
+                toolbar.forEach { it.recycle() }
+            }
+
             // Check if we're inside a chat first (most specific screen)
             // A chat screen has the message input field and/or conversation elements
             val messageInputField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
