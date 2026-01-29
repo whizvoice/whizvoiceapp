@@ -7111,25 +7111,42 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Check for Archived screen first - it looks like a chat list but isn't the main one
             // The Archived screen has "Archived" text in the toolbar
-            val toolbar = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/toolbar")
-            if (toolbar != null && toolbar.isNotEmpty()) {
-                for (toolbarNode in toolbar) {
-                    val archivedNodes = rootNode.findAccessibilityNodeInfosByText("Archived")
-                    if (archivedNodes != null && archivedNodes.isNotEmpty()) {
-                        for (archivedNode in archivedNodes) {
-                            // Check if "Archived" text is a direct title (not part of a chat name)
-                            if (archivedNode.className?.toString() == "android.widget.TextView" &&
-                                archivedNode.text?.toString() == "Archived") {
-                                archivedNodes.forEach { it.recycle() }
-                                toolbar.forEach { it.recycle() }
-                                Log.d(TAG, "On WhatsApp Archived screen - need to go back to main chat list")
-                                return WhatsAppScreen.UNKNOWN
+            // BUT: The main chat list also has "Archived" text in a row (com.whatsapp:id/archived_row)
+            // So we first check indicators that we're on main chat list, not archived screen:
+            // 1. archived_row exists (the row showing "Archived" with count)
+            // 2. bottom_nav_container exists (main chat list has bottom nav, archived screen doesn't)
+            val archivedRow = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/archived_row")
+            val hasArchivedRow = archivedRow != null && archivedRow.isNotEmpty()
+            archivedRow?.forEach { it.recycle() }
+
+            val bottomNav = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/bottom_nav_container")
+            val hasBottomNav = bottomNav != null && bottomNav.isNotEmpty()
+            bottomNav?.forEach { it.recycle() }
+
+            val isMainChatList = hasArchivedRow || hasBottomNav
+
+            if (!isMainChatList) {
+                // Only check for archived screen if we don't have the archived_row (which is on main chat list)
+                val toolbar = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/toolbar")
+                if (toolbar != null && toolbar.isNotEmpty()) {
+                    for (toolbarNode in toolbar) {
+                        val archivedNodes = rootNode.findAccessibilityNodeInfosByText("Archived")
+                        if (archivedNodes != null && archivedNodes.isNotEmpty()) {
+                            for (archivedNode in archivedNodes) {
+                                // Check if "Archived" text is a direct title (not part of a chat name)
+                                if (archivedNode.className?.toString() == "android.widget.TextView" &&
+                                    archivedNode.text?.toString() == "Archived") {
+                                    archivedNodes.forEach { it.recycle() }
+                                    toolbar.forEach { it.recycle() }
+                                    Log.d(TAG, "On WhatsApp Archived screen - need to go back to main chat list")
+                                    return WhatsAppScreen.UNKNOWN
+                                }
                             }
+                            archivedNodes.forEach { it.recycle() }
                         }
-                        archivedNodes.forEach { it.recycle() }
                     }
+                    toolbar.forEach { it.recycle() }
                 }
-                toolbar.forEach { it.recycle() }
             }
 
             // Check if we're inside a chat first (most specific screen)
