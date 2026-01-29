@@ -891,7 +891,8 @@ def test_youtube_music_integration(tester):
         "Check if this is a 90s pop playlist or similar. Requirements: "
         "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
         "2) You should see a list of songs that are typical 90s pop hits (e.g., Britney Spears, Backstreet Boys, NSYNC, Spice Girls, etc.). "
-        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all."
+        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
+        "There may or may not be a yellow notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
     )
     if not playlist_validation:
         print("❌ 90s pop playlist validation failed!")
