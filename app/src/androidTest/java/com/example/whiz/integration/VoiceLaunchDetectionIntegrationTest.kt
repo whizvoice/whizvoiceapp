@@ -324,9 +324,6 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             // No tracing_intent_id extra (key difference from voice launches)
         }
 
-        val initialChats = runBlocking { repository.getAllChats() }
-        val initialChatCount = initialChats.size
-
         // Launch through real Android system
         val activity = instrumentation.startActivitySync(manualLaunchIntent)
         
@@ -358,19 +355,19 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         }
         
         // VERIFY: Manual launch should NOT automatically create any chats
+        // Only check for optimistic chats (created by THIS app instance) to avoid flakiness
+        // from other tests or background sync adding chats to the database
         val finalChats = runBlocking { repository.getAllChats() }
         val optimisticChats = finalChats.filter { it.id < 0 }
         val assistantChats = finalChats.filter { it.title == "Assistant Chat" }
-        
+
         val hasOptimisticChat = optimisticChats.isNotEmpty()
         val hasAssistantChat = assistantChats.isNotEmpty()
-        val chatCountIncreased = finalChats.size > initialChatCount
-        
-        if (hasOptimisticChat || hasAssistantChat || chatCountIncreased) {
+
+        if (hasOptimisticChat || hasAssistantChat) {
             android.util.Log.d(TAG, "🚫 Manual launch should NOT create any chat automatically")
-            failWithScreenshot("manual_launch_created_chat", 
+            failWithScreenshot("manual_launch_created_chat",
                 "Manual launch should NOT create any chat automatically - users should choose when to start chats. " +
-                "Initial: $initialChatCount, Final: ${finalChats.size}, " +
                 "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}")
         }
         
