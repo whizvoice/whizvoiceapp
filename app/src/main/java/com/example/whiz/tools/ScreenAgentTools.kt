@@ -819,7 +819,41 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                        Log.w(TAG, "Keyboard may not have opened, trying GLOBAL_ACTION_SHOW_IME fallback")
+
+                        // Log focus state for diagnosis
+                        val stillFocused = inputNode.isFocused
+                        Log.d(TAG, "Input field focus state after timeout: isFocused=$stillFocused")
+
+                        // Try GLOBAL_ACTION_SHOW_IME as fallback (API 31+)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val imeShown = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_SHOW_IME)
+                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $imeShown")
+
+                            // Intelligent wait: check if input field moves up (keyboard opened)
+                            val keyboardOpenedAfterFallback = waitForCondition(maxWaitMs = 2000) {
+                                val currentRootNode = accessibilityService.getCurrentRootNode()
+                                if (currentRootNode != null) {
+                                    val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                                    findWhatsAppMessageInput(currentRootNode, currentInputNodes, 0)
+
+                                    val moved = if (currentInputNodes.isNotEmpty()) {
+                                        val currentRect = android.graphics.Rect()
+                                        currentInputNodes[0].getBoundsInScreen(currentRect)
+                                        val movedUp = initialRect.top - currentRect.top > 300
+                                        currentInputNodes.forEach { it.recycle() }
+                                        movedUp
+                                    } else {
+                                        false
+                                    }
+                                    currentRootNode.recycle()
+                                    moved
+                                } else {
+                                    false
+                                }
+                            }
+                            Log.d(TAG, "Keyboard opened after SHOW_IME fallback: $keyboardOpenedAfterFallback")
+                        }
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
@@ -1813,7 +1847,41 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                        Log.w(TAG, "Keyboard may not have opened, trying GLOBAL_ACTION_SHOW_IME fallback")
+
+                        // Log focus state for diagnosis
+                        val stillFocused = inputNode.isFocused
+                        Log.d(TAG, "Input field focus state after timeout: isFocused=$stillFocused")
+
+                        // Try GLOBAL_ACTION_SHOW_IME as fallback (API 31+)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val imeShown = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_SHOW_IME)
+                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $imeShown")
+
+                            // Intelligent wait: check if input field moves up (keyboard opened)
+                            val keyboardOpenedAfterFallback = waitForCondition(maxWaitMs = 2000) {
+                                val currentRootNode = accessibilityService.getCurrentRootNode()
+                                if (currentRootNode != null) {
+                                    val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
+                                    findEditTextNodes(currentRootNode, currentInputNodes)
+
+                                    val moved = if (currentInputNodes.isNotEmpty()) {
+                                        val currentRect = android.graphics.Rect()
+                                        currentInputNodes[0].getBoundsInScreen(currentRect)
+                                        val movedUp = initialRect.top - currentRect.top > 300
+                                        currentInputNodes.forEach { it.recycle() }
+                                        movedUp
+                                    } else {
+                                        false
+                                    }
+                                    currentRootNode.recycle()
+                                    moved
+                                } else {
+                                    false
+                                }
+                            }
+                            Log.d(TAG, "Keyboard opened after SHOW_IME fallback: $keyboardOpenedAfterFallback")
+                        }
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
