@@ -12,6 +12,7 @@ On my phone, which is what I use for testing as well as running the production a
 - Don't do git operations; user prefers to do it themselves
 - Don't try to run the webserver. It's on a different machine.
 - Don't do anything extra outside of what the user asked. For example if user asked you to add logging to debug a test, don't add code to try to make the test pass.
+- Unfortunately the screen agent tools are quite brittle and can break when the apps that they navigate get updated. Whereever possible, please try to maintain backwards compatibility when updating UI navigation in screen agent tools so that it will work on previous versions as well as current versions of the app being navigated (e.g. YouTube Music, Google Messages, WhatsApp, Google Maps)
 
 ## Testing
 
