@@ -819,41 +819,7 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, trying GLOBAL_ACTION_SHOW_IME fallback")
-
-                        // Log focus state for diagnosis
-                        val stillFocused = inputNode.isFocused
-                        Log.d(TAG, "Input field focus state after timeout: isFocused=$stillFocused")
-
-                        // Try GLOBAL_ACTION_SHOW_IME as fallback (API 31+)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val imeShown = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_SHOW_IME)
-                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $imeShown")
-
-                            // Intelligent wait: check if input field moves up (keyboard opened)
-                            val keyboardOpenedAfterFallback = waitForCondition(maxWaitMs = 2000) {
-                                val currentRootNode = accessibilityService.getCurrentRootNode()
-                                if (currentRootNode != null) {
-                                    val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                                    findWhatsAppMessageInput(currentRootNode, currentInputNodes, 0)
-
-                                    val moved = if (currentInputNodes.isNotEmpty()) {
-                                        val currentRect = android.graphics.Rect()
-                                        currentInputNodes[0].getBoundsInScreen(currentRect)
-                                        val movedUp = initialRect.top - currentRect.top > 300
-                                        currentInputNodes.forEach { it.recycle() }
-                                        movedUp
-                                    } else {
-                                        false
-                                    }
-                                    currentRootNode.recycle()
-                                    moved
-                                } else {
-                                    false
-                                }
-                            }
-                            Log.d(TAG, "Keyboard opened after SHOW_IME fallback: $keyboardOpenedAfterFallback")
-                        }
+                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
@@ -1584,18 +1550,23 @@ class ScreenAgentTools @Inject constructor(
         trackAction("draftSMSMessage: ${message.take(30)}...")
 
         try {
-            // Auto-launch Messages app if not already open
-            val launchResult = launchApp("Messages", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Failed to open Messages: ${launchResult.error}"
-                )
+            // Skip launching app when updating an existing draft - we're already in the correct conversation
+            if (previousText != null) {
+                Log.d(TAG, "Skipping app launch - updating existing draft, already in conversation")
+            } else {
+                // Auto-launch Messages app if not already open
+                val launchResult = launchApp("Messages", enableOverlay = true)
+                if (!launchResult.success) {
+                    Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Failed to open Messages: ${launchResult.error}"
+                    )
+                }
+                Log.i(TAG, "Messages app launched successfully")
+                delay(1000) // Wait for Messages to fully load
             }
-            Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -1646,10 +1617,16 @@ class ScreenAgentTools @Inject constructor(
                 }
             } else if (previousText != null) {
                 Log.d(TAG, "Skipping contact navigation check - updating existing draft (previousText provided)")
+
+                // Dismiss the existing overlay first so we can find the actual input field
+                Log.d(TAG, "Dismissing existing draft overlay before updating")
+                MessageDraftOverlayService.stop(context)
+                delay(500) // Wait for overlay to fully dismiss
+                Log.d(TAG, "Overlay dismissed, proceeding to find input field")
             }
 
-            // Wait a bit to ensure we're in a conversation
-            delay(800)
+            // Wait a bit to ensure we're in a conversation (shorter when updating since we're already there)
+            delay(if (previousText != null) 300 else 800)
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -1717,6 +1694,10 @@ class ScreenAgentTools @Inject constructor(
 
                     // Recycle unused nodes
                     filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
+                } else if (previousText != null) {
+                    // When updating existing draft, don't use Compose UI fallback
+                    // The overlay was just dismissed, and the Compose UI heuristics might find it or other views
+                    Log.w(TAG, "No EditText nodes found when updating draft - cannot proceed without EditText")
                 } else {
                     Log.d(TAG, "No EditText nodes found - trying Compose UI fallback")
 
@@ -1769,7 +1750,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
-                // For EditText (traditional UI): Use focus only, then GLOBAL_ACTION_SHOW_IME
+                // For EditText (traditional UI): Use focus only, then toggleSoftInput fallback if needed
                 // For Compose UI: Use double-click pattern
                 val clickSuccess: Boolean
                 if (isComposeUI) {
@@ -1784,11 +1765,11 @@ class ScreenAgentTools @Inject constructor(
                     val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     Log.d(TAG, "Second click result (Compose UI): $secondClick")
                 } else {
-                    // Traditional EditText: Use focus || click like WhatsApp does
-                    val focusResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    // Traditional EditText: Just click to open keyboard
+                    // Note: ACTION_FOCUS sets accessibility focus which may interfere with input focus
                     val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    clickSuccess = focusResult || clickResult
-                    Log.d(TAG, "EditText: focus=$focusResult, click=$clickResult")
+                    clickSuccess = clickResult
+                    Log.d(TAG, "EditText: click=$clickResult")
                 }
 
                 if (clickSuccess) {
@@ -1810,31 +1791,7 @@ class ScreenAgentTools @Inject constructor(
                                 currentInputNodes.forEach { it.recycle() }
                                 moved
                             } else {
-                                // For Compose UI, check if any wide clickable view in bottom area moved up
-                                val allClickable = mutableListOf<AccessibilityNodeInfo>()
-                                findClickableChildren(currentRootNode, allClickable)
-
-                                val screenWidth = context.resources.displayMetrics.widthPixels
-                                val wideBottomViews = allClickable.filter { node ->
-                                    val rect = android.graphics.Rect()
-                                    node.getBoundsInScreen(rect)
-                                    val width = rect.right - rect.left
-                                    width > (screenWidth * 0.4) && rect.bottom > 2000
-                                }
-
-                                val moved = if (wideBottomViews.isNotEmpty()) {
-                                    val currentRect = android.graphics.Rect()
-                                    wideBottomViews[0].getBoundsInScreen(currentRect)
-                                    val upMovement = initialRect.top - currentRect.top
-                                    Log.d(TAG, "Compose UI: input moved up by ${upMovement}px")
-                                    upMovement > 300
-                                } else {
-                                    false
-                                }
-
-                                wideBottomViews.forEach { it.recycle() }
-                                allClickable.filter { it !in wideBottomViews }.forEach { it.recycle() }
-                                moved
+                                false
                             }
 
                             currentRootNode.recycle()
@@ -1847,41 +1804,7 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, trying GLOBAL_ACTION_SHOW_IME fallback")
-
-                        // Log focus state for diagnosis
-                        val stillFocused = inputNode.isFocused
-                        Log.d(TAG, "Input field focus state after timeout: isFocused=$stillFocused")
-
-                        // Try GLOBAL_ACTION_SHOW_IME as fallback (API 31+)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val imeShown = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_SHOW_IME)
-                            Log.d(TAG, "GLOBAL_ACTION_SHOW_IME result: $imeShown")
-
-                            // Intelligent wait: check if input field moves up (keyboard opened)
-                            val keyboardOpenedAfterFallback = waitForCondition(maxWaitMs = 2000) {
-                                val currentRootNode = accessibilityService.getCurrentRootNode()
-                                if (currentRootNode != null) {
-                                    val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                                    findEditTextNodes(currentRootNode, currentInputNodes)
-
-                                    val moved = if (currentInputNodes.isNotEmpty()) {
-                                        val currentRect = android.graphics.Rect()
-                                        currentInputNodes[0].getBoundsInScreen(currentRect)
-                                        val movedUp = initialRect.top - currentRect.top > 300
-                                        currentInputNodes.forEach { it.recycle() }
-                                        movedUp
-                                    } else {
-                                        false
-                                    }
-                                    currentRootNode.recycle()
-                                    moved
-                                } else {
-                                    false
-                                }
-                            }
-                            Log.d(TAG, "Keyboard opened after SHOW_IME fallback: $keyboardOpenedAfterFallback")
-                        }
+                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
@@ -2029,18 +1952,9 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to send SMS message: $message")
 
         try {
-            // Auto-launch Messages app if not already open
-            val launchResult = launchApp("Messages", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
-                return SMSResult(
-                    success = false,
-                    action = "send_message",
-                    error = "Failed to open Messages: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
+            // Skip launching app - sendSMSMessage is always called after a draft was shown,
+            // so the Messages app should already be open in the correct conversation
+            Log.d(TAG, "Skipping app launch - send is called after draft, app should already be in correct state")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -3934,19 +3848,32 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                     // If no Start button, check for mode tabs (indicates we're on directions screen)
-                    // This is important for transit mode which doesn't show Start button until a route is selected
                     val modeTabNodes = mutableListOf<AccessibilityNodeInfo>()
                     findNodesByResourceId(modeRootNode, "com.google.android.apps.maps:id/directions_mode_tabs", modeTabNodes)
                     val hasModeTabs = modeTabNodes.isNotEmpty()
                     modeTabNodes.forEach { it.recycle() }
 
                     if (hasModeTabs) {
-                        directionsScreenFound = true
-                        Log.d(TAG, "Found directions mode tabs on attempt $attempt (no Start button yet - likely transit mode)")
-                        break
+                        // Check what mode we're in - only break early for transit mode
+                        // For driving/walking/biking, the Start button should exist, so keep waiting
+                        val currentMode = findSelectedTransportMode(modeRootNode)
+                        val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
+
+                        if (isTransitMode) {
+                            // Transit mode genuinely doesn't have Start button until route is selected
+                            directionsScreenFound = true
+                            Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")
+                            break
+                        } else {
+                            // Non-transit mode - Start button should exist, keep waiting for it to render
+                            Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
+                            // Don't break - continue the loop to wait for Start button
+                            modeRootNode.recycle()
+                            modeRootNode = null
+                        }
                     }
 
-                    modeRootNode.recycle()
+                    modeRootNode?.recycle()
                     modeRootNode = null
                 }
                 Log.d(TAG, "Directions screen indicators not found, waiting... (attempt $attempt/5)")
