@@ -82,6 +82,11 @@ class BubbleOverlayService : Service() {
         var isActive: Boolean = false
             private set
 
+        // Flag to indicate bubble is about to start (set before startService, cleared in onCreate)
+        // This prevents race condition where onAppBackgrounded fires before bubble's onCreate sets isActive
+        @Volatile
+        var isPendingStart: Boolean = false
+
         // Track the current listening mode
         @Volatile
         var bubbleListeningMode: ListeningMode = ListeningMode.CONTINUOUS_LISTENING
@@ -159,6 +164,7 @@ class BubbleOverlayService : Service() {
         super.onCreate()
         Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
         isActive = true
+        isPendingStart = false  // Clear pending flag now that we're actually active
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 

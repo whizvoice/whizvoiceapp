@@ -443,9 +443,11 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
 
         // Note: TTS state is saved by ChatViewModel before disabling
-        // Check if bubble overlay is running - if so, don't stop listening
-        if (com.example.whiz.services.BubbleOverlayService.isActive) {
-            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
+        // Check if bubble overlay is running OR about to start - if so, don't stop listening
+        // isPendingStart handles the race condition where onAppBackgrounded fires before
+        // bubble's onCreate sets isActive (since startService is asynchronous)
+        if (BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart) {
+            Log.d(TAG, "Bubble overlay is active or pending - keeping voice recognition running (isActive=${BubbleOverlayService.isActive}, isPendingStart=${BubbleOverlayService.isPendingStart})")
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }

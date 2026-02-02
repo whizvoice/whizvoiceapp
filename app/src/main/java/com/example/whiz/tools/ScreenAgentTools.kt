@@ -167,21 +167,34 @@ class ScreenAgentTools @Inject constructor(
                 
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(launchIntent)
-                    
-                    val appLabel = packageManager.getApplicationLabel(
-                        packageManager.getApplicationInfo(packageName, 0)
-                    ).toString()
-                    
-                    // Start bubble overlay if enabled and we have permission
+
+                    // Set pending flag BEFORE launching to prevent race with onAppBackgrounded
+                    // This ensures VoiceManager doesn't stop listening during the transition
                     var overlayStarted = false
                     var overlayPermissionRequired = false
                     Log.d(TAG, "Checking overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}, hasPermission=${hasOverlayPermission()}")
+                    if (enableOverlay && !isWhizApp(packageName) && hasOverlayPermission()) {
+                        BubbleOverlayService.isPendingStart = true
+                        Log.d(TAG, "Set isPendingStart=true before launching (fuzzy)")
+                    }
+
+                    context.startActivity(launchIntent)
+
+                    val appLabel = packageManager.getApplicationLabel(
+                        packageManager.getApplicationInfo(packageName, 0)
+                    ).toString()
+
+                    // Start bubble overlay if enabled and we have permission
                     if (enableOverlay && !isWhizApp(packageName)) {
                         if (hasOverlayPermission()) {
                             Log.d(TAG, "Starting bubble overlay service (fuzzy)")
                             overlayStarted = startBubbleOverlay()
                             Log.d(TAG, "Bubble overlay started (fuzzy): $overlayStarted")
+                            // Clear pending flag if bubble failed to start
+                            if (!overlayStarted) {
+                                BubbleOverlayService.isPendingStart = false
+                                Log.d(TAG, "Cleared isPendingStart because bubble failed to start (fuzzy)")
+                            }
                         } else {
                             overlayPermissionRequired = true
                             Log.w(TAG, "Overlay permission required to show bubble")
@@ -247,9 +260,20 @@ class ScreenAgentTools @Inject constructor(
                 
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+                    // Set pending flag BEFORE launching to prevent race with onAppBackgrounded
+                    // This ensures VoiceManager doesn't stop listening during the transition
+                    var overlayStarted = false
+                    var overlayPermissionRequired = false
+                    Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
+                    if (enableOverlay && !isWhizApp(mappedPackage) && hasOverlayPermission()) {
+                        BubbleOverlayService.isPendingStart = true
+                        Log.i(TAG, "🔵 Set isPendingStart=true before launching (common mappings)")
+                    }
+
                     try {
                         context.startActivity(launchIntent)
-                        
+
                         val appLabel = try {
                             packageManager.getApplicationLabel(
                                 packageManager.getApplicationInfo(mappedPackage, 0)
@@ -257,16 +281,18 @@ class ScreenAgentTools @Inject constructor(
                         } catch (e: Exception) {
                             appName
                         }
-                        
+
                         // Start bubble overlay if enabled and we have permission
-                        var overlayStarted = false
-                        var overlayPermissionRequired = false
-                        Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                         if (enableOverlay && !isWhizApp(mappedPackage)) {
                             if (hasOverlayPermission()) {
                                 Log.i(TAG, "🔵 STARTING BUBBLE OVERLAY SERVICE for $mappedPackage")
                                 overlayStarted = startBubbleOverlay()
                                 Log.i(TAG, "🔵 BUBBLE OVERLAY RESULT: $overlayStarted")
+                                // Clear pending flag if bubble failed to start
+                                if (!overlayStarted) {
+                                    BubbleOverlayService.isPendingStart = false
+                                    Log.i(TAG, "🔵 Cleared isPendingStart because bubble failed to start")
+                                }
                             } else {
                                 overlayPermissionRequired = true
                                 Log.w(TAG, "🔵 OVERLAY PERMISSION REQUIRED to show bubble")
@@ -285,10 +311,12 @@ class ScreenAgentTools @Inject constructor(
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
+                        // Clear pending flag on launch failure
+                        BubbleOverlayService.isPendingStart = false
                     }
                 }
             }
-            
+
             Log.w(TAG, "Could not find app matching: $appName")
             logScreenAgentError(
                 reason = "app_not_found",
