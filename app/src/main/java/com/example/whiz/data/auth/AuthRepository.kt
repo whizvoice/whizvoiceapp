@@ -43,6 +43,7 @@ private object PreferenceKeys {
     const val USER_EMAIL = "user_email"
     const val USER_PHOTO_URL = "user_photo_url"
     const val DEFAULT_SMS_APP_PACKAGE = "default_sms_app_package"
+    const val DEVICE_ID = "device_id"
 }
 
 // OAuth client ID for Google Sign-In
@@ -612,5 +613,28 @@ open class AuthRepository @Inject constructor(
             apply()
         }
         Log.d(TAG, "Saved default SMS app package: $packageName")
+    }
+
+    /**
+     * Get or create a persistent device ID.
+     * Uses ANDROID_ID as the primary source, with UUID fallback.
+     * The device ID persists in SharedPreferences to ensure consistency across sessions.
+     */
+    fun getOrCreateDeviceId(): String {
+        var deviceId = sharedPreferences.getString(PreferenceKeys.DEVICE_ID, null)
+        if (deviceId == null) {
+            // Try to use ANDROID_ID first
+            deviceId = android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID
+            )
+            // Fallback to UUID if ANDROID_ID is not available
+            if (deviceId.isNullOrEmpty()) {
+                deviceId = java.util.UUID.randomUUID().toString()
+            }
+            sharedPreferences.edit().putString(PreferenceKeys.DEVICE_ID, deviceId).apply()
+            Log.d(TAG, "Created new device ID: $deviceId")
+        }
+        return deviceId
     }
 } 
