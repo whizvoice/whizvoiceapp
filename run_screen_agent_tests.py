@@ -674,8 +674,10 @@ def test_whatsapp_draft_message(tester):
         print("========================================")
         # Cleanup: Delete the sent message
         # Long press on the newly sent message
-        print("🖱️  Long pressing on message at (500, 1280)...")
-        tester.long_press(500, 1280)
+        device_model = get_device_model()
+        long_press_y = 1180 if "Pixel 8" in device_model else 1280
+        print(f"🖱️  Long pressing on message at (500, {long_press_y})...")
+        tester.long_press(500, long_press_y)
         time.sleep(2)
 
         # Click delete button
@@ -1417,8 +1419,10 @@ def test_sms_draft_message(tester):
         print("========================================")
         # Cleanup: Delete the sent message
         # Long press on the newly sent message
-        print("🖱️  Long pressing on message at (500, 1280)...")
-        tester.long_press(500, 1180)
+        device_model = get_device_model()
+        long_press_y = 1180 if "Pixel 8" in device_model else 1280
+        print(f"🖱️  Long pressing on message at (500, {long_press_y})...")
+        tester.long_press(500, long_press_y)
         time.sleep(2)
 
         # Click delete button (may vary by SMS app)
