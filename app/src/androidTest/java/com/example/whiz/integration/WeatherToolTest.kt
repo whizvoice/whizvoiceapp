@@ -199,7 +199,7 @@ class WeatherToolTest : BaseIntegrationTest() {
                         break
                     }
                 }
-                delay(500)
+                delay(200)
             }
 
             if (!botResponded) {
