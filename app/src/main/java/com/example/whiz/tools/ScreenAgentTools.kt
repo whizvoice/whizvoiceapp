@@ -434,33 +434,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Accessibility service not enabled. Please enable it in settings."
                 )
             }
-
-            // Check if we're already in the correct chat before navigating back
-            val rootNodeCheck = accessibilityService.getCurrentRootNode()
-            if (rootNodeCheck != null) {
-                val currentScreen = detectWhatsAppScreen(rootNodeCheck)
-                if (currentScreen == WhatsAppScreen.INSIDE_CHAT) {
-                    val currentChatName = getCurrentWhatsAppChatName(rootNodeCheck)
-                    rootNodeCheck.recycle()
-
-                    val normalizedCurrent = normalizeChatName(currentChatName ?: "")
-                    val normalizedRequested = normalizeChatName(chatName)
-                    val isCorrectChat = currentChatName != null &&
-                        (normalizedCurrent == normalizedRequested ||
-                         normalizedCurrent.contains(normalizedRequested) ||
-                         normalizedRequested.contains(normalizedCurrent))
-
-                    if (isCorrectChat) {
-                        Log.i(TAG, "Already in correct WhatsApp chat: $currentChatName")
-                        return WhatsAppResult(success = true, action = "select_chat", chatName = chatName)
-                    } else {
-                        Log.d(TAG, "In a different WhatsApp chat (current: $currentChatName [$normalizedCurrent], requested: $chatName [$normalizedRequested]). Navigating to chat list...")
-                    }
-                } else {
-                    rootNodeCheck.recycle()
-                }
-            }
-
+            
             // Navigate to chat list by pressing back repeatedly
             // Try up to 6 times to reach the chat list
             var onChatList = false
@@ -1198,27 +1172,6 @@ class ScreenAgentTools @Inject constructor(
                         contactName = contactName,
                         error = "Accessibility service not enabled. Please enable it in settings."
                     )
-                }
-            }
-
-            // Check if we're already in the correct SMS conversation before navigating back
-            val rootNodeCheck = accessibilityService.getCurrentRootNode()
-            if (rootNodeCheck != null) {
-                val currentContactName = getCurrentSMSContactName(rootNodeCheck)
-                rootNodeCheck.recycle()
-
-                val normalizedCurrent = normalizeChatName(currentContactName ?: "")
-                val normalizedRequested = normalizeChatName(contactName)
-                val isCorrectConversation = currentContactName != null &&
-                    (normalizedCurrent == normalizedRequested ||
-                     normalizedCurrent.contains(normalizedRequested) ||
-                     normalizedRequested.contains(normalizedCurrent))
-
-                if (isCorrectConversation) {
-                    Log.i(TAG, "Already in correct SMS conversation: $currentContactName")
-                    return SMSResult(success = true, action = "select_chat", contactName = contactName)
-                } else if (currentContactName != null) {
-                    Log.d(TAG, "In a different SMS conversation (current: $currentContactName [$normalizedCurrent], requested: $contactName [$normalizedRequested]). Navigating to conversation list...")
                 }
             }
 
