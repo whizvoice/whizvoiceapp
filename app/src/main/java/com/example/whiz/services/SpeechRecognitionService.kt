@@ -503,6 +503,29 @@ class SpeechRecognitionService @Inject constructor(
                 val willRestart = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) && shouldRestart && !manualStopInProgress
 
                 if (willRestart) {
+                    // 🔧 Save current partial before restarting, same as onEndOfSpeech backup
+                    // Without this, text like "So sick of not eating whatever I" is lost when
+                    // onError(NO_MATCH) fires instead of onEndOfSpeech
+                    val currentPartial = _transcriptionState.value
+                    if (currentPartial.isNotBlank() && savedPartialForConcatenation.isBlank()) {
+                        Log.d(TAG, "🔄 RESTART_DEBUG: onError saving partial before restart: '$currentPartial' (peak: $peakPartialLength)")
+                        savedPartialForConcatenation = currentPartial
+                        savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
+                        savedPartialTimeoutJob?.cancel()
+                        savedPartialTimeoutJob = serviceScope.launch {
+                            delay(SAVED_PARTIAL_TIMEOUT_MS)
+                            if (savedPartialForConcatenation.isNotBlank()) {
+                                Log.d(TAG, "🔄 RESTART_DEBUG: onError saved partial timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
+                                val partialToSend = savedPartialForConcatenation
+                                savedPartialForConcatenation = ""
+                                savedPartialIsAfterFinalResult = false
+                                _transcriptionState.value = partialToSend
+                                recognitionCallback?.invoke(partialToSend)
+                                _transcriptionState.value = ""
+                            }
+                        }
+                    }
+
                     // Smart rate limiting using sliding window: count errors within the last N milliseconds
                     val currentTime = System.currentTimeMillis()
                     // Remove timestamps older than the window
