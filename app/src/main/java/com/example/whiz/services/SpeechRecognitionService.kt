@@ -60,6 +60,8 @@ class SpeechRecognitionService @Inject constructor(
     // 🔧 Partial concatenation for premature end-of-speech detection
     private var lastPartialTimestamp = 0L
     private var savedPartialForConcatenation = ""
+    private var savedPartialIsAfterFinalResult = false  // True when saved partial is a NEW sub-utterance spoken AFTER the finalized text
+    private var peakPartialLength = 0  // Longest partial seen in current recognition session, used to detect partial buffer resets
     private val PREMATURE_END_THRESHOLD_MS = 1500L // If end-of-speech fires within this time of last partial, it's probably premature
     private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Wait for user to continue speaking (premature end case)
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
@@ -338,6 +340,7 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] onReadyForSpeech")
                 _errorState.value = null
                 manualStopInProgress = false
+                peakPartialLength = 0
 
                 // CRITICAL: Re-check if we should still be listening
                 // This prevents race conditions where bubble is dismissed after restart is initiated
@@ -383,8 +386,11 @@ class SpeechRecognitionService @Inject constructor(
 
                     if (isPrematureEnd) {
                         // 🔧 Premature end-of-speech detected - save partial for concatenation
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Premature end-of-speech detected (${timeSinceLastPartial}ms < ${PREMATURE_END_THRESHOLD_MS}ms), saving partial for concatenation: '$currentPartial'")
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Premature end-of-speech detected (${timeSinceLastPartial}ms < ${PREMATURE_END_THRESHOLD_MS}ms), saving partial for concatenation: '$currentPartial' (peak: $peakPartialLength)")
                         savedPartialForConcatenation = currentPartial
+                        // If saved partial is much shorter than peak, a partial buffer reset occurred
+                        // (e.g., user said "Long phrase" [pause] "Short" — partial jumped from long to short)
+                        savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
                         // Don't clear transcription state - keep showing it in UI
 
                         // Start a timeout to send the saved partial if user doesn't continue
@@ -395,6 +401,7 @@ class SpeechRecognitionService @Inject constructor(
                                 Log.d(TAG, "🔄 RESTART_DEBUG: Saved partial timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
                                 val partialToSend = savedPartialForConcatenation
                                 savedPartialForConcatenation = ""
+                                savedPartialIsAfterFinalResult = false
                                 // Send the partial as the final transcription
                                 _transcriptionState.value = partialToSend
                                 recognitionCallback?.invoke(partialToSend)
@@ -407,8 +414,9 @@ class SpeechRecognitionService @Inject constructor(
                         // 🔧 BUG FIX: Also save partial for normal end-of-speech as backup
                         // The 20ms restart can cancel onResults before it delivers, so we need a safety net
                         if (currentPartial.isNotBlank()) {
-                            Log.d(TAG, "🔄 RESTART_DEBUG: Saving partial as backup in case onResults is canceled: '$currentPartial'")
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Saving partial as backup in case onResults is canceled: '$currentPartial' (peak: $peakPartialLength)")
                             savedPartialForConcatenation = currentPartial
+                            savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
                             savedPartialTimeoutJob?.cancel()
                             savedPartialTimeoutJob = serviceScope.launch {
                                 delay(BACKUP_RESULT_TIMEOUT_MS) // Short timeout - just catching race condition
@@ -416,6 +424,7 @@ class SpeechRecognitionService @Inject constructor(
                                     Log.d(TAG, "🔄 RESTART_DEBUG: Backup timeout fired (${BACKUP_RESULT_TIMEOUT_MS}ms) - onResults didn't deliver, sending partial as final: '$savedPartialForConcatenation'")
                                     val partialToSend = savedPartialForConcatenation
                                     savedPartialForConcatenation = ""
+                                    savedPartialIsAfterFinalResult = false
                                     _transcriptionState.value = partialToSend
                                     recognitionCallback?.invoke(partialToSend)
                                     _transcriptionState.value = ""
@@ -540,9 +549,16 @@ class SpeechRecognitionService @Inject constructor(
                 // 🔧 If we have a saved partial from a previous session, merge it with the final result
                 if (savedPartialForConcatenation.isNotBlank() && finalText.isNotBlank()) {
                     val originalFinal = finalText
-                    finalText = mergeOverlapping(savedPartialForConcatenation, finalText)
-                    Log.d(TAG, "[DEBUG] 🔗 MERGED final result: saved='$savedPartialForConcatenation' + final='$originalFinal' -> '$finalText'")
-                    savedPartialForConcatenation = "" // Clear after use
+                    if (savedPartialIsAfterFinalResult) {
+                        // Saved partial is a new sub-utterance spoken AFTER the finalized text
+                        finalText = mergeOverlapping(finalText, savedPartialForConcatenation)
+                        Log.d(TAG, "[DEBUG] 🔗 MERGED final result (saved AFTER final): final='$originalFinal' + saved='$savedPartialForConcatenation' -> '$finalText'")
+                    } else {
+                        finalText = mergeOverlapping(savedPartialForConcatenation, finalText)
+                        Log.d(TAG, "[DEBUG] 🔗 MERGED final result: saved='$savedPartialForConcatenation' + final='$originalFinal' -> '$finalText'")
+                    }
+                    savedPartialForConcatenation = ""
+                    savedPartialIsAfterFinalResult = false
                     savedPartialTimeoutJob?.cancel()
                 }
 
@@ -605,7 +621,12 @@ class SpeechRecognitionService @Inject constructor(
                     Log.d(TAG, "[DEBUG] 🔗 MERGED partial: saved='$savedPartialForConcatenation' + partial='$originalPartial' -> '$partialText'")
                 }
 
-                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
+                // Track peak partial length for detecting partial buffer resets
+                if (partialText.length > peakPartialLength) {
+                    peakPartialLength = partialText.length
+                }
+
+                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}', peak: $peakPartialLength)")
 
                 // Ignore empty partial results to prevent clearing user's spoken text
                 // Empty partials can occur due to TTS interference, pauses, or recognition resets
@@ -616,6 +637,7 @@ class SpeechRecognitionService @Inject constructor(
                     if (savedPartialForConcatenation.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] 🧹 Clearing savedPartialForConcatenation after successful concatenation")
                         savedPartialForConcatenation = ""
+                        savedPartialIsAfterFinalResult = false
                         savedPartialTimeoutJob?.cancel() // Cancel the timeout since we used the partial
                     }
                 } else {
