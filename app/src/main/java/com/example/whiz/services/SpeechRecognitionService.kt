@@ -780,7 +780,7 @@ class SpeechRecognitionService @Inject constructor(
         // slightly different transcription. In this case, prefer the newer (second).
         val maxPrefixLength = 30 // Compare up to first 30 characters
         val similarityThreshold = 0.70 // 70% similarity threshold
-        val minRequiredLength = 10 // Minimum characters needed for reliable comparison
+        val minRequiredLength = 5 // Minimum characters needed for reliable comparison
 
         // Use the shorter of: maxPrefixLength, or the length of the shorter string
         val compareLength = minOf(maxPrefixLength, first.length, second.length)
@@ -795,10 +795,38 @@ class SpeechRecognitionService @Inject constructor(
             }
         }
 
+        // Full-string similarity check: catches same-utterance cases at any length
+        // (e.g., "call mom" vs "call Mum", "yes" vs "yep")
+        val fullSimilarity = similarityRatio(first.lowercase(), second.lowercase())
+        val lengthRatio = minOf(first.length, second.length).toDouble() / maxOf(first.length, second.length)
+        if (fullSimilarity >= 0.65 && lengthRatio >= 0.6) {
+            Log.d(TAG, "[DEBUG] 🔗 MERGE_FULL_SIMILARITY: Detected similar strings (${(fullSimilarity * 100).toInt()}% similarity, ${(lengthRatio * 100).toInt()}% length ratio), using ${if (second.length >= first.length) "newer" else "older"} transcription")
+            return if (second.length >= first.length) second else first
+        }
+
+        // Word-level fuzzy overlap: catches middle overlaps where the recognizer
+        // changed words at the boundary (e.g., "I want to go to the store" + "to store and buy groceries")
+        val firstWords = first.trim().split("\\s+".toRegex())
+        val secondWords = second.trim().split("\\s+".toRegex())
+        for (overlapSize in minOf(firstWords.size, secondWords.size) downTo 2) {
+            val firstSuffixStr = firstWords.takeLast(overlapSize).joinToString(" ").lowercase()
+            val secondPrefixStr = secondWords.take(overlapSize).joinToString(" ").lowercase()
+            val similarity = similarityRatio(firstSuffixStr, secondPrefixStr)
+            if (similarity >= 0.70) {
+                val secondRemainder = secondWords.drop(overlapSize).joinToString(" ")
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_WORD_OVERLAP: Detected word-level overlap (${(similarity * 100).toInt()}% similarity over $overlapSize words), merging")
+                return if (secondRemainder.isNotBlank()) {
+                    "${first.trim()} $secondRemainder"
+                } else {
+                    if (first.length > second.length) first else second
+                }
+            }
+        }
+
         val firstLower = first.lowercase()
         val secondLower = second.lowercase()
 
-        // Find the longest suffix of first that matches a prefix of second
+        // Find the longest suffix of first that matches a prefix of second (exact character match fallback)
         // Start from the longest possible overlap and work down
         val maxOverlap = minOf(first.length, second.length)
 
