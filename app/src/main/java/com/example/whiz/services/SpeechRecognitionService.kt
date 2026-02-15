@@ -2,6 +2,7 @@ package com.example.whiz.services
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -68,6 +69,8 @@ class SpeechRecognitionService @Inject constructor(
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
     private var savedPartialTimeoutJob: kotlinx.coroutines.Job? = null
     private var restartAfterResults = false  // Defer restart to onResults to avoid ERROR_CLIENT from premature startListening
+    private var useSegmentedSession = false  // True when API 33+ segmented session is active
+    private var audioPipeRecorder: AudioPipeRecorder? = null  // API 33+: pipes our mic audio to recognizer
 
     val isInitialized: Boolean
         get() = _isInitialized
@@ -134,17 +137,46 @@ class SpeechRecognitionService @Inject constructor(
 
     // Setup the intent properties once
     private fun setupRecognizerIntent() {
+        // Clean up any existing recorder (pipe is single-use)
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
+
         recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // Prefer on-device speech recognition for reliability (falls back to cloud if unavailable)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Setting these might influence when onEndOfSpeech/onResults are called
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L) // Increased pause detection
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            // Consider removing minimum length if causing issues:
-            // putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
+
+            val isContinuous = continuousListeningCallback?.invoke() ?: false
+            if (isContinuous && Build.VERSION.SDK_INT >= 33) {
+                try {
+                    val recorder = AudioPipeRecorder()
+                    audioPipeRecorder = recorder
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, recorder.readParcel)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, AudioPipeRecorder.CHANNEL_COUNT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioPipeRecorder.AUDIO_FORMAT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AudioPipeRecorder.SAMPLE_RATE)
+                    putExtra(
+                        RecognizerIntent.EXTRA_SEGMENTED_SESSION,
+                        RecognizerIntent.EXTRA_AUDIO_SOURCE
+                    )
+                    useSegmentedSession = true
+                    Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🔄 SEGMENTED: AudioPipeRecorder failed, falling back to standard mode", e)
+                    audioPipeRecorder = null
+                    useSegmentedSession = false
+                    // Fall back to standard extras
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                }
+            } else {
+                // API 31-32 or non-continuous: standard approach with silence timeouts
+                useSegmentedSession = false
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            }
         }
     }
 
@@ -207,6 +239,7 @@ class SpeechRecognitionService @Inject constructor(
             manualStopInProgress = false
 
             setupRecognizerIntent()
+            audioPipeRecorder?.start()  // Must start BEFORE recognizer reads from pipe
             speechRecognizer?.startListening(recognizerIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting speech recognition", e)
@@ -229,6 +262,10 @@ class SpeechRecognitionService @Inject constructor(
             Log.d(TAG, "[DEBUG] Stopping speech recognition forcefully")
             manualStopInProgress = true
 
+            // Clean up audio pipe recorder first
+            audioPipeRecorder?.cleanup()
+            audioPipeRecorder = null
+
             // Note: Continuous listening is now managed by VoiceManager
 
             // First cancel any ongoing recognition
@@ -248,6 +285,7 @@ class SpeechRecognitionService @Inject constructor(
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
             restartAfterResults = false
+            useSegmentedSession = false
             savedPartialTimeoutJob?.cancel()
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping speech recognition", e)
@@ -256,11 +294,15 @@ class SpeechRecognitionService @Inject constructor(
             // 🔧 BUG FIX: Don't clear callback on error either - let onResults() handle cleanup
             // recognitionCallback = null  // ← REMOVED: This was preventing final results delivery
             // Note: Continuous listening is now managed by VoiceManager
+            // Clean up audio pipe recorder
+            audioPipeRecorder?.cleanup()
+            audioPipeRecorder = null
             // Try to clean up
             cleanup()
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
             restartAfterResults = false
+            useSegmentedSession = false
             savedPartialTimeoutJob?.cancel()
         }
     }
@@ -278,6 +320,10 @@ class SpeechRecognitionService @Inject constructor(
      * Ensures all SpeechRecognizer operations run on the main thread
      */
     private fun cleanup() {
+        // Clean up audio pipe recorder
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
+
         try {
             speechRecognizer?.let { recognizer ->
                 // Ensure SpeechRecognizer operations run on main thread
@@ -328,6 +374,7 @@ class SpeechRecognitionService @Inject constructor(
         manualStopInProgress = false
         utteranceFinalized = false
         restartAfterResults = false
+        useSegmentedSession = false
         recognizerIntent = null
     }
 
@@ -376,6 +423,12 @@ class SpeechRecognitionService @Inject constructor(
                 // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
                 if (testModeEnabled) {
                     Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-speech callback")
+                    return
+                }
+
+                // In segmented mode, onEndOfSpeech fires per-segment; onSegmentResults handles delivery
+                if (useSegmentedSession) {
+                    Log.d(TAG, "🔄 SEGMENTED: onEndOfSpeech (per-segment, not restarting — segmented session is active)")
                     return
                 }
 
@@ -539,6 +592,10 @@ class SpeechRecognitionService @Inject constructor(
                     if (errorCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error ($errorCount errors in window)")
 
+                        // Clean up old pipe before restart — startListening() will create a fresh one
+                        audioPipeRecorder?.cleanup()
+                        audioPipeRecorder = null
+
                         // FIX: Reset listening state before restart - the recognizer is dead after an error
                         // Without this, startListening() early-returns because _isListening is still true
                         _isListening.value = false
@@ -565,6 +622,11 @@ class SpeechRecognitionService @Inject constructor(
             }
 
             override fun onResults(results: Bundle?) {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer results callback")
+                    return
+                }
                 Log.d(TAG, "[DEBUG] onResults")
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 var finalText = matches?.firstOrNull() ?: ""
@@ -621,6 +683,15 @@ class SpeechRecognitionService @Inject constructor(
                         restartAfterResults = false
                         speechRecognizer?.startListening(recognizerIntent)
                         Log.d(TAG, "🔄 RESTART_DEBUG: Restarted listening immediately after onResults")
+                    } else if (useSegmentedSession) {
+                        // Safety net: segmented session was requested but recognizer fell through to onResults
+                        // This means EXTRA_SEGMENTED_SESSION had no effect — restart with a fresh pipe
+                        Log.w(TAG, "🔄 SEGMENTED: Recognizer ignored segmented session, restarting with fresh pipe")
+                        audioPipeRecorder?.cleanup()
+                        audioPipeRecorder = null
+                        setupRecognizerIntent()
+                        audioPipeRecorder?.start()
+                        speechRecognizer?.startListening(recognizerIntent)
                     }
                 }
 
@@ -680,6 +751,55 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onEvent(eventType: Int, params: Bundle?) {
                 Log.d(TAG, "[DEBUG] onEvent: $eventType")
+            }
+
+            override fun onSegmentResults(segmentResults: Bundle) {
+                if (!useSegmentedSession) return  // Shouldn't happen, but guard
+
+                val matches = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val segmentText = matches?.firstOrNull() ?: ""
+
+                Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
+
+                if (segmentText.isNotBlank()) {
+                    _transcriptionState.value = segmentText
+
+                    try {
+                        BubbleOverlayService.updateUserTranscription(segmentText)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                    }
+
+                    recognitionCallback?.invoke(segmentText)
+                }
+
+                // Reset partial tracking for next segment (mic stays open)
+                _transcriptionState.value = ""
+                peakPartialLength = 0
+                savedPartialForConcatenation = ""
+                savedPartialIsAfterFinalResult = false
+                savedPartialTimeoutJob?.cancel()
+            }
+
+            override fun onEndOfSegmentedSession() {
+                Log.d(TAG, "🔄 SEGMENTED: onEndOfSegmentedSession")
+
+                val shouldRestart = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
+
+                if (shouldRestart && !manualStopInProgress) {
+                    Log.d(TAG, "🔄 SEGMENTED: Session ended, restarting with fresh pipe")
+                    // Pipe is single-use — need fresh recorder + intent
+                    audioPipeRecorder?.cleanup()
+                    audioPipeRecorder = null
+                    setupRecognizerIntent()       // Creates fresh recorder + pipe
+                    audioPipeRecorder?.start()     // Start new recorder
+                    speechRecognizer?.startListening(recognizerIntent)
+                } else {
+                    Log.d(TAG, "🔄 SEGMENTED: Session ended, not restarting (shouldRestart=$shouldRestart, manualStop=$manualStopInProgress)")
+                    audioPipeRecorder?.cleanup()
+                    audioPipeRecorder = null
+                    _isListening.value = false
+                }
             }
         }
     }
@@ -976,9 +1096,15 @@ class SpeechRecognitionService @Inject constructor(
             putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(finalText))
         }
 
-        // Inject through the REAL onResults callback on main thread
+        // Inject through the REAL onResults callback on main thread and WAIT for it
+        // Set isTestInjectedCallback so the test mode guard allows this through
         withContext(Dispatchers.Main) {
-            recognitionListener?.onResults(bundle)
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onResults(bundle)
+            } finally {
+                isTestInjectedCallback = false
+            }
         }
     }
 }
