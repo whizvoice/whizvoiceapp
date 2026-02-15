@@ -577,8 +577,11 @@ class SpeechRecognitionService @Inject constructor(
                         finalText = mergeOverlapping(finalText, savedPartialForConcatenation)
                         Log.d(TAG, "[DEBUG] 🔗 MERGED final result (saved AFTER final): final='$originalFinal' + saved='$savedPartialForConcatenation' -> '$finalText'")
                     } else {
-                        finalText = mergeOverlapping(savedPartialForConcatenation, finalText)
-                        Log.d(TAG, "[DEBUG] 🔗 MERGED final result: saved='$savedPartialForConcatenation' + final='$originalFinal' -> '$finalText'")
+                        // Same session re-transcription: saved partial and final are the same audio,
+                        // just pick the longer/better transcription instead of trying to merge
+                        val originalFinal = finalText
+                        finalText = if (finalText.length >= savedPartialForConcatenation.length) finalText else savedPartialForConcatenation
+                        Log.d(TAG, "[DEBUG] 🔗 MERGE_SAME_SESSION: Same-session re-transcription, using ${if (finalText == originalFinal) "final" else "saved"}: '$finalText' (saved='$savedPartialForConcatenation', final='$originalFinal')")
                     }
                     savedPartialForConcatenation = ""
                     savedPartialIsAfterFinalResult = false
