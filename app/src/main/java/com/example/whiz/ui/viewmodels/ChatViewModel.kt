@@ -2140,8 +2140,7 @@ class ChatViewModel @Inject constructor(
     // Called when app comes back to foreground - restart continuous listening if it was enabled
     fun onAppForegrounded() {
         Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
-        Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${isSpeaking.value}, isResponding: ${_isResponding.value}")
-        
+
         // Only restart if we have permission, are in a chat, and continuous listening was enabled before backgrounding
         if (_micPermissionGranted.value && _chatId.value != 0L && voiceManager.isContinuousListeningEnabled.value) {
             try {
@@ -2160,8 +2159,6 @@ class ChatViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Error restarting continuous listening after app foregrounded", e)
             }
-        } else {
-            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value} (must be non-zero), continuousEnabled: ${voiceManager.isContinuousListeningEnabled.value}")
         }
     }
 

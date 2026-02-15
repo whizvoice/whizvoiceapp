@@ -357,15 +357,13 @@ class VoiceManager @Inject constructor(
         // Handle app background events
         coroutineScope.launch {
             appLifecycleService.appBackgroundEvent.collect {
-                Log.d(TAG, "App backgrounded - stopping continuous listening")
                 onAppBackgrounded()
             }
         }
-        
+
         // Handle app foreground events
         coroutineScope.launch {
             appLifecycleService.appForegroundEvent.collect {
-                Log.d(TAG, "App foregrounded")
                 onAppForegrounded()
             }
         }
@@ -466,8 +464,6 @@ class VoiceManager @Inject constructor(
     }
     
     private fun onAppForegrounded() {
-        Log.d(TAG, "onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled")
-        
         // Note: We don't automatically restart continuous listening here
         // It should be restarted by ChatScreen when appropriate
         // This prevents unwanted mic activation when returning to non-chat screens
