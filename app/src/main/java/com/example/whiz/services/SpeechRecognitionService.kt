@@ -67,7 +67,8 @@ class SpeechRecognitionService @Inject constructor(
     private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Wait for user to continue speaking (premature end case)
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
     private var savedPartialTimeoutJob: kotlinx.coroutines.Job? = null
-    
+    private var restartAfterResults = false  // Defer restart to onResults to avoid ERROR_CLIENT from premature startListening
+
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -246,6 +247,7 @@ class SpeechRecognitionService @Inject constructor(
             _transcriptionState.value = ""
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
+            restartAfterResults = false
             savedPartialTimeoutJob?.cancel()
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping speech recognition", e)
@@ -258,6 +260,7 @@ class SpeechRecognitionService @Inject constructor(
             cleanup()
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
+            restartAfterResults = false
             savedPartialTimeoutJob?.cancel()
         }
     }
@@ -324,6 +327,7 @@ class SpeechRecognitionService @Inject constructor(
         _transcriptionState.value = ""
         manualStopInProgress = false
         utteranceFinalized = false
+        restartAfterResults = false
         recognizerIntent = null
     }
 
@@ -343,6 +347,7 @@ class SpeechRecognitionService @Inject constructor(
                 manualStopInProgress = false
                 peakPartialLength = 0
                 lastEndOfSpeechTimestamp = 0L
+                restartAfterResults = false
 
                 // CRITICAL: Re-check if we should still be listening
                 // This prevents race conditions where bubble is dismissed after restart is initiated
@@ -447,24 +452,10 @@ class SpeechRecognitionService @Inject constructor(
                         }
                     }
 
-                    try {
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech (continuous mode)")
-                        // Add minimal delay to allow previous session cleanup and avoid ERROR_CLIENT race condition
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            // Re-check conditions inside the delayed block in case they changed during the 20ms
-                            if (shouldRestartCallback?.invoke() != false && !manualStopInProgress) {
-                                speechRecognizer?.startListening(recognizerIntent)
-                                Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech (after 20ms delay)")
-                            } else {
-                                Log.d(TAG, "🔄 RESTART_DEBUG: Skipping restart - conditions changed during delay (shouldRestart=${shouldRestartCallback?.invoke()}, manualStop=$manualStopInProgress)")
-                            }
-                        }, 20)  // 20ms delay - enough to avoid race, short enough to not miss speech
-                        // Don't set _isListening to false when we're restarting!
-                    } catch (e: Exception) {
-                        Log.e(TAG, "🔄 RESTART_DEBUG: Error restarting listening after end of speech", e)
-                        _isListening.value = false
-                        _errorState.value = "Error restarting listening: ${e.message}"
-                    }
+                    // Defer restart to onResults to avoid guaranteed ERROR_CLIENT
+                    // (old session's onResults hasn't arrived yet, so startListening now would fail)
+                    restartAfterResults = true
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Deferring restart until onResults arrives")
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Not restarting - shouldRestart=$shouldRestart")
                     _isListening.value = false
@@ -623,8 +614,11 @@ class SpeechRecognitionService @Inject constructor(
                     recognitionCallback = null
                 } else {
                     Log.d(TAG, "[DEBUG] Continuous listening mode - keeping callback and listening state")
-                    // Don't clear the callback or listening state in continuous mode
-                    // onEndOfSpeech will handle the restart
+                    if (restartAfterResults) {
+                        restartAfterResults = false
+                        speechRecognizer?.startListening(recognizerIntent)
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Restarted listening immediately after onResults")
+                    }
                 }
 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
