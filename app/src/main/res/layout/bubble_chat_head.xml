@@ -36,38 +36,54 @@
 
         </androidx.cardview.widget.CardView>
 
-        <!-- Profile picture (chat head) -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/chat_head"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            app:cardCornerRadius="30dp"
-            app:cardElevation="0dp">
+        <!-- Profile picture (chat head) with unread dot -->
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
 
-            <FrameLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent">
-                
-                <ImageView
-                    android:id="@+id/profile_image"
+            <androidx.cardview.widget.CardView
+                android:id="@+id/chat_head"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                app:cardCornerRadius="30dp"
+                app:cardElevation="0dp">
+
+                <FrameLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:src="@mipmap/ic_launcher_round"
-                    android:scaleType="centerCrop" />
-                
-                <!-- Overlay for mode indicator icon -->
-                <ImageView
-                    android:id="@+id/mode_indicator"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:layout_marginTop="3dp"
-                    android:visibility="gone"
-                    android:scaleType="fitCenter" />
-                    
-            </FrameLayout>
+                    android:layout_height="match_parent">
 
-        </androidx.cardview.widget.CardView>
+                    <ImageView
+                        android:id="@+id/profile_image"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:src="@mipmap/ic_launcher_round"
+                        android:scaleType="centerCrop" />
+
+                    <!-- Overlay for mode indicator icon -->
+                    <ImageView
+                        android:id="@+id/mode_indicator"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:layout_marginTop="3dp"
+                        android:visibility="gone"
+                        android:scaleType="fitCenter" />
+
+                </FrameLayout>
+
+            </androidx.cardview.widget.CardView>
+
+            <View
+                android:id="@+id/unread_dot"
+                android:layout_width="12dp"
+                android:layout_height="12dp"
+                android:layout_gravity="top|start"
+                android:layout_marginTop="2dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/unread_dot_background"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
     </LinearLayout>
 

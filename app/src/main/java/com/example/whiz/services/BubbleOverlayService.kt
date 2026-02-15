@@ -64,6 +64,8 @@ class BubbleOverlayService : Service() {
     private var botResponseJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
+    private var lastMessageShownTimestamp: Long = 0L
+    private var hasUnreadMessage: Boolean = false
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var isDismissTargetVisible = false
 
@@ -73,6 +75,7 @@ class BubbleOverlayService : Service() {
         private const val TAG = "BubbleOverlayService"
         private const val CLICK_THRESHOLD = 30
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
+        private const val UNREAD_THRESHOLD_MS = 1000L // 1 second - messages shown less than this are considered "missed"
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
@@ -507,6 +510,10 @@ class BubbleOverlayService : Service() {
     }
 
     private fun onChatHeadClick() {
+        // Clear unread dot
+        hasUnreadMessage = false
+        lastMessageShownTimestamp = 0L
+        chatHeadView?.findViewById<View>(R.id.unread_dot)?.visibility = View.GONE
         // Return to the main app when chat head is clicked
         returnToApp()
     }
@@ -735,7 +742,17 @@ class BubbleOverlayService : Service() {
             
             // Cancel any pending hide
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
-            
+
+            // Check if previous message was superseded in under 1 second
+            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L) {
+                val elapsed = System.currentTimeMillis() - lastMessageShownTimestamp
+                if (elapsed < UNREAD_THRESHOLD_MS) {
+                    hasUnreadMessage = true
+                    chatHeadView?.findViewById<View>(R.id.unread_dot)?.visibility = View.VISIBLE
+                }
+            }
+            lastMessageShownTimestamp = System.currentTimeMillis()
+
             // Set message text and styling
             messageText?.text = text
             messageText?.setTypeface(
@@ -810,6 +827,9 @@ class BubbleOverlayService : Service() {
                 Log.e(TAG, "Error unregistering test receiver", e)
             }
         }
+
+        hasUnreadMessage = false
+        lastMessageShownTimestamp = 0L
 
         recognitionJob?.cancel()
         botResponseJob?.cancel()
