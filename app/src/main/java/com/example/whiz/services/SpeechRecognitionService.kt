@@ -45,6 +45,7 @@ class SpeechRecognitionService @Inject constructor(
     // --- Internal State ---
     private var recognitionCallback: ((String) -> Unit)? = null
     private var manualStopInProgress = false
+    private var lastEndOfSpeechTimestamp: Long = 0L
     @Volatile
     private var utteranceFinalized = false
     private var recognizerIntent: Intent? = null // Store the intent for restarting
@@ -341,6 +342,7 @@ class SpeechRecognitionService @Inject constructor(
                 _errorState.value = null
                 manualStopInProgress = false
                 peakPartialLength = 0
+                lastEndOfSpeechTimestamp = 0L
 
                 // CRITICAL: Re-check if we should still be listening
                 // This prevents race conditions where bubble is dismissed after restart is initiated
@@ -359,6 +361,13 @@ class SpeechRecognitionService @Inject constructor(
             override fun onBufferReceived(buffer: ByteArray?) { /* ... */ }
 
             override fun onEndOfSpeech() {
+                val now = System.currentTimeMillis()
+                if (now - lastEndOfSpeechTimestamp < 1000L) {
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Ignoring duplicate onEndOfSpeech (${now - lastEndOfSpeechTimestamp}ms since last)")
+                    return
+                }
+                lastEndOfSpeechTimestamp = now
+
                 // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
                 if (testModeEnabled) {
                     Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-speech callback")
@@ -802,6 +811,19 @@ class SpeechRecognitionService @Inject constructor(
         if (fullSimilarity >= 0.65 && lengthRatio >= 0.6) {
             Log.d(TAG, "[DEBUG] 🔗 MERGE_FULL_SIMILARITY: Detected similar strings (${(fullSimilarity * 100).toInt()}% similarity, ${(lengthRatio * 100).toInt()}% length ratio), using ${if (second.length >= first.length) "newer" else "older"} transcription")
             return if (second.length >= first.length) second else first
+        }
+
+        // Space-normalized similarity check for cases like "5 6 7" vs "567"
+        // where the content is identical but spacing differs
+        val firstNormalized = first.lowercase().replace(" ", "")
+        val secondNormalized = second.lowercase().replace(" ", "")
+        if (firstNormalized.isNotEmpty() && secondNormalized.isNotEmpty()) {
+            val normalizedSimilarity = similarityRatio(firstNormalized, secondNormalized)
+            val normalizedLengthRatio = minOf(firstNormalized.length, secondNormalized.length).toDouble() / maxOf(firstNormalized.length, secondNormalized.length)
+            if (normalizedSimilarity >= 0.65 && normalizedLengthRatio >= 0.6) {
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_SPACE_NORMALIZED: Detected similar strings after removing spaces (${(normalizedSimilarity * 100).toInt()}% similarity), using ${if (second.length >= first.length) "newer" else "older"} transcription")
+                return if (second.length >= first.length) second else first
+            }
         }
 
         // Word-level fuzzy overlap: catches middle overlaps where the recognizer
