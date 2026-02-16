@@ -1032,8 +1032,8 @@ class ChatViewModel @Inject constructor(
                                     // For remote agent, we need to manually refresh to show the server-saved message
                                     
                                     // Update bubble overlay if active
-                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}")
-                                    if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}, isPendingStart=${com.example.whiz.services.BubbleOverlayService.isPendingStart}")
+                                    if (com.example.whiz.services.BubbleOverlayService.isActive || com.example.whiz.services.BubbleOverlayService.isPendingStart) {
                                         Log.d(TAG, "[BUBBLE_DEBUG] Updating bubble with bot response: '$messageContentForChat'")
                                         com.example.whiz.services.BubbleOverlayService.updateBotResponse(messageContentForChat)
                                     }

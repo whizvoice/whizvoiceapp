@@ -66,6 +66,7 @@ class BubbleOverlayService : Service() {
     private var hideMessageRunnable: Runnable? = null
     private var lastMessageShownTimestamp: Long = 0L
     private var hasUnreadMessage: Boolean = false
+    private var lastMessageWasSystemMessage: Boolean = false
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var isDismissTargetVisible = false
 
@@ -615,7 +616,7 @@ class BubbleOverlayService : Service() {
             ListeningMode.TTS_WITH_LISTENING -> "Speaking Mode"
         }
         
-        showMessage(modeText, isUserMessage = false)
+        showMessage(modeText, isUserMessage = false, isSystemMessage = true)
     }
     
     private fun applyCurrentMode() {
@@ -735,7 +736,7 @@ class BubbleOverlayService : Service() {
         }
     }
 
-    private fun showMessage(text: String, isUserMessage: Boolean) {
+    private fun showMessage(text: String, isUserMessage: Boolean, isSystemMessage: Boolean = false) {
         handler.post {
             val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
             val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
@@ -744,13 +745,15 @@ class BubbleOverlayService : Service() {
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
 
             // Check if previous message was superseded in under 1 second
-            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L) {
+            // Skip when previous message was a system message (mode change) since those aren't real messages
+            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage) {
                 val elapsed = System.currentTimeMillis() - lastMessageShownTimestamp
                 if (elapsed < UNREAD_THRESHOLD_MS) {
                     hasUnreadMessage = true
                     chatHeadView?.findViewById<View>(R.id.unread_dot)?.visibility = View.VISIBLE
                 }
             }
+            lastMessageWasSystemMessage = isSystemMessage
             lastMessageShownTimestamp = System.currentTimeMillis()
 
             // Set message text and styling
@@ -830,6 +833,7 @@ class BubbleOverlayService : Service() {
 
         hasUnreadMessage = false
         lastMessageShownTimestamp = 0L
+        lastMessageWasSystemMessage = false
 
         recognitionJob?.cancel()
         botResponseJob?.cancel()
