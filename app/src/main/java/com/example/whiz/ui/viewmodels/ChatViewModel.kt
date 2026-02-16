@@ -2129,10 +2129,14 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop()
         }
 
-        // Always disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
-        // Exception: If bubble service starts, it will restore TTS from saved state (ttsStateBeforeBackground)
-        Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
-        voiceManager.setVoiceResponseEnabled(false)
+        // Disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
+        // Exception: If bubble overlay is active or pending, preserve TTS state so the bubble can speak
+        if (!BubbleOverlayService.isActive && !BubbleOverlayService.isPendingStart) {
+            Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
+            voiceManager.setVoiceResponseEnabled(false)
+        } else {
+            Log.d(TAG, "[LOG] Bubble overlay active/pending - preserving TTS state for bubble")
+        }
 
         // VoiceManager handles stopping continuous listening on background
     }
