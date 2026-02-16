@@ -332,12 +332,8 @@ class BubbleOverlayService : Service() {
 
                     // Set up long press detection
                     longPressRunnable = Runnable {
-                        val xDiff = abs(event.rawX - initialTouchX)
-                        val yDiff = abs(event.rawY - initialTouchY)
-                        if (xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
-                            isLongPressHandled = true
-                            onChatHeadLongPress()
-                        }
+                        isLongPressHandled = true
+                        onChatHeadLongPress()
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_THRESHOLD)
                     true
@@ -817,6 +813,7 @@ class BubbleOverlayService : Service() {
         // so we need to unconditionally stop it to prevent it from continuing to listen
         Log.d(TAG, "BubbleOverlayService onDestroy - stopping microphone immediately (isListening=${voiceManager.isListening.value})")
         voiceManager.stopListening()
+        voiceManager.stopSpeaking()
 
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null
