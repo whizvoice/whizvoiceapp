@@ -68,6 +68,7 @@ class VoiceManager @Inject constructor(
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.d(TAG, "Screen turned off - stopping microphone and destroying recognizer")
                     _isScreenLocked.value = true
+                    audioFocusManager.abandonDuckingFocus()
                     // Stop and completely destroy the recognizer when screen turns off
                     if (isListening.value) {
                         stopListening()
@@ -102,6 +103,7 @@ class VoiceManager @Inject constructor(
                     // Check both foreground AND bubble active - in bubble mode the app isn't in foreground
                     if (continuousListeningEnabled && (appLifecycleService.isInForeground() || BubbleOverlayService.isActive)) {
                         Log.d(TAG, "Screen unlocked - restarting continuous listening (foreground=${appLifecycleService.isInForeground()}, bubble=${BubbleOverlayService.isActive})")
+                        audioFocusManager.requestDuckingFocus()
                         coroutineScope.launch {
                             delay(100L) // Small delay to ensure state is settled
                             if (shouldBeListening()) {
@@ -379,6 +381,7 @@ class VoiceManager @Inject constructor(
                     ListeningMode.MIC_OFF -> {
                         // Stop both listening and TTS when mic is turned off
                         Log.d(TAG, "MIC_OFF mode - stopping speech recognition and TTS")
+                        audioFocusManager.abandonDuckingFocus()
                         stopListening()
                         ttsManager.stop()
                     }
@@ -388,6 +391,11 @@ class VoiceManager @Inject constructor(
                         if (ttsManager.isSpeaking.value) {
                             Log.d(TAG, "Stopping TTS as bubble switched to listening-only mode")
                             ttsManager.stop()
+                        }
+
+                        // Resume ducking when switching back to a listening mode
+                        if (continuousListeningEnabled) {
+                            audioFocusManager.requestDuckingFocus()
                         }
 
                         // Re-evaluate if we should be listening
@@ -407,6 +415,10 @@ class VoiceManager @Inject constructor(
                     ListeningMode.TTS_WITH_LISTENING -> {
                         // Re-evaluate if we should be listening
                         Log.d(TAG, "TTS_WITH_LISTENING mode - keeping TTS enabled")
+                        // Resume ducking when switching back to a listening mode
+                        if (continuousListeningEnabled) {
+                            audioFocusManager.requestDuckingFocus()
+                        }
                         if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
                             Log.d(TAG, "Restarting speech recognition for mode: TTS_WITH_LISTENING")
                             // Force restart the continuous listening
@@ -449,6 +461,9 @@ class VoiceManager @Inject constructor(
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
+
+        // No bubble — stop ducking along with stopping the mic
+        audioFocusManager.abandonDuckingFocus()
 
         // Stop listening but preserve the setting
         if (isListening.value) {
@@ -588,15 +603,16 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
 
         if (enabled) {
-            // Note: We don't request audio focus for mic recording.
-            // Audio focus is for coordinating playback, not recording.
-            // SpeechRecognizer handles its own audio capture internally.
+            // Duck other apps' audio for the entire continuous listening session
+            // (persists during TTS too, so assistant voice is easier to hear)
+            audioFocusManager.requestDuckingFocus()
             Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
             startContinuousListening()
             Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
-            // Stop listening
+            // Stop listening and release ducking focus
             stopListening()
+            audioFocusManager.abandonDuckingFocus()
         }
     }
     

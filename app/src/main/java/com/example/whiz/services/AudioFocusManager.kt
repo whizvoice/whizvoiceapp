@@ -34,6 +34,12 @@ class AudioFocusManager @Inject constructor(
 
     private var audioFocusRequest: AudioFocusRequest? = null
 
+    // Ducking focus: separate from the main focus request, used to duck other apps'
+    // audio during continuous listening sessions
+    private var duckingFocusRequest: AudioFocusRequest? = null
+    private val _isDuckingActive = MutableStateFlow(false)
+    val isDuckingActive: StateFlow<Boolean> = _isDuckingActive.asStateFlow()
+
     // Callbacks for focus changes - VoiceManager will set these
     var onFocusGained: (() -> Unit)? = null
     var onFocusLostTransient: (() -> Unit)? = null
@@ -112,6 +118,48 @@ class AudioFocusManager @Inject constructor(
 
     fun isHoldingFocus(): Boolean {
         return _focusState.value == AudioFocusState.FOCUS_GRANTED
+    }
+
+    /**
+     * Request ducking focus to lower other apps' audio volume.
+     * Uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK so the system automatically ducks
+     * other apps' audio by ~14dB while we hold focus.
+     * This is separate from the main focus request (requestFocus/abandonFocus).
+     * @return true if ducking focus was granted
+     */
+    fun requestDuckingFocus(): Boolean {
+        if (_isDuckingActive.value) return true
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+        duckingFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(audioAttributes)
+            .setAcceptsDelayedFocusGain(false)
+            .setOnAudioFocusChangeListener(this)
+            .build()
+
+        val result = audioManager.requestAudioFocus(duckingFocusRequest!!)
+        _isDuckingActive.value = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        Log.d(TAG, "requestDuckingFocus: result=${if (_isDuckingActive.value) "GRANTED" else "FAILED($result)"}")
+        return _isDuckingActive.value
+    }
+
+    /**
+     * Abandon ducking focus so other apps resume normal volume.
+     */
+    fun abandonDuckingFocus() {
+        if (!_isDuckingActive.value) return
+        Log.d(TAG, "Abandoning ducking focus")
+        duckingFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        _isDuckingActive.value = false
+        duckingFocusRequest = null
+    }
+
+    fun isHoldingDuckingFocus(): Boolean {
+        return _isDuckingActive.value
     }
 
     override fun onAudioFocusChange(focusChange: Int) {
