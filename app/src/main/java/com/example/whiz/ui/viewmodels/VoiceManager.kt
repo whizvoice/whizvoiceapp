@@ -197,6 +197,14 @@ class VoiceManager @Inject constructor(
         audioFocusManager.onFocusLostPermanent = {
             Log.d(TAG, "Audio focus lost permanently (ignored - not used for mic recording)")
         }
+
+        // Policy callback for ducking re-request: only re-request if we're still
+        // actively in a voice session (continuous listening on, app visible, screen unlocked)
+        audioFocusManager.shouldReRequestDucking = {
+            continuousListeningEnabled &&
+                (appLifecycleService.isInForeground() || BubbleOverlayService.isActive) &&
+                !isScreenLocked.value
+        }
     }
     
     /**
