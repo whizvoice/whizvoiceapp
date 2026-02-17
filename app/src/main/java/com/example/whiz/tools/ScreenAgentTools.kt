@@ -4774,24 +4774,29 @@ class ScreenAgentTools @Inject constructor(
         if (mode?.lowercase() == "transit") {
             Log.d(TAG, "Transit mode: looking for route options to click first")
 
-            // Wait for transit UI to fully load after mode switch
-            Thread.sleep(500)
+            // Poll for transit route cards using Android's built-in search (no depth limit)
+            var tripCardNodeList = emptyList<AccessibilityNodeInfo>()
+            var transitRoot: AccessibilityNodeInfo? = null
+            for (transitAttempt in 1..25) {
+                Thread.sleep(200)
+                transitRoot?.recycle()
+                transitRoot = accessibilityService.getCurrentRootNode()
+                if (transitRoot == null) {
+                    Log.w(TAG, "Transit mode: could not get fresh root node on attempt $transitAttempt")
+                    continue
+                }
+                tripCardNodeList = transitRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_card_main_header")
+                Log.d(TAG, "Transit mode: found ${tripCardNodeList.size} trip card nodes on attempt $transitAttempt")
+                if (tripCardNodeList.isNotEmpty()) break
+            }
 
-            // Get fresh root node - the UI has changed since switching to transit mode
-            val transitRoot = accessibilityService.getCurrentRootNode()
             if (transitRoot == null) {
-                Log.w(TAG, "Transit mode: could not get fresh root node")
+                Log.w(TAG, "Transit mode: could not get fresh root node after all attempts")
                 return false
             }
 
-            // Find route cards by looking for trip_card_main_header resource ID
-            // This is more robust than searching by content-desc text
-            val tripCardNodes = mutableListOf<AccessibilityNodeInfo>()
-            findNodesByResourceId(transitRoot, "com.google.android.apps.maps:id/trip_card_main_header", tripCardNodes)
-            Log.d(TAG, "Transit mode: found ${tripCardNodes.size} trip card nodes")
-
-            if (tripCardNodes.isNotEmpty()) {
-                val tripCardNode = tripCardNodes[0]
+            if (tripCardNodeList.isNotEmpty()) {
+                val tripCardNode = tripCardNodeList[0]
                 val clickableRoute = findClickableParent(tripCardNode)
                 if (clickableRoute != null) {
                     clickableRoute.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -4817,7 +4822,7 @@ class ScreenAgentTools @Inject constructor(
                                     Log.d(TAG, "Clicked Start glanceable directions button")
                                     glanceableNodes.forEach { it.recycle() }
                                     newRoot.recycle()
-                                    tripCardNodes.forEach { it.recycle() }
+                                    tripCardNodeList.forEach { it.recycle() }
                                     transitRoot.recycle()
                                     return true
                                 }
@@ -4832,7 +4837,7 @@ class ScreenAgentTools @Inject constructor(
             } else {
                 Log.w(TAG, "Transit mode: no trip cards found in UI")
             }
-            tripCardNodes.forEach { it.recycle() }
+            tripCardNodeList.forEach { it.recycle() }
             transitRoot.recycle()
         }
 
