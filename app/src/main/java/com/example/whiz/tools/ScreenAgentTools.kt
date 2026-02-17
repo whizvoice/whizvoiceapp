@@ -579,10 +579,49 @@ class ScreenAgentTools @Inject constructor(
                     
                     // Recycle nodes
                     chatNodes.forEach { it.recycle() }
+                } else if (searchAttempted && chatNodes.isEmpty()) {
+                    // Search was performed but text matching couldn't find a match.
+                    // This happens for group chats where the search query differs from the display name.
+                    // Fall back to clicking the first search result.
+                    Log.i(TAG, "Text matching failed after search, trying to click first search result directly")
+                    val firstResult = findFirstSearchResult(rootNode)
+                    if (firstResult != null) {
+                        val clicked = accessibilityService.clickNode(firstResult)
+                        if (clicked) {
+                            // Wait to verify we entered a chat
+                            val inChat = waitForCondition(maxWaitMs = 2000) {
+                                val checkRoot = accessibilityService.getCurrentRootNode()
+                                if (checkRoot != null) {
+                                    val screen = detectWhatsAppScreen(checkRoot)
+                                    val isInChat = screen == WhatsAppScreen.INSIDE_CHAT
+                                    checkRoot.recycle()
+                                    isInChat
+                                } else {
+                                    false
+                                }
+                            }
+
+                            if (inChat) {
+                                firstResult.recycle()
+                                rootNode.recycle()
+
+                                return WhatsAppResult(
+                                    success = true,
+                                    action = "select_chat",
+                                    chatName = chatName
+                                )
+                            } else {
+                                Log.w(TAG, "Clicked first search result but not in chat - pressing back to retry")
+                                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                                delay(300)
+                            }
+                        }
+                        firstResult.recycle()
+                    }
                 } else if (!searchAttempted && attempts == 1) {
                     // If we couldn't find the chat on the first attempt, try searching
                     Log.i(TAG, "Chat not visible, attempting to search for: $chatName")
-                    
+
                     // Check if search is already active
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     val searchSuccess = if (currentScreen == WhatsAppScreen.SEARCH_ACTIVE) {
@@ -593,9 +632,9 @@ class ScreenAgentTools @Inject constructor(
                         // Open search and enter text
                         performWhatsAppSearch(rootNode, chatName, accessibilityService)
                     }
-                    
+
                     searchAttempted = true
-                    
+
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
@@ -7062,12 +7101,21 @@ class ScreenAgentTools @Inject constructor(
         return waitForCondition(maxWaitMs = maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
-                // Check if search results are visible by looking for chat items
+                // Try text matching first
                 val chatNodes = findChatNodes(rootNode, searchQuery)
                 val hasResults = chatNodes.isNotEmpty()
                 chatNodes.forEach { it.recycle() }
+                if (hasResults) {
+                    rootNode.recycle()
+                    return@waitForCondition true
+                }
+                // Fallback: check if any clickable result exists below search input
+                // This handles group chats where the search query differs from the display name
+                val firstResult = findFirstSearchResult(rootNode)
+                val hasAnyResult = firstResult != null
+                firstResult?.recycle()
                 rootNode.recycle()
-                hasResults
+                hasAnyResult
             } else {
                 false
             }
@@ -8080,6 +8128,95 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    /**
+     * Find the first clickable search result in WhatsApp search results.
+     * Used as a fallback when text matching fails (e.g., group chats where
+     * the search query differs from the group's display name).
+     */
+    private fun findFirstSearchResult(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        try {
+            // Find the search input field to determine where results start
+            val searchInputIds = listOf(
+                "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text"
+            )
+            var searchInputBottom = 0
+            for (id in searchInputIds) {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    val rect = android.graphics.Rect()
+                    nodes[0].getBoundsInScreen(rect)
+                    searchInputBottom = rect.bottom
+                    nodes.forEach { it.recycle() }
+                    break
+                }
+            }
+
+            if (searchInputBottom == 0) {
+                Log.d(TAG, "findFirstSearchResult: Could not find search input field")
+                return null
+            }
+
+            val screenWidth = context.resources.displayMetrics.widthPixels
+            val minWidth = (screenWidth * 0.4).toInt()
+
+            // Section headers to skip
+            val sectionHeaders = setOf("chats", "messages", "groups in common", "contacts", "more")
+
+            // Collect all clickable nodes
+            val clickableNodes = mutableListOf<AccessibilityNodeInfo>()
+            findClickableChildren(rootNode, clickableNodes)
+
+            // Filter and find the topmost valid result
+            var bestNode: AccessibilityNodeInfo? = null
+            var bestTop = Int.MAX_VALUE
+
+            for (node in clickableNodes) {
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+
+                // Must be below the search input
+                if (rect.top <= searchInputBottom) {
+                    node.recycle()
+                    continue
+                }
+
+                // Must span a significant portion of screen width (skip small buttons)
+                if (rect.width() < minWidth) {
+                    node.recycle()
+                    continue
+                }
+
+                // Skip section headers
+                val nodeText = getNodeTextRecursive(node).lowercase().trim()
+                if (nodeText.isNotEmpty() && nodeText in sectionHeaders) {
+                    node.recycle()
+                    continue
+                }
+
+                // Track the topmost result
+                if (rect.top < bestTop) {
+                    bestNode?.recycle()
+                    bestNode = node
+                    bestTop = rect.top
+                } else {
+                    node.recycle()
+                }
+            }
+
+            if (bestNode != null) {
+                Log.i(TAG, "findFirstSearchResult: Found first result at y=$bestTop")
+            } else {
+                Log.d(TAG, "findFirstSearchResult: No valid search results found below search input")
+            }
+
+            return bestNode
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in findFirstSearchResult", e)
+            return null
+        }
+    }
+
     private fun findClickableParent(node: AccessibilityNodeInfo, skipProfilePictures: Boolean = false): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
 
