@@ -709,13 +709,11 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             var modeSet = false
             val modeStartTime = System.currentTimeMillis()
-            val modeTimeout = 2000L
+            val modeTimeout = 5000L
 
             while (System.currentTimeMillis() - modeStartTime < modeTimeout) {
                 val currentMode = BubbleOverlayService.bubbleListeningMode
-                // Accept either TTS_WITH_LISTENING or CONTINUOUS_LISTENING
-                if (currentMode == com.example.whiz.services.ListeningMode.TTS_WITH_LISTENING ||
-                    currentMode == com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING) {
+                if (currentMode == expectedMode) {
                     modeSet = true
                     val elapsed = System.currentTimeMillis() - modeStartTime
                     Log.d(TAG, "✅ Bubble mode set to $currentMode after ${elapsed}ms")
@@ -754,6 +752,13 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             // Steps 6-9: Test TTS enable/disable - only if TTS is available
             if (ttsAvailable) {
+                // Capture assistant message count BEFORE sending turn-off command
+                // This ensures we wait for the actual response to our command
+                val messageCountBeforeTurnOff = capturedViewModel?.messages?.value?.count {
+                    it.type == com.example.whiz.data.local.MessageType.ASSISTANT
+                } ?: 0
+                Log.d(TAG, "📊 Assistant message count before turn-off: $messageCountBeforeTurnOff")
+
                 // Step 6: Send voice transcription to disable TTS (app is backgrounded in bubble mode, use broadcast)
                 Log.d(TAG, "🔇 step 6: sending voice transcription to disable TTS...")
                 val disableTTSMessage = "Please turn off text to speech - ${System.currentTimeMillis()}"
@@ -794,9 +799,6 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 // in the same Claude API call. We check the ViewModel's message list for a new
                 // assistant message since the bubble UI doesn't show "computing" state.
                 Log.d(TAG, "⏳ Waiting for bot to finish responding before sending next command...")
-                val messageCountBeforeWait = capturedViewModel?.messages?.value?.count {
-                    it.type == com.example.whiz.data.local.MessageType.ASSISTANT
-                } ?: 0
                 val waitForResponseStart = System.currentTimeMillis()
                 val waitForResponseTimeout = 15000L
                 var botResponded = false
@@ -805,9 +807,9 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                     val currentAssistantCount = capturedViewModel?.messages?.value?.count {
                         it.type == com.example.whiz.data.local.MessageType.ASSISTANT
                     } ?: 0
-                    if (currentAssistantCount > messageCountBeforeWait) {
+                    if (currentAssistantCount > messageCountBeforeTurnOff) {
                         botResponded = true
-                        Log.d(TAG, "✅ Bot responded (assistant message count: $messageCountBeforeWait -> $currentAssistantCount)")
+                        Log.d(TAG, "✅ Bot responded (assistant message count: $messageCountBeforeTurnOff -> $currentAssistantCount)")
                         break
                     }
                     delay(200)

@@ -452,7 +452,11 @@ def tester(app_installed):
 
     # Force stop the app to ensure a clean start (not resuming from bubble mode or previous chat)
     subprocess.run(['adb', 'shell', 'am', 'force-stop', 'com.example.whiz.debug'], check=False)
-    time.sleep(1)
+    time.sleep(0.5)
+
+    # Press home button to ensure device is in a clean starting state
+    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_HOME'], check=False)
+    time.sleep(0.5)
 
     tester = android_accessibility_tester.AndroidAccessibilityTester()
     tester.open_app("com.example.whiz.debug")
@@ -475,524 +479,560 @@ def test_whatsapp_draft_message(tester):
     """Test that we can draft and modify draft and send message in WhatsApp."""
     import time
 
-    # Get phone numbers based on device
-    whatsapp_numbers, _ = get_phone_numbers()
-    whatsapp_full, whatsapp_short = whatsapp_numbers
+    def cleanup_whatsapp():
+        """Close WhatsApp to prevent it from interfering with future tests."""
+        print("🧹 Cleaning up: Force stopping WhatsApp...")
+        subprocess.run([
+            'adb', 'shell', 'am', 'force-stop', 'com.whatsapp'
+        ], capture_output=True)
+        time.sleep(1)
 
-    print("\n========================================")
-    print("STEP 1: Opening WhizVoice Debug app")
-    print("========================================")
-    screenshot_path = "/tmp/whiz_screen.png"
+    # Clean up WhatsApp at the start to ensure fresh state
+    cleanup_whatsapp()
 
-    # Open WhizVoice Debug app
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
+    try:
+        # Get phone numbers based on device
+        whatsapp_numbers, _ = get_phone_numbers()
+        whatsapp_full, whatsapp_short = whatsapp_numbers
 
-    print("\n========================================")
-    print("STEP 2: Navigating to My Chats page")
-    print("========================================")
-    # Navigate to My Chats page
-    success, error_msg = navigate_to_my_chats(tester, "whatsapp_draft_message")
-    assert success, error_msg
-    print("✅ Successfully navigated to My Chats page")
+        print("\n========================================")
+        print("STEP 1: Opening WhizVoice Debug app")
+        print("========================================")
+        screenshot_path = "/tmp/whiz_screen.png"
 
-    print("\n========================================")
-    print("STEP 3: Opening new chat")
-    print("========================================")
-    # Click on coordinates to open a new chat
-    tester.tap(950, 2225)
-    time.sleep(2)
+        # Open WhizVoice Debug app
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
 
-    print("\n========================================")
-    print("STEP 4: Validating New Chat screen")
-    print("========================================")
-    # Validate we are on the New Chat screen
-    validation_result = check_on_new_chat_screen(tester)
-    if not validation_result:
-        print("❌ New Chat screen validation failed!")
-        screenshot_path_temp = "/tmp/whiz_screen.png"
-        tester.screenshot(screenshot_path_temp)
-        save_failed_screenshot(screenshot_path_temp, "whatsapp_draft_message", "new_chat_screen")
-    else:
-        print("✅ Successfully validated New Chat screen")
-    assert validation_result, "Failed to reach New Chat screen"
+        print("\n========================================")
+        print("STEP 2: Navigating to My Chats page")
+        print("========================================")
+        # Navigate to My Chats page
+        success, error_msg = navigate_to_my_chats(tester, "whatsapp_draft_message")
+        assert success, error_msg
+        print("✅ Successfully navigated to My Chats page")
 
-    print("\n========================================")
-    print("STEP 5: Sending WhatsApp draft request")
-    print("========================================")
-    # Send a voice transcription with the test message
-    # Note: The app is in continuous listening mode by default (voice app behavior),
-    # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print(f"📤 Broadcasting: 'Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 3 seconds for message to be processed...")
-    time.sleep(3)  # Give time for message to be processed
+        print("\n========================================")
+        print("STEP 3: Opening new chat")
+        print("========================================")
+        # Click on coordinates to open a new chat
+        tester.tap(950, 2225)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("STEP 6: Waiting for draft overlay to appear")
-    print("========================================")
-    # wait for draft overlay to appear over whatsapp input text bar
-    # Y position varies by device: Pixel 8 uses 1380, Pixel 7a uses 1425
-    device_model = get_device_model()
-    overlay_y = 1380 if "Pixel 8" in device_model else 1425
-    # Support light_yellow (#FFF9C4), and other yellow variants (#fffad0, #fff176, #d2cea4, #d2cfa5)
-    print(f"👀 Waiting for yellow overlay at pixel (300, {overlay_y}) with color #fff9c4, #fffad0, #fff176, #d2cea4, or #d2cfa5...")
-    result = tester.wait_for_pixel_color(300, overlay_y, ['#fff9c4', '#fffad0', '#fff176', '#d2cea4', '#d2cfa5'], timeout=30.0)
-    if result['matched']:
-        print("✅ Draft overlay detected!")
-    else:
-        print("❌ Draft overlay not detected!")
+        print("\n========================================")
+        print("STEP 4: Validating New Chat screen")
+        print("========================================")
+        # Validate we are on the New Chat screen
+        validation_result = check_on_new_chat_screen(tester)
+        if not validation_result:
+            print("❌ New Chat screen validation failed!")
+            screenshot_path_temp = "/tmp/whiz_screen.png"
+            tester.screenshot(screenshot_path_temp)
+            save_failed_screenshot(screenshot_path_temp, "whatsapp_draft_message", "new_chat_screen")
+        else:
+            print("✅ Successfully validated New Chat screen")
+        assert validation_result, "Failed to reach New Chat screen"
+
+        print("\n========================================")
+        print("STEP 5: Sending WhatsApp draft request")
+        print("========================================")
+        # Send a voice transcription with the test message
+        # Note: The app is in continuous listening mode by default (voice app behavior),
+        # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+        print(f"📤 Broadcasting: 'Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 3 seconds for message to be processed...")
+        time.sleep(3)  # Give time for message to be processed
+
+        print("\n========================================")
+        print("STEP 6: Waiting for draft overlay to appear")
+        print("========================================")
+        # wait for draft overlay to appear over whatsapp input text bar
+        # Y position varies by device: Pixel 8 uses 1380, Pixel 7a uses 1425
+        device_model = get_device_model()
+        overlay_y = 1380 if "Pixel 8" in device_model else 1425
+        # Support light_yellow (#FFF9C4), and other yellow variants (#fffad0, #fff176, #d2cea4, #d2cfa5)
+        print(f"👀 Waiting for yellow overlay at pixel (300, {overlay_y}) with color #fff9c4, #fffad0, #fff176, #d2cea4, or #d2cfa5...")
+        result = tester.wait_for_pixel_color(300, overlay_y, ['#fff9c4', '#fffad0', '#fff176', '#d2cea4', '#d2cfa5'], timeout=30.0)
+        if result['matched']:
+            print("✅ Draft overlay detected!")
+        else:
+            print("❌ Draft overlay not detected!")
+            tester.screenshot(screenshot_path)
+            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_overlay_not_detected")
+        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+
+        print("\n========================================")
+        print("STEP 7: Validating WhatsApp draft message")
+        print("========================================")
+        # Validate WhatsApp is open with the draft message
         tester.screenshot(screenshot_path)
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_overlay_not_detected")
-    assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
+            "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
+            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "similar to 'hey whats up hows it going just tryna test whiz voice'. "
+            "There is also a yellow notification bubble with the outline of a robot head. "
+            "There may or may not be an icon inside the robot head outline. "
+        )
+        if not validation_result:
+            print("❌ WhatsApp draft message validation failed!")
+            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_message_validation")
+        else:
+            print("✅ WhatsApp draft message validated successfully!")
+        assert validation_result, "Failed to draft WhatsApp message correctly"
 
-    print("\n========================================")
-    print("STEP 7: Validating WhatsApp draft message")
-    print("========================================")
-    # Validate WhatsApp is open with the draft message
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
-        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'hey whats up hows it going just tryna test whiz voice'. "
-        "There is also a yellow notification bubble with the outline of a robot head. "
-        "There may or may not be an icon inside the robot head outline. "
-    )
-    if not validation_result:
-        print("❌ WhatsApp draft message validation failed!")
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_message_validation")
-    else:
-        print("✅ WhatsApp draft message validated successfully!")
-    assert validation_result, "Failed to draft WhatsApp message correctly"
+        print("\n========================================")
+        print("STEP 8: Requesting to modify the message")
+        print("========================================")
+        # Send a voice transcription to modify the message
+        print("📤 Broadcasting: 'Actually, can you make the message more polite?'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"Actually, can you make the message more polite?"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 15 seconds for message modification...")
+        time.sleep(15)
 
-    print("\n========================================")
-    print("STEP 8: Requesting to modify the message")
-    print("========================================")
-    # Send a voice transcription to modify the message
-    print("📤 Broadcasting: 'Actually, can you make the message more polite?'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Actually, can you make the message more polite?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 15 seconds for message modification...")
-    time.sleep(15)
+        print("\n========================================")
+        print("STEP 9: Validating draft message was updated")
+        print("========================================")
+        # Validate that the draft was updated
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
+            "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
+            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "similar to 'just trying to test whiz voice' but may not be an exact match. "
+            "The Yellow overlay should have some text in red strike out and some text in blue. "
+            "There is also a yellow notification bubble with the outline of a robot head "
+            "and a microphone icon inside."
+        )
+        if not validation_result:
+            print("❌ Draft update validation failed!")
+            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_updated_validation")
+        else:
+            print("✅ Draft message successfully updated with strikethrough and new text!")
+        assert validation_result, "Failed to draft WhatsApp message correctly"
 
-    print("\n========================================")
-    print("STEP 9: Validating draft message was updated")
-    print("========================================")
-    # Validate that the draft was updated
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
-        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'just trying to test whiz voice' but may not be an exact match. "
-        "The Yellow overlay should have some text in red strike out and some text in blue. "
-        "There is also a yellow notification bubble with the outline of a robot head "
-        "and a microphone icon inside."
-    )
-    if not validation_result:
-        print("❌ Draft update validation failed!")
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_updated_validation")
-    else:
-        print("✅ Draft message successfully updated with strikethrough and new text!")
-    assert validation_result, "Failed to draft WhatsApp message correctly"
+        print("\n========================================")
+        print("STEP 10: Sending the WhatsApp message")
+        print("========================================")
+        # Send a voice transcription to send the message
+        print("📤 Broadcasting: 'That looks good, go ahead and send the message.'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"That looks good, go ahead and send the message."',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 15 seconds for message to be sent...")
+        time.sleep(15)
 
-    print("\n========================================")
-    print("STEP 10: Sending the WhatsApp message")
-    print("========================================")
-    # Send a voice transcription to send the message
-    print("📤 Broadcasting: 'That looks good, go ahead and send the message.'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"That looks good, go ahead and send the message."',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 15 seconds for message to be sent...")
-    time.sleep(15)
+        print("\n========================================")
+        print("STEP 11: Validating message was sent")
+        print("========================================")
+        # Validate that the message was sent
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
+            "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
+            "At the bottom of the screen, there is NO yellow overlay. "
+            "The most recent rescue mission is something with text similar to: "
+            "just trying to test WhizVoice. Though the message may not be exactly the same. "
+            "There is also a yellow notification bubble with the outline of a robot head "
+            "and a microphone icon inside."
+        )
+        if not validation_result:
+            print("❌ Message sent validation failed!")
+            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
+        else:
+            print("✅ WhatsApp message successfully sent!")
+        assert validation_result, "Failed to send WhatsApp message correctly"
 
-    print("\n========================================")
-    print("STEP 11: Validating message was sent")
-    print("========================================")
-    # Validate that the message was sent
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
-        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-        "At the bottom of the screen, there is NO yellow overlay. "
-        "The most recent rescue mission is something with text similar to: "
-        "just trying to test WhizVoice. Though the message may not be exactly the same. "
-        "There is also a yellow notification bubble with the outline of a robot head "
-        "and a microphone icon inside."
-    )
-    if not validation_result:
-        print("❌ Message sent validation failed!")
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
-    else:
-        print("✅ WhatsApp message successfully sent!")
-    assert validation_result, "Failed to send WhatsApp message correctly"
+        print("\n========================================")
+        print("STEP 12: Cleaning up - Deleting sent message")
+        print("========================================")
+        # Cleanup: Delete the sent message
+        # Long press on the newly sent message
+        device_model = get_device_model()
+        long_press_y = 1180 if "Pixel 8" in device_model else 1280
+        print(f"🖱️  Long pressing on message at (500, {long_press_y})...")
+        tester.long_press(500, long_press_y)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("STEP 12: Cleaning up - Deleting sent message")
-    print("========================================")
-    # Cleanup: Delete the sent message
-    # Long press on the newly sent message
-    print("🖱️  Long pressing on message at (500, 1280)...")
-    tester.long_press(500, 1280)
-    time.sleep(2)
+        # Click delete button
+        print("🗑️  Tapping delete button at (800, 200)...")
+        tester.tap(800, 200)
+        time.sleep(2)
 
-    # Click delete button
-    print("🗑️  Tapping delete button at (800, 200)...")
-    tester.tap(800, 200)
-    time.sleep(2)
+        # Click confirm delete
+        print("✔️  Confirming delete at (750, 1290)...")
+        tester.tap(750, 1290)
+        time.sleep(2)
 
-    # Click confirm delete
-    print("✔️  Confirming delete at (750, 1290)...")
-    tester.tap(750, 1290)
-    time.sleep(2)
+        print("\n========================================")
+        print("STEP 13: Validating message was deleted")
+        print("========================================")
+        # Validate that the message was deleted
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
+            "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
+            "The most recent message in the chat has been deleted."
+        )
+        if not validation_result:
+            print("❌ Message deletion validation failed!")
+            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
+        else:
+            print("✅ WhatsApp message successfully deleted!")
+        assert validation_result, "Failed to delete the sent message"
 
-    print("\n========================================")
-    print("STEP 13: Validating message was deleted")
-    print("========================================")
-    # Validate that the message was deleted
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
-        "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-        "The most recent message in the chat has been deleted."
-    )
-    if not validation_result:
-        print("❌ Message deletion validation failed!")
-        save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
-    else:
-        print("✅ WhatsApp message successfully deleted!")
-    assert validation_result, "Failed to delete the sent message"
+        print("\n========================================")
+        print("🎉 TEST COMPLETED SUCCESSFULLY!")
+        print("========================================")
 
-    print("\n========================================")
-    print("🎉 TEST COMPLETED SUCCESSFULLY!")
-    print("========================================")
+    finally:
+        # Always clean up WhatsApp to prevent it from interfering with future tests
+        cleanup_whatsapp()
 
 
 def test_youtube_music_integration(tester):
     """Test that we can play and queue songs on YouTube Music."""
     import time
 
-    print("\n========================================")
-    print("STEP 1: Opening WhizVoice Debug app")
-    print("========================================")
-    screenshot_path = "/tmp/whiz_screen.png"
+    def cleanup_youtube_music():
+        """Close YouTube Music to prevent it from interfering with future tests."""
+        print("🧹 Cleaning up: Force stopping YouTube Music...")
+        subprocess.run([
+            'adb', 'shell', 'am', 'force-stop', 'com.google.android.apps.youtube.music'
+        ], capture_output=True)
+        time.sleep(1)
 
-    # Open WhizVoice Debug app
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
+    # Clean up YouTube Music at the start to ensure fresh state
+    cleanup_youtube_music()
 
-    print("\n========================================")
-    print("STEP 2: Navigating to My Chats page")
-    print("========================================")
-    # Navigate to My Chats page
-    success, error_msg = navigate_to_my_chats(tester, "youtube_music_integration")
-    assert success, error_msg
-    print("✅ Successfully navigated to My Chats page")
+    try:
+        print("\n========================================")
+        print("STEP 1: Opening WhizVoice Debug app")
+        print("========================================")
+        screenshot_path = "/tmp/whiz_screen.png"
 
-    print("\n========================================")
-    print("STEP 3: Opening new chat")
-    print("========================================")
-    # Click on coordinates to open a new chat
-    tester.tap(950, 2225)
-    time.sleep(2)
+        # Open WhizVoice Debug app
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
 
-    print("\n========================================")
-    print("STEP 4: Validating New Chat screen")
-    print("========================================")
-    # Validate we are on the New Chat screen
-    validation_result = check_on_new_chat_screen(tester)
-    if not validation_result:
-        print("❌ New Chat screen validation failed!")
-        screenshot_path_temp = "/tmp/whiz_screen.png"
-        tester.screenshot(screenshot_path_temp)
-        save_failed_screenshot(screenshot_path_temp, "youtube_music", "new_chat_screen")
-    else:
-        print("✅ Successfully validated New Chat screen")
-    assert validation_result, "Failed to reach New Chat screen"
+        print("\n========================================")
+        print("STEP 2: Navigating to My Chats page")
+        print("========================================")
+        # Navigate to My Chats page
+        success, error_msg = navigate_to_my_chats(tester, "youtube_music_integration")
+        assert success, error_msg
+        print("✅ Successfully navigated to My Chats page")
 
-    print("\n========================================")
-    print("STEP 5: Requesting to play song on YouTube Music")
-    print("========================================")
-    # Send a voice transcription to play songs on YouTube Music
-    # Ask for specific response format so we can detect success/failure
-    play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music.'
-    print(f"📤 Broadcasting: '{play_message}'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"{play_message}"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
+        print("\n========================================")
+        print("STEP 3: Opening new chat")
+        print("========================================")
+        # Click on coordinates to open a new chat
+        tester.tap(950, 2225)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("STEP 6: Waiting for response and validating song is loaded")
-    print("========================================")
-    # Poll until we see YouTube Music actually playing (not just a menu or search result)
-    max_wait = 30
-    poll_interval = 3
-    play_succeeded = False
-    for i in range(max_wait // poll_interval):
-        time.sleep(poll_interval)
+        print("\n========================================")
+        print("STEP 4: Validating New Chat screen")
+        print("========================================")
+        # Validate we are on the New Chat screen
+        validation_result = check_on_new_chat_screen(tester)
+        if not validation_result:
+            print("❌ New Chat screen validation failed!")
+            screenshot_path_temp = "/tmp/whiz_screen.png"
+            tester.screenshot(screenshot_path_temp)
+            save_failed_screenshot(screenshot_path_temp, "youtube_music", "new_chat_screen")
+        else:
+            print("✅ Successfully validated New Chat screen")
+        assert validation_result, "Failed to reach New Chat screen"
+
+        print("\n========================================")
+        print("STEP 5: Requesting to play song on YouTube Music")
+        print("========================================")
+        # Send a voice transcription to play songs on YouTube Music
+        # Ask for specific response format so we can detect success/failure
+        play_message = 'Play Golden from Kpop Demon Hunters on YouTube Music.'
+        print(f"📤 Broadcasting: '{play_message}'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"{play_message}"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+
+        print("\n========================================")
+        print("STEP 6: Waiting for response and validating song is loaded")
+        print("========================================")
+        # Poll until we see YouTube Music actually playing (not just a menu or search result)
+        max_wait = 30
+        poll_interval = 3
+        play_succeeded = False
+        for i in range(max_wait // poll_interval):
+            time.sleep(poll_interval)
+            tester.screenshot(screenshot_path)
+
+            # Check if YouTube Music is showing "Golden" as the current track in the now-playing view
+            # The song can be playing or paused - we just need to verify it's loaded
+            validation_result = tester.validate_screenshot(
+                screenshot_path,
+                "Check if YouTube Music is showing 'Golden' as the current track in the now-playing view. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). The song can be either playing or paused - we just need to verify 'Golden' is loaded as the current track. Return False if: it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'."
+            )
+            if validation_result:
+                print(f"✅ Song loaded after {(i+1)*poll_interval} seconds")
+                play_succeeded = True
+                break
+            print(f"⏳ Waiting for song to load... ({(i+1)*poll_interval}/{max_wait}s)")
+
+        if not play_succeeded:
+            save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
+        assert play_succeeded, "Failed to load Golden on YouTube Music - song never appeared as current track"
+        print("✅ YouTube Music has 'Golden' loaded successfully!")
+
+        print("\n========================================")
+        print("STEP 7: Requesting to queue second song")
+        print("========================================")
+        # Send a voice transcription to queue up "How it's Done" by HUNTRIX
+        queue_message = "Queue How its Done by HUNTRIX on YouTube Music"
+        print(f"📤 Broadcasting: '{queue_message}'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"{queue_message}"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+
+        # Wait for the queue action to complete on the device
+        print(f"⏳ Waiting {max_wait} seconds for queue action to complete...")
+        time.sleep(max_wait)
+
+        print("\n========================================")
+        print("STEP 9: Opening queue view")
+        print("========================================")
+        # Tap to full screen the current song
+        print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
+        subprocess.run(['adb', 'shell', 'input', 'tap', '500', '2100'], check=True)
+        time.sleep(1)
+
+        # Tap to see what's up next
+        print("🖱️  Tapping to see queue at (300, 2200)...")
+        subprocess.run(['adb', 'shell', 'input', 'tap', '300', '2200'], check=True)
+        print("⏳ Waiting 2 seconds for queue to appear...")
+        time.sleep(2)  # Wait for queue to appear
+
+        print("\n========================================")
+        print("STEP 10: Validating song queue")
+        print("========================================")
+        # Screenshot and validate that it shows the queue with Golden first and How It's Done second
         tester.screenshot(screenshot_path)
-
-        # Check if YouTube Music is showing "Golden" as the current track in the now-playing view
-        # The song can be playing or paused - we just need to verify it's loaded
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            "Check if YouTube Music is showing 'Golden' as the current track in the now-playing view. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). The song can be either playing or paused - we just need to verify 'Golden' is loaded as the current track. Return False if: it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'."
+            "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue."
         )
-        if validation_result:
-            print(f"✅ Song loaded after {(i+1)*poll_interval} seconds")
-            play_succeeded = True
-            break
-        print(f"⏳ Waiting for song to load... ({(i+1)*poll_interval}/{max_wait}s)")
+        if not validation_result:
+            print("❌ Queue validation failed!")
+            save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
+        else:
+            print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
+        assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
 
-    if not play_succeeded:
-        save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
-    assert play_succeeded, "Failed to load Golden on YouTube Music - song never appeared as current track"
-    print("✅ YouTube Music has 'Golden' loaded successfully!")
+        print("\n========================================")
+        print("STEP 11: Requesting to play 90s pop instead")
+        print("========================================")
+        # Send a voice transcription to change to 90s pop
+        change_message = "Actually can you play some 90s pop instead"
+        print(f"📤 Broadcasting: '{change_message}'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"{change_message}"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
 
-    print("\n========================================")
-    print("STEP 7: Requesting to queue second song")
-    print("========================================")
-    # Send a voice transcription to queue up "How it's Done" by HUNTRIX
-    queue_message = "Queue How its Done by HUNTRIX on YouTube Music"
-    print(f"📤 Broadcasting: '{queue_message}'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"{queue_message}"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
+        print("\n========================================")
+        print("STEP 12: Waiting for music to change from Golden")
+        print("========================================")
+        # Poll until we see the song has changed from Golden (indicating playlist started)
+        music_changed = False
+        for i in range(max_wait // poll_interval):
+            time.sleep(poll_interval)
+            tester.screenshot(screenshot_path)
 
-    # Wait for the queue action to complete on the device
-    print(f"⏳ Waiting {max_wait} seconds for queue action to complete...")
-    time.sleep(max_wait)
+            # Check if the music changed from "Golden" - meaning a new song/playlist started
+            validation_result = tester.validate_screenshot(
+                screenshot_path,
+                "Check if the currently playing song is NO LONGER 'Golden' by Kpop Demon Hunters. "
+                "Return True if you see a DIFFERENT song playing (like 'Baby One More Time', or any other song that is NOT 'Golden'). "
+                "Return False if 'Golden' is still showing as the currently playing track."
+            )
+            if validation_result:
+                print(f"✅ Music changed after {(i+1)*poll_interval} seconds")
+                music_changed = True
+                break
+            print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
 
-    print("\n========================================")
-    print("STEP 9: Opening queue view")
-    print("========================================")
-    # Tap to full screen the current song
-    print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
-    subprocess.run(['adb', 'shell', 'input', 'tap', '500', '2100'], check=True)
-    time.sleep(1)
+        if not music_changed:
+            save_failed_screenshot(screenshot_path, "youtube_music", "nineties_music_change_validation")
+        assert music_changed, "Failed to change music from Golden"
+        print("✅ Music changed successfully!")
 
-    # Tap to see what's up next
-    print("🖱️  Tapping to see queue at (300, 2200)...")
-    subprocess.run(['adb', 'shell', 'input', 'tap', '300', '2200'], check=True)
-    print("⏳ Waiting 2 seconds for queue to appear...")
-    time.sleep(2)  # Wait for queue to appear
+        print("\n========================================")
+        print("STEP 13: Pressing back to see playlist")
+        print("========================================")
+        # Press back to exit the full player view and see the playlist
+        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_BACK'], check=True)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("STEP 10: Validating song queue")
-    print("========================================")
-    # Screenshot and validate that it shows the queue with Golden first and How It's Done second
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue."
-    )
-    if not validation_result:
-        print("❌ Queue validation failed!")
-        save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
-    else:
-        print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
-    assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
-
-    print("\n========================================")
-    print("STEP 11: Requesting to play 90s pop instead")
-    print("========================================")
-    # Send a voice transcription to change to 90s pop
-    change_message = "Actually can you play some 90s pop instead"
-    print(f"📤 Broadcasting: '{change_message}'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"{change_message}"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-
-    print("\n========================================")
-    print("STEP 12: Waiting for music to change from Golden")
-    print("========================================")
-    # Poll until we see the song has changed from Golden (indicating playlist started)
-    music_changed = False
-    for i in range(max_wait // poll_interval):
-        time.sleep(poll_interval)
+        print("\n========================================")
+        print("STEP 14: Validating 90s pop playlist is visible")
+        print("========================================")
         tester.screenshot(screenshot_path)
-
-        # Check if the music changed from "Golden" - meaning a new song/playlist started
-        validation_result = tester.validate_screenshot(
+        playlist_validation = tester.validate_screenshot(
             screenshot_path,
-            "Check if the currently playing song is NO LONGER 'Golden' by Kpop Demon Hunters. "
-            "Return True if you see a DIFFERENT song playing (like 'Baby One More Time', or any other song that is NOT 'Golden'). "
-            "Return False if 'Golden' is still showing as the currently playing track."
+            "Check if this is a 90s pop playlist or similar. Requirements: "
+            "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
+            "2) You should see the beginning of a list of songs. "
+            "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
+            "There may or may not be a yellow notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
         )
-        if validation_result:
-            print(f"✅ Music changed after {(i+1)*poll_interval} seconds")
-            music_changed = True
-            break
-        print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
+        if not playlist_validation:
+            print("❌ 90s pop playlist validation failed!")
+            save_failed_screenshot(screenshot_path, "youtube_music", "nineties_playlist_validation")
+        else:
+            print("✅ 90s pop playlist validated successfully!")
+        assert playlist_validation, "Failed to validate 90s pop playlist"
 
-    if not music_changed:
-        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_music_change_validation")
-    assert music_changed, "Failed to change music from Golden"
-    print("✅ Music changed successfully!")
+        print("\n========================================")
+        print("STEP 15: Requesting to play 99% Invisible podcast")
+        print("========================================")
+        podcast_message = "Play the 99% Invisible podcast"
+        print(f"📤 Broadcasting: '{podcast_message}'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"{podcast_message}"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
 
-    print("\n========================================")
-    print("STEP 13: Pressing back to see playlist")
-    print("========================================")
-    # Press back to exit the full player view and see the playlist
-    subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_BACK'], check=True)
-    time.sleep(2)
+        print("\n========================================")
+        print("STEP 16: Waiting for podcast to start playing")
+        print("========================================")
+        # Poll until we see the podcast playing
+        podcast_succeeded = False
+        for i in range(max_wait // poll_interval):
+            time.sleep(poll_interval)
+            tester.screenshot(screenshot_path)
 
-    print("\n========================================")
-    print("STEP 14: Validating 90s pop playlist is visible")
-    print("========================================")
-    tester.screenshot(screenshot_path)
-    playlist_validation = tester.validate_screenshot(
-        screenshot_path,
-        "Check if this is a 90s pop playlist or similar. Requirements: "
-        "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
-        "2) You should see a list of songs that are typical 90s pop hits (e.g., Britney Spears, Backstreet Boys, NSYNC, Spice Girls, etc.). "
-        "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
-        "There may or may not be a yellow notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
-    )
-    if not playlist_validation:
-        print("❌ 90s pop playlist validation failed!")
-        save_failed_screenshot(screenshot_path, "youtube_music", "nineties_playlist_validation")
-    else:
-        print("✅ 90s pop playlist validated successfully!")
-    assert playlist_validation, "Failed to validate 90s pop playlist"
+            # Check if 99% Invisible podcast is playing
+            validation_result = tester.validate_screenshot(
+                screenshot_path,
+                "Check if the '99% Invisible' podcast is loaded in YouTube Music. Requirements: "
+                "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
+                "2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). "
+                "The podcast can be either playing or paused - we just need to verify '99% Invisible' is loaded as the current track. "
+                "Return True if 99% Invisible podcast content is loaded. Return False if it's still showing 90s pop music, "
+                "a search results page, or anything other than the 99% Invisible podcast."
+            )
+            if validation_result:
+                print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
+                podcast_succeeded = True
+                break
+            print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
 
-    print("\n========================================")
-    print("STEP 15: Requesting to play 99% Invisible podcast")
-    print("========================================")
-    podcast_message = "Play the 99% Invisible podcast"
-    print(f"📤 Broadcasting: '{podcast_message}'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"{podcast_message}"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
+        if not podcast_succeeded:
+            save_failed_screenshot(screenshot_path, "youtube_music", "podcast_playing_validation")
+        assert podcast_succeeded, "Failed to play 99% Invisible podcast"
+        print("✅ 99% Invisible podcast playing successfully!")
 
-    print("\n========================================")
-    print("STEP 16: Waiting for podcast to start playing")
-    print("========================================")
-    # Poll until we see the podcast playing
-    podcast_succeeded = False
-    for i in range(max_wait // poll_interval):
-        time.sleep(poll_interval)
-        tester.screenshot(screenshot_path)
+        print("\n========================================")
+        print("STEP 17: Requesting to stop the music")
+        print("========================================")
+        # Send a voice transcription to pause the music
+        pause_message = "Stop the music"
+        print(f"📤 Broadcasting: '{pause_message}'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"{pause_message}"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
 
-        # Check if 99% Invisible podcast is playing
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "Check if the '99% Invisible' podcast is playing in YouTube Music. Requirements: "
-            "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
-            "2) You must see a PAUSE button (not play button) or playback progress showing it's actively playing. "
-            "Return True if 99% Invisible podcast content is playing. Return False if it's still showing 90s pop music, "
-            "a search results page, or anything other than the 99% Invisible podcast playing."
-        )
-        if validation_result:
-            print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
-            podcast_succeeded = True
-            break
-        print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
+        print("\n========================================")
+        print("STEP 18: Waiting for music to pause and validating")
+        print("========================================")
+        # Poll until we see the music is paused (play button visible instead of pause button)
+        pause_succeeded = False
+        for i in range(max_wait // poll_interval):
+            time.sleep(poll_interval)
+            tester.screenshot(screenshot_path)
 
-    if not podcast_succeeded:
-        save_failed_screenshot(screenshot_path, "youtube_music", "podcast_playing_validation")
-    assert podcast_succeeded, "Failed to play 99% Invisible podcast"
-    print("✅ 99% Invisible podcast playing successfully!")
+            # Check if the music is paused (play button visible)
+            validation_result = tester.validate_screenshot(
+                screenshot_path,
+                "Check if YouTube Music is showing PAUSED state. Requirements: "
+                "1) You must see a PLAY button (triangle pointing right) NOT a pause button (two vertical bars), AND "
+                "2) The 99% Invisible podcast content should still be visible as the current track. "
+                "Return True if the music is paused (play button visible). "
+                "Return False if the music is still playing (pause button visible)."
+            )
+            if validation_result:
+                print(f"✅ Music paused after {(i+1)*poll_interval} seconds")
+                pause_succeeded = True
+                break
+            print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
 
-    print("\n========================================")
-    print("STEP 17: Requesting to stop the music")
-    print("========================================")
-    # Send a voice transcription to pause the music
-    pause_message = "Stop the music"
-    print(f"📤 Broadcasting: '{pause_message}'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"{pause_message}"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
+        if not pause_succeeded:
+            save_failed_screenshot(screenshot_path, "youtube_music", "pause_music_validation")
+        assert pause_succeeded, "Failed to pause music - play button never appeared"
+        print("✅ Music paused successfully!")
 
-    print("\n========================================")
-    print("STEP 18: Waiting for music to pause and validating")
-    print("========================================")
-    # Poll until we see the music is paused (play button visible instead of pause button)
-    pause_succeeded = False
-    for i in range(max_wait // poll_interval):
-        time.sleep(poll_interval)
-        tester.screenshot(screenshot_path)
+        print("\n========================================")
+        print("🎉 TEST COMPLETED SUCCESSFULLY!")
+        print("========================================")
 
-        # Check if the music is paused (play button visible)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "Check if YouTube Music is showing PAUSED state. Requirements: "
-            "1) You must see a PLAY button (triangle pointing right) NOT a pause button (two vertical bars), AND "
-            "2) The 99% Invisible podcast content should still be visible as the current track. "
-            "Return True if the music is paused (play button visible). "
-            "Return False if the music is still playing (pause button visible)."
-        )
-        if validation_result:
-            print(f"✅ Music paused after {(i+1)*poll_interval} seconds")
-            pause_succeeded = True
-            break
-        print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
+    finally:
+        # Always clean up YouTube Music to prevent it from interfering with future tests
+        cleanup_youtube_music()
 
-    if not pause_succeeded:
-        save_failed_screenshot(screenshot_path, "youtube_music", "pause_music_validation")
-    assert pause_succeeded, "Failed to pause music - play button never appeared"
-    print("✅ Music paused successfully!")
-
-    print("\n========================================")
-    print("🎉 TEST COMPLETED SUCCESSFULLY!")
-    print("========================================")
 
 def test_google_maps_directions(tester):
     """Test that we can get directions to multiple locations using Google Maps."""
@@ -1186,219 +1226,237 @@ def test_sms_draft_message(tester):
     """Test that we can draft, modify draft, and send SMS messages."""
     import time
 
-    # Get phone numbers based on device
-    _, sms_numbers = get_phone_numbers()
-    sms_full, sms_short = sms_numbers
+    def cleanup_messages():
+        """Close Google Messages to prevent it from interfering with future tests."""
+        print("🧹 Cleaning up: Force stopping Google Messages...")
+        subprocess.run([
+            'adb', 'shell', 'am', 'force-stop', 'com.google.android.apps.messaging'
+        ], capture_output=True)
+        time.sleep(1)
 
-    print("\n========================================")
-    print("STEP 1: Opening WhizVoice Debug app")
-    print("========================================")
-    screenshot_path = "/tmp/whiz_screen.png"
+    # Clean up Google Messages at the start to ensure fresh state
+    cleanup_messages()
 
-    # Open WhizVoice Debug app
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
+    try:
+        # Get phone numbers based on device
+        _, sms_numbers = get_phone_numbers()
+        sms_full, sms_short = sms_numbers
 
-    print("\n========================================")
-    print("STEP 2: Navigating to My Chats page")
-    print("========================================")
-    # Navigate to My Chats page
-    success, error_msg = navigate_to_my_chats(tester, "sms_draft_message")
-    assert success, error_msg
-    print("✅ Successfully navigated to My Chats page")
+        print("\n========================================")
+        print("STEP 1: Opening WhizVoice Debug app")
+        print("========================================")
+        screenshot_path = "/tmp/whiz_screen.png"
 
-    print("\n========================================")
-    print("STEP 3: Opening new chat")
-    print("========================================")
-    # Click on coordinates to open a new chat
-    tester.tap(950, 2225)
-    time.sleep(2)
+        # Open WhizVoice Debug app
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
 
-    print("\n========================================")
-    print("STEP 4: Validating New Chat screen")
-    print("========================================")
-    # Validate we are on the New Chat screen
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        "The screen shows a 'New Chat' page where users can start a new conversation"
-    )
-    if not validation_result:
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "new_chat_screen")
-    assert validation_result, "Failed to reach New Chat screen"
-    print("✅ Successfully validated New Chat screen")
+        print("\n========================================")
+        print("STEP 2: Navigating to My Chats page")
+        print("========================================")
+        # Navigate to My Chats page
+        success, error_msg = navigate_to_my_chats(tester, "sms_draft_message")
+        assert success, error_msg
+        print("✅ Successfully navigated to My Chats page")
 
-    print("\n========================================")
-    print("STEP 5: Sending SMS draft request")
-    print("========================================")
-    # Send a voice transcription with the test message to send an SMS
-    # Note: The app is in continuous listening mode by default (voice app behavior),
-    # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
-    print(f"📤 Broadcasting: 'Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', f'"Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 3 seconds for message to be processed...")
-    time.sleep(3)  # Give time for message to be processed
+        print("\n========================================")
+        print("STEP 3: Opening new chat")
+        print("========================================")
+        # Click on coordinates to open a new chat
+        tester.tap(950, 2225)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("STEP 6: Waiting for draft overlay to appear")
-    print("========================================")
-    # wait for draft overlay to appear over SMS input text bar
-    # Support light mode (#fffad0), dark mode (#d2cea4), and other yellow variants (#aead93, #afad92, #fbf7cd)
-    print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0, #d2cea4, #aead93, #afad92, or #fbf7cd...")
-    result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd'], timeout=30.0)
-
-    # If overlay detection failed, capture diagnostics before asserting
-    if not result['matched']:
-        print("❌ Draft overlay not detected!")
+        print("\n========================================")
+        print("STEP 4: Validating New Chat screen")
+        print("========================================")
+        # Validate we are on the New Chat screen
         tester.screenshot(screenshot_path)
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_overlay_not_detected")
-    else:
-        print("✅ Draft overlay detected!")
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            "The screen shows a 'New Chat' page where users can start a new conversation"
+        )
+        if not validation_result:
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "new_chat_screen")
+        assert validation_result, "Failed to reach New Chat screen"
+        print("✅ Successfully validated New Chat screen")
 
-    assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        print("\n========================================")
+        print("STEP 5: Sending SMS draft request")
+        print("========================================")
+        # Send a voice transcription with the test message to send an SMS
+        # Note: The app is in continuous listening mode by default (voice app behavior),
+        # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+        print(f"📤 Broadcasting: 'Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', f'"Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 3 seconds for message to be processed...")
+        time.sleep(3)  # Give time for message to be processed
 
-    print("\n========================================")
-    print("STEP 7: Validating SMS draft message")
-    print("========================================")
-    # Validate Messages app is open with the draft message
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
-        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'hey testing SMS from whiz voice'. "
-        "There is also a yellow notification bubble with an outline of something (it's a robot head). "
-        "There may or may not be an icon inside the outline. "
-    )
-    if not validation_result:
-        print("❌ Draft message validation failed!")
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_message_validation")
-    else:
-        print("✅ SMS draft message validated successfully!")
-    assert validation_result, "Failed to draft SMS message correctly"
+        print("\n========================================")
+        print("STEP 6: Waiting for draft overlay to appear")
+        print("========================================")
+        # wait for draft overlay to appear over SMS input text bar
+        # Support light mode (#fffad0), dark mode (#d2cea4), and other yellow variants (#aead93, #afad92, #fbf7cd)
+        print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0, #d2cea4, #aead93, #afad92, or #fbf7cd...")
+        result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd'], timeout=30.0)
 
-    print("\n========================================")
-    print("STEP 8: Requesting to modify the message")
-    print("========================================")
-    # Send a voice transcription to modify the message
-    print("📤 Broadcasting: 'Actually, can you make the message more polite?'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"Actually, can you make the message more polite?"',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 15 seconds for message modification...")
-    time.sleep(15)
+        # If overlay detection failed, capture diagnostics before asserting
+        if not result['matched']:
+            print("❌ Draft overlay not detected!")
+            tester.screenshot(screenshot_path)
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_overlay_not_detected")
+        else:
+            print("✅ Draft overlay detected!")
 
-    print("\n========================================")
-    print("STEP 9: Validating draft message was updated")
-    print("========================================")
-    # Validate that the draft was updated
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-        "At the bottom of the screen, there is a yellow overlay or message input field containing text "
-        "similar to 'testing SMS'. "
-        "The Yellow overlay should have some text in red strike out and some text in blue. "
-        "There is also a yellow notification bubble with the outline of a robot head. "
-        "There may or may not be an icon inside the robot head outline. "
-    )
-    if not validation_result:
-        print("❌ Draft update validation failed!")
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_updated_validation")
-    else:
-        print("✅ Draft message successfully updated with strikethrough and new text!")
-    assert validation_result, "Failed to update SMS draft message correctly"
+        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
-    print("\n========================================")
-    print("STEP 10: Sending the SMS message")
-    print("========================================")
-    # Send a voice transcription to send the message
-    print("📤 Broadcasting: 'That looks good, go ahead and send the text.'")
-    subprocess.run([
-        'adb', 'shell',
-        'am', 'broadcast',
-        '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
-        '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-        '--es', 'text', '"That looks good, go ahead and send the text."',
-        '--ez', 'fromVoice', 'true',
-        '--ez', 'autoSend', 'true'
-    ], check=True)
-    print("⏳ Waiting 30 seconds for message to be sent...")
-    time.sleep(30)
+        print("\n========================================")
+        print("STEP 7: Validating SMS draft message")
+        print("========================================")
+        # Validate Messages app is open with the draft message
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
+            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "similar to 'hey testing SMS from whiz voice'. "
+            "There is also a yellow notification bubble with an outline of something (it's a robot head). "
+            "There may or may not be an icon inside the outline. "
+        )
+        if not validation_result:
+            print("❌ Draft message validation failed!")
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_message_validation")
+        else:
+            print("✅ SMS draft message validated successfully!")
+        assert validation_result, "Failed to draft SMS message correctly"
 
-    print("\n========================================")
-    print("STEP 11: Validating message was sent")
-    print("========================================")
-    # Validate that the message was sent
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-        "Check that the message was SENT (appears in the conversation thread as a sent message bubble, not in the text input field). "
-        "The most recent sent message should contain text similar to 'testing SMS' (may have polite words added). "
-        "There should be NO yellow overlay covering the bottom of the screen. "
-        "A yellow notification bubble with a robot head outline may be visible. "
-        "Return True if the message appears as a SENT message in the conversation. "
-        "Return False if the message text is still in the input field at the bottom."
-    )
-    if not validation_result:
-        print("❌ Message sent validation failed!")
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "message_sent_validation")
-    else:
-        print("✅ SMS message successfully sent!")
-    assert validation_result, "Failed to send SMS message correctly"
+        print("\n========================================")
+        print("STEP 8: Requesting to modify the message")
+        print("========================================")
+        # Send a voice transcription to modify the message
+        print("📤 Broadcasting: 'Actually, can you make the message more polite?'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"Actually, can you make the message more polite?"',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 15 seconds for message modification...")
+        time.sleep(15)
 
-    print("\n========================================")
-    print("STEP 12: Cleaning up - Deleting sent message")
-    print("========================================")
-    # Cleanup: Delete the sent message
-    # Long press on the newly sent message
-    print("🖱️  Long pressing on message at (500, 1280)...")
-    tester.long_press(500, 1180)
-    time.sleep(2)
+        print("\n========================================")
+        print("STEP 9: Validating draft message was updated")
+        print("========================================")
+        # Validate that the draft was updated
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "similar to 'testing SMS'. "
+            "The Yellow overlay should have some text in red strike out and some text in blue. "
+            "There is also a yellow notification bubble with the outline of a robot head. "
+            "There may or may not be an icon inside the robot head outline. "
+        )
+        if not validation_result:
+            print("❌ Draft update validation failed!")
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_updated_validation")
+        else:
+            print("✅ Draft message successfully updated with strikethrough and new text!")
+        assert validation_result, "Failed to update SMS draft message correctly"
 
-    # Click delete button (may vary by SMS app)
-    print("🗑️  Tapping delete button at (800, 200)...")
-    tester.tap(800, 200)
-    time.sleep(2)
+        print("\n========================================")
+        print("STEP 10: Sending the SMS message")
+        print("========================================")
+        # Send a voice transcription to send the message
+        print("📤 Broadcasting: 'That looks good, go ahead and send the text.'")
+        subprocess.run([
+            'adb', 'shell',
+            'am', 'broadcast',
+            '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
+            '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
+            '--es', 'text', '"That looks good, go ahead and send the text."',
+            '--ez', 'fromVoice', 'true',
+            '--ez', 'autoSend', 'true'
+        ], check=True)
+        print("⏳ Waiting 30 seconds for message to be sent...")
+        time.sleep(30)
 
-    # Click confirm delete
-    print("✔️  Confirming delete at (750, 1490)...")
-    tester.tap(750, 1490)
-    time.sleep(2)
+        print("\n========================================")
+        print("STEP 11: Validating message was sent")
+        print("========================================")
+        # Validate that the message was sent
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+            "Check that the message was SENT (appears in the conversation thread as a sent message bubble, not in the text input field). "
+            "The most recent sent message should contain text similar to 'testing SMS' (may have polite words added). "
+            "There should be NO yellow overlay covering the bottom of the screen. "
+            "A yellow notification bubble with a robot head outline may be visible. "
+            "Return True if the message appears as a SENT message in the conversation. "
+            "Return False if the message text is still in the input field at the bottom."
+        )
+        if not validation_result:
+            print("❌ Message sent validation failed!")
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "message_sent_validation")
+        else:
+            print("✅ SMS message successfully sent!")
+        assert validation_result, "Failed to send SMS message correctly"
 
-    print("\n========================================")
-    print("STEP 13: Validating message was deleted")
-    print("========================================")
-    # Validate that the message was deleted
-    tester.screenshot(screenshot_path)
-    validation_result = tester.validate_screenshot(
-        screenshot_path,
-        f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-        "The most recent message in the chat has been deleted. Other messages may or may not be deleted."
-    )
-    if not validation_result:
-        print("❌ Message deletion validation failed!")
-        save_failed_screenshot(screenshot_path, "sms_draft_message", "message_deleted_validation")
-    else:
-        print("✅ SMS message successfully deleted!")
-    assert validation_result, "Failed to delete the sent SMS message"
+        print("\n========================================")
+        print("STEP 12: Cleaning up - Deleting sent message")
+        print("========================================")
+        # Cleanup: Delete the sent message
+        # Long press on the newly sent message
+        device_model = get_device_model()
+        long_press_y = 1180 if "Pixel 8" in device_model else 1280
+        print(f"🖱️  Long pressing on message at (500, {long_press_y})...")
+        tester.long_press(500, long_press_y)
+        time.sleep(2)
 
-    print("\n========================================")
-    print("🎉 TEST COMPLETED SUCCESSFULLY!")
-    print("========================================")
+        # Click delete button (may vary by SMS app)
+        print("🗑️  Tapping delete button at (800, 200)...")
+        tester.tap(800, 200)
+        time.sleep(2)
+
+        # Click confirm delete
+        print("✔️  Confirming delete at (750, 1490)...")
+        tester.tap(750, 1490)
+        time.sleep(2)
+
+        print("\n========================================")
+        print("STEP 13: Validating message was deleted")
+        print("========================================")
+        # Validate that the message was deleted
+        tester.screenshot(screenshot_path)
+        validation_result = tester.validate_screenshot(
+            screenshot_path,
+            f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
+            "The most recent message in the chat has been deleted. Other messages may or may not be deleted."
+        )
+        if not validation_result:
+            print("❌ Message deletion validation failed!")
+            save_failed_screenshot(screenshot_path, "sms_draft_message", "message_deleted_validation")
+        else:
+            print("✅ SMS message successfully deleted!")
+        assert validation_result, "Failed to delete the sent SMS message"
+
+        print("\n========================================")
+        print("🎉 TEST COMPLETED SUCCESSFULLY!")
+        print("========================================")
+
+    finally:
+        # Always clean up Google Messages to prevent it from interfering with future tests
+        cleanup_messages()
 

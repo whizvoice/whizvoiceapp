@@ -357,15 +357,13 @@ class VoiceManager @Inject constructor(
         // Handle app background events
         coroutineScope.launch {
             appLifecycleService.appBackgroundEvent.collect {
-                Log.d(TAG, "App backgrounded - stopping continuous listening")
                 onAppBackgrounded()
             }
         }
-        
+
         // Handle app foreground events
         coroutineScope.launch {
             appLifecycleService.appForegroundEvent.collect {
-                Log.d(TAG, "App foregrounded")
                 onAppForegrounded()
             }
         }
@@ -443,9 +441,11 @@ class VoiceManager @Inject constructor(
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
 
         // Note: TTS state is saved by ChatViewModel before disabling
-        // Check if bubble overlay is running - if so, don't stop listening
-        if (com.example.whiz.services.BubbleOverlayService.isActive) {
-            Log.d(TAG, "Bubble overlay is active - keeping voice recognition running with continuous listening")
+        // Check if bubble overlay is running OR about to start - if so, don't stop listening
+        // isPendingStart handles the race condition where onAppBackgrounded fires before
+        // bubble's onCreate sets isActive (since startService is asynchronous)
+        if (BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart) {
+            Log.d(TAG, "Bubble overlay is active or pending - keeping voice recognition running (isActive=${BubbleOverlayService.isActive}, isPendingStart=${BubbleOverlayService.isPendingStart})")
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
@@ -464,8 +464,6 @@ class VoiceManager @Inject constructor(
     }
     
     private fun onAppForegrounded() {
-        Log.d(TAG, "onAppForegrounded called. continuousListeningEnabled=$continuousListeningEnabled")
-        
         // Note: We don't automatically restart continuous listening here
         // It should be restarted by ChatScreen when appropriate
         // This prevents unwanted mic activation when returning to non-chat screens

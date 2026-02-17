@@ -167,21 +167,34 @@ class ScreenAgentTools @Inject constructor(
                 
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(launchIntent)
-                    
-                    val appLabel = packageManager.getApplicationLabel(
-                        packageManager.getApplicationInfo(packageName, 0)
-                    ).toString()
-                    
-                    // Start bubble overlay if enabled and we have permission
+
+                    // Set pending flag BEFORE launching to prevent race with onAppBackgrounded
+                    // This ensures VoiceManager doesn't stop listening during the transition
                     var overlayStarted = false
                     var overlayPermissionRequired = false
                     Log.d(TAG, "Checking overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}, hasPermission=${hasOverlayPermission()}")
+                    if (enableOverlay && !isWhizApp(packageName) && hasOverlayPermission()) {
+                        BubbleOverlayService.isPendingStart = true
+                        Log.d(TAG, "Set isPendingStart=true before launching (fuzzy)")
+                    }
+
+                    context.startActivity(launchIntent)
+
+                    val appLabel = packageManager.getApplicationLabel(
+                        packageManager.getApplicationInfo(packageName, 0)
+                    ).toString()
+
+                    // Start bubble overlay if enabled and we have permission
                     if (enableOverlay && !isWhizApp(packageName)) {
                         if (hasOverlayPermission()) {
                             Log.d(TAG, "Starting bubble overlay service (fuzzy)")
                             overlayStarted = startBubbleOverlay()
                             Log.d(TAG, "Bubble overlay started (fuzzy): $overlayStarted")
+                            // Clear pending flag if bubble failed to start
+                            if (!overlayStarted) {
+                                BubbleOverlayService.isPendingStart = false
+                                Log.d(TAG, "Cleared isPendingStart because bubble failed to start (fuzzy)")
+                            }
                         } else {
                             overlayPermissionRequired = true
                             Log.w(TAG, "Overlay permission required to show bubble")
@@ -247,9 +260,20 @@ class ScreenAgentTools @Inject constructor(
                 
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+                    // Set pending flag BEFORE launching to prevent race with onAppBackgrounded
+                    // This ensures VoiceManager doesn't stop listening during the transition
+                    var overlayStarted = false
+                    var overlayPermissionRequired = false
+                    Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
+                    if (enableOverlay && !isWhizApp(mappedPackage) && hasOverlayPermission()) {
+                        BubbleOverlayService.isPendingStart = true
+                        Log.i(TAG, "🔵 Set isPendingStart=true before launching (common mappings)")
+                    }
+
                     try {
                         context.startActivity(launchIntent)
-                        
+
                         val appLabel = try {
                             packageManager.getApplicationLabel(
                                 packageManager.getApplicationInfo(mappedPackage, 0)
@@ -257,16 +281,18 @@ class ScreenAgentTools @Inject constructor(
                         } catch (e: Exception) {
                             appName
                         }
-                        
+
                         // Start bubble overlay if enabled and we have permission
-                        var overlayStarted = false
-                        var overlayPermissionRequired = false
-                        Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                         if (enableOverlay && !isWhizApp(mappedPackage)) {
                             if (hasOverlayPermission()) {
                                 Log.i(TAG, "🔵 STARTING BUBBLE OVERLAY SERVICE for $mappedPackage")
                                 overlayStarted = startBubbleOverlay()
                                 Log.i(TAG, "🔵 BUBBLE OVERLAY RESULT: $overlayStarted")
+                                // Clear pending flag if bubble failed to start
+                                if (!overlayStarted) {
+                                    BubbleOverlayService.isPendingStart = false
+                                    Log.i(TAG, "🔵 Cleared isPendingStart because bubble failed to start")
+                                }
                             } else {
                                 overlayPermissionRequired = true
                                 Log.w(TAG, "🔵 OVERLAY PERMISSION REQUIRED to show bubble")
@@ -285,10 +311,12 @@ class ScreenAgentTools @Inject constructor(
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
+                        // Clear pending flag on launch failure
+                        BubbleOverlayService.isPendingStart = false
                     }
                 }
             }
-            
+
             Log.w(TAG, "Could not find app matching: $appName")
             logScreenAgentError(
                 reason = "app_not_found",
@@ -819,7 +847,7 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
@@ -1550,18 +1578,23 @@ class ScreenAgentTools @Inject constructor(
         trackAction("draftSMSMessage: ${message.take(30)}...")
 
         try {
-            // Auto-launch Messages app if not already open
-            val launchResult = launchApp("Messages", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Failed to open Messages: ${launchResult.error}"
-                )
+            // Skip launching app when updating an existing draft - we're already in the correct conversation
+            if (previousText != null) {
+                Log.d(TAG, "Skipping app launch - updating existing draft, already in conversation")
+            } else {
+                // Auto-launch Messages app if not already open
+                val launchResult = launchApp("Messages", enableOverlay = true)
+                if (!launchResult.success) {
+                    Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Failed to open Messages: ${launchResult.error}"
+                    )
+                }
+                Log.i(TAG, "Messages app launched successfully")
+                delay(1000) // Wait for Messages to fully load
             }
-            Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -1612,10 +1645,16 @@ class ScreenAgentTools @Inject constructor(
                 }
             } else if (previousText != null) {
                 Log.d(TAG, "Skipping contact navigation check - updating existing draft (previousText provided)")
+
+                // Dismiss the existing overlay first so we can find the actual input field
+                Log.d(TAG, "Dismissing existing draft overlay before updating")
+                MessageDraftOverlayService.stop(context)
+                delay(500) // Wait for overlay to fully dismiss
+                Log.d(TAG, "Overlay dismissed, proceeding to find input field")
             }
 
-            // Wait a bit to ensure we're in a conversation
-            delay(800)
+            // Wait a bit to ensure we're in a conversation (shorter when updating since we're already there)
+            delay(if (previousText != null) 300 else 800)
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -1683,6 +1722,10 @@ class ScreenAgentTools @Inject constructor(
 
                     // Recycle unused nodes
                     filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
+                } else if (previousText != null) {
+                    // When updating existing draft, don't use Compose UI fallback
+                    // The overlay was just dismissed, and the Compose UI heuristics might find it or other views
+                    Log.w(TAG, "No EditText nodes found when updating draft - cannot proceed without EditText")
                 } else {
                     Log.d(TAG, "No EditText nodes found - trying Compose UI fallback")
 
@@ -1735,7 +1778,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
-                // For EditText (traditional UI): Use focus only, then GLOBAL_ACTION_SHOW_IME
+                // For EditText (traditional UI): Use focus only, then toggleSoftInput fallback if needed
                 // For Compose UI: Use double-click pattern
                 val clickSuccess: Boolean
                 if (isComposeUI) {
@@ -1750,11 +1793,11 @@ class ScreenAgentTools @Inject constructor(
                     val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     Log.d(TAG, "Second click result (Compose UI): $secondClick")
                 } else {
-                    // Traditional EditText: Use focus || click like WhatsApp does
-                    val focusResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    // Traditional EditText: Just click to open keyboard
+                    // Note: ACTION_FOCUS sets accessibility focus which may interfere with input focus
                     val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    clickSuccess = focusResult || clickResult
-                    Log.d(TAG, "EditText: focus=$focusResult, click=$clickResult")
+                    clickSuccess = clickResult
+                    Log.d(TAG, "EditText: click=$clickResult")
                 }
 
                 if (clickSuccess) {
@@ -1776,31 +1819,7 @@ class ScreenAgentTools @Inject constructor(
                                 currentInputNodes.forEach { it.recycle() }
                                 moved
                             } else {
-                                // For Compose UI, check if any wide clickable view in bottom area moved up
-                                val allClickable = mutableListOf<AccessibilityNodeInfo>()
-                                findClickableChildren(currentRootNode, allClickable)
-
-                                val screenWidth = context.resources.displayMetrics.widthPixels
-                                val wideBottomViews = allClickable.filter { node ->
-                                    val rect = android.graphics.Rect()
-                                    node.getBoundsInScreen(rect)
-                                    val width = rect.right - rect.left
-                                    width > (screenWidth * 0.4) && rect.bottom > 2000
-                                }
-
-                                val moved = if (wideBottomViews.isNotEmpty()) {
-                                    val currentRect = android.graphics.Rect()
-                                    wideBottomViews[0].getBoundsInScreen(currentRect)
-                                    val upMovement = initialRect.top - currentRect.top
-                                    Log.d(TAG, "Compose UI: input moved up by ${upMovement}px")
-                                    upMovement > 300
-                                } else {
-                                    false
-                                }
-
-                                wideBottomViews.forEach { it.recycle() }
-                                allClickable.filter { it !in wideBottomViews }.forEach { it.recycle() }
-                                moved
+                                false
                             }
 
                             currentRootNode.recycle()
@@ -1813,7 +1832,7 @@ class ScreenAgentTools @Inject constructor(
                     if (keyboardOpened) {
                         Log.d(TAG, "Keyboard opened successfully, input field moved up")
                     } else {
-                        Log.w(TAG, "Keyboard may not have opened, or input field didn't move as expected")
+                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
                     }
                 } else {
                     Log.w(TAG, "Could not click/focus input field to open keyboard")
@@ -1961,18 +1980,9 @@ class ScreenAgentTools @Inject constructor(
         Log.d(TAG, "Attempting to send SMS message: $message")
 
         try {
-            // Auto-launch Messages app if not already open
-            val launchResult = launchApp("Messages", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Messages: ${launchResult.error}")
-                return SMSResult(
-                    success = false,
-                    action = "send_message",
-                    error = "Failed to open Messages: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
+            // Skip launching app - sendSMSMessage is always called after a draft was shown,
+            // so the Messages app should already be open in the correct conversation
+            Log.d(TAG, "Skipping app launch - send is called after draft, app should already be in correct state")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -3866,19 +3876,32 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                     // If no Start button, check for mode tabs (indicates we're on directions screen)
-                    // This is important for transit mode which doesn't show Start button until a route is selected
                     val modeTabNodes = mutableListOf<AccessibilityNodeInfo>()
                     findNodesByResourceId(modeRootNode, "com.google.android.apps.maps:id/directions_mode_tabs", modeTabNodes)
                     val hasModeTabs = modeTabNodes.isNotEmpty()
                     modeTabNodes.forEach { it.recycle() }
 
                     if (hasModeTabs) {
-                        directionsScreenFound = true
-                        Log.d(TAG, "Found directions mode tabs on attempt $attempt (no Start button yet - likely transit mode)")
-                        break
+                        // Check what mode we're in - only break early for transit mode
+                        // For driving/walking/biking, the Start button should exist, so keep waiting
+                        val currentMode = findSelectedTransportMode(modeRootNode)
+                        val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
+
+                        if (isTransitMode) {
+                            // Transit mode genuinely doesn't have Start button until route is selected
+                            directionsScreenFound = true
+                            Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")
+                            break
+                        } else {
+                            // Non-transit mode - Start button should exist, keep waiting for it to render
+                            Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
+                            // Don't break - continue the loop to wait for Start button
+                            modeRootNode.recycle()
+                            modeRootNode = null
+                        }
                     }
 
-                    modeRootNode.recycle()
+                    modeRootNode?.recycle()
                     modeRootNode = null
                 }
                 Log.d(TAG, "Directions screen indicators not found, waiting... (attempt $attempt/5)")
@@ -4586,9 +4609,10 @@ class ScreenAgentTools @Inject constructor(
         val screenHeight = displayMetrics.heightPixels
 
         // Calculate swipe coordinates (swipe UP from bottom to top to scroll DOWN and reveal more results)
+        // Use a smaller scroll distance (20% of screen) to avoid over-scrolling due to Material Design momentum
         val centerX = screenWidth / 2f
-        val startY = screenHeight * 0.7f  // Start at 70% down the screen
-        val endY = screenHeight * 0.3f    // End at 30% down the screen (swipe upward to scroll down)
+        val startY = screenHeight * 0.6f  // Start at 60% down the screen
+        val endY = screenHeight * 0.4f    // End at 40% down the screen (swipe upward to scroll down)
 
         Log.d(TAG, "Performing scroll gesture on Maps results list (swipe from $startY to $endY)")
         val scrolled = accessibilityService.performScrollGesture(
@@ -7109,6 +7133,46 @@ class ScreenAgentTools @Inject constructor(
     
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
+            // Check for Archived screen first - it looks like a chat list but isn't the main one
+            // The Archived screen has "Archived" text in the toolbar
+            // BUT: The main chat list also has "Archived" text in a row (com.whatsapp:id/archived_row)
+            // So we first check indicators that we're on main chat list, not archived screen:
+            // 1. archived_row exists (the row showing "Archived" with count)
+            // 2. bottom_nav_container exists (main chat list has bottom nav, archived screen doesn't)
+            val archivedRow = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/archived_row")
+            val hasArchivedRow = archivedRow != null && archivedRow.isNotEmpty()
+            archivedRow?.forEach { it.recycle() }
+
+            val bottomNav = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/bottom_nav_container")
+            val hasBottomNav = bottomNav != null && bottomNav.isNotEmpty()
+            bottomNav?.forEach { it.recycle() }
+
+            val isMainChatList = hasArchivedRow || hasBottomNav
+
+            if (!isMainChatList) {
+                // Only check for archived screen if we don't have the archived_row (which is on main chat list)
+                val toolbar = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/toolbar")
+                if (toolbar != null && toolbar.isNotEmpty()) {
+                    for (toolbarNode in toolbar) {
+                        val archivedNodes = rootNode.findAccessibilityNodeInfosByText("Archived")
+                        if (archivedNodes != null && archivedNodes.isNotEmpty()) {
+                            for (archivedNode in archivedNodes) {
+                                // Check if "Archived" text is a direct title (not part of a chat name)
+                                if (archivedNode.className?.toString() == "android.widget.TextView" &&
+                                    archivedNode.text?.toString() == "Archived") {
+                                    archivedNodes.forEach { it.recycle() }
+                                    toolbar.forEach { it.recycle() }
+                                    Log.d(TAG, "On WhatsApp Archived screen - need to go back to main chat list")
+                                    return WhatsAppScreen.UNKNOWN
+                                }
+                            }
+                            archivedNodes.forEach { it.recycle() }
+                        }
+                    }
+                    toolbar.forEach { it.recycle() }
+                }
+            }
+
             // Check if we're inside a chat first (most specific screen)
             // A chat screen has the message input field and/or conversation elements
             val messageInputField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")

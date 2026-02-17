@@ -476,12 +476,13 @@ class WhizServerRepository @Inject constructor(
                 return
             }
             
-            // Build WebSocket URL with conversation_id parameter if provided
+            // Build WebSocket URL with conversation_id and device_id parameters
             // Include any conversation ID except -1 (which represents "no chat")
+            val deviceId = authRepository.getOrCreateDeviceId()
             val websocketUrl = if (conversationId != null && conversationId != -1L) {
-                "$WHIZ_SERVER_URL?conversation_id=$conversationId"
+                "$WHIZ_SERVER_URL?conversation_id=$conversationId&device_id=$deviceId"
             } else {
-                WHIZ_SERVER_URL
+                "$WHIZ_SERVER_URL?device_id=$deviceId"
             }
             
             val requestBuilder = Request.Builder().url(websocketUrl)

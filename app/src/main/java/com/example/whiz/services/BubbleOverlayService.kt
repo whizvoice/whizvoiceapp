@@ -64,6 +64,9 @@ class BubbleOverlayService : Service() {
     private var botResponseJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
     private var hideMessageRunnable: Runnable? = null
+    private var lastMessageShownTimestamp: Long = 0L
+    private var hasUnreadMessage: Boolean = false
+    private var lastMessageWasSystemMessage: Boolean = false
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var isDismissTargetVisible = false
 
@@ -73,6 +76,7 @@ class BubbleOverlayService : Service() {
         private const val TAG = "BubbleOverlayService"
         private const val CLICK_THRESHOLD = 30
         private const val MESSAGE_DISPLAY_DURATION = 5000L // 5 seconds
+        private const val UNREAD_THRESHOLD_MS = 1000L // 1 second - messages shown less than this are considered "missed"
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
@@ -81,6 +85,11 @@ class BubbleOverlayService : Service() {
         @Volatile
         var isActive: Boolean = false
             private set
+
+        // Flag to indicate bubble is about to start (set before startService, cleared in onCreate)
+        // This prevents race condition where onAppBackgrounded fires before bubble's onCreate sets isActive
+        @Volatile
+        var isPendingStart: Boolean = false
 
         // Track the current listening mode
         @Volatile
@@ -159,6 +168,7 @@ class BubbleOverlayService : Service() {
         super.onCreate()
         Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
         isActive = true
+        isPendingStart = false  // Clear pending flag now that we're actually active
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
@@ -322,12 +332,8 @@ class BubbleOverlayService : Service() {
 
                     // Set up long press detection
                     longPressRunnable = Runnable {
-                        val xDiff = abs(event.rawX - initialTouchX)
-                        val yDiff = abs(event.rawY - initialTouchY)
-                        if (xDiff < CLICK_THRESHOLD && yDiff < CLICK_THRESHOLD) {
-                            isLongPressHandled = true
-                            onChatHeadLongPress()
-                        }
+                        isLongPressHandled = true
+                        onChatHeadLongPress()
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_THRESHOLD)
                     true
@@ -501,6 +507,10 @@ class BubbleOverlayService : Service() {
     }
 
     private fun onChatHeadClick() {
+        // Clear unread dot
+        hasUnreadMessage = false
+        lastMessageShownTimestamp = 0L
+        chatHeadView?.findViewById<View>(R.id.unread_dot)?.visibility = View.GONE
         // Return to the main app when chat head is clicked
         returnToApp()
     }
@@ -602,7 +612,7 @@ class BubbleOverlayService : Service() {
             ListeningMode.TTS_WITH_LISTENING -> "Speaking Mode"
         }
         
-        showMessage(modeText, isUserMessage = false)
+        showMessage(modeText, isUserMessage = false, isSystemMessage = true)
     }
     
     private fun applyCurrentMode() {
@@ -722,14 +732,26 @@ class BubbleOverlayService : Service() {
         }
     }
 
-    private fun showMessage(text: String, isUserMessage: Boolean) {
+    private fun showMessage(text: String, isUserMessage: Boolean, isSystemMessage: Boolean = false) {
         handler.post {
             val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
             val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
             
             // Cancel any pending hide
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
-            
+
+            // Check if previous message was superseded in under 1 second
+            // Skip when previous message was a system message (mode change) since those aren't real messages
+            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage) {
+                val elapsed = System.currentTimeMillis() - lastMessageShownTimestamp
+                if (elapsed < UNREAD_THRESHOLD_MS) {
+                    hasUnreadMessage = true
+                    chatHeadView?.findViewById<View>(R.id.unread_dot)?.visibility = View.VISIBLE
+                }
+            }
+            lastMessageWasSystemMessage = isSystemMessage
+            lastMessageShownTimestamp = System.currentTimeMillis()
+
             // Set message text and styling
             messageText?.text = text
             messageText?.setTypeface(
@@ -791,6 +813,7 @@ class BubbleOverlayService : Service() {
         // so we need to unconditionally stop it to prevent it from continuing to listen
         Log.d(TAG, "BubbleOverlayService onDestroy - stopping microphone immediately (isListening=${voiceManager.isListening.value})")
         voiceManager.stopListening()
+        voiceManager.stopSpeaking()
 
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null
@@ -804,6 +827,10 @@ class BubbleOverlayService : Service() {
                 Log.e(TAG, "Error unregistering test receiver", e)
             }
         }
+
+        hasUnreadMessage = false
+        lastMessageShownTimestamp = 0L
+        lastMessageWasSystemMessage = false
 
         recognitionJob?.cancel()
         botResponseJob?.cancel()

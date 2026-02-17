@@ -13,8 +13,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
+import android.widget.ImageView
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 class MessageDraftOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private var dismissButtonView: View? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private val handler = Handler(Looper.getMainLooper())
     private var autoDismissRunnable: Runnable? = null
@@ -107,19 +108,26 @@ class MessageDraftOverlayService : Service() {
         return START_NOT_STICKY
     }
     
-    @SuppressLint("InflateParams", "ClickableViewAccessibility")
+    @SuppressLint("InflateParams")
     private fun createDraftOverlay(bounds: Rect, message: String, previousText: String?) {
         Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message, previousText: $previousText")
         
         // Store the draft message for later use by confirm_send
         currentDraftMessage = message
         
-        // Remove any existing overlay
+        // Remove any existing overlay and dismiss button
         overlayView?.let {
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) {
                 Log.e(TAG, "Error removing existing overlay", e)
+            }
+        }
+        dismissButtonView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing existing dismiss button", e)
             }
         }
         
@@ -181,22 +189,13 @@ class MessageDraftOverlayService : Service() {
         
         Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top}, width=$overlayWidth (app width), height=$overlayHeight, realScreenHeight=$realScreenHeight")
         
-        // Make the overlay clickable to dismiss
-        overlayView?.findViewById<CardView>(R.id.draft_card)?.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_UP -> {
-                    Log.d(TAG, "Overlay tapped, dismissing")
-                    stopSelf()
-                    true
-                }
-                else -> false
-            }
-        }
-        
         try {
             windowManager.addView(overlayView, params)
             Log.d(TAG, "Draft overlay added successfully")
-            
+
+            // Add dismiss button overlay
+            createDismissButton(bounds)
+
             // Schedule auto-dismiss
             scheduleAutoDismiss()
             
@@ -206,6 +205,70 @@ class MessageDraftOverlayService : Service() {
         }
     }
     
+    private fun createDismissButton(bounds: Rect) {
+        val density = resources.displayMetrics.density
+        val buttonSize = (48 * density).toInt() // 48dp touch target
+        val padding = (12 * density).toInt() // 12dp padding around 24dp icon
+        val inset = (4 * density).toInt() // 4dp inset from card edge
+
+        val imageView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_close)
+            setPadding(padding, padding, padding, padding)
+            contentDescription = "Dismiss draft"
+            visibility = View.INVISIBLE // Hidden until positioned correctly
+            setOnClickListener {
+                Log.d(TAG, "Dismiss button tapped")
+                stopSelf()
+            }
+        }
+
+        val params = WindowManager.LayoutParams(
+            buttonSize,
+            buttonSize,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = bounds.right - buttonSize - inset
+            y = bounds.top + inset // Initial guess; corrected after layout
+        }
+
+        try {
+            windowManager.addView(imageView, params)
+            dismissButtonView = imageView
+
+            // After layout, measure actual positions and correct for coordinate
+            // system differences between touchable and non-touchable overlays
+            imageView.post {
+                val overlayLoc = IntArray(2)
+                overlayView?.getLocationOnScreen(overlayLoc)
+
+                val buttonLoc = IntArray(2)
+                imageView.getLocationOnScreen(buttonLoc)
+
+                val desiredScreenY = overlayLoc[1] + inset
+                val correction = buttonLoc[1] - desiredScreenY
+                if (correction != 0) {
+                    params.y -= correction
+                    windowManager.updateViewLayout(imageView, params)
+                    Log.d(TAG, "Dismiss button corrected by ${correction}px")
+                }
+                imageView.visibility = View.VISIBLE
+            }
+            Log.d(TAG, "Dismiss button added at x=${params.x}, y=${params.y}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add dismiss button", e)
+        }
+    }
+
     private fun createTrackedChangesText(oldText: String, newText: String): SpannableStringBuilder {
         val result = SpannableStringBuilder()
         
@@ -279,11 +342,16 @@ class MessageDraftOverlayService : Service() {
         // Cancel auto-dismiss
         autoDismissRunnable?.let { handler.removeCallbacks(it) }
         
-        // Remove overlay
+        // Remove overlay and dismiss button
         try {
             overlayView?.let { windowManager.removeView(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error removing overlay", e)
+        }
+        try {
+            dismissButtonView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing dismiss button", e)
         }
     }
 }

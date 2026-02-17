@@ -677,11 +677,12 @@ class MainActivity : ComponentActivity() {
         // Check if bubble overlay is active and in TTS mode before stopping TTS
         val bubbleActive = BubbleOverlayService.isActive
         val bubbleMode = BubbleOverlayService.bubbleListeningMode
-        val shouldKeepTTS = bubbleActive && bubbleMode == ListeningMode.TTS_WITH_LISTENING
+        val bubblePending = BubbleOverlayService.isPendingStart
+        val shouldKeepTTS = (bubbleActive || bubblePending) && bubbleMode == ListeningMode.TTS_WITH_LISTENING
 
         // Stop microphone immediately if bubble isn't active
         // This prevents the mic from continuing to listen while the app is backgrounding
-        if (!bubbleActive && voiceManager.isListening.value) {
+        if (!bubbleActive && !bubblePending && voiceManager.isListening.value) {
             Log.d("MainActivity", "Stopping microphone immediately - app pausing without bubble")
             voiceManager.stopListening()
         }

@@ -1032,8 +1032,8 @@ class ChatViewModel @Inject constructor(
                                     // For remote agent, we need to manually refresh to show the server-saved message
                                     
                                     // Update bubble overlay if active
-                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}")
-                                    if (com.example.whiz.services.BubbleOverlayService.isActive) {
+                                    Log.d(TAG, "[BUBBLE_DEBUG] Checking bubble status: isActive=${com.example.whiz.services.BubbleOverlayService.isActive}, isPendingStart=${com.example.whiz.services.BubbleOverlayService.isPendingStart}")
+                                    if (com.example.whiz.services.BubbleOverlayService.isActive || com.example.whiz.services.BubbleOverlayService.isPendingStart) {
                                         Log.d(TAG, "[BUBBLE_DEBUG] Updating bubble with bot response: '$messageContentForChat'")
                                         com.example.whiz.services.BubbleOverlayService.updateBotResponse(messageContentForChat)
                                     }
@@ -2129,10 +2129,14 @@ class ChatViewModel @Inject constructor(
             ttsManager.stop()
         }
 
-        // Always disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
-        // Exception: If bubble service starts, it will restore TTS from saved state (ttsStateBeforeBackground)
-        Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
-        voiceManager.setVoiceResponseEnabled(false)
+        // Disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
+        // Exception: If bubble overlay is active or pending, preserve TTS state so the bubble can speak
+        if (!BubbleOverlayService.isActive && !BubbleOverlayService.isPendingStart) {
+            Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
+            voiceManager.setVoiceResponseEnabled(false)
+        } else {
+            Log.d(TAG, "[LOG] Bubble overlay active/pending - preserving TTS state for bubble")
+        }
 
         // VoiceManager handles stopping continuous listening on background
     }
@@ -2140,10 +2144,9 @@ class ChatViewModel @Inject constructor(
     // Called when app comes back to foreground - restart continuous listening if it was enabled
     fun onAppForegrounded() {
         Log.d(TAG, "[LOG] onAppForegrounded called. continuousListeningEnabled=${voiceManager.isContinuousListeningEnabled.value}, micPermissionGranted=${_micPermissionGranted.value}, chatId=${_chatId.value}")
-        Log.d(TAG, "[LOG] Current states - isListening: ${isListening.value}, isSpeaking: ${isSpeaking.value}, isResponding: ${_isResponding.value}")
-        
+
         // Only restart if we have permission, are in a chat, and continuous listening was enabled before backgrounding
-        if (_micPermissionGranted.value && _chatId.value > 0 && voiceManager.isContinuousListeningEnabled.value) {
+        if (_micPermissionGranted.value && _chatId.value != 0L && voiceManager.isContinuousListeningEnabled.value) {
             try {
                 viewModelScope.launch {
                     delay(200L) // Brief delay to ensure app is fully resumed
@@ -2160,8 +2163,6 @@ class ChatViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Error restarting continuous listening after app foregrounded", e)
             }
-        } else {
-            Log.d(TAG, "[LOG] Not restarting continuous listening - permission: ${_micPermissionGranted.value}, chatId: ${_chatId.value}, continuousEnabled: ${voiceManager.isContinuousListeningEnabled.value}")
         }
     }
 

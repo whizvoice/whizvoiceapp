@@ -2,6 +2,7 @@ package com.example.whiz.services
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -45,6 +46,7 @@ class SpeechRecognitionService @Inject constructor(
     // --- Internal State ---
     private var recognitionCallback: ((String) -> Unit)? = null
     private var manualStopInProgress = false
+    private var lastEndOfSpeechTimestamp: Long = 0L
     @Volatile
     private var utteranceFinalized = false
     private var recognizerIntent: Intent? = null // Store the intent for restarting
@@ -60,11 +62,16 @@ class SpeechRecognitionService @Inject constructor(
     // 🔧 Partial concatenation for premature end-of-speech detection
     private var lastPartialTimestamp = 0L
     private var savedPartialForConcatenation = ""
+    private var savedPartialIsAfterFinalResult = false  // True when saved partial is a NEW sub-utterance spoken AFTER the finalized text
+    private var peakPartialLength = 0  // Longest partial seen in current recognition session, used to detect partial buffer resets
     private val PREMATURE_END_THRESHOLD_MS = 1500L // If end-of-speech fires within this time of last partial, it's probably premature
     private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Wait for user to continue speaking (premature end case)
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
     private var savedPartialTimeoutJob: kotlinx.coroutines.Job? = null
-    
+    private var restartAfterResults = false  // Defer restart to onResults to avoid ERROR_CLIENT from premature startListening
+    private var useSegmentedSession = false  // True when API 33+ segmented session is active
+    private var audioPipeRecorder: AudioPipeRecorder? = null  // API 33+: pipes our mic audio to recognizer
+
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -130,17 +137,46 @@ class SpeechRecognitionService @Inject constructor(
 
     // Setup the intent properties once
     private fun setupRecognizerIntent() {
+        // Clean up any existing recorder (pipe is single-use)
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
+
         recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // Prefer on-device speech recognition for reliability (falls back to cloud if unavailable)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Setting these might influence when onEndOfSpeech/onResults are called
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L) // Increased pause detection
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            // Consider removing minimum length if causing issues:
-            // putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
+
+            val isContinuous = continuousListeningCallback?.invoke() ?: false
+            if (isContinuous && Build.VERSION.SDK_INT >= 33) {
+                try {
+                    val recorder = AudioPipeRecorder()
+                    audioPipeRecorder = recorder
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, recorder.readParcel)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, AudioPipeRecorder.CHANNEL_COUNT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioPipeRecorder.AUDIO_FORMAT)
+                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, AudioPipeRecorder.SAMPLE_RATE)
+                    putExtra(
+                        RecognizerIntent.EXTRA_SEGMENTED_SESSION,
+                        RecognizerIntent.EXTRA_AUDIO_SOURCE
+                    )
+                    useSegmentedSession = true
+                    Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
+                } catch (e: Exception) {
+                    Log.w(TAG, "🔄 SEGMENTED: AudioPipeRecorder failed, falling back to standard mode", e)
+                    audioPipeRecorder = null
+                    useSegmentedSession = false
+                    // Fall back to standard extras
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                }
+            } else {
+                // API 31-32 or non-continuous: standard approach with silence timeouts
+                useSegmentedSession = false
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            }
         }
     }
 
@@ -203,6 +239,7 @@ class SpeechRecognitionService @Inject constructor(
             manualStopInProgress = false
 
             setupRecognizerIntent()
+            audioPipeRecorder?.start()  // Must start BEFORE recognizer reads from pipe
             speechRecognizer?.startListening(recognizerIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting speech recognition", e)
@@ -225,6 +262,10 @@ class SpeechRecognitionService @Inject constructor(
             Log.d(TAG, "[DEBUG] Stopping speech recognition forcefully")
             manualStopInProgress = true
 
+            // Clean up audio pipe recorder first
+            audioPipeRecorder?.cleanup()
+            audioPipeRecorder = null
+
             // Note: Continuous listening is now managed by VoiceManager
 
             // First cancel any ongoing recognition
@@ -243,6 +284,8 @@ class SpeechRecognitionService @Inject constructor(
             _transcriptionState.value = ""
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
+            restartAfterResults = false
+            useSegmentedSession = false
             savedPartialTimeoutJob?.cancel()
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping speech recognition", e)
@@ -251,10 +294,15 @@ class SpeechRecognitionService @Inject constructor(
             // 🔧 BUG FIX: Don't clear callback on error either - let onResults() handle cleanup
             // recognitionCallback = null  // ← REMOVED: This was preventing final results delivery
             // Note: Continuous listening is now managed by VoiceManager
+            // Clean up audio pipe recorder
+            audioPipeRecorder?.cleanup()
+            audioPipeRecorder = null
             // Try to clean up
             cleanup()
             savedPartialForConcatenation = ""
             lastPartialTimestamp = 0L
+            restartAfterResults = false
+            useSegmentedSession = false
             savedPartialTimeoutJob?.cancel()
         }
     }
@@ -272,6 +320,10 @@ class SpeechRecognitionService @Inject constructor(
      * Ensures all SpeechRecognizer operations run on the main thread
      */
     private fun cleanup() {
+        // Clean up audio pipe recorder
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
+
         try {
             speechRecognizer?.let { recognizer ->
                 // Ensure SpeechRecognizer operations run on main thread
@@ -321,6 +373,8 @@ class SpeechRecognitionService @Inject constructor(
         _transcriptionState.value = ""
         manualStopInProgress = false
         utteranceFinalized = false
+        restartAfterResults = false
+        useSegmentedSession = false
         recognizerIntent = null
     }
 
@@ -338,6 +392,9 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] onReadyForSpeech")
                 _errorState.value = null
                 manualStopInProgress = false
+                peakPartialLength = 0
+                lastEndOfSpeechTimestamp = 0L
+                restartAfterResults = false
 
                 // CRITICAL: Re-check if we should still be listening
                 // This prevents race conditions where bubble is dismissed after restart is initiated
@@ -356,9 +413,22 @@ class SpeechRecognitionService @Inject constructor(
             override fun onBufferReceived(buffer: ByteArray?) { /* ... */ }
 
             override fun onEndOfSpeech() {
+                val now = System.currentTimeMillis()
+                if (now - lastEndOfSpeechTimestamp < 1000L) {
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Ignoring duplicate onEndOfSpeech (${now - lastEndOfSpeechTimestamp}ms since last)")
+                    return
+                }
+                lastEndOfSpeechTimestamp = now
+
                 // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
                 if (testModeEnabled) {
                     Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-speech callback")
+                    return
+                }
+
+                // In segmented mode, onEndOfSpeech fires per-segment; onSegmentResults handles delivery
+                if (useSegmentedSession) {
+                    Log.d(TAG, "🔄 SEGMENTED: onEndOfSpeech (per-segment, not restarting — segmented session is active)")
                     return
                 }
 
@@ -383,8 +453,11 @@ class SpeechRecognitionService @Inject constructor(
 
                     if (isPrematureEnd) {
                         // 🔧 Premature end-of-speech detected - save partial for concatenation
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Premature end-of-speech detected (${timeSinceLastPartial}ms < ${PREMATURE_END_THRESHOLD_MS}ms), saving partial for concatenation: '$currentPartial'")
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Premature end-of-speech detected (${timeSinceLastPartial}ms < ${PREMATURE_END_THRESHOLD_MS}ms), saving partial for concatenation: '$currentPartial' (peak: $peakPartialLength)")
                         savedPartialForConcatenation = currentPartial
+                        // If saved partial is much shorter than peak, a partial buffer reset occurred
+                        // (e.g., user said "Long phrase" [pause] "Short" — partial jumped from long to short)
+                        savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
                         // Don't clear transcription state - keep showing it in UI
 
                         // Start a timeout to send the saved partial if user doesn't continue
@@ -395,6 +468,7 @@ class SpeechRecognitionService @Inject constructor(
                                 Log.d(TAG, "🔄 RESTART_DEBUG: Saved partial timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
                                 val partialToSend = savedPartialForConcatenation
                                 savedPartialForConcatenation = ""
+                                savedPartialIsAfterFinalResult = false
                                 // Send the partial as the final transcription
                                 _transcriptionState.value = partialToSend
                                 recognitionCallback?.invoke(partialToSend)
@@ -407,8 +481,9 @@ class SpeechRecognitionService @Inject constructor(
                         // 🔧 BUG FIX: Also save partial for normal end-of-speech as backup
                         // The 20ms restart can cancel onResults before it delivers, so we need a safety net
                         if (currentPartial.isNotBlank()) {
-                            Log.d(TAG, "🔄 RESTART_DEBUG: Saving partial as backup in case onResults is canceled: '$currentPartial'")
+                            Log.d(TAG, "🔄 RESTART_DEBUG: Saving partial as backup in case onResults is canceled: '$currentPartial' (peak: $peakPartialLength)")
                             savedPartialForConcatenation = currentPartial
+                            savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
                             savedPartialTimeoutJob?.cancel()
                             savedPartialTimeoutJob = serviceScope.launch {
                                 delay(BACKUP_RESULT_TIMEOUT_MS) // Short timeout - just catching race condition
@@ -416,6 +491,7 @@ class SpeechRecognitionService @Inject constructor(
                                     Log.d(TAG, "🔄 RESTART_DEBUG: Backup timeout fired (${BACKUP_RESULT_TIMEOUT_MS}ms) - onResults didn't deliver, sending partial as final: '$savedPartialForConcatenation'")
                                     val partialToSend = savedPartialForConcatenation
                                     savedPartialForConcatenation = ""
+                                    savedPartialIsAfterFinalResult = false
                                     _transcriptionState.value = partialToSend
                                     recognitionCallback?.invoke(partialToSend)
                                     _transcriptionState.value = ""
@@ -429,24 +505,10 @@ class SpeechRecognitionService @Inject constructor(
                         }
                     }
 
-                    try {
-                        Log.d(TAG, "🔄 RESTART_DEBUG: Attempting to restart listening after end of speech (continuous mode)")
-                        // Add minimal delay to allow previous session cleanup and avoid ERROR_CLIENT race condition
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            // Re-check conditions inside the delayed block in case they changed during the 20ms
-                            if (shouldRestartCallback?.invoke() != false && !manualStopInProgress) {
-                                speechRecognizer?.startListening(recognizerIntent)
-                                Log.d(TAG, "🔄 RESTART_DEBUG: Successfully restarted listening after end of speech (after 20ms delay)")
-                            } else {
-                                Log.d(TAG, "🔄 RESTART_DEBUG: Skipping restart - conditions changed during delay (shouldRestart=${shouldRestartCallback?.invoke()}, manualStop=$manualStopInProgress)")
-                            }
-                        }, 20)  // 20ms delay - enough to avoid race, short enough to not miss speech
-                        // Don't set _isListening to false when we're restarting!
-                    } catch (e: Exception) {
-                        Log.e(TAG, "🔄 RESTART_DEBUG: Error restarting listening after end of speech", e)
-                        _isListening.value = false
-                        _errorState.value = "Error restarting listening: ${e.message}"
-                    }
+                    // Defer restart to onResults to avoid guaranteed ERROR_CLIENT
+                    // (old session's onResults hasn't arrived yet, so startListening now would fail)
+                    restartAfterResults = true
+                    Log.d(TAG, "🔄 RESTART_DEBUG: Deferring restart until onResults arrives")
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Not restarting - shouldRestart=$shouldRestart")
                     _isListening.value = false
@@ -494,6 +556,29 @@ class SpeechRecognitionService @Inject constructor(
                 val willRestart = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) && shouldRestart && !manualStopInProgress
 
                 if (willRestart) {
+                    // 🔧 Save current partial before restarting, same as onEndOfSpeech backup
+                    // Without this, text like "So sick of not eating whatever I" is lost when
+                    // onError(NO_MATCH) fires instead of onEndOfSpeech
+                    val currentPartial = _transcriptionState.value
+                    if (currentPartial.isNotBlank() && savedPartialForConcatenation.isBlank()) {
+                        Log.d(TAG, "🔄 RESTART_DEBUG: onError saving partial before restart: '$currentPartial' (peak: $peakPartialLength)")
+                        savedPartialForConcatenation = currentPartial
+                        savedPartialIsAfterFinalResult = currentPartial.length < peakPartialLength / 2
+                        savedPartialTimeoutJob?.cancel()
+                        savedPartialTimeoutJob = serviceScope.launch {
+                            delay(SAVED_PARTIAL_TIMEOUT_MS)
+                            if (savedPartialForConcatenation.isNotBlank()) {
+                                Log.d(TAG, "🔄 RESTART_DEBUG: onError saved partial timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
+                                val partialToSend = savedPartialForConcatenation
+                                savedPartialForConcatenation = ""
+                                savedPartialIsAfterFinalResult = false
+                                _transcriptionState.value = partialToSend
+                                recognitionCallback?.invoke(partialToSend)
+                                _transcriptionState.value = ""
+                            }
+                        }
+                    }
+
                     // Smart rate limiting using sliding window: count errors within the last N milliseconds
                     val currentTime = System.currentTimeMillis()
                     // Remove timestamps older than the window
@@ -506,6 +591,10 @@ class SpeechRecognitionService @Inject constructor(
 
                     if (errorCount <= MAX_ERROR_RESTARTS && shouldRestart && !manualStopInProgress) {
                         Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restarting listening after error ($errorCount errors in window)")
+
+                        // Clean up old pipe before restart — startListening() will create a fresh one
+                        audioPipeRecorder?.cleanup()
+                        audioPipeRecorder = null
 
                         // FIX: Reset listening state before restart - the recognizer is dead after an error
                         // Without this, startListening() early-returns because _isListening is still true
@@ -533,6 +622,11 @@ class SpeechRecognitionService @Inject constructor(
             }
 
             override fun onResults(results: Bundle?) {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer results callback")
+                    return
+                }
                 Log.d(TAG, "[DEBUG] onResults")
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 var finalText = matches?.firstOrNull() ?: ""
@@ -540,9 +634,19 @@ class SpeechRecognitionService @Inject constructor(
                 // 🔧 If we have a saved partial from a previous session, merge it with the final result
                 if (savedPartialForConcatenation.isNotBlank() && finalText.isNotBlank()) {
                     val originalFinal = finalText
-                    finalText = mergeOverlapping(savedPartialForConcatenation, finalText)
-                    Log.d(TAG, "[DEBUG] 🔗 MERGED final result: saved='$savedPartialForConcatenation' + final='$originalFinal' -> '$finalText'")
-                    savedPartialForConcatenation = "" // Clear after use
+                    if (savedPartialIsAfterFinalResult) {
+                        // Saved partial is a new sub-utterance spoken AFTER the finalized text
+                        finalText = mergeOverlapping(finalText, savedPartialForConcatenation)
+                        Log.d(TAG, "[DEBUG] 🔗 MERGED final result (saved AFTER final): final='$originalFinal' + saved='$savedPartialForConcatenation' -> '$finalText'")
+                    } else {
+                        // Same session re-transcription: saved partial and final are the same audio,
+                        // just pick the longer/better transcription instead of trying to merge
+                        val originalFinal = finalText
+                        finalText = if (finalText.length >= savedPartialForConcatenation.length) finalText else savedPartialForConcatenation
+                        Log.d(TAG, "[DEBUG] 🔗 MERGE_SAME_SESSION: Same-session re-transcription, using ${if (finalText == originalFinal) "final" else "saved"}: '$finalText' (saved='$savedPartialForConcatenation', final='$originalFinal')")
+                    }
+                    savedPartialForConcatenation = ""
+                    savedPartialIsAfterFinalResult = false
                     savedPartialTimeoutJob?.cancel()
                 }
 
@@ -575,8 +679,20 @@ class SpeechRecognitionService @Inject constructor(
                     recognitionCallback = null
                 } else {
                     Log.d(TAG, "[DEBUG] Continuous listening mode - keeping callback and listening state")
-                    // Don't clear the callback or listening state in continuous mode
-                    // onEndOfSpeech will handle the restart
+                    if (restartAfterResults) {
+                        restartAfterResults = false
+                        speechRecognizer?.startListening(recognizerIntent)
+                        Log.d(TAG, "🔄 RESTART_DEBUG: Restarted listening immediately after onResults")
+                    } else if (useSegmentedSession) {
+                        // Safety net: segmented session was requested but recognizer fell through to onResults
+                        // This means EXTRA_SEGMENTED_SESSION had no effect — restart with a fresh pipe
+                        Log.w(TAG, "🔄 SEGMENTED: Recognizer ignored segmented session, restarting with fresh pipe")
+                        audioPipeRecorder?.cleanup()
+                        audioPipeRecorder = null
+                        setupRecognizerIntent()
+                        audioPipeRecorder?.start()
+                        speechRecognizer?.startListening(recognizerIntent)
+                    }
                 }
 
                 // 🔧 Clear transcription state after callback to prevent UI from showing stale text
@@ -605,7 +721,12 @@ class SpeechRecognitionService @Inject constructor(
                     Log.d(TAG, "[DEBUG] 🔗 MERGED partial: saved='$savedPartialForConcatenation' + partial='$originalPartial' -> '$partialText'")
                 }
 
-                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}')")
+                // Track peak partial length for detecting partial buffer resets
+                if (partialText.length > peakPartialLength) {
+                    peakPartialLength = partialText.length
+                }
+
+                Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}', peak: $peakPartialLength)")
 
                 // Ignore empty partial results to prevent clearing user's spoken text
                 // Empty partials can occur due to TTS interference, pauses, or recognition resets
@@ -616,6 +737,7 @@ class SpeechRecognitionService @Inject constructor(
                     if (savedPartialForConcatenation.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] 🧹 Clearing savedPartialForConcatenation after successful concatenation")
                         savedPartialForConcatenation = ""
+                        savedPartialIsAfterFinalResult = false
                         savedPartialTimeoutJob?.cancel() // Cancel the timeout since we used the partial
                     }
                 } else {
@@ -629,6 +751,55 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onEvent(eventType: Int, params: Bundle?) {
                 Log.d(TAG, "[DEBUG] onEvent: $eventType")
+            }
+
+            override fun onSegmentResults(segmentResults: Bundle) {
+                if (!useSegmentedSession) return  // Shouldn't happen, but guard
+
+                val matches = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val segmentText = matches?.firstOrNull() ?: ""
+
+                Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
+
+                if (segmentText.isNotBlank()) {
+                    _transcriptionState.value = segmentText
+
+                    try {
+                        BubbleOverlayService.updateUserTranscription(segmentText)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                    }
+
+                    recognitionCallback?.invoke(segmentText)
+                }
+
+                // Reset partial tracking for next segment (mic stays open)
+                _transcriptionState.value = ""
+                peakPartialLength = 0
+                savedPartialForConcatenation = ""
+                savedPartialIsAfterFinalResult = false
+                savedPartialTimeoutJob?.cancel()
+            }
+
+            override fun onEndOfSegmentedSession() {
+                Log.d(TAG, "🔄 SEGMENTED: onEndOfSegmentedSession")
+
+                val shouldRestart = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
+
+                if (shouldRestart && !manualStopInProgress) {
+                    Log.d(TAG, "🔄 SEGMENTED: Session ended, restarting with fresh pipe")
+                    // Pipe is single-use — need fresh recorder + intent
+                    audioPipeRecorder?.cleanup()
+                    audioPipeRecorder = null
+                    setupRecognizerIntent()       // Creates fresh recorder + pipe
+                    audioPipeRecorder?.start()     // Start new recorder
+                    speechRecognizer?.startListening(recognizerIntent)
+                } else {
+                    Log.d(TAG, "🔄 SEGMENTED: Session ended, not restarting (shouldRestart=$shouldRestart, manualStop=$manualStopInProgress)")
+                    audioPipeRecorder?.cleanup()
+                    audioPipeRecorder = null
+                    _isListening.value = false
+                }
             }
         }
     }
@@ -735,7 +906,7 @@ class SpeechRecognitionService @Inject constructor(
         // slightly different transcription. In this case, prefer the newer (second).
         val maxPrefixLength = 30 // Compare up to first 30 characters
         val similarityThreshold = 0.70 // 70% similarity threshold
-        val minRequiredLength = 10 // Minimum characters needed for reliable comparison
+        val minRequiredLength = 5 // Minimum characters needed for reliable comparison
 
         // Use the shorter of: maxPrefixLength, or the length of the shorter string
         val compareLength = minOf(maxPrefixLength, first.length, second.length)
@@ -750,10 +921,51 @@ class SpeechRecognitionService @Inject constructor(
             }
         }
 
+        // Full-string similarity check: catches same-utterance cases at any length
+        // (e.g., "call mom" vs "call Mum", "yes" vs "yep")
+        val fullSimilarity = similarityRatio(first.lowercase(), second.lowercase())
+        val lengthRatio = minOf(first.length, second.length).toDouble() / maxOf(first.length, second.length)
+        if (fullSimilarity >= 0.65 && lengthRatio >= 0.6) {
+            Log.d(TAG, "[DEBUG] 🔗 MERGE_FULL_SIMILARITY: Detected similar strings (${(fullSimilarity * 100).toInt()}% similarity, ${(lengthRatio * 100).toInt()}% length ratio), using ${if (second.length >= first.length) "newer" else "older"} transcription")
+            return if (second.length >= first.length) second else first
+        }
+
+        // Space-normalized similarity check for cases like "5 6 7" vs "567"
+        // where the content is identical but spacing differs
+        val firstNormalized = first.lowercase().replace(" ", "")
+        val secondNormalized = second.lowercase().replace(" ", "")
+        if (firstNormalized.isNotEmpty() && secondNormalized.isNotEmpty()) {
+            val normalizedSimilarity = similarityRatio(firstNormalized, secondNormalized)
+            val normalizedLengthRatio = minOf(firstNormalized.length, secondNormalized.length).toDouble() / maxOf(firstNormalized.length, secondNormalized.length)
+            if (normalizedSimilarity >= 0.65 && normalizedLengthRatio >= 0.6) {
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_SPACE_NORMALIZED: Detected similar strings after removing spaces (${(normalizedSimilarity * 100).toInt()}% similarity), using ${if (second.length >= first.length) "newer" else "older"} transcription")
+                return if (second.length >= first.length) second else first
+            }
+        }
+
+        // Word-level fuzzy overlap: catches middle overlaps where the recognizer
+        // changed words at the boundary (e.g., "I want to go to the store" + "to store and buy groceries")
+        val firstWords = first.trim().split("\\s+".toRegex())
+        val secondWords = second.trim().split("\\s+".toRegex())
+        for (overlapSize in minOf(firstWords.size, secondWords.size) downTo 2) {
+            val firstSuffixStr = firstWords.takeLast(overlapSize).joinToString(" ").lowercase()
+            val secondPrefixStr = secondWords.take(overlapSize).joinToString(" ").lowercase()
+            val similarity = similarityRatio(firstSuffixStr, secondPrefixStr)
+            if (similarity >= 0.70) {
+                val secondRemainder = secondWords.drop(overlapSize).joinToString(" ")
+                Log.d(TAG, "[DEBUG] 🔗 MERGE_WORD_OVERLAP: Detected word-level overlap (${(similarity * 100).toInt()}% similarity over $overlapSize words), merging")
+                return if (secondRemainder.isNotBlank()) {
+                    "${first.trim()} $secondRemainder"
+                } else {
+                    if (first.length > second.length) first else second
+                }
+            }
+        }
+
         val firstLower = first.lowercase()
         val secondLower = second.lowercase()
 
-        // Find the longest suffix of first that matches a prefix of second
+        // Find the longest suffix of first that matches a prefix of second (exact character match fallback)
         // Start from the longest possible overlap and work down
         val maxOverlap = minOf(first.length, second.length)
 
@@ -884,9 +1096,15 @@ class SpeechRecognitionService @Inject constructor(
             putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(finalText))
         }
 
-        // Inject through the REAL onResults callback on main thread
+        // Inject through the REAL onResults callback on main thread and WAIT for it
+        // Set isTestInjectedCallback so the test mode guard allows this through
         withContext(Dispatchers.Main) {
-            recognitionListener?.onResults(bundle)
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onResults(bundle)
+            } finally {
+                isTestInjectedCallback = false
+            }
         }
     }
 }
