@@ -1502,7 +1502,10 @@ class WhizRepository @Inject constructor(
                 try {
                     Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Reusing ongoing request for $requestKey")
                     val result = existing.await()
-                    return SyncResult(result, isCachedData = false)
+                    // When reusing another request's deferred, we don't know if it was cached.
+                    // If the result is empty, conservatively treat it as cached data so the
+                    // offline snackbar shows correctly.
+                    return SyncResult(result, isCachedData = result.isEmpty())
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     Log.d(TAG, "fetchConversationsWithDeduplicationAndStatus: Ongoing $requestKey was cancelled, retrying")
                     continue

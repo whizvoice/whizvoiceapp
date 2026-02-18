@@ -523,10 +523,12 @@ class ChatViewModel @Inject constructor(
                             _connectionError.value = null
                         }
                         // Check if this is a final retry failure (contains "after X attempts")
-                        else if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                        // or a final connection loss after max reconnect attempts
+                        else if ((errorMessage.contains("after") && errorMessage.contains("attempts")) ||
+                                 errorMessage.contains("Connection lost")) {
                             // This is a final failure after all retries - show to user
                             _connectionError.value = "Failed to send message. Please check your connection and try again."
-                            if (_chatId.value > 0) { // Only add if a chat is active
+                            if (_chatId.value != 0L && _chatId.value != -1L) { // Only add if a chat is active (includes temporary negative IDs)
                                 repository.addAssistantMessage(
                                     chatId = _chatId.value,
                                     content = "Error: Unable to send message. Please try again."
@@ -541,12 +543,11 @@ class ChatViewModel @Inject constructor(
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
-                            
-                            // Clear responding state for temporary connection errors too
-                            // When message retries have failed completely (~6-8 seconds of trying),
-                            // clear the responding state to allow user to interact with the microphone button
-                            if (_isResponding.value) {
-                                Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+
+                            // Only clear responding state if there are no messages waiting in the retry queue
+                            // This keeps the typing indicator visible while retries are still happening
+                            if (_isResponding.value && whizServerRepository.isRetryQueueEmpty()) {
+                                Log.d(TAG, "Clearing responding state due to connection error (no pending retries)")
                                 Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                                 _isResponding.value = false
                                 pendingRequests.clear()
