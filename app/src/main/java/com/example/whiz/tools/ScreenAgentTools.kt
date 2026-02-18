@@ -174,8 +174,8 @@ class ScreenAgentTools @Inject constructor(
                     var overlayPermissionRequired = false
                     Log.d(TAG, "Checking overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}, hasPermission=${hasOverlayPermission()}")
                     if (enableOverlay && !isWhizApp(packageName) && hasOverlayPermission()) {
-                        BubbleOverlayService.isPendingStart = true
-                        Log.d(TAG, "Set isPendingStart=true before launching (fuzzy)")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        Log.d(TAG, "Set pendingStartTimestamp before launching (fuzzy)")
                     }
 
                     context.startActivity(launchIntent)
@@ -192,8 +192,8 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Bubble overlay started (fuzzy): $overlayStarted")
                             // Clear pending flag if bubble failed to start
                             if (!overlayStarted) {
-                                BubbleOverlayService.isPendingStart = false
-                                Log.d(TAG, "Cleared isPendingStart because bubble failed to start (fuzzy)")
+                                BubbleOverlayService.pendingStartTimestamp = 0L
+                                Log.d(TAG, "Cleared pendingStartTimestamp because bubble failed to start (fuzzy)")
                             }
                         } else {
                             overlayPermissionRequired = true
@@ -267,8 +267,8 @@ class ScreenAgentTools @Inject constructor(
                     var overlayPermissionRequired = false
                     Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                     if (enableOverlay && !isWhizApp(mappedPackage) && hasOverlayPermission()) {
-                        BubbleOverlayService.isPendingStart = true
-                        Log.i(TAG, "🔵 Set isPendingStart=true before launching (common mappings)")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        Log.i(TAG, "🔵 Set pendingStartTimestamp before launching (common mappings)")
                     }
 
                     try {
@@ -290,8 +290,8 @@ class ScreenAgentTools @Inject constructor(
                                 Log.i(TAG, "🔵 BUBBLE OVERLAY RESULT: $overlayStarted")
                                 // Clear pending flag if bubble failed to start
                                 if (!overlayStarted) {
-                                    BubbleOverlayService.isPendingStart = false
-                                    Log.i(TAG, "🔵 Cleared isPendingStart because bubble failed to start")
+                                    BubbleOverlayService.pendingStartTimestamp = 0L
+                                    Log.i(TAG, "🔵 Cleared pendingStartTimestamp because bubble failed to start")
                                 }
                             } else {
                                 overlayPermissionRequired = true
@@ -312,7 +312,7 @@ class ScreenAgentTools @Inject constructor(
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
                         // Clear pending flag on launch failure
-                        BubbleOverlayService.isPendingStart = false
+                        BubbleOverlayService.pendingStartTimestamp = 0L
                     }
                 }
             }

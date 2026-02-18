@@ -86,10 +86,17 @@ class BubbleOverlayService : Service() {
         var isActive: Boolean = false
             private set
 
-        // Flag to indicate bubble is about to start (set before startService, cleared in onCreate)
-        // This prevents race condition where onAppBackgrounded fires before bubble's onCreate sets isActive
+        // Timestamp-based flag to indicate bubble is about to start.
+        // Set before startService, cleared in onCreate. Auto-expires after 5 seconds to prevent
+        // stale flags from keeping voice recognition running in the background indefinitely.
+        private const val PENDING_START_TIMEOUT_MS = 5000L
+
         @Volatile
-        var isPendingStart: Boolean = false
+        var pendingStartTimestamp: Long = 0L
+
+        val isPendingStart: Boolean
+            get() = pendingStartTimestamp > 0L &&
+                    System.currentTimeMillis() - pendingStartTimestamp < PENDING_START_TIMEOUT_MS
 
         // Track the current listening mode
         @Volatile
@@ -168,7 +175,7 @@ class BubbleOverlayService : Service() {
         super.onCreate()
         Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
         isActive = true
-        isPendingStart = false  // Clear pending flag now that we're actually active
+        pendingStartTimestamp = 0L  // Clear pending flag now that we're actually active
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
