@@ -4759,6 +4759,9 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Clicked Start button")
                     startNodes.forEach { it.recycle() }
 
+                    // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
+                    dismissStartThisTripDialog(accessibilityService)
+
                     // Check for and dismiss welcome popup (no wait needed - detect by text)
                     dismissGoogleMapsWelcomePopup(accessibilityService)
 
@@ -4820,6 +4823,10 @@ class ScreenAgentTools @Inject constructor(
                                 clickableStart.recycle()
                                 if (clicked) {
                                     Log.d(TAG, "Clicked Start glanceable directions button")
+
+                                    // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
+                                    dismissStartThisTripDialog(accessibilityService)
+
                                     glanceableNodes.forEach { it.recycle() }
                                     newRoot.recycle()
                                     tripCardNodeList.forEach { it.recycle() }
@@ -4881,6 +4888,48 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing welcome popup: ${e.message}")
+        }
+    }
+
+    private fun dismissStartThisTripDialog(accessibilityService: WhizAccessibilityService) {
+        try {
+            // Brief delay to allow the dialog to appear
+            Thread.sleep(500)
+
+            val rootNode = accessibilityService.getCurrentRootNode() ?: return
+
+            // Check if the "Start this trip?" dialog is present by looking for dialog_title
+            val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_title")
+            val hasStartTripDialog = titleNodes.any { it.text?.toString() == "Start this trip?" }
+            titleNodes.forEach { it.recycle() }
+
+            if (!hasStartTripDialog) {
+                Log.d(TAG, "No 'Start this trip?' dialog detected")
+                rootNode.recycle()
+                return
+            }
+
+            Log.d(TAG, "Found 'Start this trip?' dialog, clicking 'Start trip' button")
+
+            // Click the positive button ("Start trip")
+            val positiveButtons = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_positive_button")
+            try {
+                for (button in positiveButtons) {
+                    if (button.isClickable) {
+                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.d(TAG, "Dismissed 'Start this trip?' dialog by clicking 'Start trip'")
+                            return
+                        }
+                    }
+                }
+                Log.w(TAG, "Could not click 'Start trip' button in dialog")
+            } finally {
+                positiveButtons.forEach { it.recycle() }
+                rootNode.recycle()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing 'Start this trip?' dialog: ${e.message}")
         }
     }
 
