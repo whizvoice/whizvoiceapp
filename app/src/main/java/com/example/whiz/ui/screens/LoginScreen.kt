@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,9 +62,9 @@ fun LoginScreen(
     val isLoading by authViewModel.isLoading.collectAsState()
     val navigateToHome by authViewModel.navigateToHome.collectAsState()
     val errorState by authViewModel.errorState.collectAsState()
-    val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    
+    var signInError by remember { mutableStateOf<String?>(null) }
+
     // Set up the launcher for Google Sign-In
     val signInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -79,32 +80,31 @@ fun LoginScreen(
                 }
             } catch (e: ApiException) {
                 Log.e("LoginScreen", "Google sign in failed with status code: ${e.statusCode}", e)
-                // Show detailed error based on status code
-                val errorMessage = when (e.statusCode) {
-                    10 -> "DEVELOPER_ERROR: The application is misconfigured. Check OAuth client ID and SHA-1 signature."
-                    14 -> "CANCELED: The user canceled the sign-in flow."
-                    else -> "Error code: ${e.statusCode}"
+                signInError = if (e.statusCode == 7) {
+                    "No internet connection. Please check your connection and try again."
+                } else {
+                    "Sign-in failed (error ${e.statusCode}). Please try again."
                 }
-                Log.e("LoginScreen", "Sign-in error details: $errorMessage")
-                // Show error to user
+                Log.e("LoginScreen", "Sign-in error: ${signInError}")
             }
         } else {
             Log.d("LoginScreen", "Sign in canceled or failed, result code: ${result.resultCode}")
             if (result.data != null) {
                 try {
                     val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                    task.addOnCompleteListener {
-                        if (it.isSuccessful) {
-                            Log.d("LoginScreen", "Task successful despite canceled result")
-                        } else {
-                            Log.e("LoginScreen", "Task failed: ${it.exception}")
-                        }
+                    val account = task.getResult(ApiException::class.java)
+                    Log.d("LoginScreen", "Task successful despite canceled result: ${account.email}")
+                } catch (e: ApiException) {
+                    Log.e("LoginScreen", "Sign-in failed with status code: ${e.statusCode}", e)
+                    signInError = if (e.statusCode == 7) {
+                        "No internet connection. Please check your connection and try again."
+                    } else {
+                        "Sign-in failed (error ${e.statusCode}). Please try again."
                     }
                 } catch (e: Exception) {
                     Log.e("LoginScreen", "Error checking sign-in data", e)
                 }
             }
-            // User canceled sign-in flow or it failed for another reason
             authViewModel.cancelSignInAttempt()
         }
     }
@@ -132,62 +132,134 @@ fun LoginScreen(
         }
     }
 
-    // Show error message in a Snackbar if present
+    // Show error screen when auth fails
     LaunchedEffect(errorState) {
         errorState?.let { errorMsg ->
-            snackbarHostState.showSnackbar(errorMsg)
+            Log.d("LoginScreen", "Auth error: $errorMsg")
+            signInError = if (errorMsg.contains("UnknownHost", ignoreCase = true) ||
+                errorMsg.contains("Unable to resolve host", ignoreCase = true) ||
+                errorMsg.contains("network", ignoreCase = true) ||
+                errorMsg.contains("SocketTimeout", ignoreCase = true) ||
+                errorMsg.contains("ConnectException", ignoreCase = true)) {
+                "No internet connection. Please check your connection and try again."
+            } else {
+                "Something went wrong. Please try again."
+            }
             authViewModel.clearError()
         }
     }
 
-    if (isLoading) {
-        // Show loading indicator while authentication is in progress
+    if (isLoading && signInError == null) {
+        // Show loading indicator while authentication is in progress (first attempt)
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
         return
     }
     if (!isAuthenticated) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // App Logo/Icon
-            Image(
-                painter = painterResource(id = R.drawable.ic_launcher), // Use the pre-rendered WebP from drawable
-                contentDescription = "WhizVoice Logo",
-                modifier = Modifier.size(120.dp)
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text(
-                text = "Welcome to WhizVoice",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            Button(
-                onClick = {
-                    try {
-                        val signInIntent = authViewModel.getSignInIntent()
-                        Log.d("LoginScreen", "Launching sign-in intent")
-                        signInLauncher.launch(signInIntent)
-                    } catch (e: Exception) {
-                        Log.e("LoginScreen", "Error launching sign-in", e)
-                    }
-                },
+        if (signInError != null) {
+            // Error screen
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.8f)
-                    .height(50.dp)
-                    .semantics { contentDescription = "Sign in with Google button" }
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Text(text = "Sign in with Google", fontSize = 16.sp)
+                Image(
+                    painter = painterResource(id = R.drawable.ic_launcher),
+                    contentDescription = "WhizVoice Logo",
+                    modifier = Modifier.size(120.dp)
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Can't sign in",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = signInError!!,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(0.8f)
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Button(
+                    onClick = {
+                        try {
+                            val signInIntent = authViewModel.getSignInIntent()
+                            Log.d("LoginScreen", "Retrying sign-in intent")
+                            signInLauncher.launch(signInIntent)
+                        } catch (e: Exception) {
+                            Log.e("LoginScreen", "Error launching sign-in retry", e)
+                        }
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth(0.8f)
+                        .height(50.dp)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(text = "Try again", fontSize = 16.sp)
+                    }
+                }
+            }
+        } else {
+            // Normal sign-in screen
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                // App Logo/Icon
+                Image(
+                    painter = painterResource(id = R.drawable.ic_launcher),
+                    contentDescription = "WhizVoice Logo",
+                    modifier = Modifier.size(120.dp)
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Welcome to WhizVoice",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(48.dp))
+
+                Button(
+                    onClick = {
+                        try {
+                            val signInIntent = authViewModel.getSignInIntent()
+                            Log.d("LoginScreen", "Launching sign-in intent")
+                            signInLauncher.launch(signInIntent)
+                        } catch (e: Exception) {
+                            Log.e("LoginScreen", "Error launching sign-in", e)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth(0.8f)
+                        .height(50.dp)
+                        .semantics { contentDescription = "Sign in with Google button" }
+                ) {
+                    Text(text = "Sign in with Google", fontSize = 16.sp)
+                }
             }
         }
     }
