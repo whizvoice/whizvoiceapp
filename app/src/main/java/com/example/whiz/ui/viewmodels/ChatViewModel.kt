@@ -417,6 +417,13 @@ class ChatViewModel @Inject constructor(
                             Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for chat $currentChatId (reconnect=$isReconnectingAfterDisconnect)")
                             viewModelScope.launch {
                                 try {
+                                    // Clean up temporary error messages from offline state
+                                    val deletedCount = repository.deleteAssistantMessageByRequestId(currentChatId, "CONNECTION_ERROR")
+                                    if (deletedCount > 0) {
+                                        Log.d(TAG, "WebSocketEvent.Connected: Cleaned up $deletedCount CONNECTION_ERROR message(s)")
+                                        repository.refreshMessages()
+                                    }
+
                                     // Fetch any messages we might have missed
                                     // Server now handles optimistic chat IDs via optimistic_chat_id column
                                     // Use retry mechanism to handle race conditions with optimistic chats
@@ -532,7 +539,8 @@ class ChatViewModel @Inject constructor(
                                 // Use optimistic (local-only) insert since we're likely offline
                                 repository.addAssistantMessageOptimistic(
                                     chatId = _chatId.value,
-                                    content = "Error: Unable to send message. Please try again."
+                                    content = "Error: Unable to send message. Please try again.",
+                                    requestId = "CONNECTION_ERROR"
                                 )
                             }
                             // Clear all pending requests on final connection error
@@ -2199,15 +2207,33 @@ class ChatViewModel @Inject constructor(
                 _isRefreshing.value = true
                 try {
                     Log.d(TAG, "refreshMessages: Starting refresh for chat $currentChatId")
-                    
+
                     // Use fetchMessagesWithRetry which includes deduplication and retry logic
                     val serverMessages = repository.fetchMessagesWithRetry(currentChatId)
                     Log.d(TAG, "refreshMessages: Retrieved ${serverMessages.size} messages from server")
-                    
+
                     // The fetchMessagesWithRetry already handles storing messages with deduplication
                     // Just trigger UI refresh
                     repository.refreshMessages()
-                    
+
+                    // If REST fetch succeeded, try reconnecting WebSocket if it's disconnected
+                    // This handles the case where internet was restored after max reconnect attempts
+                    if (!whizServerRepository.isConnected()) {
+                        Log.d(TAG, "refreshMessages: REST fetch succeeded but WebSocket disconnected, attempting reconnect")
+                        // Track retry queue messages in pendingRequests BEFORE connecting,
+                        // so when processRetryQueue sends them and responses arrive,
+                        // pendingRequests is properly cleared and isResponding resets to false
+                        val retryRequestIds = whizServerRepository.getRetryQueueRequestIds()
+                        if (retryRequestIds.isNotEmpty()) {
+                            Log.d(TAG, "refreshMessages: Adding ${retryRequestIds.size} retry queue request(s) to pendingRequests")
+                            for (requestId in retryRequestIds) {
+                                pendingRequests[requestId] = currentChatId
+                            }
+                            _isResponding.value = true
+                        }
+                        whizServerRepository.connect(currentChatId)
+                    }
+
                     _errorState.value = null
                 } catch (e: Exception) {
                     Log.e(TAG, "Error refreshing messages for chat $currentChatId", e)

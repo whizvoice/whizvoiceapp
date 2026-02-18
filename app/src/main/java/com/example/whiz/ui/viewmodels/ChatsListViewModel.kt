@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.repository.WhizRepository
+import com.example.whiz.data.remote.WhizServerRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +17,8 @@ import android.util.Log
 
 @HiltViewModel
 class ChatsListViewModel @Inject constructor(
-    private val repository: WhizRepository
+    private val repository: WhizRepository,
+    private val whizServerRepository: WhizServerRepository
 ) : ViewModel() {
 
     private val TAG = "ChatsListViewModel"
@@ -106,6 +108,13 @@ class ChatsListViewModel @Inject constructor(
 
                 // Check if we're showing cached data (result will indicate this)
                 _isShowingCachedData.value = result.isCachedData
+
+                // If the REST API sync succeeded (not cached), try reconnecting WebSocket
+                // This handles the case where internet was restored after max reconnect attempts
+                if (!result.isCachedData && !whizServerRepository.isConnected()) {
+                    Log.d(TAG, "refreshChats: REST sync succeeded but WebSocket disconnected, attempting reconnect")
+                    whizServerRepository.connect(forPriming = true)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "refreshChats: Error during incremental sync", e)
                 // Even on error, we show cached data
