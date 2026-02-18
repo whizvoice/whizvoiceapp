@@ -529,7 +529,8 @@ class ChatViewModel @Inject constructor(
                             // This is a final failure after all retries - show to user
                             _connectionError.value = "Failed to send message. Please check your connection and try again."
                             if (_chatId.value != 0L && _chatId.value != -1L) { // Only add if a chat is active (includes temporary negative IDs)
-                                repository.addAssistantMessage(
+                                // Use optimistic (local-only) insert since we're likely offline
+                                repository.addAssistantMessageOptimistic(
                                     chatId = _chatId.value,
                                     content = "Error: Unable to send message. Please try again."
                                 )
