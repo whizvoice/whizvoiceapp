@@ -190,9 +190,6 @@ class WakeWordService : Service() {
                     if (rec.acceptWaveForm(buffer, bytesRead)) {
                         val result = rec.result
                         checkForWakeWord(result)
-                    } else {
-                        val partial = rec.partialResult
-                        checkForWakeWord(partial)
                     }
                 }
             } catch (e: Exception) {
@@ -205,9 +202,7 @@ class WakeWordService : Service() {
     private fun checkForWakeWord(jsonResult: String) {
         try {
             val json = JSONObject(jsonResult)
-            val text = json.optString("text", "").ifBlank {
-                json.optString("partial", "")
-            }.lowercase()
+            val text = json.optString("text", "").lowercase()
 
             if (text.contains("ok whiz") || text.contains("okay whiz") || text.contains("hey whiz")) {
                 Log.d(TAG, "Wake word detected: '$text'")
