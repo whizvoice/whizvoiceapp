@@ -1,5 +1,6 @@
 package com.example.whiz.services
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -222,6 +223,7 @@ class WakeWordService : Service() {
     private fun onWakeWordDetected() {
         try {
             Log.d(TAG, "Launching AssistantActivity")
+            collapseStatusBar()
             val assistantIntent = Intent(this, AssistantActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -231,6 +233,18 @@ class WakeWordService : Service() {
             startActivity(assistantIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch AssistantActivity", e)
+        }
+    }
+
+    @SuppressLint("WrongConstant")
+    private fun collapseStatusBar() {
+        try {
+            val service = getSystemService("statusbar")
+            val clazz = Class.forName("android.app.StatusBarManager")
+            val method = clazz.getMethod("collapsePanels")
+            method.invoke(service)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not collapse status bar", e)
         }
     }
 
