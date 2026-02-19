@@ -6,7 +6,9 @@ import android.util.Log
 import android.widget.Toast
 import kotlin.system.exitProcess
 import dagger.hilt.android.HiltAndroidApp
+import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.services.SpeechRecognitionService
+import com.example.whiz.services.WakeWordService
 import org.json.JSONObject
 import java.io.File
 import javax.inject.Inject
@@ -20,10 +22,23 @@ class WhizApplication : Application() {
     @Inject
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
 
+    @Inject
+    lateinit var wakeWordPreferences: WakeWordPreferences
+
     override fun onCreate() {
         super.onCreate()
 
         Log.d("WhizApplication", "Application created - AppLifecycleService will automatically track foreground/background state")
+
+        // Auto-start wake word service if enabled (recovers from process death)
+        try {
+            if (wakeWordPreferences.isEnabledOnce() && !WakeWordService.isRunning) {
+                Log.d("WhizApplication", "Wake word enabled, starting WakeWordService")
+                WakeWordService.start(this)
+            }
+        } catch (e: Exception) {
+            Log.e("WhizApplication", "Error checking wake word preference", e)
+        }
 
         // Set up global exception handler
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

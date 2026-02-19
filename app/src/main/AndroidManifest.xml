@@ -12,6 +12,10 @@
         tools:ignore="ProtectedPermissions" />
     
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name="com.example.whiz.WhizApplication"
@@ -107,6 +111,22 @@
         <service
             android:name=".services.MessageDraftOverlayService"
             android:exported="false" />
+
+        <!-- Wake Word Detection Service -->
+        <service
+            android:name=".services.WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Wake Word Boot Receiver -->
+        <receiver
+            android:name=".services.WakeWordBootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

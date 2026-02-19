@@ -24,6 +24,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.HearingDisabled
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -76,6 +78,7 @@ fun ChatsListScreen(
     val chats by viewModel.chats.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isShowingCachedData by viewModel.isShowingCachedData.collectAsState()
+    val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     
     // Snackbar state
     val snackbarHostState = remember { SnackbarHostState() }
@@ -117,6 +120,19 @@ fun ChatsListScreen(
                                 contentDescription = null
                             )
                         }
+                    }
+                    IconButton(
+                        onClick = { viewModel.toggleWakeWord() },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (isWakeWordEnabled) "Disable Wake Word" else "Enable Wake Word"
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isWakeWordEnabled) Icons.Default.Hearing else Icons.Default.HearingDisabled,
+                            contentDescription = null,
+                            tint = if (isWakeWordEnabled) MaterialTheme.colorScheme.onPrimary
+                                   else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f)
+                        )
                     }
                     IconButton(
                         onClick = onSettingsClick,

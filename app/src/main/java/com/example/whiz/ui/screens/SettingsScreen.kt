@@ -187,6 +187,17 @@ fun SettingsScreen(
                 onSaveSettings = { viewModel.saveVoiceSettings(localVoiceSettings) }
             )
 
+            // Wake Word Detection Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Wake Word Detection",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Wake Word Detection header" }
+            )
+            HorizontalDivider(thickness = Dp.Hairline)
+
+            WakeWordSection(viewModel = viewModel)
+
             // Subscription Section
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -893,6 +904,47 @@ fun BenefitRow(text: String) {
             text = text,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+    }
+}
+
+@Composable
+fun WakeWordSection(viewModel: SettingsViewModel) {
+    val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Wake Word Detection content" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Always-on Wake Word",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = "Say \"Ok Whiz\" or \"Hey Whiz\" to open the app",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isWakeWordEnabled) {
+                Text(
+                    text = "A green dot in the status bar indicates microphone access",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(
+            checked = isWakeWordEnabled,
+            onCheckedChange = { enabled ->
+                viewModel.setWakeWordEnabled(enabled)
+            },
+            modifier = Modifier.semantics {
+                contentDescription = "Always-on Wake Word switch"
+            }
         )
     }
 }
