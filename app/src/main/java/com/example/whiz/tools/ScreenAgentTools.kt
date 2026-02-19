@@ -4,6 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.Uri
+import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -343,7 +346,64 @@ class ScreenAgentTools @Inject constructor(
             )
         }
     }
-    
+
+    /**
+     * Launch Google Maps directly to search results using a geo: intent.
+     * This bypasses the fragile search bar automation (find search box, click, type, submit).
+     */
+    private fun launchGoogleMapsSearch(query: String, enableOverlay: Boolean = true): LaunchResult {
+        Log.d(TAG, "Launching Google Maps search with geo: intent for query: $query")
+        trackAction("launchGoogleMapsSearch: $query")
+
+        val mapsPackage = "com.google.android.apps.maps"
+        var overlayStarted = false
+        var overlayPermissionRequired = false
+
+        try {
+            val uri = Uri.parse("geo:0,0?q=${Uri.encode(query)}")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage(mapsPackage)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+
+            // Set pending overlay flag BEFORE launching (same pattern as launchApp)
+            if (enableOverlay && hasOverlayPermission()) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            }
+
+            context.startActivity(intent)
+
+            // Start bubble overlay if enabled
+            if (enableOverlay) {
+                if (hasOverlayPermission()) {
+                    overlayStarted = startBubbleOverlay()
+                    if (!overlayStarted) {
+                        BubbleOverlayService.pendingStartTimestamp = 0L
+                    }
+                } else {
+                    overlayPermissionRequired = true
+                }
+            }
+
+            return LaunchResult(
+                success = true,
+                appName = "Maps",
+                packageName = mapsPackage,
+                overlayStarted = overlayStarted,
+                overlayPermissionRequired = overlayPermissionRequired
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch Google Maps search", e)
+            BubbleOverlayService.pendingStartTimestamp = 0L
+            return LaunchResult(
+                success = false,
+                appName = "Maps",
+                packageName = mapsPackage,
+                error = "Failed to launch Maps search: ${e.message}"
+            )
+        }
+    }
+
     private fun isWhizApp(packageName: String): Boolean {
         // Only return true if the package name matches THIS app's package name exactly
         // This ensures production and debug apps don't interfere with each other
@@ -2581,30 +2641,38 @@ class ScreenAgentTools @Inject constructor(
         query: String,
         contentType: String = "song"
     ): MusicActionResult {
-        Log.d(TAG, "Attempting to play on YouTube Music: $query (contentType=$contentType)")
+        Log.d(TAG, "Playing on YouTube Music via deep link + accessibility: $query (contentType=$contentType)")
         trackAction("playYouTubeMusicSong: $query")
 
         try {
-            // Auto-launch YouTube Music if not already open
-            val launchResult = launchApp("YouTube Music", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch YouTube Music: ${launchResult.error}")
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Failed to open YouTube Music: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "YouTube Music launched successfully")
-            delay(1000) // Wait for YouTube Music to fully load
+            val ytMusicPackage = "com.google.android.apps.youtube.music"
 
+            // 1. Build deep link to YouTube Music search results
+            val deepLinkUrl = "https://music.youtube.com/search?q=${Uri.encode(query)}"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkUrl)).apply {
+                setPackage(ytMusicPackage)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            // 2. Start bubble overlay before launching (same pattern as launchApp)
+            if (hasOverlayPermission()) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            }
+
+            context.startActivity(intent)
+
+            // Start overlay if permission granted
+            if (hasOverlayPermission()) {
+                startBubbleOverlay()
+            }
+
+            // 3. Wait for YouTube Music to be in foreground
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 logScreenAgentError(
                     reason = "accessibility_unavailable",
                     errorMessage = "Accessibility service not available for playYouTubeMusicSong",
-                    packageName = "com.google.android.apps.youtube.music"
+                    packageName = ytMusicPackage
                 )
                 return MusicActionResult(
                     success = false,
@@ -2614,11 +2682,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for YouTube Music to be ready (max 3 seconds)
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
-                packageName = "com.google.android.apps.youtube.music",
-                maxWaitMs = 3000
+                packageName = ytMusicPackage,
+                maxWaitMs = 5000
             )
 
             if (!appReady) {
@@ -2630,189 +2697,67 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to a searchable screen (speed dial or search screen)
-            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
-            if (!navigationSuccess) {
-                // UI dump for navigation failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "ytmusic_nav_to_search_failed", "Could not navigate to searchable screen in YouTube Music")
-                    dumpRoot.recycle()
-                }
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Could not navigate to searchable screen in YouTube Music"
-                )
-            }
-
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Could not get root node"
-                )
-            }
-
-            // Perform search with filter chip selection (shared logic)
-            val searchResult = performYouTubeMusicSearch(rootNode, query, contentType, accessibilityService)
-            rootNode.recycle()
-
-            if (searchResult is YouTubeMusicSearchResult.Error) {
-                // UI dump for search failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "ytmusic_search_failed", searchResult.message)
-                    dumpRoot.recycle()
-                }
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = searchResult.message
-                )
-            }
-
-            // Poll for the result to appear (max 3 seconds)
+            // 4. Wait for search results to load and click the first result
+            //    Use a longer wait since the deep link needs to load the search page
             val clickResult = waitForAndClickPlayButton(
-                accessibilityService,
+                accessibilityService = accessibilityService,
                 contentType = contentType,
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
-            return if (clickResult.clicked) {
-                Log.d(TAG, "Successfully clicked result on search, verifying song is playing...")
-
-                // For List-type content (album, playlist, artist), we just verify music started
-                // We can't match the playlist name to the song title since now-playing shows the current song
-                val isListType = contentType.lowercase() in listOf("album", "community_playlist", "artist")
-
-                if (isListType) {
-                    // For playlists/albums, just verify that some music started playing
-                    delay(1500) // Give time for playback to start
-                    val verifyRoot = accessibilityService.getCurrentRootNode()
-                    if (verifyRoot != null) {
-                        val nowPlayingTitle = getMiniPlayerTitle(verifyRoot)
-                        verifyRoot.recycle()
-
-                        if (nowPlayingTitle != null && nowPlayingTitle.isNotEmpty()) {
-                            Log.d(TAG, "List-type content playing: '$nowPlayingTitle' from playlist/album '${clickResult.clickedTitle}'")
-                            return MusicActionResult(
-                                success = true,
-                                action = "play_song",
-                                query = query,
-                                nowPlaying = nowPlayingTitle
-                            )
-                        }
-                    }
-                    // Fallback - if we can't verify, assume success since we clicked play
-                    Log.d(TAG, "Could not verify list-type playback, but Play was clicked successfully")
-                    return MusicActionResult(
-                        success = true,
-                        action = "play_song",
-                        query = query,
-                        nowPlaying = clickResult.clickedTitle
-                    )
+            if (!clickResult.clicked) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_play_deeplink_no_result", "Deep link search loaded but could not find/click result for: $query")
+                    dumpRoot.recycle()
                 }
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not find search result to click after deep link"
+                )
+            }
 
-                // For Song-type content, verify the correct song is playing
-                // Use the actual title we clicked on for verification (more accurate than parsing query)
-                // Fall back to parsing query if we couldn't extract the title
-                val expectedSong = clickResult.clickedTitle
-                    ?: query.split(" by ", " from ", " - ").firstOrNull()?.trim()
-                    ?: query
-                Log.d(TAG, "Expecting to verify song: '$expectedSong'")
-
-                // Poll for the correct song to appear in player (max 3 seconds)
-                val startTime = System.currentTimeMillis()
-                val maxWaitMs = 3000L
-                val pollIntervalMs = 200L
-
-                while (System.currentTimeMillis() - startTime < maxWaitMs) {
-                    val verifyRoot = accessibilityService.getCurrentRootNode()
-                    if (verifyRoot != null) {
-                        val nowPlayingTitle = getMiniPlayerTitle(verifyRoot)
-                        verifyRoot.recycle()
-
-                        if (nowPlayingTitle != null && nowPlayingTitle.contains(expectedSong, ignoreCase = true)) {
-                            Log.d(TAG, "Verified: '$nowPlayingTitle' matches expected '$expectedSong' after ${System.currentTimeMillis() - startTime}ms")
-                            return MusicActionResult(
-                                success = true,
-                                action = "play_song",
-                                query = query,
-                                nowPlaying = nowPlayingTitle
-                            )
-                        }
-                    }
-                    delay(pollIntervalMs)
-                }
-
-                // Timeout - check what's actually playing
-                val finalRoot = accessibilityService.getCurrentRootNode()
-                val finalTitle = if (finalRoot != null) {
-                    val title = getMiniPlayerTitle(finalRoot)
-                    finalRoot.recycle()
+            // 5. Verify playback started
+            val isSongType = contentType.lowercase() in listOf("song", "video")
+            if (isSongType) {
+                // For songs/videos, wait for mini player to show the playing title
+                delay(2000)
+                val verifyRoot = accessibilityService.getCurrentRootNode()
+                val nowPlaying = if (verifyRoot != null) {
+                    val title = getMiniPlayerTitle(verifyRoot)
+                    verifyRoot.recycle()
                     title
                 } else null
 
-                if (finalTitle != null) {
-                    // If we got a title from now playing, check if it matches what we clicked
-                    if (clickResult.clickedTitle != null && finalTitle.contains(clickResult.clickedTitle, ignoreCase = true)) {
-                        Log.d(TAG, "Verified via clicked title: '$finalTitle' matches clicked '${clickResult.clickedTitle}'")
-                        MusicActionResult(
-                            success = true,
-                            action = "play_song",
-                            query = query,
-                            nowPlaying = finalTitle
-                        )
-                    } else {
-                        Log.w(TAG, "Wrong song playing: expected '$expectedSong', got '$finalTitle'")
-                        MusicActionResult(
-                            success = false,
-                            action = "play_song",
-                            query = query,
-                            error = "Wrong song playing: expected '$expectedSong', got '$finalTitle'"
-                        )
-                    }
-                } else {
-                    Log.w(TAG, "Could not verify song - player title not found after ${maxWaitMs}ms")
-                    MusicActionResult(
-                        success = false,
-                        action = "play_song",
-                        query = query,
-                        error = "Could not verify song is playing"
-                    )
-                }
-            } else {
-                // Dump UI for debugging
-                val debugRoot = accessibilityService.getCurrentRootNode()
-                if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_no_play_button", "Could not find play button after waiting for search results")
-                    debugRoot.recycle()
-                }
-                MusicActionResult(
-                    success = false,
+                return MusicActionResult(
+                    success = true,
                     action = "play_song",
                     query = query,
-                    error = "Could not find play button after waiting for search results"
+                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query
+                )
+            } else {
+                // For albums/playlists/artists, clicking opens the page — playback may not start immediately
+                return MusicActionResult(
+                    success = true,
+                    action = "play_song",
+                    query = query,
+                    nowPlaying = clickResult.clickedTitle ?: query
                 )
             }
-
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing YouTube Music song", e)
+            Log.e(TAG, "Error playing YouTube Music via deep link", e)
             logScreenAgentError(
                 reason = "ytmusic_play_error",
-                errorMessage = "Exception playing YouTube Music song '$query': ${e.message}",
+                errorMessage = "Exception playing YouTube Music '$query': ${e.message}",
                 packageName = "com.google.android.apps.youtube.music"
             )
             return MusicActionResult(
                 success = false,
                 action = "play_song",
                 query = query,
-                error = "Error playing song: ${e.message}"
+                error = "Failed to play via deep link: ${e.message}"
             )
         }
     }
@@ -2980,157 +2925,43 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Pause or resume YouTube Music playback by clicking the play/pause button.
+     * Pause or resume YouTube Music playback via media key event.
      * This function toggles between playing and paused states.
      */
     suspend fun pauseYouTubeMusic(): MusicActionResult {
-        Log.d(TAG, "Attempting to pause/resume YouTube Music")
+        Log.d(TAG, "Toggling YouTube Music playback via media key event")
         trackAction("pauseYouTubeMusic")
 
         try {
-            val accessibilityService = WhizAccessibilityService.getInstance()
-            if (accessibilityService == null) {
-                logScreenAgentError(
-                    reason = "accessibility_unavailable",
-                    errorMessage = "Accessibility service not available for pauseYouTubeMusic",
-                    packageName = "com.google.android.apps.youtube.music"
-                )
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "Accessibility service not enabled"
-                )
-            }
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val wasPlaying = audioManager.isMusicActive
 
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "Could not get root node"
-                )
-            }
-
-            // Check if we're in YouTube Music
-            val currentPackage = rootNode.packageName?.toString()
-            if (currentPackage != "com.google.android.apps.youtube.music") {
-                rootNode.recycle()
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "YouTube Music is not the active app (current: $currentPackage)"
-                )
-            }
-
-            // Try to find the play/pause button by resource ID
-            val playPauseButton = rootNode.findAccessibilityNodeInfosByViewId(
-                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
+            // Dispatch MEDIA_PLAY_PAUSE key event (down + up)
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            )
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
             )
 
-            if (playPauseButton != null && playPauseButton.isNotEmpty()) {
-                val button = playPauseButton.first()
-                val contentDesc = button.contentDescription?.toString() ?: ""
-                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
+            delay(300) // Brief wait for state to update
 
-                Log.d(TAG, "Found play/pause button with contentDesc: '$contentDesc', wasPlaying: $wasPlaying")
+            val isNowPlaying = audioManager.isMusicActive
+            val newState = if (isNowPlaying) "playing" else "paused"
 
-                if (button.isClickable) {
-                    val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    playPauseButton.forEach { it.recycle() }
-                    rootNode.recycle()
-
-                    if (clicked) {
-                        // Wait briefly for the state to update
-                        delay(300)
-
-                        // Verify the new state
-                        val verifyRoot = accessibilityService.getCurrentRootNode()
-                        val newState = if (verifyRoot != null) {
-                            val newButton = verifyRoot.findAccessibilityNodeInfosByViewId(
-                                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
-                            )
-                            val newDesc = newButton?.firstOrNull()?.contentDescription?.toString() ?: ""
-                            newButton?.forEach { it.recycle() }
-                            verifyRoot.recycle()
-                            if (newDesc.contains("Pause", ignoreCase = true)) "playing" else "paused"
-                        } else {
-                            if (wasPlaying) "paused" else "playing"
-                        }
-
-                        Log.d(TAG, "Play/pause button clicked, new state: $newState")
-                        return MusicActionResult(
-                            success = true,
-                            action = "pause_music",
-                            nowPlaying = newState
-                        )
-                    } else {
-                        Log.w(TAG, "Failed to click play/pause button")
-                        return MusicActionResult(
-                            success = false,
-                            action = "pause_music",
-                            error = "Failed to click play/pause button"
-                        )
-                    }
-                } else {
-                    playPauseButton.forEach { it.recycle() }
-                    rootNode.recycle()
-                    return MusicActionResult(
-                        success = false,
-                        action = "pause_music",
-                        error = "Play/pause button is not clickable"
-                    )
-                }
-            }
-
-            // Fallback: search recursively for any node with "Pause video" or "Play video" content description
-            val foundButton = findPlayPauseButtonRecursive(rootNode)
-            rootNode.recycle()
-
-            if (foundButton != null) {
-                val contentDesc = foundButton.contentDescription?.toString() ?: ""
-                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
-
-                Log.d(TAG, "Found play/pause button via recursive search, contentDesc: '$contentDesc'")
-
-                val clicked = foundButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                foundButton.recycle()
-
-                if (clicked) {
-                    delay(300)
-                    val newState = if (wasPlaying) "paused" else "playing"
-                    Log.d(TAG, "Play/pause button clicked via fallback, new state: $newState")
-                    return MusicActionResult(
-                        success = true,
-                        action = "pause_music",
-                        nowPlaying = newState
-                    )
-                }
-            }
-
-            // UI dump for debugging
-            val dumpRoot = accessibilityService.getCurrentRootNode()
-            if (dumpRoot != null) {
-                dumpUIHierarchy(dumpRoot, "ytmusic_pause_button_not_found", "Could not find play/pause button in YouTube Music")
-                dumpRoot.recycle()
-            }
+            Log.d(TAG, "Media key dispatched, wasPlaying=$wasPlaying, newState=$newState")
 
             return MusicActionResult(
-                success = false,
+                success = true,
                 action = "pause_music",
-                error = "Could not find play/pause button in YouTube Music"
+                nowPlaying = newState
             )
-
         } catch (e: Exception) {
-            Log.e(TAG, "Error pausing/resuming YouTube Music", e)
-            logScreenAgentError(
-                reason = "ytmusic_pause_error",
-                errorMessage = "Exception pausing/resuming YouTube Music: ${e.message}",
-                packageName = "com.google.android.apps.youtube.music"
-            )
+            Log.e(TAG, "Error toggling playback via media key", e)
             return MusicActionResult(
                 success = false,
                 action = "pause_music",
-                error = "Error pausing/resuming music: ${e.message}"
+                error = "Failed to toggle playback: ${e.message}"
             )
         }
     }
@@ -3163,10 +2994,9 @@ class ScreenAgentTools @Inject constructor(
         trackAction("searchGoogleMapsLocation: $address")
 
         try {
-            // Auto-launch Google Maps if not already open
-            val launchResult = launchApp("Maps", enableOverlay = true)
+            // Launch Google Maps with geo: intent directly to search results
+            val launchResult = launchGoogleMapsSearch(address)
             if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -3174,8 +3004,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Failed to open Google Maps: ${launchResult.error}"
                 )
             }
-            Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            Log.i(TAG, "Google Maps geo: search launched for: $address")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -3192,13 +3021,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
+            // Wait for Maps to be in foreground
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 5000
             )
-
             if (!appReady) {
                 return MapsActionResult(
                     success = false,
@@ -3208,85 +3036,29 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to main screen with search box, then click and type in one operation
-            var searchSuccess = false
-            var attempts = 0
-            val maxAttempts = 5
-
-            while (!searchSuccess && attempts < maxAttempts) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode == null) {
-                    return MapsActionResult(
-                        success = false,
-                        action = "search_location",
-                        location = address,
-                        error = "Could not get root node"
-                    )
-                }
-
-                // Try to click and type into the search box
-                searchSuccess = clickAndTypeGoogleMapsSearch(rootNode, address)
-
-                if (!searchSuccess) {
-                    // Search box not found or couldn't type, press back and try again
-                    Log.d(TAG, "Search box not usable, pressing back (attempt ${attempts + 1}/$maxAttempts)")
-                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                    attempts++
-                    delay(500) // Wait for UI to update
-                } else {
-                    Log.d(TAG, "Successfully entered search query on attempt ${attempts + 1}")
-                }
-                rootNode.recycle()
+            // Poll for search results to load (wait for search_list_layout or location details to appear)
+            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+                val node = accessibilityService.getCurrentRootNode()
+                if (node != null) {
+                    // Dismiss "Exit navigation?" dialog if present
+                    dismissExitNavigationDialog(node)
+                    val state = detectGoogleMapsScreenState(node)
+                    node.recycle()
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                } else false
             }
-
-            if (!searchSuccess) {
-                // UI dump for search failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_not_found", "Could not find search box in Google Maps after $maxAttempts attempts")
-                    dumpRoot.recycle()
-                }
+            if (!resultsLoaded) {
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
                     location = address,
-                    error = "Could not find search box or enter query in Google Maps"
+                    error = "Search results did not load in time"
                 )
             }
 
-            // Wait for suggestions to appear
-            delay(800)
-
-            // Press Enter to submit search (don't click autocomplete suggestions)
-            // This ensures we get location-aware results near the user, not random worldwide matches
-            val suggestionRootNode = accessibilityService.getCurrentRootNode()
-            if (suggestionRootNode == null) {
-                return MapsActionResult(
-                    success = false,
-                    action = "search_location",
-                    location = address,
-                    error = "Could not get root node after entering query"
-                )
-            }
-
-            val searchSubmitted = pressEnterToSubmitSearch(suggestionRootNode)
-            suggestionRootNode.recycle()
-
-            if (!searchSubmitted) {
-                return MapsActionResult(
-                    success = false,
-                    action = "search_location",
-                    location = address,
-                    error = "Could not submit search"
-                )
-            }
-
-            // Wait for results to load
-            delay(1500)
-
-            // After pressing Enter, we get a list of results - select the first non-sponsored one
+            // Select the first non-sponsored result from the list
             // If all visible results are sponsored, scroll down and retry
-            Log.d(TAG, "Search submitted, selecting first non-sponsored location from results")
+            Log.d(TAG, "Search results loaded, selecting first non-sponsored location from results")
 
             val maxScrollAttempts = 3
             var locationSelected = false
@@ -4204,10 +3976,9 @@ class ScreenAgentTools @Inject constructor(
         trackAction("searchGoogleMapsPhrase: $searchPhrase")
 
         try {
-            // Auto-launch Google Maps to bring it to foreground
-            val launchResult = launchApp("Maps", enableOverlay = true)
+            // Launch Google Maps with geo: intent directly to search results
+            val launchResult = launchGoogleMapsSearch(searchPhrase)
             if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4215,8 +3986,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Failed to open Google Maps: ${launchResult.error}"
                 )
             }
-            Log.i(TAG, "Google Maps launched/foregrounded successfully")
-            delay(1000) // Wait for Maps to fully load
+            Log.i(TAG, "Google Maps geo: search launched for phrase: $searchPhrase")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -4228,13 +3998,11 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 5000
             )
-
             if (!appReady) {
                 return MapsActionResult(
                     success = false,
@@ -4244,65 +4012,25 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to main screen with search box, then click and type in one operation
-            var searchSuccess = false
-            var attempts = 0
-            val maxAttempts = 5
-
-            while (!searchSuccess && attempts < maxAttempts) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode == null) {
-                    return MapsActionResult(
-                        success = false,
-                        action = "search_phrase",
-                        location = searchPhrase,
-                        error = "Could not get root node"
-                    )
-                }
-
-                // Try to click and type into the search box
-                searchSuccess = clickAndTypeGoogleMapsSearch(rootNode, searchPhrase)
-
-                if (!searchSuccess) {
-                    // Search box not found or couldn't type, press back and try again
-                    Log.d(TAG, "Search box not usable, pressing back (attempt ${attempts + 1}/$maxAttempts)")
-                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                    attempts++
-                    delay(500) // Wait for UI to update
-                } else {
-                    Log.d(TAG, "Successfully entered search query on attempt ${attempts + 1}")
-                }
-                rootNode.recycle()
+            // Poll for search results to load
+            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+                val node = accessibilityService.getCurrentRootNode()
+                if (node != null) {
+                    // Dismiss "Exit navigation?" dialog if present
+                    dismissExitNavigationDialog(node)
+                    val state = detectGoogleMapsScreenState(node)
+                    node.recycle()
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                } else false
             }
-
-            if (!searchSuccess) {
+            if (!resultsLoaded) {
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
                     location = searchPhrase,
-                    error = "Could not find search box or enter query in Google Maps"
+                    error = "Search results did not load in time"
                 )
             }
-
-            // Wait for suggestions to appear
-            delay(800)
-
-            // Click matching suggestion (or first suggestion if no match)
-            Log.d(TAG, "Attempting to click matching suggestion for phrase: $searchPhrase")
-            val rootNodeAfterType = accessibilityService.getCurrentRootNode()
-            if (rootNodeAfterType != null) {
-                val (suggestionClicked, wasSeeLocations) = clickMatchingSuggestion(rootNodeAfterType, searchPhrase, accessibilityService)
-                rootNodeAfterType.recycle()
-
-                if (suggestionClicked) {
-                    Log.d(TAG, "Successfully clicked suggestion${if (wasSeeLocations) " (See locations)" else ""}")
-                } else {
-                    Log.w(TAG, "Could not click suggestion, search may not have submitted")
-                }
-            }
-
-            // Wait for search results to appear
-            delay(2000)
 
             return MapsActionResult(
                 success = true,
@@ -4930,6 +4658,48 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing 'Start this trip?' dialog: ${e.message}")
+        }
+    }
+
+    private fun dismissExitNavigationDialog(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            val exitNavNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Exit navigation?", exitNavNodes)
+
+            if (exitNavNodes.isEmpty()) {
+                return false
+            }
+
+            Log.d(TAG, "Found 'Exit navigation?' dialog, clicking 'Yes' to dismiss")
+
+            val yesNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Yes", yesNodes)
+
+            for (node in yesNodes) {
+                if (node.isClickable) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed 'Exit navigation?' dialog")
+                        return true
+                    }
+                }
+                // If the node itself isn't clickable, try finding a clickable parent
+                val clickableParent = findClickableParent(node)
+                if (clickableParent != null) {
+                    val clicked = clickableParent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickableParent.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed 'Exit navigation?' dialog via clickable parent")
+                        return true
+                    }
+                }
+            }
+
+            Log.w(TAG, "Found 'Exit navigation?' dialog but could not click 'Yes'")
+            return false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing 'Exit navigation?' dialog: ${e.message}")
+            return false
         }
     }
 
