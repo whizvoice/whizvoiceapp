@@ -746,10 +746,16 @@ fun ChatScreen(
     }
     
     // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
+    // Track previous viewModelChatId to distinguish real migrations (new chat → server ID)
+    // from stale state (screen re-composed while ViewModel still has old chat ID)
+    var previousViewModelChatId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(viewModelChatId) {
-        // Handle migration if the chat ID has changed from the initial -1
-        // This handles both optimistic IDs (negative) and real IDs (positive)
-        if (chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
+        val prev = previousViewModelChatId
+        previousViewModelChatId = viewModelChatId
+        // Only migrate if the PREVIOUS value was -1 (we were in new chat state)
+        // and the current value is a real chat ID. This prevents stale migration when
+        // the screen first composes with an old viewModelChatId from a previous chat.
+        if (prev == -1L && chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
             Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
             // This is a migration (new chat creation), not a chat switch
             // Use migrateChatId to avoid disconnecting WebSocket
