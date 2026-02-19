@@ -35,6 +35,7 @@ sealed class ToolExecutionResult {
 class ToolExecutor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val screenAgentTools: ScreenAgentTools,
+    private val deviceControlTools: DeviceControlTools,
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
     private val authRepository: com.example.whiz.data.auth.AuthRepository
 ) {
@@ -124,6 +125,31 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_select_location_from_list" -> {
                         executeSelectLocationFromList(requestId, params)
+                    }
+                    // ========== Device Control Tools (direct intents/APIs) ==========
+                    "agent_set_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setAlarm(it) }
+                    }
+                    "agent_set_timer" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setTimer(it) }
+                    }
+                    "agent_dismiss_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissAlarm() }
+                    }
+                    "agent_get_next_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.getNextAlarm() }
+                    }
+                    "agent_toggle_flashlight" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.toggleFlashlight(it) }
+                    }
+                    "agent_add_calendar_event" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.addCalendarEvent(it) }
+                    }
+                    "agent_dial_phone_number" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dialPhoneNumber(it) }
+                    }
+                    "agent_set_volume" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setVolume(it) }
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -1072,9 +1098,43 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    /**
+     * Generic executor for device control tools (direct intents/APIs).
+     * These are synchronous and don't require accessibility service.
+     */
+    private suspend fun executeDeviceControlTool(
+        toolName: String,
+        requestId: String,
+        params: JSONObject,
+        action: (JSONObject) -> JSONObject
+    ) {
+        try {
+            Log.i(TAG, "Executing device control tool: $toolName")
+            val resultJson = action(params)
+            Log.i(TAG, "[TOOL_RESULT] $toolName result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = toolName,
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing $toolName", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = toolName,
+                    requestId = requestId,
+                    error = "Failed to execute $toolName: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_get_next_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
