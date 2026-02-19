@@ -594,6 +594,11 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             composeTestRule.activityRule.scenario.close()
             Thread.sleep(500) // Give it time to fully close
 
+            // Reset TTS state to ensure clean initial state (previous tests may have left it enabled)
+            voiceManager.setVoiceResponseEnabled(false)
+            voiceManager.ttsStateBeforeBackground = null
+            Log.d(TAG, "🔄 Reset TTS state: isVoiceResponseEnabled=false, ttsStateBeforeBackground=null")
+
             // Step 1: Voice launch
             Log.d(TAG, "🎤 step 1: Voice launching app...")
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
