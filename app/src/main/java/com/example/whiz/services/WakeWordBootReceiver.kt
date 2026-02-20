@@ -5,18 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.example.whiz.data.preferences.WakeWordPreferences
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 
-@AndroidEntryPoint
 class WakeWordBootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "WakeWordBootReceiver"
     }
 
-    @Inject
-    lateinit var wakeWordPreferences: WakeWordPreferences
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface WakeWordBootReceiverEntryPoint {
+        fun wakeWordPreferences(): WakeWordPreferences
+    }
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
@@ -24,6 +28,11 @@ class WakeWordBootReceiver : BroadcastReceiver() {
         Log.d(TAG, "Boot completed, checking wake word preference")
 
         try {
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                WakeWordBootReceiverEntryPoint::class.java
+            )
+            val wakeWordPreferences = entryPoint.wakeWordPreferences()
             val enabled = wakeWordPreferences.isEnabledOnce()
             Log.d(TAG, "Wake word enabled=$enabled")
             if (enabled) {
