@@ -232,6 +232,9 @@ class ToolExecutor @Inject constructor(
                     "agent_set_volume" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setVolume(it) }
                     }
+                    "agent_lookup_phone_contacts" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
+                    }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
                         _toolResults.emit(
@@ -1250,7 +1253,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_get_next_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_get_next_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

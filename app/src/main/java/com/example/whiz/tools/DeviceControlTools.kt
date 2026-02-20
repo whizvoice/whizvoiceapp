@@ -1,16 +1,22 @@
 package com.example.whiz.tools
 
+import android.Manifest
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.database.Cursor
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.provider.AlarmClock
 import android.provider.CalendarContract
+import android.provider.ContactsContract
 import android.util.Log
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -329,6 +335,189 @@ class DeviceControlTools @Inject constructor(
             JSONObject().apply {
                 put("success", false)
                 put("error", "Failed to set volume: ${e.message}")
+            }
+        }
+    }
+
+    // ========== Contacts Lookup ==========
+
+    fun lookupPhoneContacts(params: JSONObject): JSONObject {
+        val name = params.getString("name")
+        Log.i(TAG, "Looking up phone contacts for: $name")
+
+        // Check READ_CONTACTS permission
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED) {
+            Log.i(TAG, "READ_CONTACTS permission not granted")
+            return JSONObject().apply {
+                put("success", true)
+                put("contacts", JSONArray())
+                put("permission_denied", true)
+                put("message", "Contacts permission not granted.")
+            }
+        }
+
+        return try {
+            val contactsList = JSONArray()
+            val contactIds = mutableListOf<Pair<String, String>>() // (contact_id, display_name)
+
+            // Query contacts by display name
+            val contactsCursor: Cursor? = context.contentResolver.query(
+                ContactsContract.Contacts.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.Contacts._ID,
+                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+                ),
+                "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} LIKE ?",
+                arrayOf("%$name%"),
+                "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} ASC"
+            )
+
+            contactsCursor?.use { cursor ->
+                var count = 0
+                while (cursor.moveToNext() && count < 5) {
+                    val contactId = cursor.getString(
+                        cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
+                    )
+                    val displayName = cursor.getString(
+                        cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+                    )
+                    contactIds.add(Pair(contactId, displayName))
+                    count++
+                }
+            }
+
+            // For each contact, get phone numbers, emails, and addresses
+            for ((contactId, displayName) in contactIds) {
+                val contactJson = JSONObject().apply {
+                    put("display_name", displayName)
+                }
+
+                // Phone numbers
+                val phoneNumbers = JSONObject()
+                val phoneCursor: Cursor? = context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Phone.NUMBER,
+                        ContactsContract.CommonDataKinds.Phone.TYPE
+                    ),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )
+                phoneCursor?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val number = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        )
+                        val type = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.TYPE)
+                        )
+                        val label = when (type) {
+                            ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE -> "mobile"
+                            ContactsContract.CommonDataKinds.Phone.TYPE_HOME -> "home"
+                            ContactsContract.CommonDataKinds.Phone.TYPE_WORK -> "work"
+                            else -> "other"
+                        }
+                        // If label already used, append a suffix
+                        val finalLabel = if (phoneNumbers.has(label)) {
+                            var i = 2
+                            while (phoneNumbers.has("${label}_$i")) i++
+                            "${label}_$i"
+                        } else label
+                        phoneNumbers.put(finalLabel, number)
+                    }
+                }
+                if (phoneNumbers.length() > 0) {
+                    contactJson.put("phone_numbers", phoneNumbers)
+                }
+
+                // Emails
+                val emails = JSONObject()
+                val emailCursor: Cursor? = context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Email.ADDRESS,
+                        ContactsContract.CommonDataKinds.Email.TYPE
+                    ),
+                    "${ContactsContract.CommonDataKinds.Email.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )
+                emailCursor?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val address = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Email.ADDRESS)
+                        )
+                        val type = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Email.TYPE)
+                        )
+                        val label = when (type) {
+                            ContactsContract.CommonDataKinds.Email.TYPE_HOME -> "personal"
+                            ContactsContract.CommonDataKinds.Email.TYPE_WORK -> "work"
+                            else -> "other"
+                        }
+                        val finalLabel = if (emails.has(label)) {
+                            var i = 2
+                            while (emails.has("${label}_$i")) i++
+                            "${label}_$i"
+                        } else label
+                        emails.put(finalLabel, address)
+                    }
+                }
+                if (emails.length() > 0) {
+                    contactJson.put("emails", emails)
+                }
+
+                // Addresses
+                val addresses = JSONObject()
+                val addressCursor: Cursor? = context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS,
+                        ContactsContract.CommonDataKinds.StructuredPostal.TYPE
+                    ),
+                    "${ContactsContract.CommonDataKinds.StructuredPostal.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )
+                addressCursor?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val formattedAddress = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS)
+                        )
+                        val type = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.StructuredPostal.TYPE)
+                        )
+                        val label = when (type) {
+                            ContactsContract.CommonDataKinds.StructuredPostal.TYPE_HOME -> "home"
+                            ContactsContract.CommonDataKinds.StructuredPostal.TYPE_WORK -> "work"
+                            else -> "other"
+                        }
+                        val finalLabel = if (addresses.has(label)) {
+                            var i = 2
+                            while (addresses.has("${label}_$i")) i++
+                            "${label}_$i"
+                        } else label
+                        addresses.put(finalLabel, formattedAddress)
+                    }
+                }
+                if (addresses.length() > 0) {
+                    contactJson.put("addresses", addresses)
+                }
+
+                contactsList.put(contactJson)
+            }
+
+            JSONObject().apply {
+                put("success", true)
+                put("contacts", contactsList)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to lookup phone contacts", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to lookup contacts: ${e.message}")
             }
         }
     }
