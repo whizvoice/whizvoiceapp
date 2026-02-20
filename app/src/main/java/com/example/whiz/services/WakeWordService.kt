@@ -43,7 +43,8 @@ class WakeWordService : Service() {
         private const val ACTION_TOGGLE = "com.example.whiz.ACTION_TOGGLE_WAKE_WORD"
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
-        private const val WAKE_WORD_CONFIDENCE_THRESHOLD = 0.80
+        private const val WAKE_WORD_CONFIDENCE_THRESHOLD_HEY = 95.0
+        private const val WAKE_WORD_CONFIDENCE_THRESHOLD_OK = 45.0
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "small-en-us-0.15"
@@ -226,15 +227,19 @@ class WakeWordService : Service() {
             val text = best.optString("text", "").lowercase()
             val confidence = best.optDouble("confidence", 0.0)
 
-            if (text.contains("ok whiz") || text.contains("okay whiz") || text.contains("hey whiz")) {
-                if (confidence >= WAKE_WORD_CONFIDENCE_THRESHOLD) {
-                    Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence)")
-                    lastDetectionTime = System.currentTimeMillis()
-                    recognizer?.reset()
-                    onWakeWordDetected()
-                } else {
-                    Log.d(TAG, "Wake word rejected (low confidence): '$text' (confidence=$confidence, threshold=$WAKE_WORD_CONFIDENCE_THRESHOLD)")
-                }
+            val threshold = when {
+                text.contains("hey whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_HEY
+                text.contains("ok whiz") || text.contains("okay whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_OK
+                else -> return
+            }
+
+            if (confidence >= threshold) {
+                Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence, threshold=$threshold)")
+                lastDetectionTime = System.currentTimeMillis()
+                recognizer?.reset()
+                onWakeWordDetected()
+            } else {
+                Log.d(TAG, "Wake word rejected (low confidence): '$text' (confidence=$confidence, threshold=$threshold)")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error parsing recognizer result", e)
