@@ -43,6 +43,7 @@ class WakeWordService : Service() {
         private const val ACTION_TOGGLE = "com.example.whiz.ACTION_TOGGLE_WAKE_WORD"
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
+        private const val WAKE_WORD_CONFIDENCE_THRESHOLD = 0.80
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "small-en-us-0.15"
@@ -139,7 +140,9 @@ class WakeWordService : Service() {
                 voskModel = model
 
                 val grammar = "[\"ok whiz\", \"hey whiz\", \"okay whiz\", \"[unk]\"]"
-                recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), grammar)
+                recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), grammar).apply {
+                    setMaxAlternatives(1)
+                }
 
                 val bufferSize = maxOf(
                     AudioRecord.getMinBufferSize(
@@ -216,13 +219,22 @@ class WakeWordService : Service() {
     private fun checkForWakeWord(jsonResult: String) {
         try {
             val json = JSONObject(jsonResult)
-            val text = json.optString("text", "").lowercase()
+            val alternatives = json.optJSONArray("alternatives") ?: return
+            if (alternatives.length() == 0) return
+
+            val best = alternatives.getJSONObject(0)
+            val text = best.optString("text", "").lowercase()
+            val confidence = best.optDouble("confidence", 0.0)
 
             if (text.contains("ok whiz") || text.contains("okay whiz") || text.contains("hey whiz")) {
-                Log.d(TAG, "Wake word detected: '$text'")
-                lastDetectionTime = System.currentTimeMillis()
-                recognizer?.reset()
-                onWakeWordDetected()
+                if (confidence >= WAKE_WORD_CONFIDENCE_THRESHOLD) {
+                    Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence)")
+                    lastDetectionTime = System.currentTimeMillis()
+                    recognizer?.reset()
+                    onWakeWordDetected()
+                } else {
+                    Log.d(TAG, "Wake word rejected (low confidence): '$text' (confidence=$confidence, threshold=$WAKE_WORD_CONFIDENCE_THRESHOLD)")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error parsing recognizer result", e)
