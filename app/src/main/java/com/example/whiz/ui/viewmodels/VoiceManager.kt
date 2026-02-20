@@ -674,6 +674,8 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
+        audioFocusManager.abandonDuckingFocus()
+        audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()

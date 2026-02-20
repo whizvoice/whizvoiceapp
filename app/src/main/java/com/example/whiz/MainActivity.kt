@@ -94,6 +94,9 @@ class MainActivity : ComponentActivity() {
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
 
     @Inject
+    lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
+
+    @Inject
     lateinit var apiService: ApiService
 
     // ViewModel for creating new chats on assistant relaunch
@@ -713,6 +716,11 @@ class MainActivity : ComponentActivity() {
             voiceManager.stopListening()
         }
 
+        // Abandon ducking focus so other apps resume normal volume
+        if (!bubbleActive && !bubblePending) {
+            audioFocusManager.abandonDuckingFocus()
+        }
+
         // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
         if (!shouldKeepTTS) {
             try {
@@ -729,6 +737,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
+
+        // Release any held audio focus as a safety net
+        audioFocusManager.abandonDuckingFocus()
+        audioFocusManager.abandonFocus()
 
         // Clear the static callbacks
         finishAndRemoveTaskCallback = null
