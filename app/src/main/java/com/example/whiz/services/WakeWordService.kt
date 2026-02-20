@@ -227,13 +227,18 @@ class WakeWordService : Service() {
             val text = best.optString("text", "").lowercase()
             val confidence = best.optDouble("confidence", 0.0)
 
-            val threshold = when {
-                text.contains("hey whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_HEY
-                text.contains("ok whiz") || text.contains("okay whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_OK
+            val (threshold, phraseKey) = when {
+                text.contains("hey whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_HEY to "hey_whiz"
+                text.contains("ok whiz") || text.contains("okay whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_OK to "ok_whiz"
                 else -> return
             }
 
-            if (confidence >= threshold) {
+            val accepted = confidence >= threshold
+            wakeWordPreferences.recordDetection(phraseKey, confidence, accepted)
+            val stats = wakeWordPreferences.getStats(phraseKey)
+            Log.d(TAG, "Stats[$phraseKey]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.1f".format(stats.mean)}, stdDev=${"%.1f".format(stats.stdDev)}, last=${"%.1f".format(stats.lastConfidence)}")
+
+            if (accepted) {
                 Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence, threshold=$threshold)")
                 lastDetectionTime = System.currentTimeMillis()
                 recognizer?.reset()

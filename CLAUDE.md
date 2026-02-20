@@ -55,6 +55,23 @@ Test output for screen agent tests is stored in whizvoiceapp/screen_agent_test_o
 - **screen_agent_logcat.log** - Android logcat output during screen agent test execution
 - Screenshots from tests are also saved in this directory
 
+## Wake Word Detection Metrics
+
+Running aggregate stats (count, accepted count, mean, std dev) are stored in SharedPreferences (`wake_word_settings`) using Welford's online algorithm. A human-readable summary is also written to the app's external files dir after each detection.
+
+To pull the stats file:
+```
+# Debug:
+adb pull /sdcard/Android/data/com.example.whiz.debug/files/wake_word_stats.txt
+
+# Production:
+adb pull /sdcard/Android/data/com.example.whiz/files/wake_word_stats.txt
+```
+
+Key files:
+- `WakeWordPreferences.kt` - `recordDetection()`, `getStats()`, `clearMetrics()`
+- `WakeWordService.kt` - calls `recordDetection()` in `checkForWakeWord()` and logs stats summary
+
 ## Database
 
 Please refer to whizvoiceapp/.supabaseinfo for info about what's in the database and what functions are in the database.
