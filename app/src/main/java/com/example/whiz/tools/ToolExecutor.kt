@@ -1,10 +1,13 @@
 package com.example.whiz.tools
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.provider.Telephony
+import com.example.whiz.MainActivity
 import com.example.whiz.services.BubbleOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,9 +16,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
 
 sealed class ToolExecutionResult {
     data class Success(
@@ -41,6 +47,16 @@ class ToolExecutor @Inject constructor(
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private val toolsRequiringUnlock = setOf(
+        "agent_launch_app",
+        "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
+        "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
+        "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
+        "agent_search_google_maps_location", "agent_search_google_maps_phrase",
+        "agent_get_google_maps_directions", "agent_recenter_google_maps",
+        "agent_fullscreen_google_maps", "agent_select_location_from_list"
+    )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
@@ -65,6 +81,52 @@ class ToolExecutor @Inject constructor(
 
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
+
+                // Check if device is locked and tool requires unlock
+                val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                if (km.isKeyguardLocked && toolName in toolsRequiringUnlock) {
+                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and waiting")
+                    val unlockCallback = MainActivity.requestUnlockCallback
+                    if (unlockCallback == null) {
+                        Log.e(TAG, "🔒 No unlock callback available - MainActivity may not be active")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Phone is locked and cannot show unlock prompt. Please unlock your phone and try again."
+                        ))
+                        return@launch
+                    }
+
+                    // Suspend and wait for user to unlock (or cancel), with 60s timeout
+                    val unlocked = withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Boolean> { cont ->
+                            unlockCallback(
+                                { // onSuccess
+                                    Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
+                                    if (cont.isActive) cont.resume(true)
+                                },
+                                { // onCancelled
+                                    Log.i(TAG, "🔒 User cancelled unlock - aborting tool $toolName")
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            )
+                        }
+                    }
+
+                    if (unlocked != true) {
+                        val reason = if (unlocked == null) "Unlock timed out" else "User cancelled unlock"
+                        Log.i(TAG, "🔒 $reason for tool $toolName")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Phone is locked. Please unlock your phone to use this feature."
+                        ))
+                        return@launch
+                    }
+
+                    // Small delay after unlock to let the system settle
+                    delay(500)
+                }
 
                 when (toolName) {
                     "agent_launch_app" -> {

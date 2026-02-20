@@ -68,6 +68,7 @@ class VoiceManager @Inject constructor(
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.d(TAG, "Screen turned off - stopping microphone and destroying recognizer")
                     _isScreenLocked.value = true
+                    isWakeWordActiveSession = false
                     audioFocusManager.abandonDuckingFocus()
                     // Stop and completely destroy the recognizer when screen turns off
                     if (isListening.value) {
@@ -86,7 +87,7 @@ class VoiceManager @Inject constructor(
                     val isLocked = keyguardManager.isKeyguardLocked
                     _isScreenLocked.value = isLocked
 
-                    if (isLocked) {
+                    if (isLocked && !isWakeWordActiveSession) {
                         Log.d(TAG, "Screen is on but still locked - destroying recognizer to prevent audio pickup")
                         if (isListening.value) {
                             stopListening()
@@ -94,11 +95,14 @@ class VoiceManager @Inject constructor(
                         // Force destroy any lingering recognizer instances
                         speechRecognitionService.release()
                         speechRecognitionService.initialize()
+                    } else if (isLocked && isWakeWordActiveSession) {
+                        Log.d(TAG, "Screen is on and locked but wake word session active - keeping recognizer alive")
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     Log.d(TAG, "Screen unlocked (user present)")
                     _isScreenLocked.value = false
+                    isWakeWordActiveSession = false
                     // Restart listening if continuous mode was enabled
                     // Check both foreground AND bubble active - in bubble mode the app isn't in foreground
                     if (continuousListeningEnabled && (appLifecycleService.isInForeground() || BubbleOverlayService.isActive)) {
@@ -146,6 +150,11 @@ class VoiceManager @Inject constructor(
     // Package-private so BubbleOverlayService can clear it when bubble session ends
     @Volatile
     var ttsStateBeforeBackground: Boolean? = null
+
+    // Flag indicating the current session was started by wake word detection on lock screen
+    // When true, allows voice listening even when screen is locked
+    @Volatile
+    var isWakeWordActiveSession = false
 
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
@@ -199,11 +208,11 @@ class VoiceManager @Inject constructor(
         }
 
         // Policy callback for ducking re-request: only re-request if we're still
-        // actively in a voice session (continuous listening on, app visible, screen unlocked)
+        // actively in a voice session (continuous listening on, app visible, screen unlocked or wake word session)
         audioFocusManager.shouldReRequestDucking = {
             continuousListeningEnabled &&
                 (appLifecycleService.isInForeground() || BubbleOverlayService.isActive) &&
-                !isScreenLocked.value
+                (!isScreenLocked.value || isWakeWordActiveSession)
         }
     }
     
@@ -225,16 +234,18 @@ class VoiceManager @Inject constructor(
 
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
         // BUT only if screen is NOT locked - mic should always stop when screen is off
+        // EXCEPTION: wake word active session allows listening on lock screen
         // Note: Audio focus is NOT required here - it's cooperative, not enforced.
         // We request focus to notify other apps, but don't block listening if not granted.
         // The onFocusLostTransient callback will pause listening when another app takes focus.
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    screenNotLocked
+                    (screenNotLocked || isWakeWordActiveSession)
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
-                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, result=$should")
+                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, " +
+                "isWakeWordActiveSession=$isWakeWordActiveSession, result=$should")
 
         return should
     }

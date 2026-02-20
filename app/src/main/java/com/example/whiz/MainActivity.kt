@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.KeyguardManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -66,6 +67,10 @@ class MainActivity : ComponentActivity() {
         // Callback for self-close tool to finish the activity and remove from recents
         @Volatile
         var finishAndRemoveTaskCallback: (() -> Unit)? = null
+
+        // Callback for on-demand unlock when screen agent tools need the device unlocked
+        @Volatile
+        var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -117,6 +122,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Handle wake word lock screen flags before super.onCreate()
+        val fromWakeWord = intent?.getBooleanExtra("FROM_WAKE_WORD", false) ?: false
+        if (fromWakeWord) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            Log.d(TAG, "Wake word launch - set showWhenLocked, turnScreenOn")
+        }
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
@@ -136,6 +149,19 @@ class MainActivity : ComponentActivity() {
         finishAndRemoveTaskCallback = {
             Log.d(TAG, "finishAndRemoveTaskCallback invoked - calling finishAndRemoveTask()")
             finishAndRemoveTask()
+        }
+
+        // Set up static callback for on-demand unlock (used by screen agent tools on lock screen)
+        requestUnlockCallback = { onSuccess, onCancelled ->
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            if (km.isKeyguardLocked) {
+                km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() { onSuccess() }
+                    override fun onDismissCancelled() { onCancelled() }
+                })
+            } else {
+                onSuccess() // Already unlocked
+            }
         }
 
         setContent {
@@ -704,8 +730,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
 
-        // Clear the static callback
+        // Clear the static callbacks
         finishAndRemoveTaskCallback = null
+        requestUnlockCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {

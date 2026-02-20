@@ -12,6 +12,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.whiz.AssistantActivity
@@ -72,6 +73,7 @@ class WakeWordService : Service() {
     private var audioRecord: AudioRecord? = null
     private var voskModel: Model? = null
     private var recognizer: Recognizer? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
     private var isPaused = false
     @Volatile
@@ -115,6 +117,18 @@ class WakeWordService : Service() {
 
     private fun startDetection() {
         if (detectionJob?.isActive == true) return
+
+        // Acquire partial wake lock to keep CPU alive during screen-off detection
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "whiz:wake_word_detection")
+        }
+        wakeLock?.let {
+            if (!it.isHeld) {
+                it.acquire()
+                Log.d(TAG, "Wake lock acquired")
+            }
+        }
 
         detectionJob = serviceScope.launch {
             try {
@@ -255,6 +269,13 @@ class WakeWordService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord", e)
         }
+        // Release wake lock
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+                Log.d(TAG, "Wake lock released in stopDetection")
+            }
+        }
     }
 
     private fun releaseResources() {
@@ -275,6 +296,18 @@ class WakeWordService : Service() {
             voskModel = null
         } catch (e: Exception) {
             Log.w(TAG, "Error closing model", e)
+        }
+        // Release wake lock
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    Log.d(TAG, "Wake lock released in releaseResources")
+                }
+            }
+            wakeLock = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing wake lock", e)
         }
     }
 
