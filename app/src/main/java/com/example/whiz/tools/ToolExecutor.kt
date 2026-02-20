@@ -5,6 +5,7 @@ import android.content.Context
 import android.provider.Telephony
 import com.example.whiz.MainActivity
 import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.MessageDraftOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellableContinuation
@@ -159,6 +160,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_close_app" -> {
                         executeCloseApp(requestId)
+                    }
+                    "agent_dismiss_draft" -> {
+                        executeDismissDraft(requestId)
                     }
                     "agent_play_youtube_music" -> {
                         executePlayYouTubeMusic(requestId, params)
@@ -806,6 +810,41 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    private suspend fun executeDismissDraft(requestId: String) {
+        try {
+            val wasActive = MessageDraftOverlayService.isActive
+            Log.i(TAG, "Dismissing draft overlay (wasActive=$wasActive)")
+
+            if (wasActive) {
+                MessageDraftOverlayService.stop(context)
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", if (wasActive) "Draft overlay dismissed" else "No active draft to dismiss")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Dismiss draft result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_draft",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error dismissing draft overlay", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_draft",
+                    requestId = requestId,
+                    error = "Failed to dismiss draft: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
@@ -1196,7 +1235,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_get_next_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_get_next_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)
