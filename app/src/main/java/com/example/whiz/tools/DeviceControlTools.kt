@@ -313,7 +313,7 @@ class DeviceControlTools @Inject constructor(
             val maxVolume = audioManager.getStreamMaxVolume(streamType)
             val clampedLevel = volumeLevel.coerceIn(0, maxVolume)
 
-            audioManager.setStreamVolume(streamType, clampedLevel, 0)
+            audioManager.setStreamVolume(streamType, clampedLevel, AudioManager.FLAG_SHOW_UI)
 
             val currentVolume = audioManager.getStreamVolume(streamType)
 
