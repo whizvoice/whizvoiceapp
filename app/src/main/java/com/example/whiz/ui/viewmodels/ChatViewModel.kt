@@ -645,6 +645,12 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
 
+                        if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
+                            Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
+                            pendingRequests.remove(event.requestId)
+                            updateRespondingStateForCurrentChat()
+                        }
+
                         // Only delete if this message is for the current chat
                         if (event.conversationId == _chatId.value) {
                             viewModelScope.launch {
