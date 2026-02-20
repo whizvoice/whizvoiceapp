@@ -888,6 +888,30 @@ class WhizServerRepository @Inject constructor(
         }
     }
 
+    fun sendToolStatus(toolName: String, requestId: String, status: String, message: String, chatId: Long): Boolean {
+        return try {
+            val currentSocket = webSocket
+            if (currentSocket != null && connectionState == ConnectionState.CONNECTED && !persistentDisconnectForTest) {
+                val statusJson = org.json.JSONObject().apply {
+                    put("type", "tool_status")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("status", status)
+                    put("message", message)
+                    if (chatId > 0) put("conversation_id", chatId)
+                    else if (chatId < 0) put("client_conversation_id", chatId)
+                }
+                currentSocket.send(statusJson.toString())
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending tool status", e)
+            false
+        }
+    }
+
     fun sendToolResult(toolName: String, requestId: String, result: org.json.JSONObject, chatId: Long, timestamp: Long? = null): Boolean {
         Log.i(TAG, "📤📤📤 SENDING TOOL RESULT TO SERVER")
         Log.i(TAG, "📤 Tool: $toolName")

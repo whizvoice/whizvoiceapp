@@ -36,6 +36,13 @@ sealed class ToolExecutionResult {
         val requestId: String,
         val error: String
     ) : ToolExecutionResult()
+
+    data class Status(
+        val toolName: String,
+        val requestId: String,
+        val status: String,
+        val message: String
+    ) : ToolExecutionResult()
 }
 
 @Singleton
@@ -97,6 +104,14 @@ class ToolExecutor @Inject constructor(
                         ))
                         return@launch
                     }
+
+                    // Notify server that we're waiting for unlock so it can extend its timeout
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "waiting_for_unlock",
+                        message = "Phone is locked. Waiting for user to unlock."
+                    ))
 
                     // Suspend and wait for user to unlock (or cancel), with 60s timeout
                     val unlocked = withTimeoutOrNull(60_000L) {

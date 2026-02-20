@@ -1248,6 +1248,16 @@ class ChatViewModel @Inject constructor(
                             Log.e(TAG, "Failed to send tool error result to server")
                         }
                     }
+                    is ToolExecutionResult.Status -> {
+                        Log.i(TAG, "[TOOL_COLLECTOR] Tool status: ${result.status} for ${result.requestId}")
+                        whizServerRepository.sendToolStatus(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            status = result.status,
+                            message = result.message,
+                            chatId = currentChatId
+                        )
+                    }
                 }
             }
         }
