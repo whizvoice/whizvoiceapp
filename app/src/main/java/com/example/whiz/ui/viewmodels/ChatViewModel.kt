@@ -645,12 +645,6 @@ class ChatViewModel @Inject constructor(
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
 
-                        if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
-                            Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
-                            pendingRequests.remove(event.requestId)
-                            updateRespondingStateForCurrentChat()
-                        }
-
                         // Only delete if this message is for the current chat
                         if (event.conversationId == _chatId.value) {
                             viewModelScope.launch {
@@ -1084,15 +1078,6 @@ class ChatViewModel @Inject constructor(
                             }
 
                             // TTS and UI updates (only for current chat)
-                            // Clear any orphaned pending requests for this chat.
-                            // If the server responded to this request, it has already seen (and
-                            // implicitly handled) any earlier requests for the same conversation.
-                            val currentChatIdForCleanup = _chatId.value
-                            val orphanedRequests = pendingRequests.entries.filter { it.value == currentChatIdForCleanup }
-                            if (orphanedRequests.isNotEmpty()) {
-                                Log.d(TAG, "Clearing ${orphanedRequests.size} orphaned pending request(s) for chat $currentChatIdForCleanup: ${orphanedRequests.map { it.key }}")
-                                pendingRequests.entries.removeIf { it.value == currentChatIdForCleanup }
-                            }
                             // 🔧 Update responding state FIRST, before trying to restart listening
                             updateRespondingStateForCurrentChat()
                             
