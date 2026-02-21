@@ -111,6 +111,16 @@ class MainActivity : ComponentActivity() {
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var closeAppReceiver: BroadcastReceiver? = null
 
+    // Clears showWhenLocked after user unlocks so the app doesn't persist over subsequent lock screens
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                setShowWhenLocked(false)
+                Log.d(TAG, "User unlocked - cleared showWhenLocked")
+            }
+        }
+    }
+
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
     
@@ -171,6 +181,9 @@ class MainActivity : ComponentActivity() {
 
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
         setupCloseAppReceiver()
+
+        // Register receiver to clear showWhenLocked when user unlocks the device
+        registerReceiver(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
 
         // Set up static callback for self-close tool (more reliable than broadcast)
         finishAndRemoveTaskCallback = {
@@ -812,6 +825,13 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 Log.w(TAG, "Error unregistering close app receiver", e)
             }
+        }
+
+        // Unregister user present receiver
+        try {
+            unregisterReceiver(userPresentReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering user present receiver", e)
         }
     }
 

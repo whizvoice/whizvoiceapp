@@ -253,6 +253,14 @@ class WakeWordService : Service() {
 
     private fun onWakeWordDetected() {
         try {
+            // Set BEFORE launching activity — prevents race with ACTION_SCREEN_ON
+            // setTurnScreenOn(true) in AssistantActivity triggers ACTION_SCREEN_ON before
+            // Hilt injects voiceManager, so isWakeWordActiveSession must already be true
+            com.example.whiz.ui.viewmodels.VoiceManager.instance?.let {
+                it.isWakeWordActiveSession = true
+                Log.d(TAG, "Set isWakeWordActiveSession=true before launching activity")
+            }
+
             Log.d(TAG, "Launching AssistantActivity")
             collapseStatusBar()
             val assistantIntent = Intent(this, AssistantActivity::class.java).apply {

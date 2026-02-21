@@ -155,6 +155,17 @@ class VoiceManager @Inject constructor(
     // When true, allows voice listening even when screen is locked
     @Volatile
     var isWakeWordActiveSession = false
+        set(value) {
+            field = value
+            if (value && continuousListeningEnabled) {
+                Log.d(TAG, "isWakeWordActiveSession set to true — re-evaluating continuous listening")
+                coroutineScope.launch {
+                    if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                        startContinuousListening()
+                    }
+                }
+            }
+        }
 
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
