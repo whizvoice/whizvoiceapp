@@ -1,8 +1,11 @@
 package com.example.whiz.tools
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.provider.Telephony
+import androidx.core.content.ContextCompat
 import com.example.whiz.MainActivity
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
@@ -233,6 +236,39 @@ class ToolExecutor @Inject constructor(
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setVolume(it) }
                     }
                     "agent_lookup_phone_contacts" -> {
+                        // Check contacts permission and prompt user if needed
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+                            != PackageManager.PERMISSION_GRANTED) {
+                            val permCallback = MainActivity.requestContactsPermissionCallback
+                            if (permCallback != null) {
+                                Log.i(TAG, "📇 READ_CONTACTS not granted - showing permission dialog")
+                                _toolResults.emit(ToolExecutionResult.Status(
+                                    toolName = toolName,
+                                    requestId = requestId,
+                                    status = "waiting_for_contacts_permission",
+                                    message = "Contacts permission required. Waiting for user to grant."
+                                ))
+                                val granted = withTimeoutOrNull(60_000L) {
+                                    suspendCancellableCoroutine<Boolean> { cont ->
+                                        permCallback(
+                                            { // onGranted
+                                                Log.i(TAG, "📇 User granted contacts permission")
+                                                if (cont.isActive) cont.resume(true)
+                                            },
+                                            { // onDenied
+                                                Log.i(TAG, "📇 User denied contacts permission")
+                                                if (cont.isActive) cont.resume(false)
+                                            }
+                                        )
+                                    }
+                                }
+                                if (granted != true) {
+                                    val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                                    Log.i(TAG, "📇 $reason for contacts lookup")
+                                }
+                                // Proceed regardless - lookupPhoneContacts handles missing permission gracefully
+                            }
+                        }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
                     else -> {

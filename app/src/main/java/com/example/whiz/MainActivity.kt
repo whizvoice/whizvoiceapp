@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -71,6 +72,10 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand unlock when screen agent tools need the device unlocked
         @Volatile
         var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
+        @Volatile
+        var requestContactsPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -116,12 +121,31 @@ class MainActivity : ComponentActivity() {
         try {
             // Update permission state safely
             permissionManager.updateMicrophonePermission(isGranted)
-            
+
             // Log for debugging
             Log.d("MainActivity", "Microphone permission result: $isGranted")
         } catch (e: Exception) {
             Log.e("MainActivity", "Error handling permission result", e)
         }
+    }
+
+    // Contacts permission launcher (on-demand, triggered by tool execution)
+    private var contactsPermissionOnGranted: (() -> Unit)? = null
+    private var contactsPermissionOnDenied: (() -> Unit)? = null
+    private val showContactsPermissionDialog = mutableStateOf(false)
+
+    private val requestContactsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d(TAG, "Contacts permission result: $isGranted")
+        showContactsPermissionDialog.value = false
+        if (isGranted) {
+            contactsPermissionOnGranted?.invoke()
+        } else {
+            contactsPermissionOnDenied?.invoke()
+        }
+        contactsPermissionOnGranted = null
+        contactsPermissionOnDenied = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,6 +189,14 @@ class MainActivity : ComponentActivity() {
             } else {
                 onSuccess() // Already unlocked
             }
+        }
+
+        // Set up static callback for on-demand contacts permission (used by lookup tool)
+        requestContactsPermissionCallback = { onGranted, onDenied ->
+            Log.d(TAG, "requestContactsPermissionCallback invoked - showing contacts permission dialog")
+            contactsPermissionOnGranted = onGranted
+            contactsPermissionOnDenied = onDenied
+            showContactsPermissionDialog.value = true
         }
 
         setContent {
@@ -299,6 +331,21 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     
+                    // On-demand contacts permission dialog (triggered by tool execution)
+                    if (showContactsPermissionDialog.value) {
+                        com.example.whiz.ui.components.ContactsPermissionDialog(
+                            onDismiss = {
+                                showContactsPermissionDialog.value = false
+                                contactsPermissionOnDenied?.invoke()
+                                contactsPermissionOnGranted = null
+                                contactsPermissionOnDenied = null
+                            },
+                            onGrantPermission = {
+                                requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                            }
+                        )
+                    }
+
                     // Handle navigation after navController is initialized
                     LaunchedEffect(navController) {
                         handleIntentNavigation(intent)
@@ -745,6 +792,7 @@ class MainActivity : ComponentActivity() {
         // Clear the static callbacks
         finishAndRemoveTaskCallback = null
         requestUnlockCallback = null
+        requestContactsPermissionCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
