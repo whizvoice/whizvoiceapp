@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.ContactsContract
@@ -22,6 +23,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import com.example.whiz.services.BubbleOverlayService
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -281,7 +283,27 @@ class DeviceControlTools @Inject constructor(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
+            // Start bubble overlay before launching dialer so user can still talk to Whiz
+            val hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true
+            }
+            if (hasOverlayPermission) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            }
+
             context.startActivity(intent)
+
+            if (hasOverlayPermission) {
+                try {
+                    BubbleOverlayService.start(context)
+                    Log.i(TAG, "Bubble overlay started for dialer")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start bubble overlay for dialer", e)
+                    BubbleOverlayService.pendingStartTimestamp = 0L
+                }
+            }
 
             JSONObject().apply {
                 put("success", true)

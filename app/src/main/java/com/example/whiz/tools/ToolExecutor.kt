@@ -66,7 +66,8 @@ class ToolExecutor @Inject constructor(
         "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
         "agent_search_google_maps_location", "agent_search_google_maps_phrase",
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
-        "agent_fullscreen_google_maps", "agent_select_location_from_list"
+        "agent_fullscreen_google_maps", "agent_select_location_from_list",
+        "agent_press_call_button"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -231,6 +232,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_dial_phone_number" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dialPhoneNumber(it) }
+                    }
+                    "agent_press_call_button" -> {
+                        executePhoneCallButton(requestId, params)
                     }
                     "agent_set_volume" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setVolume(it) }
@@ -1248,6 +1252,43 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_select_location_from_list",
                     requestId = requestId,
                     error = "Failed to select location: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Press the call button in the dialer via accessibility service.
+     */
+    private suspend fun executePhoneCallButton(requestId: String, params: JSONObject) {
+        try {
+            val expectedNumber = if (params.has("expected_number")) params.getString("expected_number") else null
+            Log.i(TAG, "Pressing call button, expectedNumber=$expectedNumber")
+
+            val result = screenAgentTools.pressCallButton(expectedNumber)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.dialedNumber?.let { put("dialed_number", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_press_call_button result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_press_call_button",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing press call button", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_press_call_button",
+                    requestId = requestId,
+                    error = "Failed to press call button: ${e.message}"
                 )
             )
         }

@@ -120,6 +120,100 @@ class ScreenAgentTools @Inject constructor(
         val error: String? = null
     )
 
+    data class CallButtonResult(
+        val success: Boolean,
+        val dialedNumber: String? = null,
+        val error: String? = null
+    )
+
+    // ========== Phone Call Functions ==========
+
+    /**
+     * Press the call button in the Google Dialer app via accessibility service.
+     * Verifies the dialer is in the foreground and optionally checks the displayed number.
+     */
+    fun pressCallButton(expectedNumber: String?): CallButtonResult {
+        Log.i(TAG, "pressCallButton called, expectedNumber=$expectedNumber")
+
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return CallButtonResult(
+                success = false,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+            ?: return CallButtonResult(
+                success = false,
+                error = "Could not get current screen. Is the dialer open?"
+            )
+
+        try {
+            // Verify the dialer app is in the foreground
+            val currentPackage = rootNode.packageName?.toString() ?: ""
+            if (currentPackage != "com.google.android.dialer") {
+                return CallButtonResult(
+                    success = false,
+                    error = "Dialer is not in the foreground. Current app: $currentPackage"
+                )
+            }
+
+            // Read the displayed number from the dialer
+            val digitsNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.dialer:id/digits"
+            )
+            val displayedNumber = digitsNodes?.firstOrNull()?.text?.toString()
+            Log.i(TAG, "Displayed number in dialer: $displayedNumber")
+
+            // If expectedNumber is provided, verify it matches
+            if (expectedNumber != null && displayedNumber != null) {
+                val normalizedExpected = expectedNumber.replace(Regex("[^0-9]"), "")
+                val normalizedDisplayed = displayedNumber.replace(Regex("[^0-9]"), "")
+
+                val longer = if (normalizedExpected.length >= normalizedDisplayed.length) normalizedExpected else normalizedDisplayed
+                val shorter = if (normalizedExpected.length < normalizedDisplayed.length) normalizedExpected else normalizedDisplayed
+
+                if (!longer.endsWith(shorter)) {
+                    return CallButtonResult(
+                        success = false,
+                        dialedNumber = displayedNumber,
+                        error = "Number mismatch: expected '$expectedNumber' but dialer shows '$displayedNumber'"
+                    )
+                }
+            }
+
+            // Find and click the call button
+            val callButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.dialer:id/dialpad_voice_call_button"
+            )
+            val callButton = callButtonNodes?.firstOrNull()
+            if (callButton == null) {
+                return CallButtonResult(
+                    success = false,
+                    dialedNumber = displayedNumber,
+                    error = "Call button not found in dialer. Is the dialpad visible?"
+                )
+            }
+
+            val clicked = callButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.i(TAG, "Call button click result: $clicked")
+
+            return if (clicked) {
+                CallButtonResult(
+                    success = true,
+                    dialedNumber = displayedNumber
+                )
+            } else {
+                CallButtonResult(
+                    success = false,
+                    dialedNumber = displayedNumber,
+                    error = "Failed to click call button"
+                )
+            }
+        } finally {
+            rootNode.recycle()
+        }
+    }
+
     // ========== App Launch Functions ==========
     
     private fun hasOverlayPermission(): Boolean {
