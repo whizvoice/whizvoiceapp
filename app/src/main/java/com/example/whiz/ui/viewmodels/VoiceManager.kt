@@ -509,6 +509,14 @@ class VoiceManager @Inject constructor(
     }
     
     private fun onAppForegrounded() {
+        // Refresh screen lock state - if the app is in foreground, the screen should be unlocked
+        // This fixes a race condition where long-pressing the power button triggers both
+        // the assistant launch and a screen-off event, leaving _isScreenLocked stuck as true
+        val actuallyLocked = keyguardManager.isKeyguardLocked
+        if (_isScreenLocked.value != actuallyLocked) {
+            Log.d(TAG, "onAppForegrounded: Correcting stale lock state from ${_isScreenLocked.value} to $actuallyLocked")
+            _isScreenLocked.value = actuallyLocked
+        }
         // Note: We don't automatically restart continuous listening here
         // It should be restarted by ChatScreen when appropriate
         // This prevents unwanted mic activation when returning to non-chat screens
