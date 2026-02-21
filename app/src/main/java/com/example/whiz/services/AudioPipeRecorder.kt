@@ -3,6 +3,7 @@ package com.example.whiz.services
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.IOException
@@ -33,6 +34,7 @@ class AudioPipeRecorder {
 
     private val writeParcel: ParcelFileDescriptor
     private val audioRecord: AudioRecord
+    private var echoCanceler: AcousticEchoCanceler? = null
     private val isRecording = AtomicBoolean(false)
     private val isStopped = AtomicBoolean(false)
     private var recordingThread: Thread? = null
@@ -71,6 +73,21 @@ class AudioPipeRecorder {
             readParcel.close()
             writeParcel.close()
             throw IllegalStateException("AudioRecord failed to initialize (state=${audioRecord.state})")
+        }
+
+        // Attach Acoustic Echo Canceler if available (non-fatal if it fails)
+        try {
+            if (AcousticEchoCanceler.isAvailable()) {
+                echoCanceler = AcousticEchoCanceler.create(audioRecord.audioSessionId)?.also {
+                    it.enabled = true
+                    Log.d(TAG, "AcousticEchoCanceler attached and enabled (sessionId=${audioRecord.audioSessionId})")
+                }
+            } else {
+                Log.d(TAG, "AcousticEchoCanceler not available on this device")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to attach AcousticEchoCanceler (non-fatal): ${e.message}")
+            echoCanceler = null
         }
 
         Log.d(TAG, "AudioPipeRecorder created (bufferSize=$bufferSize)")
@@ -149,6 +166,12 @@ class AudioPipeRecorder {
             audioRecord.stop()
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord: ${e.message}")
+        }
+        try {
+            echoCanceler?.release()
+            echoCanceler = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing AcousticEchoCanceler: ${e.message}")
         }
         try {
             audioRecord.release()

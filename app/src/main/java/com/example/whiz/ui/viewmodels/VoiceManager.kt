@@ -227,6 +227,11 @@ class VoiceManager @Inject constructor(
         }
     }
     
+    private fun isInTTSWithListeningMode(): Boolean {
+        return BubbleOverlayService.isActive &&
+               BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING
+    }
+
     /**
      * Determines if the speech service should actually be listening right now.
      * This is the authoritative check that considers all conditions.
@@ -235,7 +240,7 @@ class VoiceManager @Inject constructor(
         val isInForeground = appLifecycleService.isInForeground()
         val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
-        val notSpeaking = !isSpeaking.value
+        val notSpeaking = !isSpeaking.value || isInTTSWithListeningMode()
         val screenNotLocked = !isScreenLocked.value
 
         // Check bubble mode - if bubble is active and mic is off, don't listen
@@ -294,7 +299,9 @@ class VoiceManager @Inject constructor(
                 val shouldRestoreContinuousListening = continuousListeningBeforeTTS ?: false
                 continuousListeningBeforeTTS = null // Clear the saved state
 
-                if (shouldRestoreContinuousListening) {
+                if (isInTTSWithListeningMode()) {
+                    Log.d(TAG, "TTS completed in TTS_WITH_LISTENING mode - mic was kept active")
+                } else if (shouldRestoreContinuousListening) {
                     Log.d(TAG, "TTS completed - restarting continuous listening as it was enabled before TTS")
                     startContinuousListening()
                 } else {
@@ -306,7 +313,7 @@ class VoiceManager @Inject constructor(
                 // No need to set _isSpeaking - TTSManager handles it
                 
                 // Also handle continuous listening restart on error if needed
-                if (continuousListeningEnabled) {
+                if (!isInTTSWithListeningMode() && continuousListeningEnabled) {
                     startContinuousListening()
                 }
             }
@@ -529,7 +536,8 @@ class VoiceManager @Inject constructor(
             Log.d(TAG, "speak: Saved continuous listening state before TTS: $continuousListeningBeforeTTS")
 
             // Stop any ongoing speech recognition before speaking
-            if (isListening.value) {
+            // In TTS_WITH_LISTENING mode, keep mic active (AEC handles echo)
+            if (isListening.value && !isInTTSWithListeningMode()) {
                 speechRecognitionService.stopListening()
             }
 
