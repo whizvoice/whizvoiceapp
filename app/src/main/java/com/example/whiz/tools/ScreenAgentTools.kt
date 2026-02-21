@@ -123,7 +123,8 @@ class ScreenAgentTools @Inject constructor(
     data class CallButtonResult(
         val success: Boolean,
         val dialedNumber: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        val speakerphoneEnabled: Boolean = false
     )
 
     // ========== Phone Call Functions ==========
@@ -132,8 +133,8 @@ class ScreenAgentTools @Inject constructor(
      * Press the call button in the Google Dialer app via accessibility service.
      * Verifies the dialer is in the foreground and optionally checks the displayed number.
      */
-    fun pressCallButton(expectedNumber: String?): CallButtonResult {
-        Log.i(TAG, "pressCallButton called, expectedNumber=$expectedNumber")
+    fun pressCallButton(expectedNumber: String?, speakerphone: Boolean = true): CallButtonResult {
+        Log.i(TAG, "pressCallButton called, expectedNumber=$expectedNumber, speakerphone=$speakerphone")
 
         val accessibilityService = WhizAccessibilityService.getInstance()
             ?: return CallButtonResult(
@@ -197,10 +198,18 @@ class ScreenAgentTools @Inject constructor(
             val clicked = callButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             Log.i(TAG, "Call button click result: $clicked")
 
+            if (clicked && speakerphone) {
+                // Enable speakerphone so the user can continue talking to Whiz hands-free
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.isSpeakerphoneOn = true
+                Log.i(TAG, "Speakerphone enabled after pressing call button")
+            }
+
             return if (clicked) {
                 CallButtonResult(
                     success = true,
-                    dialedNumber = displayedNumber
+                    dialedNumber = displayedNumber,
+                    speakerphoneEnabled = speakerphone
                 )
             } else {
                 CallButtonResult(

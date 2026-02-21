@@ -1263,14 +1263,16 @@ class ToolExecutor @Inject constructor(
     private suspend fun executePhoneCallButton(requestId: String, params: JSONObject) {
         try {
             val expectedNumber = if (params.has("expected_number")) params.getString("expected_number") else null
-            Log.i(TAG, "Pressing call button, expectedNumber=$expectedNumber")
+            val speakerphone = if (params.has("speakerphone")) params.getBoolean("speakerphone") else true
+            Log.i(TAG, "Pressing call button, expectedNumber=$expectedNumber, speakerphone=$speakerphone")
 
-            val result = screenAgentTools.pressCallButton(expectedNumber)
+            val result = screenAgentTools.pressCallButton(expectedNumber, speakerphone)
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.dialedNumber?.let { put("dialed_number", it) }
                 result.error?.let { put("error", it) }
+                if (result.speakerphoneEnabled) put("speakerphone_enabled", true)
             }
 
             Log.i(TAG, "[TOOL_RESULT] agent_press_call_button result for requestId=$requestId: ${resultJson.toString(2)}")
