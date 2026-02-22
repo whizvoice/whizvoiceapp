@@ -87,7 +87,7 @@ class VoiceManager @Inject constructor(
                     val isLocked = keyguardManager.isKeyguardLocked
                     _isScreenLocked.value = isLocked
 
-                    if (isLocked && !isWakeWordActiveSession) {
+                    if (isLocked && !isWakeWordActiveSession && !(continuousListeningEnabled && appLifecycleService.isInForeground())) {
                         Log.d(TAG, "Screen is on but still locked - destroying recognizer to prevent audio pickup")
                         if (isListening.value) {
                             stopListening()
@@ -97,6 +97,8 @@ class VoiceManager @Inject constructor(
                         speechRecognitionService.initialize()
                     } else if (isLocked && isWakeWordActiveSession) {
                         Log.d(TAG, "Screen is on and locked but wake word session active - keeping recognizer alive")
+                    } else if (isLocked && continuousListeningEnabled && appLifecycleService.isInForeground()) {
+                        Log.d(TAG, "Screen is on and locked but continuous listening active in foreground - keeping recognizer alive")
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
@@ -267,7 +269,7 @@ class VoiceManager @Inject constructor(
         // The onFocusLostTransient callback will pause listening when another app takes focus.
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    (screenNotLocked || isWakeWordActiveSession)
+                    (screenNotLocked || isWakeWordActiveSession || isInForeground)
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
