@@ -133,7 +133,7 @@ class ScreenAgentTools @Inject constructor(
      * Press the call button in the Google Dialer app via accessibility service.
      * Verifies the dialer is in the foreground and optionally checks the displayed number.
      */
-    fun pressCallButton(expectedNumber: String?, speakerphone: Boolean = true): CallButtonResult {
+    suspend fun pressCallButton(expectedNumber: String?, speakerphone: Boolean = true): CallButtonResult {
         Log.i(TAG, "pressCallButton called, expectedNumber=$expectedNumber, speakerphone=$speakerphone")
 
         val accessibilityService = WhizAccessibilityService.getInstance()
@@ -148,6 +148,7 @@ class ScreenAgentTools @Inject constructor(
                 error = "Could not get current screen. Is the dialer open?"
             )
 
+        val displayedNumber: String?
         try {
             // Verify the dialer app is in the foreground
             val currentPackage = rootNode.packageName?.toString() ?: ""
@@ -162,7 +163,7 @@ class ScreenAgentTools @Inject constructor(
             val digitsNodes = rootNode.findAccessibilityNodeInfosByViewId(
                 "com.google.android.dialer:id/digits"
             )
-            val displayedNumber = digitsNodes?.firstOrNull()?.text?.toString()
+            displayedNumber = digitsNodes?.firstOrNull()?.text?.toString()
             Log.i(TAG, "Displayed number in dialer: $displayedNumber")
 
             // If expectedNumber is provided, verify it matches
@@ -198,21 +199,8 @@ class ScreenAgentTools @Inject constructor(
             val clicked = callButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             Log.i(TAG, "Call button click result: $clicked")
 
-            if (clicked && speakerphone) {
-                // Enable speakerphone so the user can continue talking to Whiz hands-free
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                audioManager.isSpeakerphoneOn = true
-                Log.i(TAG, "Speakerphone enabled after pressing call button")
-            }
-
-            return if (clicked) {
-                CallButtonResult(
-                    success = true,
-                    dialedNumber = displayedNumber,
-                    speakerphoneEnabled = speakerphone
-                )
-            } else {
-                CallButtonResult(
+            if (!clicked) {
+                return CallButtonResult(
                     success = false,
                     dialedNumber = displayedNumber,
                     error = "Failed to click call button"
@@ -220,6 +208,75 @@ class ScreenAgentTools @Inject constructor(
             }
         } finally {
             rootNode.recycle()
+        }
+
+        // Enable speakerphone by clicking the Speaker button in the in-call UI
+        var speakerphoneEnabled = false
+        if (speakerphone) {
+            speakerphoneEnabled = enableSpeakerphoneViaAccessibility(accessibilityService)
+        }
+
+        return CallButtonResult(
+            success = true,
+            dialedNumber = displayedNumber,
+            speakerphoneEnabled = speakerphoneEnabled
+        )
+    }
+
+    /**
+     * Wait for the in-call UI to appear and click the Speaker button via accessibility.
+     * Polls for up to 5 seconds for the Speaker button to become available.
+     */
+    private suspend fun enableSpeakerphoneViaAccessibility(
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        // Wait for the in-call UI to load after placing the call
+        for (attempt in 1..10) {
+            delay(500)
+            val root = accessibilityService.getCurrentRootNode() ?: continue
+            try {
+                val currentPackage = root.packageName?.toString() ?: ""
+                if (currentPackage != "com.google.android.dialer") {
+                    Log.d(TAG, "Speakerphone attempt $attempt: not in dialer ($currentPackage)")
+                    continue
+                }
+
+                // Find the Speaker button by content description
+                val speakerNode = findNodeByContentDesc(root, "Speaker")
+                if (speakerNode != null) {
+                    // The clickable parent is the checkable view wrapping the Speaker icon
+                    val clickTarget = findClickableParent(speakerNode) ?: speakerNode
+                    val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Speaker button click result: $clicked (attempt $attempt)")
+                    return clicked
+                }
+                Log.d(TAG, "Speakerphone attempt $attempt: Speaker button not found yet")
+            } finally {
+                root.recycle()
+            }
+        }
+        Log.w(TAG, "Failed to find Speaker button after all attempts")
+        return false
+    }
+
+    private fun findNodeByContentDesc(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? {
+        if (root.contentDescription?.toString() == desc) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = findNodeByContentDesc(child, desc)
+            if (found != null) return found
+            child.recycle()
+        }
+        return null
+    }
+
+    private fun findClickableParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var current = node.parent ?: return null
+        while (true) {
+            if (current.isClickable) return current
+            val parent = current.parent ?: return null
+            current.recycle()
+            current = parent
         }
     }
 

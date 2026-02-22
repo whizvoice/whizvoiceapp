@@ -9,7 +9,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRecordingConfiguration
 import android.media.MediaRecorder
 import android.os.IBinder
 import android.os.PowerManager
@@ -80,6 +82,34 @@ class WakeWordService : Service() {
     private var isPaused = false
     @Volatile
     private var lastDetectionTime = 0L
+    @Volatile
+    private var isExternalRecorderActive = false
+    private var ownAudioSessionId: Int = 0
+    private var audioManager: AudioManager? = null
+    private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
+        override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>?) {
+            val myUid = android.os.Process.myUid()
+            val externalActive = configs?.any { config ->
+                config.clientAudioSource != MediaRecorder.AudioSource.DEFAULT &&
+                    config.clientAudioSessionId != 0 &&
+                    config.clientAudioSessionId != ownAudioSessionId &&
+                    getUidFromConfig(config, myUid) != myUid
+            } ?: false
+            if (externalActive != isExternalRecorderActive) {
+                Log.d(TAG, "External recorder active changed: $isExternalRecorderActive -> $externalActive")
+                isExternalRecorderActive = externalActive
+            }
+        }
+    }
+
+    private fun getUidFromConfig(config: AudioRecordingConfiguration, fallback: Int): Int {
+        return try {
+            val method = AudioRecordingConfiguration::class.java.getMethod("getClientUid")
+            method.invoke(config) as Int
+        } catch (e: Exception) {
+            fallback // If reflection fails, treat as own UID to avoid self-detection
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -119,6 +149,12 @@ class WakeWordService : Service() {
 
     private fun startDetection() {
         if (detectionJob?.isActive == true) return
+
+        // Register for audio recording changes to yield mic to external apps
+        if (audioManager == null) {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        }
+        audioManager?.registerAudioRecordingCallback(recordingCallback, null)
 
         // Acquire partial wake lock to keep CPU alive during screen-off detection
         if (wakeLock == null) {
@@ -167,29 +203,38 @@ class WakeWordService : Service() {
                     return@launch
                 }
 
+                ownAudioSessionId = audioRecord?.audioSessionId ?: 0
+                Log.d(TAG, "Own audio session ID: $ownAudioSessionId")
+
                 audioRecord?.startRecording()
                 Log.d(TAG, "Detection loop started")
 
                 val buffer = ByteArray(bufferSize)
 
                 while (true) {
-                    // Pause while main speech recognizer is active
-                    if (speechRecognitionService.isListening.value) {
+                    // Pause while main speech recognizer or external recorder is active
+                    val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
+                    if (shouldPause) {
                         if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                            val reason = when {
+                                speechRecognitionService.isListening.value -> "main speech recognizer active"
+                                isExternalRecorderActive -> "external recorder active"
+                                else -> "unknown"
+                            }
                             audioRecord?.stop()
-                            Log.d(TAG, "Paused: main speech recognizer active")
+                            Log.d(TAG, "Paused: $reason")
                         }
                         delay(200)
                         continue
                     }
 
-                    // Resume after speech recognizer stops (with debounce)
+                    // Resume after pause source stops (with debounce)
                     if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                         delay(RESUME_DEBOUNCE_MS)
-                        // Re-check that speech recognizer hasn't started again
-                        if (speechRecognitionService.isListening.value) continue
+                        // Re-check that no pause source has started again
+                        if (speechRecognitionService.isListening.value || isExternalRecorderActive) continue
                         audioRecord?.startRecording()
-                        Log.d(TAG, "Resumed: main speech recognizer stopped")
+                        Log.d(TAG, "Resumed: no active recorders")
                     }
 
                     // Cooldown after detection
@@ -287,6 +332,7 @@ class WakeWordService : Service() {
     }
 
     private fun stopDetection() {
+        audioManager?.unregisterAudioRecordingCallback(recordingCallback)
         detectionJob?.cancel()
         detectionJob = null
         try {
@@ -308,6 +354,13 @@ class WakeWordService : Service() {
     }
 
     private fun releaseResources() {
+        // Defensive unregister in case stopDetection wasn't called
+        try {
+            audioManager?.unregisterAudioRecordingCallback(recordingCallback)
+            audioManager = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering recording callback", e)
+        }
         try {
             audioRecord?.release()
             audioRecord = null
