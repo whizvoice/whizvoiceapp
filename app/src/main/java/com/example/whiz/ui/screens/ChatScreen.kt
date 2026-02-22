@@ -108,9 +108,6 @@ import android.provider.Settings
 import com.example.whiz.ui.components.OverlayPermissionDialog
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
-import android.app.Activity
-import android.view.WindowManager
-import androidx.compose.ui.platform.LocalView
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -583,27 +580,8 @@ fun ChatScreen(
     val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
     val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
-    // Keep screen on when continuous listening is enabled
-    val view = LocalView.current
-    DisposableEffect(isContinuousListeningEnabled) {
-        val window = (view.context as Activity).window
-        if (isContinuousListeningEnabled) {
-            Log.d("ChatScreen", "Enabling FLAG_KEEP_SCREEN_ON - continuous listening active")
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            Log.d("ChatScreen", "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-        // Log actual flag state for debugging
-        val flags = window.attributes.flags
-        val isSet = (flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
-        Log.d("ChatScreen", "FLAG_KEEP_SCREEN_ON state after update: $isSet (full flags: $flags)")
-
-        onDispose {
-            Log.d("ChatScreen", "ChatScreen disposing - clearing FLAG_KEEP_SCREEN_ON")
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
+    // NOTE: FLAG_KEEP_SCREEN_ON is now managed by MainActivity lifecycle observer
+    // to prevent the flag from being cleared during activity/composable transitions
 
     // UI State
     val listState = rememberLazyListState()

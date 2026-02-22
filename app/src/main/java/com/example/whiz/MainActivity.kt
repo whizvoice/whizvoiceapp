@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -366,8 +367,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // Manage FLAG_KEEP_SCREEN_ON at the Activity level so it persists across
+        // composable transitions (ChatScreen dispose/recompose won't clear it)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                voiceManager.isContinuousListeningEnabled.collect { enabled ->
+                    if (enabled) {
+                        Log.d(TAG, "Enabling FLAG_KEEP_SCREEN_ON - continuous listening active")
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        Log.d(TAG, "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+            }
+        }
     }
-    
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Set intent first so logDetailedIntentInfo can use it

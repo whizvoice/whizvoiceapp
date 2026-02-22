@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -96,9 +97,22 @@ class VoiceManager @Inject constructor(
                         speechRecognitionService.release()
                         speechRecognitionService.initialize()
                     } else if (isLocked && isWakeWordActiveSession) {
-                        Log.d(TAG, "Screen is on and locked but wake word session active - keeping recognizer alive")
+                        Log.d(TAG, "Screen is on and locked but wake word session active - restarting listening")
+                        coroutineScope.launch {
+                            delay(300L)
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
                     } else if (isLocked && continuousListeningEnabled && appLifecycleService.isInForeground()) {
-                        Log.d(TAG, "Screen is on and locked but continuous listening active in foreground - keeping recognizer alive")
+                        Log.d(TAG, "Screen is on and locked but continuous listening active in foreground - restarting listening")
+                        audioFocusManager.requestDuckingFocus()
+                        coroutineScope.launch {
+                            delay(300L)
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
@@ -175,6 +189,12 @@ class VoiceManager @Inject constructor(
             _isContinuousListeningEnabled.value = value
         }
 
+    // Desync detection: heals state where UI shows continuous listening but recognizer is stopped
+    private var desyncCheckJob: Job? = null
+    private var consecutiveDesyncCount = 0
+    private val MAX_DESYNC_RETRIES = 3
+    private val DESYNC_BACKOFF_MS = 10_000L
+
     // Audio focus management - kept for potential future use (e.g., phone call detection)
     // Note: We no longer request/use audio focus for mic recording
 
@@ -200,6 +220,9 @@ class VoiceManager @Inject constructor(
 
         // Set up audio focus callbacks
         setupAudioFocusCallbacks()
+
+        // Start desync detection to heal listening state mismatches
+        startDesyncHealing()
     }
 
     private fun setupAudioFocusCallbacks() {
@@ -501,6 +524,68 @@ class VoiceManager @Inject constructor(
         }
     }
     
+    private fun startDesyncHealing() {
+        // Monitor app foreground events - check after returning to foreground
+        coroutineScope.launch {
+            appLifecycleService.appForegroundEvent.collect {
+                delay(500L)
+                performDesyncCheck("APP_FOREGROUNDED")
+            }
+        }
+
+        // Monitor isListening flipping to false while continuous listening is enabled
+        coroutineScope.launch {
+            speechRecognitionService.isListening.collect { listening ->
+                if (!listening && continuousListeningEnabled) {
+                    // Give normal restart logic time to complete before checking
+                    delay(2000L)
+                    performDesyncCheck("LISTENING_STOPPED")
+                }
+            }
+        }
+
+        // Monitor TTS stopping while continuous listening is enabled
+        coroutineScope.launch {
+            ttsManager.isSpeaking.collect { speaking ->
+                if (!speaking && continuousListeningEnabled) {
+                    delay(1000L)
+                    performDesyncCheck("TTS_STOPPED")
+                }
+            }
+        }
+    }
+
+    private fun performDesyncCheck(reason: String) {
+        val shouldListen = shouldBeListening()
+        val actuallyListening = speechRecognitionService.isListening.value
+
+        if (shouldListen && !actuallyListening) {
+            consecutiveDesyncCount++
+            Log.w(TAG, "DESYNC_CHECK ($reason): shouldBeListening=true but isListening=false " +
+                    "(attempt $consecutiveDesyncCount/$MAX_DESYNC_RETRIES)")
+
+            if (consecutiveDesyncCount <= MAX_DESYNC_RETRIES) {
+                Log.d(TAG, "DESYNC_HEALED ($reason): Restarting continuous listening")
+                startContinuousListening()
+            } else {
+                Log.w(TAG, "DESYNC_CHECK ($reason): Max retries reached, backing off for ${DESYNC_BACKOFF_MS}ms")
+                desyncCheckJob?.cancel()
+                desyncCheckJob = coroutineScope.launch {
+                    delay(DESYNC_BACKOFF_MS)
+                    consecutiveDesyncCount = 0
+                    Log.d(TAG, "DESYNC_CHECK: Backoff complete, retries reset")
+                    performDesyncCheck("BACKOFF_RETRY")
+                }
+            }
+        } else if (shouldListen && actuallyListening) {
+            // State is correct - reset counter
+            if (consecutiveDesyncCount > 0) {
+                Log.d(TAG, "DESYNC_CHECK ($reason): State is now correct, resetting counter")
+                consecutiveDesyncCount = 0
+            }
+        }
+    }
+
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
 
@@ -661,6 +746,7 @@ class VoiceManager @Inject constructor(
     fun updateContinuousListeningEnabled(enabled: Boolean) {
         Log.d(TAG, "[DEBUG] updateContinuousListeningEnabled called with: $enabled (was: $continuousListeningEnabled)")
         continuousListeningEnabled = enabled
+        consecutiveDesyncCount = 0
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
 
         if (enabled) {
@@ -710,6 +796,7 @@ class VoiceManager @Inject constructor(
     // As a Singleton, this will rarely be called in practice
     fun cleanup() {
         Log.d(TAG, "Cleaning up VoiceManager resources")
+        desyncCheckJob?.cancel()
         try {
             context.unregisterReceiver(screenStateReceiver)
         } catch (e: Exception) {
