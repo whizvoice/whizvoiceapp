@@ -75,6 +75,15 @@ class SpeechRecognitionService @Inject constructor(
     val isInitialized: Boolean
         get() = _isInitialized
 
+    /**
+     * Returns true when AEC (Acoustic Echo Cancellation) is active.
+     * This is the case on API 33+ with continuous listening using AudioPipeRecorder,
+     * which auto-enables AcousticEchoCanceler.
+     */
+    fun isAECActive(): Boolean {
+        return audioPipeRecorder != null && useSegmentedSession
+    }
+
     // --- Continuous Listening State ---
     // Note: Continuous listening state is now managed by VoiceManager
     // This callback provides the current state when needed

@@ -233,6 +233,17 @@ class VoiceManager @Inject constructor(
     }
 
     /**
+     * Returns true when full-duplex audio (mic + TTS simultaneously) is safe.
+     * Full-duplex is available when:
+     * 1. Headphones are connected (TTS won't feed into mic), OR
+     * 2. AEC is active (API 33+ with AudioPipeRecorder)
+     */
+    fun isFullDuplexAvailable(): Boolean {
+        return ttsManager.areHeadphonesConnected() ||
+               speechRecognitionService.isAECActive()
+    }
+
+    /**
      * Determines if the speech service should actually be listening right now.
      * This is the authoritative check that considers all conditions.
      */
@@ -240,7 +251,7 @@ class VoiceManager @Inject constructor(
         val isInForeground = appLifecycleService.isInForeground()
         val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
-        val notSpeaking = !isSpeaking.value || isInTTSWithListeningMode()
+        val notSpeaking = !isSpeaking.value || isFullDuplexAvailable() || isInTTSWithListeningMode()
         val screenNotLocked = !isScreenLocked.value
 
         // Check bubble mode - if bubble is active and mic is off, don't listen
@@ -299,7 +310,9 @@ class VoiceManager @Inject constructor(
                 val shouldRestoreContinuousListening = continuousListeningBeforeTTS ?: false
                 continuousListeningBeforeTTS = null // Clear the saved state
 
-                if (isInTTSWithListeningMode()) {
+                if (isListening.value) {
+                    Log.d(TAG, "TTS completed - mic already active (full-duplex mode), no restart needed")
+                } else if (isInTTSWithListeningMode()) {
                     Log.d(TAG, "TTS completed in TTS_WITH_LISTENING mode - mic was kept active")
                 } else if (shouldRestoreContinuousListening) {
                     Log.d(TAG, "TTS completed - restarting continuous listening as it was enabled before TTS")
@@ -536,8 +549,8 @@ class VoiceManager @Inject constructor(
             Log.d(TAG, "speak: Saved continuous listening state before TTS: $continuousListeningBeforeTTS")
 
             // Stop any ongoing speech recognition before speaking
-            // In TTS_WITH_LISTENING mode, keep mic active (AEC handles echo)
-            if (isListening.value && !isInTTSWithListeningMode()) {
+            // Keep mic active when full-duplex is available (AEC handles echo) or in TTS_WITH_LISTENING mode
+            if (isListening.value && !isFullDuplexAvailable() && !isInTTSWithListeningMode()) {
                 speechRecognitionService.stopListening()
             }
 
@@ -671,23 +684,22 @@ class VoiceManager @Inject constructor(
         return ttsManager.shouldShowMicButtonDuringTTS()
     }
 
-    // Handle mic button click during TTS - interrupt TTS and start listening
+    // Handle mic button click during TTS - start listening alongside TTS (full-duplex) or interrupt TTS
     fun handleMicClickDuringTTS() {
         if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - enabling conversation mode")
-
-            // Stop TTS immediately (user wants to speak)
-            stopSpeaking()
-
-            // Enable continuous listening for conversation mode
-            // When user clicks "Interrupt and speak", they want to have a conversation
-            coroutineScope.launch {
-                // Wait for TTS to actually stop
-                ttsManager.isSpeaking.first { !it }
-                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, enabling continuous listening for conversation")
-
-                // Enable and start continuous listening
+            if (isFullDuplexAvailable()) {
+                // Full-duplex: start listening alongside TTS without stopping it
+                Log.d(TAG, "handleMicClickDuringTTS: Full-duplex available - starting listening alongside TTS")
                 updateContinuousListeningEnabled(true)
+            } else {
+                // No full-duplex: stop TTS first, then listen (original behavior)
+                Log.d(TAG, "handleMicClickDuringTTS: No full-duplex - stopping TTS then enabling listening")
+                stopSpeaking()
+                coroutineScope.launch {
+                    ttsManager.isSpeaking.first { !it }
+                    Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, enabling continuous listening for conversation")
+                    updateContinuousListeningEnabled(true)
+                }
             }
         }
     }

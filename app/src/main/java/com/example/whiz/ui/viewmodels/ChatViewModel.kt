@@ -1142,17 +1142,20 @@ class ChatViewModel @Inject constructor(
                                         // Don't stop listening, let user finish
                                     } else {
                                         // No active speech - start TTS immediately
-                                        if (isListening.value) {
+                                        // Full-duplex: keep mic active when AEC/headphones available
+                                        if (isListening.value && !voiceManager.isFullDuplexAvailable()) {
                                             wasListeningBeforeTTS = true
                                             voiceManager.stopListening() // Stop STT before TTS speaks
                                         }
-                                        val utteranceId = UUID.randomUUID().toString()
                                         ttsManager.speak(messageContentForChat, "chat_message")
                                         // TTSManager will handle the isSpeaking state
                                     }
                                 } else {
-                                    // Always restart continuous listening after assistant reply if enabled and not speaking
-                                    if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
+                                    // Restart listening after assistant reply if needed
+                                    if (isListening.value) {
+                                        // Already listening (full-duplex mode) - nothing to restart
+                                        Log.d(TAG, "[LOG] Already listening (full-duplex), no restart needed after assistant reply.")
+                                    } else if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
                                         Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
                                         startContinuousListening()
                                     } else if (wasListeningBeforeTTS && !isSpeaking.value) {
@@ -2329,6 +2332,11 @@ class ChatViewModel @Inject constructor(
     private fun startQueuedTTS() {
         pendingTTSMessage?.let { message ->
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
+            // Full-duplex: keep mic active when AEC/headphones available
+            if (isListening.value && !voiceManager.isFullDuplexAvailable()) {
+                wasListeningBeforeTTS = true
+                voiceManager.stopListening()
+            }
             viewModelScope.launch(Dispatchers.Main) {
                 ttsManager.speak(message, "chat_message")
             }
@@ -2353,18 +2361,18 @@ class ChatViewModel @Inject constructor(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
 
-                        // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
-                        // Must run on main thread for speech recognizer
-                        if (!ttsManager.areHeadphonesConnected()) {
-                            // Check if continuous listening is ENABLED (the user's intent)
-                            // not if we're currently listening (which can be transiently false during restarts)
+                        // Full-duplex: keep mic active when AEC or headphones available
+                        if (!voiceManager.isFullDuplexAvailable()) {
+                            // No full-duplex: stop listening to prevent mic from picking up TTS audio
                             if (voiceManager.isContinuousListeningEnabled.value) {
-                                Log.d(TAG, "Stopping listening to prevent TTS echo (no headphones)")
+                                Log.d(TAG, "Stopping listening to prevent TTS echo (no full-duplex)")
                                 wasListeningBeforeTTS = true
                             }
                             viewModelScope.launch(Dispatchers.Main) {
                                 voiceManager.stopListening()
                             }
+                        } else {
+                            Log.d(TAG, "Full-duplex available - keeping mic active during TTS")
                         }
                         // TTSManager handles its own isSpeaking state
                     },
@@ -2374,13 +2382,17 @@ class ChatViewModel @Inject constructor(
                         // Restart listening if we stopped it when TTS started
                         // Must run on main thread for speech recognizer
                         viewModelScope.launch(Dispatchers.Main) {
-                            if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
+                            if (isListening.value) {
+                                // Already listening (full-duplex mode) - no restart needed
+                                Log.d(TAG, "TTS completed - mic already active (full-duplex), no restart needed")
+                                wasListeningBeforeTTS = false
+                            } else if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
                                 Log.d(TAG, "TTS completed - restarting listening that was paused for TTS")
                                 wasListeningBeforeTTS = false
                                 startContinuousListening()
-                            } else if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
-                                // Headphones case: always restart
-                                Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                            } else if (voiceManager.isContinuousListeningEnabled.value) {
+                                // Continuous listening enabled but mic not active - restart
+                                Log.d(TAG, "TTS completed with continuous listening enabled - auto-resuming listening")
                                 startContinuousListening()
                             }
                         }

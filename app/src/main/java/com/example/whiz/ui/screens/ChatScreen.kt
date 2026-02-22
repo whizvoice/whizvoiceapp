@@ -262,7 +262,7 @@ fun ChatInputBar(
         else -> inputText // Default to input text (could be empty)
     }
     
-    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else if (isSpeaking && inputText.isBlank()) "Speaking..." else "Type or tap mic..."
     
 
 
@@ -331,9 +331,18 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.onSurface
                             )
                         }
+                        isSpeaking && isListening -> {
+                            // PRIORITY 2a: Full-duplex mode - both TTS and mic active
+                            // Show MicOff to let user stop listening (mic IS on, tap to mute)
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Listening while speaking",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
                         isSpeaking -> {
-                            // PRIORITY 2: When TTS is speaking, always show Mic button to allow interrupt
-                            // This allows user to interrupt TTS and start speaking
+                            // PRIORITY 2b: TTS only, mic off - show mic to start listening/interrupt
                             Tuple4(
                                 Icons.Filled.Mic,
                                 "Interrupt and speak",
