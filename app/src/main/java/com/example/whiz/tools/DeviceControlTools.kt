@@ -92,7 +92,6 @@ class DeviceControlTools @Inject constructor(
 
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             if (label != null) {
                 putExtra(AlarmClock.EXTRA_MESSAGE, label)
             }
@@ -128,7 +127,6 @@ class DeviceControlTools @Inject constructor(
         Log.i(TAG, "Dismissing alarm")
 
         val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
-            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
@@ -143,6 +141,28 @@ class DeviceControlTools @Inject constructor(
             JSONObject().apply {
                 put("success", false)
                 put("error", "Failed to dismiss alarm: ${e.message}")
+            }
+        }
+    }
+
+    fun dismissTimer(): JSONObject {
+        Log.i(TAG, "Dismissing timer")
+
+        val intent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        return try {
+            context.startActivity(intent)
+            JSONObject().apply {
+                put("success", true)
+                put("message", "Timer dismissed")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dismiss timer", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to dismiss timer: ${e.message}")
             }
         }
     }
@@ -572,7 +592,7 @@ class DeviceControlTools @Inject constructor(
 
                 // Check if this is actually the resolver dialog
                 val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("android:id/title")
-                val isResolver = titleNodes.any { it.text?.toString() == "Complete action using" }
+                val isResolver = titleNodes.any { it.text?.toString()?.startsWith("Complete action using") == true }
                 if (!isResolver) {
                     Log.d(TAG, "No resolver dialog detected, skipping")
                     return@Thread
@@ -596,8 +616,9 @@ class DeviceControlTools @Inject constructor(
                 }
 
                 if (!clockClicked) {
-                    Log.w(TAG, "Could not find/click Clock in resolver")
-                    return@Thread
+                    Log.w(TAG, "Could not find/click Clock in resolver, checking if already pre-selected")
+                    // Format B: title is "Complete action using Clock" — Clock is already pre-selected,
+                    // so we can skip clicking it and go straight to "Just once"
                 }
 
                 // Poll for "Just once" button to become enabled

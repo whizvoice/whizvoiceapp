@@ -210,6 +210,8 @@ class WakeWordService : Service() {
                 Log.d(TAG, "Detection loop started")
 
                 val buffer = ByteArray(bufferSize)
+                var frameCount = 0L
+                var lastHeartbeatTime = System.currentTimeMillis()
 
                 while (true) {
                     // Pause while main speech recognizer or external recorder is active
@@ -247,6 +249,14 @@ class WakeWordService : Service() {
                     if (bytesRead <= 0) {
                         delay(10)
                         continue
+                    }
+
+                    frameCount++
+                    val now = System.currentTimeMillis()
+                    if (now - lastHeartbeatTime >= 10_000) {
+                        Log.d(TAG, "Heartbeat: processed $frameCount audio frames, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}")
+                        lastHeartbeatTime = now
+                        frameCount = 0
                     }
 
                     val rec = recognizer ?: continue
