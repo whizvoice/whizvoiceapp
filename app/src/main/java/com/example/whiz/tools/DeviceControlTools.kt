@@ -100,6 +100,8 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             context.startActivity(intent)
+            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            BubbleOverlayService.start(context)
             dismissResolverDialog()
             val minutes = seconds / 60
             val remainingSeconds = seconds % 60
