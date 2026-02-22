@@ -44,7 +44,7 @@ class WakeWordService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
         private const val WAKE_WORD_CONFIDENCE_THRESHOLD_HEY = 95.0
-        private const val WAKE_WORD_CONFIDENCE_THRESHOLD_OK = 45.0
+
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "small-en-us-0.15"
@@ -140,7 +140,7 @@ class WakeWordService : Service() {
                 }
                 voskModel = model
 
-                val grammar = "[\"ok whiz\", \"hey whiz\", \"okay whiz\", \"[unk]\"]"
+                val grammar = "[\"hey whiz\", \"[unk]\"]"
                 recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), grammar).apply {
                     setMaxAlternatives(1)
                 }
@@ -229,7 +229,6 @@ class WakeWordService : Service() {
 
             val (threshold, phraseKey) = when {
                 text.contains("hey whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_HEY to "hey_whiz"
-                text.contains("ok whiz") || text.contains("okay whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_OK to "ok_whiz"
                 else -> return
             }
 
@@ -407,7 +406,7 @@ class WakeWordService : Service() {
             "Wake Word Detection",
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
-            description = "Listening for \"Ok Whiz\" or \"Hey Whiz\""
+            description = "Listening for \"Hey Whiz\""
             setShowBadge(false)
             setSound(null, null)
         }
@@ -425,7 +424,7 @@ class WakeWordService : Service() {
         )
 
         val actionText = if (isPaused) "Resume" else "Pause"
-        val contentText = if (isPaused) "Wake word detection paused" else "Listening for \"Ok Whiz\"..."
+        val contentText = if (isPaused) "Wake word detection paused" else "Listening for \"Hey Whiz\"..."
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Whiz Voice")

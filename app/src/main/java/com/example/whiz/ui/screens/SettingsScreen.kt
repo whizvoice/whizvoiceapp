@@ -925,7 +925,7 @@ fun WakeWordSection(viewModel: SettingsViewModel) {
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = "Say \"Ok Whiz\" or \"Hey Whiz\" to open the app",
+                text = "Say \"Hey Whiz\" to open the app",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
