@@ -372,7 +372,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Set intent first so logDetailedIntentInfo can use it
         logDetailedIntentInfo(intent, "onNewIntent")
-        
+
+        // Handle wake word lock screen flags (same as onCreate, needed when activity is reused via SINGLE_TOP)
+        val fromWakeWord = intent.getBooleanExtra("FROM_WAKE_WORD", false)
+        if (fromWakeWord) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            Log.d(TAG, "Wake word launch (onNewIntent) - set showWhenLocked, turnScreenOn")
+        }
+
         // If navController is already initialized, LaunchedEffect(navController) won't trigger
         // So we need to manually call handleIntentNavigation
         if (::navController.isInitialized) {
