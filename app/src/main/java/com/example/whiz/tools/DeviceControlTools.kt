@@ -23,6 +23,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.services.BubbleOverlayService
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -64,6 +65,7 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             context.startActivity(intent)
+            dismissResolverDialog()
             val timeStr = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
             JSONObject().apply {
                 put("success", true)
@@ -99,6 +101,7 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             context.startActivity(intent)
+            dismissResolverDialog()
             val minutes = seconds / 60
             val remainingSeconds = seconds % 60
             val timeStr = if (minutes > 0) {
@@ -542,5 +545,81 @@ class DeviceControlTools @Inject constructor(
                 put("error", "Failed to lookup contacts: ${e.message}")
             }
         }
+    }
+
+    // ========== Resolver Dialog Handling ==========
+
+    /**
+     * Dismisses the Android "Complete action using" resolver dialog by selecting
+     * the Clock app and tapping "Just once". This fires on a background thread
+     * so it doesn't block the tool result.
+     */
+    private fun dismissResolverDialog() {
+        Thread {
+            try {
+                // Wait for the resolver dialog to appear
+                Thread.sleep(1000)
+
+                val service = WhizAccessibilityService.getInstance() ?: run {
+                    Log.w(TAG, "Accessibility service not available to dismiss resolver")
+                    return@Thread
+                }
+
+                val rootNode = service.getCurrentRootNode() ?: run {
+                    Log.d(TAG, "No root node - resolver dialog may not have appeared")
+                    return@Thread
+                }
+
+                // Check if this is actually the resolver dialog
+                val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("android:id/title")
+                val isResolver = titleNodes.any { it.text?.toString() == "Complete action using" }
+                if (!isResolver) {
+                    Log.d(TAG, "No resolver dialog detected, skipping")
+                    return@Thread
+                }
+
+                Log.i(TAG, "Resolver dialog detected, selecting Clock app")
+
+                // Find and click "Clock" in the resolver list
+                val clockNodes = rootNode.findAccessibilityNodeInfosByText("Clock")
+                val clockClicked = clockNodes.any { node ->
+                    // Click the clickable parent (the list item row)
+                    var target = node
+                    while (target.parent != null && !target.isClickable) {
+                        target = target.parent
+                    }
+                    if (target.isClickable) {
+                        service.clickNode(target)
+                    } else {
+                        false
+                    }
+                }
+
+                if (!clockClicked) {
+                    Log.w(TAG, "Could not find/click Clock in resolver")
+                    return@Thread
+                }
+
+                // Poll for "Just once" button to become enabled
+                var clicked = false
+                for (attempt in 1..10) {
+                    Thread.sleep(100)
+                    val updatedRoot = service.getCurrentRootNode() ?: continue
+                    val justOnceNodes = updatedRoot.findAccessibilityNodeInfosByViewId("android:id/button_once")
+                    val button = justOnceNodes.firstOrNull() ?: continue
+                    if (button.isEnabled) {
+                        service.clickNode(button)
+                        Log.i(TAG, "Dismissed resolver dialog with Clock + Just once (attempt $attempt)")
+                        clicked = true
+                        break
+                    }
+                }
+                if (!clicked) {
+                    Log.w(TAG, "Just once button never became enabled")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error dismissing resolver dialog", e)
+            }
+        }.start()
     }
 }
