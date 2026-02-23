@@ -1,9 +1,5 @@
-US English model for mobile Vosk applications
+Accurate universal English model (both for callcenter and wideband)
 
-Copyright 2020 Alpha Cephei Inc
+Based on Appen Kaldi model https://github.com/Appen/UHV-OTS-Speech
 
-Accuracy: 10.38 (tedlium test) 9.85 (librispeech test-clean)
-Speed: 0.11xRT (desktop)
-Latency: 0.15s (right context)
-
-
+Dynamic graph version

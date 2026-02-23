@@ -49,7 +49,7 @@ class WakeWordService : Service() {
 
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
-        private const val MODEL_VERSION = "small-en-us-0.15"
+        private const val MODEL_VERSION = "en-us-0.22-lgraph"
 
         @Volatile
         var isRunning = false
