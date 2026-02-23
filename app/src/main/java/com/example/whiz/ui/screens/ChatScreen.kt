@@ -640,6 +640,10 @@ fun ChatScreen(
     
     // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
+        if (BubbleOverlayService.isActive) {
+            Log.d("ChatScreen", "[LOG] Mic click ignored - bubble overlay is active")
+            return
+        }
         if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
