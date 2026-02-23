@@ -183,14 +183,14 @@ class DeviceControlTools @Inject constructor(
 
         Log.i(TAG, "Deleting alarm for $targetTimeStr" + (if (label != null) " ($label)" else ""))
 
-        // Step 1: Open the alarm list
+        // Step 1: Open the alarm list (target Google Clock to avoid resolver dialog)
         val intent = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setPackage("com.google.android.deskclock")
         }
 
         return try {
             context.startActivity(intent)
-            dismissResolverDialog()
 
             // Wait for the Clock app's alarm list to appear
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -222,6 +222,39 @@ class DeviceControlTools @Inject constructor(
             val screenWidth = displayMetrics.widthPixels
             val screenHeight = displayMetrics.heightPixels
             val centerX = screenWidth / 2f
+
+            // Scroll to top of alarm list first so we search from the beginning
+            val maxScrollToTopAttempts = 10
+            for (i in 1..maxScrollToTopAttempts) {
+                val scrolledUp = accessibilityService.performScrollGesture(
+                    centerX, screenHeight * 0.3f, centerX, screenHeight * 0.7f, duration = 300
+                )
+                Log.d(TAG, "Scroll-to-top attempt $i: $scrolledUp")
+                delay(400)
+
+                // Check if we've reached the top by seeing if scroll had no effect
+                val rootBefore = accessibilityService.getCurrentRootNode()
+                val clocksBefore = rootBefore?.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.deskclock:id/digital_clock"
+                )?.mapNotNull { it.text?.toString() }?.toSet() ?: emptySet()
+                clocksBefore.let { rootBefore?.recycle() }
+
+                accessibilityService.performScrollGesture(
+                    centerX, screenHeight * 0.3f, centerX, screenHeight * 0.7f, duration = 300
+                )
+                delay(400)
+
+                val rootAfter = accessibilityService.getCurrentRootNode()
+                val clocksAfter = rootAfter?.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.deskclock:id/digital_clock"
+                )?.mapNotNull { it.text?.toString() }?.toSet() ?: emptySet()
+                rootAfter?.recycle()
+
+                if (clocksBefore.isNotEmpty() && clocksBefore == clocksAfter) {
+                    Log.i(TAG, "Reached top of alarm list after $i scroll-to-top attempts")
+                    break
+                }
+            }
 
             val maxScrollAttempts = 20
             var previousAlarmTimes = setOf<String>()
@@ -273,22 +306,75 @@ class DeviceControlTools @Inject constructor(
                     )
                     val switchNode = switchNodes?.firstOrNull()
 
-                    if (switchNode != null && switchNode.isChecked) {
-                        val clicked = accessibilityService.clickNode(switchNode)
-                        Log.i(TAG, "Clicked alarm switch to disable: $clicked")
-                        switchNodes.forEach { it.recycle() }
-                    } else {
-                        Log.w(TAG, "Could not find checked switch node in alarm card")
+                    if (switchNode == null || !switchNode.isChecked) {
+                        Log.e(TAG, "Could not find checked switch node in alarm card")
                         switchNodes?.forEach { it.recycle() }
+                        clockNodes.forEach { it.recycle() }
+                        alarmCards.forEach { it.recycle() }
+                        rootNode.recycle()
+                        return JSONObject().apply {
+                            put("success", false)
+                            put("error", "Found alarm for $targetTimeStr but could not find its enabled switch")
+                        }
                     }
 
+                    val clicked = accessibilityService.clickNode(switchNode)
+                    Log.i(TAG, "Clicked alarm switch to disable: $clicked")
+                    switchNodes.forEach { it.recycle() }
                     clockNodes.forEach { it.recycle() }
                     alarmCards.forEach { it.recycle() }
                     rootNode.recycle()
 
+                    if (!clicked) {
+                        return JSONObject().apply {
+                            put("success", false)
+                            put("error", "Found alarm for $targetTimeStr but failed to click its switch")
+                        }
+                    }
+
+                    // Verify the alarm was actually disabled by re-reading the UI
+                    delay(500)
+                    val verifyRoot = accessibilityService.getCurrentRootNode()
+                    if (verifyRoot != null) {
+                        val verifyCards = verifyRoot.findAccessibilityNodeInfosByViewId(
+                            "com.google.android.deskclock:id/alarm_card"
+                        )
+                        for (verifyCard in verifyCards) {
+                            val verifyDesc = verifyCard.contentDescription?.toString() ?: continue
+                            if (verifyDesc.contains(targetTimeStr)) {
+                                if (verifyDesc.contains("disabled")) {
+                                    Log.i(TAG, "Verified: alarm $targetTimeStr is now disabled")
+                                    verifyCards.forEach { it.recycle() }
+                                    verifyRoot.recycle()
+                                    return JSONObject().apply {
+                                        put("success", true)
+                                        put("message", "Disabled alarm for $targetTimeStr")
+                                        put("alarm_time", targetTimeStr)
+                                        label?.let { put("label", it) }
+                                    }
+                                } else if (verifyDesc.contains("enabled")) {
+                                    Log.e(TAG, "Alarm $targetTimeStr is still enabled after clicking switch")
+                                    verifyCards.forEach { it.recycle() }
+                                    verifyRoot.recycle()
+                                    return JSONObject().apply {
+                                        put("success", false)
+                                        put("error", "Clicked switch but alarm $targetTimeStr is still enabled")
+                                    }
+                                }
+                            }
+                        }
+                        verifyCards.forEach { it.recycle() }
+                        verifyRoot.recycle()
+                        // Card might have scrolled out of view or content-desc format unexpected
+                        Log.w(TAG, "Could not re-find alarm card for verification, but click succeeded")
+                    } else {
+                        Log.w(TAG, "Could not get root node for verification, but click succeeded")
+                    }
+
+                    // Click succeeded but couldn't verify - report as success with caveat
                     return JSONObject().apply {
                         put("success", true)
-                        put("message", "Disabled alarm for $targetTimeStr")
+                        put("message", "Disabled alarm for $targetTimeStr (click succeeded, verification inconclusive)")
                         put("alarm_time", targetTimeStr)
                         label?.let { put("label", it) }
                     }
