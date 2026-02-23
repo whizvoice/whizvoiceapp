@@ -6,6 +6,8 @@ import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,8 +75,25 @@ class WakeWordPreferences @Inject constructor(
         editor.putLong(m2Key, newM2.toBits())
 
         // Last confidence and timestamp
+        val now = System.currentTimeMillis()
         editor.putLong(metricsKey(phrase, "last_confidence"), confidence.toBits())
-        editor.putLong(metricsKey(phrase, "last_timestamp"), System.currentTimeMillis())
+        editor.putLong(metricsKey(phrase, "last_timestamp"), now)
+
+        // Rolling window of last 10 detections
+        val recentKey = metricsKey(phrase, "recent")
+        val recentArray = try {
+            JSONArray(prefs.getString(recentKey, "[]"))
+        } catch (e: Exception) { JSONArray() }
+        val entry = JSONObject().apply {
+            put("confidence", confidence)
+            put("accepted", accepted)
+            put("timestamp", now)
+        }
+        recentArray.put(entry)
+        while (recentArray.length() > 10) {
+            recentArray.remove(0)
+        }
+        editor.putString(recentKey, recentArray.toString())
 
         editor.apply()
         writeStatsFile()
@@ -102,6 +121,14 @@ class WakeWordPreferences @Inject constructor(
                 sb.appendLine("  mean:     ${"%.2f".format(s.mean)}")
                 sb.appendLine("  stdDev:   ${"%.2f".format(s.stdDev)}")
                 sb.appendLine("  last:     ${"%.2f".format(s.lastConfidence)} at ${df.format(Date(s.lastTimestamp))}")
+                val recent = getRecentDetections(phrase)
+                if (recent.isNotEmpty()) {
+                    sb.appendLine("  recent (last ${recent.size}):")
+                    for (r in recent) {
+                        val status = if (r.accepted) "ACCEPTED" else "REJECTED"
+                        sb.appendLine("    ${"%.2f".format(r.confidence)} $status at ${df.format(Date(r.timestamp))}")
+                    }
+                }
             }
             file.writeText(sb.toString())
         } catch (e: Exception) {
@@ -131,10 +158,31 @@ class WakeWordPreferences @Inject constructor(
         return WakeWordStats(count, acceptedCount, mean, stdDev, lastConfidence, lastTimestamp)
     }
 
+    data class RecentDetection(
+        val confidence: Double,
+        val accepted: Boolean,
+        val timestamp: Long
+    )
+
+    fun getRecentDetections(phrase: String): List<RecentDetection> {
+        val recentKey = metricsKey(phrase, "recent")
+        val recentArray = try {
+            JSONArray(prefs.getString(recentKey, "[]"))
+        } catch (e: Exception) { return emptyList() }
+        return (0 until recentArray.length()).map { i ->
+            val obj = recentArray.getJSONObject(i)
+            RecentDetection(
+                confidence = obj.getDouble("confidence"),
+                accepted = obj.getBoolean("accepted"),
+                timestamp = obj.getLong("timestamp")
+            )
+        }
+    }
+
     fun clearMetrics() {
         val editor = prefs.edit()
         for (phrase in listOf("hey_whiz", "ok_whiz")) {
-            for (field in listOf("count", "accepted_count", "mean", "m2", "last_confidence", "last_timestamp")) {
+            for (field in listOf("count", "accepted_count", "mean", "m2", "last_confidence", "last_timestamp", "recent")) {
                 editor.remove(metricsKey(phrase, field))
             }
         }
