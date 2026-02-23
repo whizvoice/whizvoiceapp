@@ -322,81 +322,102 @@ class DeviceControlTools @Inject constructor(
 
                     Log.i(TAG, "Found matching active alarm: $contentDesc")
 
-                    // Find the onoff switch inside this card and toggle it off
-                    val switchNodes = card.findAccessibilityNodeInfosByViewId(
-                        "com.google.android.deskclock:id/onoff"
-                    )
-                    val switchNode = switchNodes?.firstOrNull()
-
-                    if (switchNode == null || !switchNode.isChecked) {
-                        Log.e(TAG, "Could not find checked switch node in alarm card")
-                        switchNodes?.forEach { it.recycle() }
-                        clockNodes.forEach { it.recycle() }
-                        alarmCards.forEach { it.recycle() }
-                        rootNode.recycle()
-                        return JSONObject().apply {
-                            put("success", false)
-                            put("error", "Found alarm for $targetTimeStr but could not find its enabled switch")
-                        }
-                    }
-
-                    val clicked = accessibilityService.clickNode(switchNode)
-                    Log.i(TAG, "Clicked alarm switch to disable: $clicked")
-                    switchNodes.forEach { it.recycle() }
+                    // Click the alarm card to expand the bottom sheet
+                    val cardClicked = accessibilityService.clickNode(card)
+                    Log.i(TAG, "Clicked alarm card to expand: $cardClicked")
                     clockNodes.forEach { it.recycle() }
                     alarmCards.forEach { it.recycle() }
                     rootNode.recycle()
 
-                    if (!clicked) {
+                    if (!cardClicked) {
                         return JSONObject().apply {
                             put("success", false)
-                            put("error", "Found alarm for $targetTimeStr but failed to click its switch")
+                            put("error", "Found alarm for $targetTimeStr but failed to click the card to expand it")
                         }
                     }
 
-                    // Verify the alarm was actually disabled by re-reading the UI
+                    // Wait for the delete button to appear in the bottom sheet
+                    var deleteButton: android.view.accessibility.AccessibilityNodeInfo? = null
+                    var deleteRoot: android.view.accessibility.AccessibilityNodeInfo? = null
+                    val deleteWaitStart = System.currentTimeMillis()
+                    val deleteWaitTimeout = 3000L
+                    while (System.currentTimeMillis() - deleteWaitStart < deleteWaitTimeout) {
+                        delay(300)
+                        deleteRoot = accessibilityService.getCurrentRootNode() ?: continue
+                        val deleteButtons = deleteRoot.findAccessibilityNodeInfosByViewId(
+                            "com.google.android.deskclock:id/delete_button"
+                        )
+                        if (deleteButtons != null && deleteButtons.isNotEmpty()) {
+                            deleteButton = deleteButtons.first()
+                            // Recycle the extras but keep the first one
+                            deleteButtons.drop(1).forEach { it.recycle() }
+                            Log.d(TAG, "Delete button appeared after ${System.currentTimeMillis() - deleteWaitStart}ms")
+                            break
+                        }
+                        deleteButtons?.forEach { it.recycle() }
+                        deleteRoot.recycle()
+                        deleteRoot = null
+                    }
+
+                    if (deleteButton == null) {
+                        deleteRoot?.recycle()
+                        return JSONObject().apply {
+                            put("success", false)
+                            put("error", "Expanded alarm card for $targetTimeStr but delete button did not appear")
+                        }
+                    }
+
+                    // Click the delete button
+                    val deleteClicked = accessibilityService.clickNode(deleteButton)
+                    Log.i(TAG, "Clicked delete button: $deleteClicked")
+                    deleteButton.recycle()
+                    deleteRoot?.recycle()
+
+                    if (!deleteClicked) {
+                        return JSONObject().apply {
+                            put("success", false)
+                            put("error", "Found delete button for alarm $targetTimeStr but failed to click it")
+                        }
+                    }
+
+                    // Verify the alarm was actually deleted by checking it's gone
                     delay(500)
                     val verifyRoot = accessibilityService.getCurrentRootNode()
                     if (verifyRoot != null) {
                         val verifyCards = verifyRoot.findAccessibilityNodeInfosByViewId(
                             "com.google.android.deskclock:id/alarm_card"
                         )
-                        for (verifyCard in verifyCards) {
-                            val verifyDesc = verifyCard.contentDescription?.toString() ?: continue
-                            if (verifyDesc.contains(targetTimeStr)) {
-                                if (verifyDesc.contains("disabled")) {
-                                    Log.i(TAG, "Verified: alarm $targetTimeStr is now disabled")
-                                    verifyCards.forEach { it.recycle() }
-                                    verifyRoot.recycle()
-                                    return JSONObject().apply {
-                                        put("success", true)
-                                        put("message", "Disabled alarm for $targetTimeStr")
-                                        put("alarm_time", targetTimeStr)
-                                        label?.let { put("label", it) }
-                                    }
-                                } else if (verifyDesc.contains("enabled")) {
-                                    Log.e(TAG, "Alarm $targetTimeStr is still enabled after clicking switch")
-                                    verifyCards.forEach { it.recycle() }
-                                    verifyRoot.recycle()
-                                    return JSONObject().apply {
-                                        put("success", false)
-                                        put("error", "Clicked switch but alarm $targetTimeStr is still enabled")
+                        var stillExists = false
+                        if (verifyCards != null) {
+                            for (verifyCard in verifyCards) {
+                                val verifyDesc = verifyCard.contentDescription?.toString() ?: continue
+                                if (verifyDesc.contains(targetTimeStr)) {
+                                    val labelMatches = label == null || verifyDesc.contains(label, ignoreCase = true)
+                                    if (labelMatches && !verifyDesc.contains("disabled")) {
+                                        stillExists = true
+                                        break
                                     }
                                 }
                             }
+                            verifyCards.forEach { it.recycle() }
                         }
-                        verifyCards.forEach { it.recycle() }
                         verifyRoot.recycle()
-                        // Card might have scrolled out of view or content-desc format unexpected
-                        Log.w(TAG, "Could not re-find alarm card for verification, but click succeeded")
+
+                        if (stillExists) {
+                            Log.e(TAG, "Alarm $targetTimeStr still exists after clicking delete")
+                            return JSONObject().apply {
+                                put("success", false)
+                                put("error", "Clicked delete but alarm $targetTimeStr still exists")
+                            }
+                        }
+                        Log.i(TAG, "Verified: alarm $targetTimeStr has been deleted")
                     } else {
-                        Log.w(TAG, "Could not get root node for verification, but click succeeded")
+                        Log.w(TAG, "Could not get root node for verification, but delete click succeeded")
                     }
 
-                    // Click succeeded but couldn't verify - report as success with caveat
                     return JSONObject().apply {
                         put("success", true)
-                        put("message", "Disabled alarm for $targetTimeStr (click succeeded, verification inconclusive)")
+                        put("message", "Deleted alarm for $targetTimeStr")
                         put("alarm_time", targetTimeStr)
                         label?.let { put("label", it) }
                     }
