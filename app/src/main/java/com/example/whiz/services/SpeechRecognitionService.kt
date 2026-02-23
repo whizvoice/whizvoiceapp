@@ -1032,6 +1032,35 @@ class SpeechRecognitionService @Inject constructor(
         }
     }
 
+    /**
+     * Inject a previously-captured partial transcription so that the existing
+     * partial-concatenation mechanism prepends it to the next recognition session.
+     * Called by VoiceManager when the app returns to foreground after setAlarm
+     * briefly stole focus and killed the recognizer mid-utterance.
+     */
+    fun injectSavedPartial(text: String) {
+        Log.i(TAG, "injectSavedPartial: injecting '$text'")
+        savedPartialForConcatenation = text
+        savedPartialIsAfterFinalResult = false
+        peakPartialLength = 0
+
+        // Start the existing timeout so the partial is sent as a final result
+        // if the user doesn't continue speaking
+        savedPartialTimeoutJob?.cancel()
+        savedPartialTimeoutJob = serviceScope.launch {
+            delay(SAVED_PARTIAL_TIMEOUT_MS)
+            if (savedPartialForConcatenation.isNotBlank()) {
+                Log.d(TAG, "injectSavedPartial: timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
+                val partialToSend = savedPartialForConcatenation
+                savedPartialForConcatenation = ""
+                savedPartialIsAfterFinalResult = false
+                _transcriptionState.value = partialToSend
+                recognitionCallback?.invoke(partialToSend)
+                _transcriptionState.value = ""
+            }
+        }
+    }
+
     // ==================== TEST SUPPORT METHODS ====================
 
     /**

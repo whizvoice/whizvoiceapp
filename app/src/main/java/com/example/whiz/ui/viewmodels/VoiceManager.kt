@@ -14,6 +14,7 @@ import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
+import com.example.whiz.tools.DeviceControlTools
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -624,6 +625,22 @@ class VoiceManager @Inject constructor(
             Log.d(TAG, "onAppForegrounded: Correcting stale lock state from ${_isScreenLocked.value} to $actuallyLocked")
             _isScreenLocked.value = actuallyLocked
         }
+
+        // Restore any partial transcription buffered before a focus-stealing intent
+        // (e.g., setAlarm fires a Clock intent that briefly kills the recognizer)
+        val bufferedText = DeviceControlTools.bufferedPartial
+        val bufferedAge = System.currentTimeMillis() - DeviceControlTools.bufferedPartialTimestamp
+        if (bufferedText.isNotBlank() && bufferedAge < 10_000L) {
+            Log.i(TAG, "onAppForegrounded: Restoring buffered partial '$bufferedText' (age=${bufferedAge}ms)")
+            speechRecognitionService.injectSavedPartial(bufferedText)
+            DeviceControlTools.bufferedPartial = ""
+            DeviceControlTools.bufferedPartialTimestamp = 0L
+        } else if (bufferedText.isNotBlank()) {
+            Log.d(TAG, "onAppForegrounded: Discarding stale buffered partial '$bufferedText' (age=${bufferedAge}ms)")
+            DeviceControlTools.bufferedPartial = ""
+            DeviceControlTools.bufferedPartialTimestamp = 0L
+        }
+
         // Note: We don't automatically restart continuous listening here
         // It should be restarted by ChatScreen when appropriate
         // This prevents unwanted mic activation when returning to non-chat screens

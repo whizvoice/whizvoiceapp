@@ -27,6 +27,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.accessibility.WhizAccessibilityService
 import kotlinx.coroutines.delay
 import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.ui.viewmodels.VoiceManager
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,6 +42,15 @@ class DeviceControlTools @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val TAG = "DeviceControlTools"
+
+    companion object {
+        /** Partial transcription buffered before setAlarm fires an intent that steals focus. */
+        @Volatile
+        var bufferedPartial: String = ""
+
+        @Volatile
+        var bufferedPartialTimestamp: Long = 0L
+    }
 
     // Track flashlight state since CameraManager doesn't expose it directly
     private var flashlightOn = false
@@ -66,6 +76,16 @@ class DeviceControlTools @Inject constructor(
         }
 
         return try {
+            // Buffer the current partial transcription before the Clock app steals focus.
+            // Unlike deleteAlarm/setTimer/dialPhone, setAlarm doesn't start the bubble overlay
+            // so the recognizer briefly dies. VoiceManager.onAppForegrounded() restores it.
+            val currentPartial = VoiceManager.instance?.transcriptionState?.value ?: ""
+            if (currentPartial.isNotBlank()) {
+                Log.i(TAG, "Buffering partial transcription before setAlarm intent: '$currentPartial'")
+                bufferedPartial = currentPartial
+                bufferedPartialTimestamp = System.currentTimeMillis()
+            }
+
             context.startActivity(intent)
             dismissResolverDialog()
             val timeStr = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
