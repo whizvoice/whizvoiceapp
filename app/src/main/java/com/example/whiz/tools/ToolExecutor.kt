@@ -67,7 +67,8 @@ class ToolExecutor @Inject constructor(
         "agent_search_google_maps_location", "agent_search_google_maps_phrase",
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
         "agent_fullscreen_google_maps", "agent_select_location_from_list",
-        "agent_press_call_button"
+        "agent_press_call_button",
+        "agent_save_calendar_event"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -233,8 +234,11 @@ class ToolExecutor @Inject constructor(
                     "agent_toggle_flashlight" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.toggleFlashlight(it) }
                     }
-                    "agent_add_calendar_event" -> {
-                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.addCalendarEvent(it) }
+                    "agent_draft_calendar_event" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.draftCalendarEvent(it) }
+                    }
+                    "agent_save_calendar_event" -> {
+                        executeSaveCalendarEvent(requestId)
                     }
                     "agent_dial_phone_number" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dialPhoneNumber(it) }
@@ -1303,6 +1307,42 @@ class ToolExecutor @Inject constructor(
     }
 
     /**
+     * Press the Save button in Google Calendar via accessibility service.
+     */
+    private suspend fun executeSaveCalendarEvent(requestId: String) {
+        try {
+            Log.i(TAG, "Pressing Save button in Google Calendar")
+
+            val result = screenAgentTools.saveCalendarEvent()
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.error?.let { put("error", it) }
+                if (result.success) put("message", "Calendar event saved")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_save_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_save_calendar_event",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing save calendar event", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_save_calendar_event",
+                    requestId = requestId,
+                    error = "Failed to save calendar event: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
      * Delete a scheduled alarm by finding it in the Clock app's alarm list.
      */
     private suspend fun executeDeleteAlarm(requestId: String, params: JSONObject) {
@@ -1366,7 +1406,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_get_next_alarm", "agent_delete_alarm", "agent_toggle_flashlight", "agent_add_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_get_next_alarm", "agent_delete_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

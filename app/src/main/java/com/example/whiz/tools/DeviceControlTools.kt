@@ -491,15 +491,20 @@ class DeviceControlTools @Inject constructor(
 
     // ========== Calendar ==========
 
-    fun addCalendarEvent(params: JSONObject): JSONObject {
+    fun draftCalendarEvent(params: JSONObject): JSONObject {
         val title = params.getString("title")
         val beginTimeStr = params.getString("begin_time")
         val endTimeStr = if (params.has("end_time")) params.getString("end_time") else null
         val description = if (params.has("description")) params.getString("description") else null
         val location = if (params.has("location")) params.getString("location") else null
         val allDay = if (params.has("all_day")) params.getBoolean("all_day") else false
+        val attendees = if (params.has("attendees")) params.getString("attendees") else null
+        val recurrence = if (params.has("recurrence")) params.getString("recurrence") else null
+        val availability = if (params.has("availability")) params.getString("availability") else null
+        val accessLevel = if (params.has("access_level")) params.getString("access_level") else null
+        val timezone = if (params.has("timezone")) params.getString("timezone") else null
 
-        Log.i(TAG, "Adding calendar event: '$title' at $beginTimeStr")
+        Log.i(TAG, "Drafting calendar event: '$title' at $beginTimeStr")
 
         return try {
             val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
@@ -523,25 +528,69 @@ class DeviceControlTools @Inject constructor(
                 putExtra(CalendarContract.Events.ALL_DAY, allDay)
                 description?.let { putExtra(CalendarContract.Events.DESCRIPTION, it) }
                 location?.let { putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
+                attendees?.let { putExtra(Intent.EXTRA_EMAIL, it) }
+                recurrence?.let { putExtra(CalendarContract.Events.RRULE, it) }
+                availability?.let {
+                    val availInt = when (it.lowercase()) {
+                        "busy" -> CalendarContract.Events.AVAILABILITY_BUSY
+                        "free" -> CalendarContract.Events.AVAILABILITY_FREE
+                        else -> CalendarContract.Events.AVAILABILITY_BUSY
+                    }
+                    putExtra(CalendarContract.Events.AVAILABILITY, availInt)
+                }
+                accessLevel?.let {
+                    val levelInt = when (it.lowercase()) {
+                        "private" -> CalendarContract.Events.ACCESS_PRIVATE
+                        "public" -> CalendarContract.Events.ACCESS_PUBLIC
+                        else -> CalendarContract.Events.ACCESS_DEFAULT
+                    }
+                    putExtra(CalendarContract.Events.ACCESS_LEVEL, levelInt)
+                }
+                timezone?.let { putExtra(CalendarContract.Events.EVENT_TIMEZONE, it) }
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            // Start bubble overlay before launching calendar so user can still talk to Whiz
+            val hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true
+            }
+            if (hasOverlayPermission) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
             }
 
             context.startActivity(intent)
 
+            if (hasOverlayPermission) {
+                try {
+                    BubbleOverlayService.start(context)
+                    Log.i(TAG, "Bubble overlay started for calendar")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start bubble overlay for calendar", e)
+                    BubbleOverlayService.pendingStartTimestamp = 0L
+                }
+            }
+
             JSONObject().apply {
                 put("success", true)
-                put("message", "Calendar app opened with event '$title' pre-filled. User needs to tap Save to confirm.")
+                put("message", "Calendar app opened with event '$title' pre-filled.")
                 put("title", title)
                 put("begin_time", beginTimeStr)
                 endTimeStr?.let { put("end_time", it) }
                 description?.let { put("description", it) }
                 location?.let { put("location", it) }
+                attendees?.let { put("attendees", it) }
+                recurrence?.let { put("recurrence", it) }
+                availability?.let { put("availability", it) }
+                accessLevel?.let { put("access_level", it) }
+                timezone?.let { put("timezone", it) }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to add calendar event", e)
+            Log.e(TAG, "Failed to draft calendar event", e)
             JSONObject().apply {
                 put("success", false)
-                put("error", "Failed to add calendar event: ${e.message}")
+                put("error", "Failed to draft calendar event: ${e.message}")
             }
         }
     }
