@@ -16,6 +16,10 @@ On my phone, which is what I use for testing as well as running the production a
 
 ## Testing
 
+### Logcat
+
+When i ask you to run or stream logcat, i mean stream logcat from the connected android device onto a file on the computer. We have a lot of logs and logcat rotates quickly, so just pulling it isn't enough.
+
 ### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.

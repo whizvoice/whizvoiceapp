@@ -23,7 +23,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.accessibility.WhizAccessibilityService
+import kotlinx.coroutines.delay
 import com.example.whiz.services.BubbleOverlayService
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -165,6 +167,166 @@ class DeviceControlTools @Inject constructor(
             JSONObject().apply {
                 put("success", false)
                 put("error", "Failed to dismiss timer: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun deleteAlarm(params: JSONObject): JSONObject {
+        val hour = params.getInt("hour")
+        val minute = params.getInt("minute")
+        val label = if (params.has("label") && !params.isNull("label")) params.getString("label") else null
+
+        // Format the time string to match Clock app display (e.g. "4:30 PM")
+        val amPm = if (hour < 12) "AM" else "PM"
+        val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
+        val targetTimeStr = "$displayHour:${minute.toString().padStart(2, '0')} $amPm"
+
+        Log.i(TAG, "Deleting alarm for $targetTimeStr" + (if (label != null) " ($label)" else ""))
+
+        // Step 1: Open the alarm list
+        val intent = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        return try {
+            context.startActivity(intent)
+            dismissResolverDialog()
+
+            // Wait for the Clock app's alarm list to appear
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return JSONObject().apply {
+                    put("success", false)
+                    put("error", "Accessibility service not available")
+                }
+
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 5000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                val root = accessibilityService.getCurrentRootNode()
+                if (root != null) {
+                    val alarmList = root.findAccessibilityNodeInfosByViewId(
+                        "com.google.android.deskclock:id/alarm_recycler_view"
+                    )
+                    val found = alarmList != null && alarmList.isNotEmpty()
+                    alarmList?.forEach { it.recycle() }
+                    root.recycle()
+                    if (found) {
+                        Log.d(TAG, "Alarm list appeared after ${System.currentTimeMillis() - waitStart}ms")
+                        break
+                    }
+                }
+                delay(200)
+            }
+
+            val displayMetrics = context.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+            val centerX = screenWidth / 2f
+
+            val maxScrollAttempts = 20
+            var previousAlarmTimes = setOf<String>()
+
+            for (attempt in 0..maxScrollAttempts) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode == null) {
+                    Log.w(TAG, "Could not get root node on attempt $attempt")
+                    delay(500)
+                    continue
+                }
+
+                // Find all digital_clock nodes currently visible
+                val clockNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.deskclock:id/digital_clock"
+                )
+
+                val currentAlarmTimes = clockNodes.mapNotNull { it.text?.toString() }.toSet()
+                Log.d(TAG, "Attempt $attempt: visible alarms = $currentAlarmTimes")
+
+                // Check each alarm card for a match
+                val alarmCards = rootNode.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.deskclock:id/alarm_card"
+                )
+
+                for (card in alarmCards) {
+                    val contentDesc = card.contentDescription?.toString() ?: continue
+
+                    // Check if this card matches the target time
+                    if (!contentDesc.contains(targetTimeStr)) continue
+
+                    // Check if alarm is active (not disabled)
+                    if (contentDesc.contains("disabled")) {
+                        Log.d(TAG, "Found $targetTimeStr but it's disabled, skipping")
+                        continue
+                    }
+
+                    // Optional: check label match
+                    if (label != null && !contentDesc.contains(label, ignoreCase = true)) {
+                        Log.d(TAG, "Found active $targetTimeStr but label doesn't match ('$label' not in '$contentDesc')")
+                        continue
+                    }
+
+                    Log.i(TAG, "Found matching active alarm: $contentDesc")
+
+                    // Find the onoff switch inside this card and toggle it off
+                    val switchNodes = card.findAccessibilityNodeInfosByViewId(
+                        "com.google.android.deskclock:id/onoff"
+                    )
+                    val switchNode = switchNodes?.firstOrNull()
+
+                    if (switchNode != null && switchNode.isChecked) {
+                        val clicked = accessibilityService.clickNode(switchNode)
+                        Log.i(TAG, "Clicked alarm switch to disable: $clicked")
+                        switchNodes.forEach { it.recycle() }
+                    } else {
+                        Log.w(TAG, "Could not find checked switch node in alarm card")
+                        switchNodes?.forEach { it.recycle() }
+                    }
+
+                    clockNodes.forEach { it.recycle() }
+                    alarmCards.forEach { it.recycle() }
+                    rootNode.recycle()
+
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Disabled alarm for $targetTimeStr")
+                        put("alarm_time", targetTimeStr)
+                        label?.let { put("label", it) }
+                    }
+                }
+
+                clockNodes.forEach { it.recycle() }
+                alarmCards.forEach { it.recycle() }
+                rootNode.recycle()
+
+                // Check if we've reached the end (same alarms visible as last time)
+                if (currentAlarmTimes.isNotEmpty() && currentAlarmTimes == previousAlarmTimes) {
+                    Log.i(TAG, "Alarm list stopped scrolling (same alarms visible), alarm not found")
+                    break
+                }
+                previousAlarmTimes = currentAlarmTimes
+
+                if (attempt < maxScrollAttempts) {
+                    // Scroll about 5-6 alarm cards at a time
+                    val startY = screenHeight * 0.80f
+                    val endY = screenHeight * 0.20f
+                    Log.d(TAG, "Scrolling alarm list (attempt ${attempt + 1})")
+                    accessibilityService.performScrollGesture(
+                        centerX, startY, centerX, endY, duration = 500
+                    )
+                    delay(600)
+                }
+            }
+
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Could not find active alarm for $targetTimeStr" +
+                        (if (label != null) " with label '$label'" else ""))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete alarm", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to delete alarm: ${e.message}")
             }
         }
     }
