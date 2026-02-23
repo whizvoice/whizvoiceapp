@@ -3,7 +3,10 @@ package com.example.whiz.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Path
 import android.os.Build
@@ -22,11 +25,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 class WhizAccessibilityService : AccessibilityService() {
-    
+
     private val TAG = "WhizAccessibilityService"
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    
+    private var dumpReceiver: BroadcastReceiver? = null
+
     companion object {
+        const val ACTION_DUMP_UI = "com.example.whiz.DUMP_UI"
         @Volatile
         private var instance: WhizAccessibilityService? = null
 
@@ -76,8 +81,48 @@ class WhizAccessibilityService : AccessibilityService() {
         }
         
         this.serviceInfo = info
+
+        // Register broadcast receiver for on-demand UI dumps
+        dumpReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                Log.d(TAG, "UI dump broadcast received")
+                dumpCurrentUI()
+            }
+        }
+        registerReceiver(dumpReceiver, IntentFilter(ACTION_DUMP_UI), Context.RECEIVER_EXPORTED)
+        Log.d(TAG, "UI dump broadcast receiver registered")
     }
-    
+
+    /**
+     * Dump the current UI hierarchy to /sdcard/Download/ for debugging.
+     * Triggered via: adb shell am broadcast -a com.example.whiz.DUMP_UI -p <package>
+     */
+    private fun dumpCurrentUI() {
+        try {
+            val rootNode = rootInActiveWindow
+            if (rootNode == null) {
+                Log.w(TAG, "UI dump: no root node available")
+                return
+            }
+            val sb = StringBuilder()
+            val packageName = rootNode.packageName?.toString() ?: "unknown"
+            sb.appendLine("=== UI Dump (on-demand) ===")
+            sb.appendLine("Timestamp: ${System.currentTimeMillis()}")
+            sb.appendLine("Package: $packageName")
+            sb.appendLine("")
+            sb.appendLine("=== Node Tree ===")
+            AccessibilityDumpUtil.dumpNodeRecursive(rootNode, sb, 0)
+
+            val fileName = "whiz_ui_dump_manual_${System.currentTimeMillis()}.txt"
+            val file = java.io.File("/sdcard/Download", fileName)
+            file.writeText(sb.toString())
+            Log.i(TAG, "UI dump saved to: ${file.absolutePath}")
+            rootNode.recycle()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dump UI", e)
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.let {
             when (it.eventType) {
@@ -100,6 +145,10 @@ class WhizAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        dumpReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        dumpReceiver = null
         instance = null
         _serviceState.value = ServiceState.DISCONNECTED
         serviceScope.cancel()

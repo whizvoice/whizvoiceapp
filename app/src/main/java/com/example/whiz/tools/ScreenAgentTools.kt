@@ -7794,23 +7794,7 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun dumpNodeRecursive(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
-        val indent = "  ".repeat(depth)
-        val resourceId = node.viewIdResourceName ?: ""
-        val text = node.text?.toString() ?: ""
-        val contentDesc = node.contentDescription?.toString() ?: ""
-        val className = node.className?.toString()?.substringAfterLast('.') ?: ""
-        val bounds = android.graphics.Rect()
-        node.getBoundsInScreen(bounds)
-
-        sb.appendLine("$indent[$className] id=$resourceId text=\"$text\" desc=\"$contentDesc\" bounds=$bounds clickable=${node.isClickable}")
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                dumpNodeRecursive(child, sb, depth + 1)
-                // Don't recycle children here as we're just traversing
-            }
-        }
+        com.example.whiz.accessibility.AccessibilityDumpUtil.dumpNodeRecursive(node, sb, depth)
     }
 
     private fun logCurrentScreen(rootNode: AccessibilityNodeInfo) {
