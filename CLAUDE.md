@@ -73,7 +73,7 @@ adb pull /sdcard/Android/data/com.example.whiz/files/wake_word_stats.txt
 ```
 
 Key files:
-- `WakeWordPreferences.kt` - `recordDetection()`, `getStats()`, `clearMetrics()`
+- `WakeWordPreferences.kt` - `recordDetection()`, `getStats()`, `getRecentDetections()`, `clearMetrics()`. Also stores a rolling window of the last 10 detections (confidence, accepted/rejected, timestamp) as JSON in SharedPreferences. These are included in the stats file under "recent (last N):"
 - `WakeWordService.kt` - calls `recordDetection()` in `checkForWakeWord()` and logs stats summary
 
 ## Database

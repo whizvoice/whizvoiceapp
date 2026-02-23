@@ -191,6 +191,8 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             context.startActivity(intent)
+            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            BubbleOverlayService.start(context)
 
             // Wait for the Clock app's alarm list to appear
             val accessibilityService = WhizAccessibilityService.getInstance()
