@@ -765,6 +765,12 @@ class SpeechRecognitionService @Inject constructor(
             override fun onSegmentResults(segmentResults: Bundle) {
                 if (!useSegmentedSession) return  // Shouldn't happen, but guard
 
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer segment results callback")
+                    return
+                }
+
                 val matches = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val segmentText = matches?.firstOrNull() ?: ""
 
@@ -791,6 +797,12 @@ class SpeechRecognitionService @Inject constructor(
             }
 
             override fun onEndOfSegmentedSession() {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-segmented-session callback")
+                    return
+                }
+
                 Log.d(TAG, "🔄 SEGMENTED: onEndOfSegmentedSession")
 
                 val shouldRestart = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
@@ -1070,7 +1082,14 @@ class SpeechRecognitionService @Inject constructor(
      */
     fun enableTestMode() {
         testModeEnabled = true
-        Log.d(TAG, "[TEST] Test mode enabled - will inject results through real callbacks")
+        Log.d(TAG, "[TEST] Test mode enabled - stopping real recognizer and injecting results through callbacks")
+        // Stop real recognizer if running (but keep isListening=true for test)
+        // SpeechRecognizer must be accessed from the main thread
+        Handler(Looper.getMainLooper()).post {
+            speechRecognizer?.cancel()
+        }
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
     }
 
     /**
