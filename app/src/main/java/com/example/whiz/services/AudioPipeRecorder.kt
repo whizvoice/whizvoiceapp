@@ -35,6 +35,10 @@ class AudioPipeRecorder {
     private val writeParcel: ParcelFileDescriptor
     private val audioRecord: AudioRecord
     private var echoCanceler: AcousticEchoCanceler? = null
+
+    /** True when AEC is attached and enabled on this recorder. */
+    val isAECEnabled: Boolean
+        get() = echoCanceler?.enabled == true
     private val isRecording = AtomicBoolean(false)
     private val isStopped = AtomicBoolean(false)
     private var recordingThread: Thread? = null
