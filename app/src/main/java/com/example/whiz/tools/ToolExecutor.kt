@@ -1307,17 +1307,17 @@ class ToolExecutor @Inject constructor(
     }
 
     /**
-     * Draft a calendar event, with optional redraft support.
-     * When redraft=true, dismisses the current calendar draft before launching a new one.
+     * Draft a calendar event. Always dismisses any existing calendar draft first
+     * (handles both redrafts and cases where the user was drafting outside the app).
      */
     private suspend fun executeDraftCalendarEvent(requestId: String, params: JSONObject) {
         try {
-            val redraft = if (params.has("redraft")) params.getBoolean("redraft") else false
-            if (redraft) {
-                Log.i(TAG, "Redraft requested, dismissing current calendar draft first")
-                val dismissed = deviceControlTools.dismissCalendarDraft()
-                Log.i(TAG, "dismissCalendarDraft result: $dismissed")
-            }
+            // Always dismiss any existing calendar draft before launching a new one.
+            // This handles both explicit redrafts and cases where the user was already
+            // drafting an event outside of Whiz (which would show a discard dialog).
+            Log.i(TAG, "Dismissing any existing calendar draft before drafting new event")
+            val dismissed = deviceControlTools.dismissCalendarDraft()
+            Log.i(TAG, "dismissCalendarDraft result: $dismissed")
 
             val resultJson = deviceControlTools.draftCalendarEvent(params)
             Log.i(TAG, "[TOOL_RESULT] agent_draft_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -1349,12 +1349,27 @@ class ToolExecutor @Inject constructor(
         try {
             Log.i(TAG, "Saving calendar event via ContentProvider")
 
-            // Check WRITE_CALENDAR permission and prompt user if needed
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR)
-                != PackageManager.PERMISSION_GRANTED) {
+            // Check READ_CALENDAR + WRITE_CALENDAR permission and prompt user if needed
+            val hasCalendarPerms = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            if (!hasCalendarPerms) {
                 val permCallback = MainActivity.requestCalendarPermissionCallback
                 if (permCallback != null) {
-                    Log.i(TAG, "WRITE_CALENDAR not granted - showing permission dialog")
+                    Log.i(TAG, "Calendar permissions not granted - showing permission dialog")
+
+                    // If bubble overlay is active, we need to bring MainActivity to foreground
+                    // so the user can see the permission dialog
+                    val wasBubbleActive = BubbleOverlayService.isActive
+                    if (wasBubbleActive) {
+                        Log.i(TAG, "Bubble overlay active - stopping bubble and bringing MainActivity to foreground for permission dialog")
+                        BubbleOverlayService.stop(context)
+                        val bringToFrontIntent = android.content.Intent(context, MainActivity::class.java).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        }
+                        context.startActivity(bringToFrontIntent)
+                        delay(500) // Let MainActivity come to foreground
+                    }
+
                     _toolResults.emit(ToolExecutionResult.Status(
                         toolName = "agent_save_calendar_event",
                         requestId = requestId,
@@ -1375,20 +1390,52 @@ class ToolExecutor @Inject constructor(
                             )
                         }
                     }
+
                     if (granted != true) {
                         val reason = if (granted == null) "Permission request timed out" else "User denied permission"
                         Log.i(TAG, "$reason for calendar save")
+                        // Restore bubble if it was active
+                        if (wasBubbleActive) {
+                            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                            BubbleOverlayService.start(context)
+                        }
                         _toolResults.emit(
                             ToolExecutionResult.Error(
                                 toolName = "agent_save_calendar_event",
                                 requestId = requestId,
-                                error = "$reason. Cannot save calendar event without WRITE_CALENDAR permission."
+                                error = "$reason. Cannot save calendar event without calendar permission."
                             )
                         )
                         return
                     }
+
+                    // Wait for permission to propagate, then restore bubble overlay
+                    if (wasBubbleActive) {
+                        // Poll until permission is actually usable (up to 3 seconds)
+                        val permWaitStart = System.currentTimeMillis()
+                        while (System.currentTimeMillis() - permWaitStart < 3000) {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                                && ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED) {
+                                Log.i(TAG, "Calendar permissions confirmed after ${System.currentTimeMillis() - permWaitStart}ms")
+                                break
+                            }
+                            delay(200)
+                        }
+                        // Restart bubble overlay and bring calendar back to foreground
+                        Log.i(TAG, "Restarting bubble overlay after permission grant")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        BubbleOverlayService.start(context)
+                        // Bring Google Calendar back to foreground so bubble overlays on calendar, not chat
+                        val calendarIntent = context.packageManager.getLaunchIntentForPackage("com.google.android.calendar")
+                        if (calendarIntent != null) {
+                            calendarIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                            context.startActivity(calendarIntent)
+                            Log.i(TAG, "Brought Google Calendar back to foreground")
+                        }
+                        delay(500)
+                    }
                 } else {
-                    Log.w(TAG, "WRITE_CALENDAR not granted and no permission callback available")
+                    Log.w(TAG, "Calendar permissions not granted and no permission callback available")
                     _toolResults.emit(
                         ToolExecutionResult.Error(
                             toolName = "agent_save_calendar_event",
@@ -1405,10 +1452,90 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] agent_save_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            // On success, dismiss the Calendar draft UI
+            // On success, dismiss the Calendar draft UI, wait for sync, then show the event
             if (resultJson.optBoolean("success", false)) {
                 Log.i(TAG, "ContentProvider insert succeeded, dismissing calendar draft UI")
                 deviceControlTools.dismissCalendarDraft()
+
+                val accountName = resultJson.optString("account_name", "")
+                val accountType = resultJson.optString("account_type", "")
+                val eventUri = resultJson.optString("event_uri", "")
+
+                // Request a sync so Google Calendar's internal cache picks up our insert.
+                // Without this, EventInfoActivity shows "The requested event was not found".
+                // The sync can take 6-15+ seconds (JobScheduler delay + network), so we wait.
+                try {
+                    val account = android.accounts.Account(accountName, accountType)
+                    val extras = android.os.Bundle().apply {
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                    }
+                    android.content.ContentResolver.requestSync(account, android.provider.CalendarContract.AUTHORITY, extras)
+                    Log.i(TAG, "Requested calendar sync for account=$accountName ($accountType)")
+
+                    // Wait for sync to start, then wait for it to finish
+                    val syncStart = System.currentTimeMillis()
+                    val syncTimeout = 20_000L // 20s — sync can take a while via JobScheduler
+
+                    // Phase 1: wait for sync to become active
+                    var syncStarted = false
+                    while (System.currentTimeMillis() - syncStart < syncTimeout) {
+                        if (android.content.ContentResolver.isSyncActive(account, android.provider.CalendarContract.AUTHORITY)) {
+                            syncStarted = true
+                            Log.i(TAG, "Calendar sync started after ${System.currentTimeMillis() - syncStart}ms")
+                            break
+                        }
+                        delay(200)
+                    }
+
+                    if (syncStarted) {
+                        // Phase 2: wait for sync to complete
+                        while (System.currentTimeMillis() - syncStart < syncTimeout) {
+                            if (!android.content.ContentResolver.isSyncActive(account, android.provider.CalendarContract.AUTHORITY)) {
+                                Log.i(TAG, "Calendar sync completed after ${System.currentTimeMillis() - syncStart}ms")
+                                break
+                            }
+                            delay(200)
+                        }
+                    }
+
+                    val elapsed = System.currentTimeMillis() - syncStart
+                    if (elapsed >= syncTimeout) {
+                        Log.w(TAG, "Calendar sync timed out after ${syncTimeout}ms, proceeding anyway")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Calendar sync wait failed (non-fatal): ${e.message}")
+                }
+
+                // Open the event in Google Calendar
+                if (eventUri.isNotEmpty()) {
+                    val uri = android.net.Uri.parse(eventUri)
+                    val eventDetails = context.contentResolver.query(
+                        uri, arrayOf("_id", "dtstart", "dtend"), null, null, null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            Triple(
+                                cursor.getLong(cursor.getColumnIndexOrThrow("_id")),
+                                cursor.getLong(cursor.getColumnIndexOrThrow("dtstart")),
+                                cursor.getLong(cursor.getColumnIndexOrThrow("dtend"))
+                            )
+                        } else null
+                    }
+
+                    if (eventDetails != null) {
+                        val (eventId, beginTime, endTime) = eventDetails
+                        Log.i(TAG, "Opening event (id=$eventId, begin=$beginTime, end=$endTime): $eventUri")
+                        val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            setPackage("com.google.android.calendar")
+                            putExtra("beginTime", beginTime)
+                            putExtra("endTime", endTime)
+                        }
+                        context.startActivity(viewIntent)
+                    } else {
+                        Log.w(TAG, "Event not found in ContentProvider after insert: $eventUri")
+                    }
+                }
             }
 
             _toolResults.emit(

@@ -40,7 +40,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class DeviceControlTools @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val screenAgentTools: ScreenAgentTools
 ) {
     private val TAG = "DeviceControlTools"
 
@@ -633,15 +634,16 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             // Query for the user's primary writable calendar
-            val calendarId = getWritableCalendarId()
-            if (calendarId == null) {
+            val calendarInfo = getWritableCalendarId()
+            if (calendarInfo == null) {
                 Log.e(TAG, "No writable calendar found")
                 return JSONObject().apply {
                     put("success", false)
                     put("error", "No writable calendar found on device")
                 }
             }
-            Log.i(TAG, "Using calendar ID: $calendarId")
+            val calendarId = calendarInfo.calendarId
+            Log.i(TAG, "Using calendar ID: $calendarId (account=${calendarInfo.accountName}, type=${calendarInfo.accountType})")
 
             val title = params.getString("title")
             val beginTimeStr = params.getString("begin_time")
@@ -703,6 +705,8 @@ class DeviceControlTools @Inject constructor(
                     put("success", true)
                     put("message", "Calendar event '$title' saved successfully")
                     put("event_uri", eventUri.toString())
+                    put("account_name", calendarInfo.accountName)
+                    put("account_type", calendarInfo.accountType)
                 }
             } else {
                 Log.e(TAG, "ContentProvider insert returned null URI")
@@ -726,22 +730,27 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
+    data class CalendarInfo(val calendarId: Long, val accountName: String, val accountType: String)
+
     /**
      * Find the first writable calendar on the device.
      * Prefers the primary calendar; falls back to any writable calendar.
+     * Returns calendar ID along with account name/type needed for requestSync().
      */
-    private fun getWritableCalendarId(): Long? {
+    private fun getWritableCalendarId(): CalendarInfo? {
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.IS_PRIMARY,
             CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
-            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE
         )
         val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
         val selectionArgs = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
 
-        var primaryId: Long? = null
-        var firstWritableId: Long? = null
+        var primaryInfo: CalendarInfo? = null
+        var firstWritableInfo: CalendarInfo? = null
 
         context.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
@@ -750,23 +759,30 @@ class DeviceControlTools @Inject constructor(
             val idIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
             val primaryIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.IS_PRIMARY)
             val nameIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+            val accountNameIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_NAME)
+            val accountTypeIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_TYPE)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIdx)
                 val isPrimary = cursor.getInt(primaryIdx) == 1
                 val name = cursor.getString(nameIdx)
-                Log.d(TAG, "Found writable calendar: id=$id, name=$name, primary=$isPrimary")
+                val accountName = cursor.getString(accountNameIdx)
+                val accountType = cursor.getString(accountTypeIdx)
+                Log.d(TAG, "Found writable calendar: id=$id, name=$name, primary=$isPrimary, account=$accountName ($accountType)")
 
-                if (isPrimary && primaryId == null) {
-                    primaryId = id
+                val info = CalendarInfo(id, accountName, accountType)
+                if (isPrimary && primaryInfo == null) {
+                    primaryInfo = info
                 }
-                if (firstWritableId == null) {
-                    firstWritableId = id
+                if (firstWritableInfo == null) {
+                    firstWritableInfo = info
                 }
             }
         }
 
-        return primaryId ?: firstWritableId
+        val selected = primaryInfo ?: firstWritableInfo
+        Log.i(TAG, "Selected calendar id=${selected?.calendarId} (primaryId=${primaryInfo?.calendarId}, firstWritableId=${firstWritableInfo?.calendarId})")
+        return selected
     }
 
     fun draftCalendarEvent(params: JSONObject): JSONObject {
@@ -849,6 +865,9 @@ class DeviceControlTools @Inject constructor(
                     BubbleOverlayService.pendingStartTimestamp = 0L
                 }
             }
+
+            // Dismiss the keyboard that appears when Google Calendar focuses the title field
+            dismissCalendarKeyboard()
 
             JSONObject().apply {
                 put("success", true)
@@ -1146,14 +1165,69 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
+    // ========== Keyboard Dismissal ==========
+
+    /**
+     * Dismiss the soft keyboard after Google Calendar opens with the title field focused.
+     * Clears focus from the title EditText so the keyboard goes away without navigating back.
+     */
+    private fun dismissCalendarKeyboard() {
+        Thread {
+            try {
+                // Wait for the calendar to load and keyboard to appear
+                Thread.sleep(1500)
+
+                val service = WhizAccessibilityService.getInstance() ?: run {
+                    Log.w(TAG, "Accessibility service not available to dismiss keyboard")
+                    return@Thread
+                }
+
+                val rootNode = service.getCurrentRootNode() ?: run {
+                    Log.w(TAG, "No root node available to dismiss keyboard")
+                    return@Thread
+                }
+
+                try {
+                    // Find the focused title field and clear its focus
+                    val titleNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                        "com.google.android.calendar:id/title"
+                    )
+                    val titleNode = titleNodes?.firstOrNull()
+                    if (titleNode != null) {
+                        titleNode.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS)
+                        Log.i(TAG, "Cleared focus from calendar title field to dismiss keyboard")
+                        titleNodes.forEach { it.recycle() }
+                    } else {
+                        titleNodes?.forEach { it.recycle() }
+                        // Fallback: find any focused node and clear its focus
+                        val focused = rootNode.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                        if (focused != null) {
+                            focused.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS)
+                            Log.i(TAG, "Cleared focus from input-focused node to dismiss keyboard")
+                            focused.recycle()
+                        } else {
+                            Log.d(TAG, "No focused node found after calendar launch")
+                        }
+                    }
+                } finally {
+                    rootNode.recycle()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error dismissing calendar keyboard", e)
+            }
+        }.start()
+    }
+
     // ========== Resolver Dialog Handling ==========
 
     /**
-     * Dismisses the Android "Complete action using" resolver dialog by selecting
-     * the Clock app and tapping "Just once". This fires on a background thread
-     * so it doesn't block the tool result.
+     * Dismisses the Android resolver dialog by selecting the specified app
+     * and tapping "Just once". Handles both dialog formats:
+     * - "Complete action using" (older)
+     * - "Open with <app>" / "Use a different app" (newer)
+     * Fires on a background thread so it doesn't block the tool result.
      */
-    private fun dismissResolverDialog() {
+    fun dismissResolverDialog(appName: String = "Clock") {
         Thread {
             try {
                 // Wait for the resolver dialog to appear
@@ -1169,35 +1243,48 @@ class DeviceControlTools @Inject constructor(
                     return@Thread
                 }
 
-                // Check if this is actually the resolver dialog
+                // Check if this is actually the resolver dialog (handles both formats)
                 val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("android:id/title")
-                val isResolver = titleNodes.any { it.text?.toString()?.startsWith("Complete action using") == true }
+                val isResolver = titleNodes.any {
+                    val text = it.text?.toString() ?: ""
+                    text.startsWith("Complete action using") || text.startsWith("Open with")
+                }
                 if (!isResolver) {
                     Log.d(TAG, "No resolver dialog detected, skipping")
                     return@Thread
                 }
 
-                Log.i(TAG, "Resolver dialog detected, selecting Clock app")
+                Log.i(TAG, "Resolver dialog detected, selecting $appName app")
 
-                // Find and click "Clock" in the resolver list
-                val clockNodes = rootNode.findAccessibilityNodeInfosByText("Clock")
-                val clockClicked = clockNodes.any { node ->
-                    // Click the clickable parent (the list item row)
-                    var target = node
-                    while (target.parent != null && !target.isClickable) {
-                        target = target.parent
-                    }
-                    if (target.isClickable) {
-                        service.clickNode(target)
-                    } else {
-                        false
-                    }
+                // Check if the desired app is already pre-selected in the title
+                // e.g. "Complete action using Clock" or "Open with Calendar"
+                val alreadySelected = titleNodes.any {
+                    val text = it.text?.toString() ?: ""
+                    text.contains(appName, ignoreCase = true)
                 }
 
-                if (!clockClicked) {
-                    Log.w(TAG, "Could not find/click Clock in resolver, checking if already pre-selected")
-                    // Format B: title is "Complete action using Clock" — Clock is already pre-selected,
-                    // so we can skip clicking it and go straight to "Just once"
+                if (alreadySelected) {
+                    Log.i(TAG, "$appName already pre-selected in resolver title")
+                } else {
+                    // Find and click the app in the resolver list
+                    val appNodes = rootNode.findAccessibilityNodeInfosByText(appName)
+                    val appClicked = appNodes.any { node ->
+                        // Click the clickable parent (the list item row)
+                        var target = node
+                        while (target.parent != null && !target.isClickable) {
+                            target = target.parent
+                        }
+                        if (target.isClickable) {
+                            service.clickNode(target)
+                        } else {
+                            false
+                        }
+                    }
+
+                    if (!appClicked) {
+                        Log.w(TAG, "Could not find/click $appName in resolver")
+                        screenAgentTools.dumpUIHierarchy(rootNode, "resolver_app_not_found", "Could not find/click $appName in resolver dialog")
+                    }
                 }
 
                 // Poll for "Just once" button to become enabled
@@ -1209,17 +1296,22 @@ class DeviceControlTools @Inject constructor(
                     val button = justOnceNodes.firstOrNull() ?: continue
                     if (button.isEnabled) {
                         service.clickNode(button)
-                        Log.i(TAG, "Dismissed resolver dialog with Clock + Just once (attempt $attempt)")
+                        Log.i(TAG, "Dismissed resolver dialog with $appName + Just once (attempt $attempt)")
                         clicked = true
                         break
                     }
                 }
                 if (!clicked) {
                     Log.w(TAG, "Just once button never became enabled")
+                    val currentRoot = service.getCurrentRootNode()
+                    if (currentRoot != null) {
+                        screenAgentTools.dumpUIHierarchy(currentRoot, "resolver_just_once_failed", "Just once button never became enabled for $appName")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error dismissing resolver dialog", e)
             }
         }.start()
     }
+
 }

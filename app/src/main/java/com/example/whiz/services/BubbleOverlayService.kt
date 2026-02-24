@@ -821,6 +821,7 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "BubbleOverlayService onDestroy - stopping microphone immediately (isListening=${voiceManager.isListening.value})")
         voiceManager.stopListening()
         voiceManager.stopSpeaking()
+        voiceManager.setVoiceResponseEnabled(false)
 
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null

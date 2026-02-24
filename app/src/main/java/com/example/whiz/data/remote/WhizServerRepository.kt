@@ -898,6 +898,7 @@ class WhizServerRepository @Inject constructor(
                     put("request_id", requestId)
                     put("status", status)
                     put("message", message)
+                    put("timestamp", formatTimestamp(System.currentTimeMillis()))
                     if (chatId > 0) put("conversation_id", chatId)
                     else if (chatId < 0) put("client_conversation_id", chatId)
                 }

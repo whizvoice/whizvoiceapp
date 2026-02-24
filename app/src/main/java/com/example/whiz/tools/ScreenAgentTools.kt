@@ -7641,7 +7641,7 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
-    private fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
+    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
         try {
             val timestamp = System.currentTimeMillis()
             val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"

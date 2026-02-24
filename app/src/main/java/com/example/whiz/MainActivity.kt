@@ -169,11 +169,12 @@ class MainActivity : ComponentActivity() {
     private val showCalendarPermissionDialog = mutableStateOf(false)
 
     private val requestCalendarPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        Log.d(TAG, "Calendar permission result: $isGranted")
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        Log.d(TAG, "Calendar permission result: $allGranted (details: $permissions)")
         showCalendarPermissionDialog.value = false
-        if (isGranted) {
+        if (allGranted) {
             calendarPermissionOnGranted?.invoke()
         } else {
             calendarPermissionOnDenied?.invoke()
@@ -401,7 +402,10 @@ class MainActivity : ComponentActivity() {
                                 calendarPermissionOnDenied = null
                             },
                             onGrantPermission = {
-                                requestCalendarPermissionLauncher.launch(Manifest.permission.WRITE_CALENDAR)
+                                requestCalendarPermissionLauncher.launch(arrayOf(
+                                    Manifest.permission.READ_CALENDAR,
+                                    Manifest.permission.WRITE_CALENDAR
+                                ))
                             }
                         )
                     }
