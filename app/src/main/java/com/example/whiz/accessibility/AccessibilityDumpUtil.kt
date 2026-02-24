@@ -18,12 +18,14 @@ object AccessibilityDumpUtil {
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
 
-        sb.appendLine("$indent[$className] id=$resourceId text=\"$text\" desc=\"$contentDesc\" bounds=$bounds clickable=${node.isClickable}")
+        sb.appendLine("$indent[$className] id=$resourceId text=\"$text\" desc=\"$contentDesc\" bounds=$bounds clickable=${node.isClickable} childCount=${node.childCount}")
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
                 dumpNodeRecursive(child, sb, depth + 1)
+            } else {
+                sb.appendLine("${indent}  [NULL CHILD at index $i]")
             }
         }
     }

@@ -235,10 +235,10 @@ class ToolExecutor @Inject constructor(
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.toggleFlashlight(it) }
                     }
                     "agent_draft_calendar_event" -> {
-                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.draftCalendarEvent(it) }
+                        executeDraftCalendarEvent(requestId, params)
                     }
                     "agent_save_calendar_event" -> {
-                        executeSaveCalendarEvent(requestId)
+                        executeSaveCalendarEvent(requestId, params)
                     }
                     "agent_dial_phone_number" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dialPhoneNumber(it) }
@@ -1307,21 +1307,109 @@ class ToolExecutor @Inject constructor(
     }
 
     /**
-     * Press the Save button in Google Calendar via accessibility service.
+     * Draft a calendar event, with optional redraft support.
+     * When redraft=true, dismisses the current calendar draft before launching a new one.
      */
-    private suspend fun executeSaveCalendarEvent(requestId: String) {
+    private suspend fun executeDraftCalendarEvent(requestId: String, params: JSONObject) {
         try {
-            Log.i(TAG, "Pressing Save button in Google Calendar")
-
-            val result = screenAgentTools.saveCalendarEvent()
-
-            val resultJson = JSONObject().apply {
-                put("success", result.success)
-                result.error?.let { put("error", it) }
-                if (result.success) put("message", "Calendar event saved")
+            val redraft = if (params.has("redraft")) params.getBoolean("redraft") else false
+            if (redraft) {
+                Log.i(TAG, "Redraft requested, dismissing current calendar draft first")
+                val dismissed = deviceControlTools.dismissCalendarDraft()
+                Log.i(TAG, "dismissCalendarDraft result: $dismissed")
             }
 
+            val resultJson = deviceControlTools.draftCalendarEvent(params)
+            Log.i(TAG, "[TOOL_RESULT] agent_draft_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_draft_calendar_event",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_draft_calendar_event", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_draft_calendar_event",
+                    requestId = requestId,
+                    error = "Failed to draft calendar event: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Save calendar event via ContentProvider insert, then dismiss the draft UI.
+     * Checks WRITE_CALENDAR permission first and prompts user if needed.
+     */
+    private suspend fun executeSaveCalendarEvent(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Saving calendar event via ContentProvider")
+
+            // Check WRITE_CALENDAR permission and prompt user if needed
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR)
+                != PackageManager.PERMISSION_GRANTED) {
+                val permCallback = MainActivity.requestCalendarPermissionCallback
+                if (permCallback != null) {
+                    Log.i(TAG, "WRITE_CALENDAR not granted - showing permission dialog")
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = "agent_save_calendar_event",
+                        requestId = requestId,
+                        status = "waiting_for_calendar_permission",
+                        message = "Calendar permission required. Waiting for user to grant."
+                    ))
+                    val granted = withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Boolean> { cont ->
+                            permCallback(
+                                { // onGranted
+                                    Log.i(TAG, "User granted calendar permission")
+                                    if (cont.isActive) cont.resume(true)
+                                },
+                                { // onDenied
+                                    Log.i(TAG, "User denied calendar permission")
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            )
+                        }
+                    }
+                    if (granted != true) {
+                        val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                        Log.i(TAG, "$reason for calendar save")
+                        _toolResults.emit(
+                            ToolExecutionResult.Error(
+                                toolName = "agent_save_calendar_event",
+                                requestId = requestId,
+                                error = "$reason. Cannot save calendar event without WRITE_CALENDAR permission."
+                            )
+                        )
+                        return
+                    }
+                } else {
+                    Log.w(TAG, "WRITE_CALENDAR not granted and no permission callback available")
+                    _toolResults.emit(
+                        ToolExecutionResult.Error(
+                            toolName = "agent_save_calendar_event",
+                            requestId = requestId,
+                            error = "Calendar permission not granted and cannot request it (no active Activity)."
+                        )
+                    )
+                    return
+                }
+            }
+
+            // Insert event via ContentProvider
+            val resultJson = deviceControlTools.saveCalendarEventViaContentProvider(params)
+
             Log.i(TAG, "[TOOL_RESULT] agent_save_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            // On success, dismiss the Calendar draft UI
+            if (resultJson.optBoolean("success", false)) {
+                Log.i(TAG, "ContentProvider insert succeeded, dismissing calendar draft UI")
+                deviceControlTools.dismissCalendarDraft()
+            }
 
             _toolResults.emit(
                 ToolExecutionResult.Success(

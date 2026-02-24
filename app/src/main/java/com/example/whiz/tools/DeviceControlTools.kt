@@ -2,6 +2,7 @@ package com.example.whiz.tools
 
 import android.Manifest
 import android.app.AlarmManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -50,6 +51,7 @@ class DeviceControlTools @Inject constructor(
 
         @Volatile
         var bufferedPartialTimestamp: Long = 0L
+
     }
 
     // Track flashlight state since CameraManager doesn't expose it directly
@@ -531,6 +533,241 @@ class DeviceControlTools @Inject constructor(
     }
 
     // ========== Calendar ==========
+
+    /**
+     * Dismiss the current calendar draft by pressing Cancel, then confirming Discard if prompted.
+     * Used for redrafting when the user wants to change an already-drafted event.
+     */
+    suspend fun dismissCalendarDraft(): Boolean {
+        Log.i(TAG, "dismissCalendarDraft called")
+
+        val accessibilityService = WhizAccessibilityService.getInstance()
+        if (accessibilityService == null) {
+            Log.w(TAG, "dismissCalendarDraft: accessibility service not available")
+            return false
+        }
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+        if (rootNode == null) {
+            Log.w(TAG, "dismissCalendarDraft: no root node")
+            return false
+        }
+
+        try {
+            val currentPackage = rootNode.packageName?.toString() ?: ""
+            if (currentPackage != "com.google.android.calendar") {
+                Log.i(TAG, "dismissCalendarDraft: not in Google Calendar ($currentPackage), skipping")
+                return true // Not in calendar, nothing to dismiss
+            }
+
+            // Find and click the Cancel/close button (id=close, desc="Cancel")
+            val closeNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.calendar:id/close"
+            )
+            val closeButton = closeNodes?.firstOrNull()
+            if (closeButton == null) {
+                Log.w(TAG, "dismissCalendarDraft: Cancel button not found by ID, trying by description")
+                closeNodes?.forEach { it.recycle() }
+
+                // Fallback: search by content description
+                val cancelByText = rootNode.findAccessibilityNodeInfosByText("Cancel")
+                val cancelButton = cancelByText?.firstOrNull { it.isClickable }
+                if (cancelButton == null) {
+                    Log.w(TAG, "dismissCalendarDraft: Cancel button not found at all")
+                    cancelByText?.forEach { it.recycle() }
+                    return false
+                }
+                cancelButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                cancelByText.forEach { it.recycle() }
+            } else {
+                closeButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                closeNodes.forEach { it.recycle() }
+            }
+            Log.i(TAG, "dismissCalendarDraft: Cancel button clicked")
+        } finally {
+            rootNode.recycle()
+        }
+
+        // Wait for potential "Discard changes?" confirmation dialog
+        for (attempt in 1..8) {
+            delay(300)
+            val dialogRoot = accessibilityService.getCurrentRootNode() ?: continue
+            try {
+                // Look for "Discard" button in confirmation dialog
+                val discardNodes = dialogRoot.findAccessibilityNodeInfosByText("Discard")
+                val discardButton = discardNodes?.firstOrNull { it.isClickable }
+                if (discardButton != null) {
+                    discardButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "dismissCalendarDraft: Discard button clicked")
+                    discardNodes.forEach { it.recycle() }
+                    break
+                }
+                discardNodes?.forEach { it.recycle() }
+
+                // Check if the event editor is already gone (no title field = dismissed without dialog)
+                val titleNodes = dialogRoot.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.calendar:id/title"
+                )
+                if (titleNodes.isNullOrEmpty()) {
+                    Log.i(TAG, "dismissCalendarDraft: event editor already dismissed")
+                    break
+                }
+                titleNodes.forEach { it.recycle() }
+            } finally {
+                dialogRoot.recycle()
+            }
+        }
+
+        // Wait for calendar editor to fully close
+        delay(500)
+        Log.i(TAG, "dismissCalendarDraft: completed")
+        return true
+    }
+
+    /**
+     * Save a calendar event directly via ContentProvider instead of tapping the Save button.
+     * Event params are passed directly from the server.
+     */
+    fun saveCalendarEventViaContentProvider(params: JSONObject): JSONObject {
+        Log.i(TAG, "saveCalendarEventViaContentProvider called with params: ${params.toString(2)}")
+
+        return try {
+            // Query for the user's primary writable calendar
+            val calendarId = getWritableCalendarId()
+            if (calendarId == null) {
+                Log.e(TAG, "No writable calendar found")
+                return JSONObject().apply {
+                    put("success", false)
+                    put("error", "No writable calendar found on device")
+                }
+            }
+            Log.i(TAG, "Using calendar ID: $calendarId")
+
+            val title = params.getString("title")
+            val beginTimeStr = params.getString("begin_time")
+            val allDay = params.optBoolean("all_day", false)
+            val tz = params.optString("timezone", "").ifEmpty { TimeZone.getDefault().id }
+
+            val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+            val beginMillis = isoFormat.parse(beginTimeStr)?.time
+                ?: return JSONObject().apply {
+                    put("success", false)
+                    put("error", "Invalid begin_time format. Use ISO 8601 (e.g., 2025-01-15T14:00:00)")
+                }
+
+            val endMillis = if (params.has("end_time") && !params.isNull("end_time")) {
+                isoFormat.parse(params.getString("end_time"))?.time ?: (beginMillis + 3600000)
+            } else {
+                beginMillis + 3600000 // default 1 hour
+            }
+
+            val values = ContentValues().apply {
+                put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                put(CalendarContract.Events.TITLE, title)
+                put(CalendarContract.Events.DTSTART, beginMillis)
+                put(CalendarContract.Events.DTEND, endMillis)
+                put(CalendarContract.Events.EVENT_TIMEZONE, tz)
+                put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
+
+                if (params.has("description") && !params.isNull("description")) {
+                    put(CalendarContract.Events.DESCRIPTION, params.getString("description"))
+                }
+                if (params.has("location") && !params.isNull("location")) {
+                    put(CalendarContract.Events.EVENT_LOCATION, params.getString("location"))
+                }
+                if (params.has("recurrence") && !params.isNull("recurrence")) {
+                    put(CalendarContract.Events.RRULE, params.getString("recurrence"))
+                }
+                if (params.has("availability") && !params.isNull("availability")) {
+                    val availInt = when (params.getString("availability").lowercase()) {
+                        "busy" -> CalendarContract.Events.AVAILABILITY_BUSY
+                        "free" -> CalendarContract.Events.AVAILABILITY_FREE
+                        else -> CalendarContract.Events.AVAILABILITY_BUSY
+                    }
+                    put(CalendarContract.Events.AVAILABILITY, availInt)
+                }
+                if (params.has("access_level") && !params.isNull("access_level")) {
+                    val levelInt = when (params.getString("access_level").lowercase()) {
+                        "private" -> CalendarContract.Events.ACCESS_PRIVATE
+                        "public" -> CalendarContract.Events.ACCESS_PUBLIC
+                        else -> CalendarContract.Events.ACCESS_DEFAULT
+                    }
+                    put(CalendarContract.Events.ACCESS_LEVEL, levelInt)
+                }
+            }
+
+            val eventUri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+            if (eventUri != null) {
+                Log.i(TAG, "Calendar event inserted successfully: $eventUri")
+                JSONObject().apply {
+                    put("success", true)
+                    put("message", "Calendar event '$title' saved successfully")
+                    put("event_uri", eventUri.toString())
+                }
+            } else {
+                Log.e(TAG, "ContentProvider insert returned null URI")
+                JSONObject().apply {
+                    put("success", false)
+                    put("error", "Failed to insert calendar event - ContentProvider returned null")
+                }
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Calendar permission not granted", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Calendar permission not granted: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save calendar event via ContentProvider", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to save calendar event: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Find the first writable calendar on the device.
+     * Prefers the primary calendar; falls back to any writable calendar.
+     */
+    private fun getWritableCalendarId(): Long? {
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.IS_PRIMARY,
+            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME
+        )
+        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ?"
+        val selectionArgs = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
+
+        var primaryId: Long? = null
+        var firstWritableId: Long? = null
+
+        context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            projection, selection, selectionArgs, null
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
+            val primaryIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.IS_PRIMARY)
+            val nameIdx = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idIdx)
+                val isPrimary = cursor.getInt(primaryIdx) == 1
+                val name = cursor.getString(nameIdx)
+                Log.d(TAG, "Found writable calendar: id=$id, name=$name, primary=$isPrimary")
+
+                if (isPrimary && primaryId == null) {
+                    primaryId = id
+                }
+                if (firstWritableId == null) {
+                    firstWritableId = id
+                }
+            }
+        }
+
+        return primaryId ?: firstWritableId
+    }
 
     fun draftCalendarEvent(params: JSONObject): JSONObject {
         val title = params.getString("title")

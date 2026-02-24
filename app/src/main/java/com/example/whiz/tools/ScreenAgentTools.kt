@@ -127,11 +127,6 @@ class ScreenAgentTools @Inject constructor(
         val speakerphoneEnabled: Boolean = false
     )
 
-    data class SaveCalendarResult(
-        val success: Boolean,
-        val error: String? = null
-    )
-
     // ========== Phone Call Functions ==========
 
     /**
@@ -225,66 +220,6 @@ class ScreenAgentTools @Inject constructor(
             success = true,
             dialedNumber = displayedNumber,
             speakerphoneEnabled = speakerphoneEnabled
-        )
-    }
-
-    // ========== Calendar Save Function ==========
-
-    /**
-     * Press the Save button in Google Calendar via accessibility service.
-     * Verifies Google Calendar is in the foreground and clicks the save button.
-     */
-    suspend fun saveCalendarEvent(): SaveCalendarResult {
-        Log.i(TAG, "saveCalendarEvent called")
-
-        val accessibilityService = WhizAccessibilityService.getInstance()
-            ?: return SaveCalendarResult(
-                success = false,
-                error = "Accessibility service not enabled. Please enable it in settings."
-            )
-
-        // Wait for Google Calendar to be ready (it may still be loading)
-        for (attempt in 1..10) {
-            delay(500)
-            val rootNode = accessibilityService.getCurrentRootNode() ?: continue
-            try {
-                val currentPackage = rootNode.packageName?.toString() ?: ""
-                if (currentPackage != "com.google.android.calendar") {
-                    Log.d(TAG, "Save calendar attempt $attempt: not in Google Calendar ($currentPackage)")
-                    continue
-                }
-
-                // Find the Save button
-                val saveButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
-                    "com.google.android.calendar:id/save"
-                )
-                val saveButton = saveButtonNodes?.firstOrNull()
-                if (saveButton == null) {
-                    Log.d(TAG, "Save calendar attempt $attempt: Save button not found yet")
-                    saveButtonNodes?.forEach { it.recycle() }
-                    continue
-                }
-
-                val clicked = saveButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                Log.i(TAG, "Calendar Save button click result: $clicked (attempt $attempt)")
-                saveButtonNodes.forEach { it.recycle() }
-
-                if (!clicked) {
-                    return SaveCalendarResult(
-                        success = false,
-                        error = "Failed to click Save button"
-                    )
-                }
-
-                return SaveCalendarResult(success = true)
-            } finally {
-                rootNode.recycle()
-            }
-        }
-
-        return SaveCalendarResult(
-            success = false,
-            error = "Google Calendar not in foreground or Save button not found after waiting"
         )
     }
 

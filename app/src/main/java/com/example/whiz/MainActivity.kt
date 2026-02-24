@@ -77,6 +77,10 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
         @Volatile
         var requestContactsPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
+        @Volatile
+        var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -159,6 +163,25 @@ class MainActivity : ComponentActivity() {
         contactsPermissionOnDenied = null
     }
 
+    // Calendar permission launcher (on-demand, triggered by save calendar event)
+    private var calendarPermissionOnGranted: (() -> Unit)? = null
+    private var calendarPermissionOnDenied: (() -> Unit)? = null
+    private val showCalendarPermissionDialog = mutableStateOf(false)
+
+    private val requestCalendarPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d(TAG, "Calendar permission result: $isGranted")
+        showCalendarPermissionDialog.value = false
+        if (isGranted) {
+            calendarPermissionOnGranted?.invoke()
+        } else {
+            calendarPermissionOnDenied?.invoke()
+        }
+        calendarPermissionOnGranted = null
+        calendarPermissionOnDenied = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Handle wake word lock screen flags before super.onCreate()
         val fromWakeWord = intent?.getBooleanExtra("FROM_WAKE_WORD", false) ?: false
@@ -211,6 +234,14 @@ class MainActivity : ComponentActivity() {
             contactsPermissionOnGranted = onGranted
             contactsPermissionOnDenied = onDenied
             showContactsPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand calendar permission (used by save calendar event)
+        requestCalendarPermissionCallback = { onGranted, onDenied ->
+            Log.d(TAG, "requestCalendarPermissionCallback invoked - showing calendar permission dialog")
+            calendarPermissionOnGranted = onGranted
+            calendarPermissionOnDenied = onDenied
+            showCalendarPermissionDialog.value = true
         }
 
         setContent {
@@ -356,6 +387,21 @@ class MainActivity : ComponentActivity() {
                             },
                             onGrantPermission = {
                                 requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                            }
+                        )
+                    }
+
+                    // On-demand calendar permission dialog (triggered by save calendar event)
+                    if (showCalendarPermissionDialog.value) {
+                        com.example.whiz.ui.components.CalendarPermissionDialog(
+                            onDismiss = {
+                                showCalendarPermissionDialog.value = false
+                                calendarPermissionOnDenied?.invoke()
+                                calendarPermissionOnGranted = null
+                                calendarPermissionOnDenied = null
+                            },
+                            onGrantPermission = {
+                                requestCalendarPermissionLauncher.launch(Manifest.permission.WRITE_CALENDAR)
                             }
                         )
                     }
@@ -831,6 +877,7 @@ class MainActivity : ComponentActivity() {
         finishAndRemoveTaskCallback = null
         requestUnlockCallback = null
         requestContactsPermissionCallback = null
+        requestCalendarPermissionCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {

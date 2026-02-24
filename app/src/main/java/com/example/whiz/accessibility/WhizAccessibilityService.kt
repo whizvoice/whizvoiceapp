@@ -110,7 +110,48 @@ class WhizAccessibilityService : AccessibilityService() {
             sb.appendLine("Timestamp: ${System.currentTimeMillis()}")
             sb.appendLine("Package: $packageName")
             sb.appendLine("")
-            sb.appendLine("=== Node Tree ===")
+
+            // Search for "Save" by text (bypasses getChild() traversal)
+            sb.appendLine("=== findByText(\"Save\") results ===")
+            try {
+                val saveNodes = rootNode.findAccessibilityNodeInfosByText("Save")
+                if (saveNodes.isNullOrEmpty()) {
+                    sb.appendLine("  (none found)")
+                } else {
+                    saveNodes.forEach { node ->
+                        val bounds = android.graphics.Rect()
+                        node.getBoundsInScreen(bounds)
+                        sb.appendLine("  [${node.className}] id=${node.viewIdResourceName} text=\"${node.text}\" desc=\"${node.contentDescription}\" bounds=$bounds clickable=${node.isClickable} pkg=${node.packageName}")
+                        node.recycle()
+                    }
+                }
+            } catch (e: Exception) {
+                sb.appendLine("  Error: ${e.message}")
+            }
+            sb.appendLine("")
+
+            // Dump all accessibility windows (not just rootInActiveWindow)
+            sb.appendLine("=== All Accessibility Windows ===")
+            try {
+                val allWindows = windows
+                sb.appendLine("Window count: ${allWindows.size}")
+                allWindows.forEachIndexed { idx, window ->
+                    sb.appendLine("")
+                    sb.appendLine("--- Window $idx: id=${window.id} type=${window.type} layer=${window.layer} title=\"${window.title}\" ---")
+                    val windowRoot = window.root
+                    if (windowRoot != null) {
+                        AccessibilityDumpUtil.dumpNodeRecursive(windowRoot, sb, 1)
+                        windowRoot.recycle()
+                    } else {
+                        sb.appendLine("  (no root node)")
+                    }
+                }
+            } catch (e: Exception) {
+                sb.appendLine("  Error iterating windows: ${e.message}")
+            }
+            sb.appendLine("")
+
+            sb.appendLine("=== Node Tree (rootInActiveWindow) ===")
             AccessibilityDumpUtil.dumpNodeRecursive(rootNode, sb, 0)
 
             val fileName = "whiz_ui_dump_manual_${System.currentTimeMillis()}.txt"
@@ -210,6 +251,61 @@ class WhizAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Error clicking node", e)
             false
+        }
+    }
+
+    /**
+     * Performs a tap gesture at the specified screen coordinates.
+     * @param x X coordinate to tap
+     * @param y Y coordinate to tap
+     * @return true if the tap gesture was successfully dispatched
+     */
+    suspend fun performTapGesture(x: Float, y: Float): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.w(TAG, "Gesture dispatching requires API 24+")
+            return false
+        }
+
+        return suspendCancellableCoroutine { continuation ->
+            try {
+                val path = Path().apply {
+                    moveTo(x, y)
+                }
+
+                val gestureBuilder = GestureDescription.Builder()
+                val strokeDescription = GestureDescription.StrokeDescription(path, 0, 50)
+                gestureBuilder.addStroke(strokeDescription)
+                val gesture = gestureBuilder.build()
+
+                val callback = object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d(TAG, "Tap gesture completed at ($x, $y)")
+                        if (continuation.isActive) {
+                            continuation.resume(true)
+                        }
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.w(TAG, "Tap gesture cancelled at ($x, $y)")
+                        if (continuation.isActive) {
+                            continuation.resume(false)
+                        }
+                    }
+                }
+
+                val dispatched = dispatchGesture(gesture, callback, null)
+                if (!dispatched) {
+                    Log.e(TAG, "Failed to dispatch tap gesture at ($x, $y)")
+                    if (continuation.isActive) {
+                        continuation.resume(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error performing tap gesture at ($x, $y)", e)
+                if (continuation.isActive) {
+                    continuation.resume(false)
+                }
+            }
         }
     }
 
