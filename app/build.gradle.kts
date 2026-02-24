@@ -81,6 +81,9 @@ android {
         noCompress += listOf("pb", "scorer", "conf", "json")
     }
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             // Exclude MockK and JUnit conflicting files
@@ -168,7 +171,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
 
     // Data & Storage
-    implementation("androidx.datastore:datastore-preferences:1.1.5")
+    implementation("androidx.datastore:datastore-preferences:1.2.0")
     
     // Text diffing library (Google's diff-match-patch)
     implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
@@ -177,7 +180,7 @@ dependencies {
     implementation("org.commonmark:commonmark:0.24.0")
 
     // Wake word detection (Vosk offline speech recognition)
-    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("com.alphacephei:vosk-android:0.3.75")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
