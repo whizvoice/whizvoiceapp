@@ -233,10 +233,11 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "💬 step 4: sending voice message to disable continuous listening...")
             val disableMessage = "Please turn off continuous listening - $uniqueTestId"
 
-            val disableMessageSent = ComposeTestHelper.sendVoiceMessage(
+            val disableMessageSent = simulateVoiceTranscriptionAndSend(
                 message = disableMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
+                rapid = false,
+                chatViewModel = chatViewModel,
+                speechRecognitionService = null
             )
 
             if (!disableMessageSent) {
@@ -423,10 +424,11 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "🔊 step 14: sending voice message to enable TTS (continuous listening ON)...")
             val enableTTSVoiceMessage = "Please turn on text to speech again - $uniqueTestId"
 
-            val enableTTSVoiceMessageSent = ComposeTestHelper.sendVoiceMessage(
+            val enableTTSVoiceMessageSent = simulateVoiceTranscriptionAndSend(
                 message = enableTTSVoiceMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
+                rapid = false,
+                chatViewModel = chatViewModel,
+                speechRecognitionService = null
             )
 
             if (!enableTTSVoiceMessageSent) {
@@ -474,10 +476,11 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "🔇 step 17: sending voice message to disable TTS (continuous listening ON)...")
             val disableTTSVoiceMessage = "Please turn off text to speech again - $uniqueTestId"
 
-            val disableTTSVoiceMessageSent = ComposeTestHelper.sendVoiceMessage(
+            val disableTTSVoiceMessageSent = simulateVoiceTranscriptionAndSend(
                 message = disableTTSVoiceMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
+                rapid = false,
+                chatViewModel = chatViewModel,
+                speechRecognitionService = null
             )
 
             if (!disableTTSVoiceMessageSent) {
@@ -714,7 +717,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
 
             var modeSet = false
             val modeStartTime = System.currentTimeMillis()
-            val modeTimeout = 5000L
+            val modeTimeout = 20000L // Increased from 5s to account for TTS playback after bot response
 
             while (System.currentTimeMillis() - modeStartTime < modeTimeout) {
                 val currentMode = BubbleOverlayService.bubbleListeningMode

@@ -10,6 +10,7 @@ import com.example.whiz.services.AudioPipeRecorder
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
 import org.junit.Assert.*
+import org.junit.Assume
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,8 +45,8 @@ class AECIntegrationTest : BaseIntegrationTest() {
     @Test
     fun audioPipeRecorder_aecEnabledThroughLifecycle() {
         Log.d(TAG, "Verifying AEC is available on device")
-        assertTrue(
-            "AcousticEchoCanceler should be available on this device",
+        Assume.assumeTrue(
+            "AcousticEchoCanceler not available on this device — skipping test",
             AcousticEchoCanceler.isAvailable()
         )
 
