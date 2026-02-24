@@ -332,6 +332,24 @@ CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations
 CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Auto-update conversation last_message_time when a new message is inserted.
+-- This triggers the existing update_conversations_updated_at BEFORE UPDATE trigger,
+-- which also sets updated_at = NOW(), enabling incremental sync detection.
+CREATE OR REPLACE FUNCTION update_conversation_on_new_message()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE conversations
+    SET last_message_time = NOW()
+    WHERE id = NEW.conversation_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_conversation_timestamps_on_message_insert
+    AFTER INSERT ON messages
+    FOR EACH ROW
+    EXECUTE FUNCTION update_conversation_on_new_message();
+
 policies:
 
 CREATE POLICY "Users can view their own sync metadata" ON sync_metadata
