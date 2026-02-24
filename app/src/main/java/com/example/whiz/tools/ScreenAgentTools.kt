@@ -3834,9 +3834,8 @@ class ScreenAgentTools @Inject constructor(
             for (attempt in 1..5) {
                 modeRootNode = accessibilityService.getCurrentRootNode()
                 if (modeRootNode != null) {
-                    // Check for Start button
-                    val startNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByContentDesc(modeRootNode, "Start", startNodes)
+                    // Check for Start button using built-in search (no depth limit - Start button is at depth ~22)
+                    val startNodes = modeRootNode.findAccessibilityNodeInfosByText("Start")
                     hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
                     startNodes.forEach { it.recycle() }
 
@@ -3846,16 +3845,23 @@ class ScreenAgentTools @Inject constructor(
                         break
                     }
 
-                    // If no Start button, check for mode tabs (indicates we're on directions screen)
-                    val modeTabNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByResourceId(modeRootNode, "com.google.android.apps.maps:id/directions_mode_tabs", modeTabNodes)
-                    val hasModeTabs = modeTabNodes.isNotEmpty()
-                    modeTabNodes.forEach { it.recycle() }
+                    // If no Start button, check for mode tabs using built-in search (no depth limit)
+                    val modeTabNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+                    val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
+                    modeTabNodes?.forEach { it.recycle() }
 
                     if (hasModeTabs) {
-                        // Check what mode we're in - only break early for transit mode
-                        // For driving/walking/biking, the Start button should exist, so keep waiting
-                        val currentMode = findSelectedTransportMode(modeRootNode)
+                        // Check what mode we're in using built-in search (no depth limit)
+                        var currentMode: String? = null
+                        val allModeCheckNodes = modeRootNode.findAccessibilityNodeInfosByText("mode")
+                        for (modeNode in allModeCheckNodes) {
+                            val desc = modeNode.contentDescription?.toString()
+                            if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                                currentMode = desc.substringBefore(":").trim()
+                                break
+                            }
+                        }
+                        allModeCheckNodes.forEach { it.recycle() }
                         val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
 
                         if (isTransitMode) {
@@ -4556,23 +4562,46 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun clickGoogleMapsDirections(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
-        // Look for "Directions" button
-        val directionNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Directions", directionNodes)
+        // Use Android's built-in search (no depth limit) - the Directions button can be ~22 levels deep
+        val freshRoot = accessibilityService.getCurrentRootNode()
+        if (freshRoot == null) {
+            Log.w(TAG, "Could not get fresh root node for Directions button search")
+            return false
+        }
 
-        // Don't recycle nodes during iteration - recycling nodes that share the same
-        // underlying view hierarchy can cause issues when we need to try multiple nodes.
-        // Let the GC handle cleanup instead.
+        val directionNodes = freshRoot.findAccessibilityNodeInfosByText("Directions")
+        Log.d(TAG, "Found ${directionNodes.size} nodes matching 'Directions' via built-in search")
+
         for (node in directionNodes) {
-            val clickableNode = findClickableParent(node)
-            if (clickableNode != null) {
-                val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                if (clicked) {
-                    Log.d(TAG, "Clicked Directions button")
-                    return true
+            val desc = node.contentDescription?.toString() ?: ""
+            // Match the Directions button (content-desc starts with "Directions to") or text is "Directions"
+            if (desc.startsWith("Directions to", ignoreCase = true) || node.text?.toString() == "Directions") {
+                // If the node itself is clickable, click it directly
+                if (node.isClickable) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Directions button directly")
+                        directionNodes.forEach { it.recycle() }
+                        freshRoot.recycle()
+                        return true
+                    }
+                }
+                // Otherwise find clickable parent
+                val clickableNode = findClickableParent(node)
+                if (clickableNode != null) {
+                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickableNode.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Directions button via parent")
+                        directionNodes.forEach { it.recycle() }
+                        freshRoot.recycle()
+                        return true
+                    }
                 }
             }
         }
+        directionNodes.forEach { it.recycle() }
+        freshRoot.recycle()
 
         Log.w(TAG, "Could not find Directions button")
         return false
@@ -6922,7 +6951,7 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun findNodesByResourceId(node: AccessibilityNodeInfo, resourceId: String, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
-        if (depth > 15) return // Limit recursion depth
+        if (depth > 40) return // Limit recursion depth (Google Maps nests UI elements ~28 levels deep)
 
         try {
             // Check if this node matches the resource ID
