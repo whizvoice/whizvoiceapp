@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.cardview.widget.CardView
 import com.example.whiz.MainActivity
 import com.example.whiz.R
+import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -176,6 +177,8 @@ class BubbleOverlayService : Service() {
         Log.d(TAG, "BubbleOverlayService onCreate - setting isActive to true")
         isActive = true
         pendingStartTimestamp = 0L  // Clear pending flag now that we're actually active
+        // Clear transition flag - if we're entering bubble mode, any ViewModel transition is complete
+        ChatViewModel.isTransitioning = false
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 

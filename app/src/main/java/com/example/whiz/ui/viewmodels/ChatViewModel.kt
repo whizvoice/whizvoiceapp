@@ -61,9 +61,27 @@ class ChatViewModel @Inject constructor(
          * Flag to prevent old ChatViewModel from disabling continuous listening
          * when transitioning to a new chat via assistant long-press.
          * Set to true by AssistantActivity before launching MainActivity.
+         * Auto-expires after 5 seconds to prevent getting permanently stuck.
          */
+        private const val TRANSITION_TIMEOUT_MS = 5000L
         @Volatile
-        var isTransitioning = false
+        private var _isTransitioning = false
+        @Volatile
+        private var transitionStartTimeMs = 0L
+
+        var isTransitioning: Boolean
+            get() {
+                if (!_isTransitioning) return false
+                if (System.currentTimeMillis() - transitionStartTimeMs > TRANSITION_TIMEOUT_MS) {
+                    _isTransitioning = false
+                    return false
+                }
+                return true
+            }
+            set(value) {
+                _isTransitioning = value
+                if (value) transitionStartTimeMs = System.currentTimeMillis()
+            }
     }
 
     private val TAG = "ChatViewModel"
