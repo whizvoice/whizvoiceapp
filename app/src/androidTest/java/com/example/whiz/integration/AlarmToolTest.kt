@@ -19,6 +19,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import javax.inject.Inject
 import com.example.whiz.di.AppModule
+import com.example.whiz.services.BubbleOverlayService
+import kotlinx.coroutines.delay
 import java.util.Calendar
 
 /**
@@ -47,6 +49,7 @@ class AlarmToolTest : BaseIntegrationTest() {
     @Inject
     lateinit var repository: WhizRepository
 
+    private val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
     private val createdChatIds = mutableListOf<Long>()
     private val uniqueTestId = System.currentTimeMillis()
 
@@ -67,8 +70,22 @@ class AlarmToolTest : BaseIntegrationTest() {
     @After
     fun cleanup() {
         runBlocking {
-            Log.d(TAG, "cleaning up alarm test chats")
+            Log.d(TAG, "cleaning up alarm test")
             try {
+                // Stop bubble service if active (tool execution can trigger bubble mode)
+                if (BubbleOverlayService.isActive) {
+                    Log.d(TAG, "Stopping bubble service...")
+                    BubbleOverlayService.stop(instrumentation.targetContext)
+                    val startTime = System.currentTimeMillis()
+                    while (System.currentTimeMillis() - startTime < 1000L) {
+                        if (!BubbleOverlayService.isActive) {
+                            Log.d(TAG, "Bubble service stopped")
+                            break
+                        }
+                        delay(100)
+                    }
+                }
+
                 cleanupTestChats(
                     repository = repository,
                     trackedChatIds = createdChatIds,
