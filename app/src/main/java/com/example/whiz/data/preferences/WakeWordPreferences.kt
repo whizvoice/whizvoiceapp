@@ -98,6 +98,7 @@ class WakeWordPreferences @Inject constructor(
 
         editor.apply()
         writeStatsFile()
+        writeDetectionJsonl(phrase, confidence, accepted, now, rawJson)
     }
 
     /**
@@ -137,6 +138,46 @@ class WakeWordPreferences @Inject constructor(
             file.writeText(sb.toString())
         } catch (e: Exception) {
             Log.w("WakeWordPreferences", "Failed to write stats file", e)
+        }
+    }
+
+    /**
+     * Append a detection as a JSON line to wake_word_detections.jsonl in external storage.
+     * Keeps the file bounded to the most recent 50 lines.
+     */
+    private fun writeDetectionJsonl(
+        phrase: String,
+        confidence: Double,
+        accepted: Boolean,
+        timestamp: Long,
+        rawJson: String
+    ) {
+        try {
+            val dir = context.getExternalFilesDir(null) ?: return
+            val file = File(dir, "wake_word_detections.jsonl")
+
+            val line = JSONObject().apply {
+                put("phrase", phrase)
+                put("confidence", confidence)
+                put("accepted", accepted)
+                put("timestamp", timestamp)
+                // Parse rawJson so it's a proper nested object, not a double-escaped string
+                try {
+                    put("raw_json", JSONObject(rawJson))
+                } catch (e: Exception) {
+                    put("raw_json", rawJson)
+                }
+            }
+
+            file.appendText(line.toString() + "\n")
+
+            // Trim to most recent 50 lines
+            val lines = file.readLines()
+            if (lines.size > 50) {
+                file.writeText(lines.takeLast(50).joinToString("\n") + "\n")
+            }
+        } catch (e: Exception) {
+            Log.w("WakeWordPreferences", "Failed to write detection JSONL", e)
         }
     }
 
