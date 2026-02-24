@@ -288,7 +288,7 @@ class WakeWordService : Service() {
             }
 
             val accepted = confidence >= threshold
-            wakeWordPreferences.recordDetection(phraseKey, confidence, accepted)
+            wakeWordPreferences.recordDetection(phraseKey, confidence, accepted, jsonResult)
             val stats = wakeWordPreferences.getStats(phraseKey)
             Log.d(TAG, "Stats[$phraseKey]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.1f".format(stats.mean)}, stdDev=${"%.1f".format(stats.stdDev)}, last=${"%.1f".format(stats.lastConfidence)}")
 

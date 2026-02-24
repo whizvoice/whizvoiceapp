@@ -45,7 +45,7 @@ class WakeWordPreferences @Inject constructor(
      * @param confidence the Vosk confidence score
      * @param accepted whether it met the threshold
      */
-    fun recordDetection(phrase: String, confidence: Double, accepted: Boolean) {
+    fun recordDetection(phrase: String, confidence: Double, accepted: Boolean, rawJson: String) {
         val editor = prefs.edit()
 
         // Update count
@@ -88,6 +88,7 @@ class WakeWordPreferences @Inject constructor(
             put("confidence", confidence)
             put("accepted", accepted)
             put("timestamp", now)
+            put("raw_json", rawJson)
         }
         recentArray.put(entry)
         while (recentArray.length() > 10) {
@@ -127,6 +128,9 @@ class WakeWordPreferences @Inject constructor(
                     for (r in recent) {
                         val status = if (r.accepted) "ACCEPTED" else "REJECTED"
                         sb.appendLine("    ${"%.2f".format(r.confidence)} $status at ${df.format(Date(r.timestamp))}")
+                        if (r.rawJson.isNotEmpty()) {
+                            sb.appendLine("      vosk: ${r.rawJson}")
+                        }
                     }
                 }
             }
@@ -161,7 +165,8 @@ class WakeWordPreferences @Inject constructor(
     data class RecentDetection(
         val confidence: Double,
         val accepted: Boolean,
-        val timestamp: Long
+        val timestamp: Long,
+        val rawJson: String
     )
 
     fun getRecentDetections(phrase: String): List<RecentDetection> {
@@ -174,7 +179,8 @@ class WakeWordPreferences @Inject constructor(
             RecentDetection(
                 confidence = obj.getDouble("confidence"),
                 accepted = obj.getBoolean("accepted"),
-                timestamp = obj.getLong("timestamp")
+                timestamp = obj.getLong("timestamp"),
+                rawJson = obj.optString("raw_json", "")
             )
         }
     }
