@@ -3590,6 +3590,24 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                 }
+                GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL -> {
+                    Log.d(TAG, "On transit route detail, pressing back once to return to mode selection")
+                    rootNode.recycle()
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    val reachedDirections = waitForCondition(maxWaitMs = 3000) {
+                        val checkNode = accessibilityService.getCurrentRootNode()
+                        if (checkNode != null) {
+                            val state = detectGoogleMapsScreenState(checkNode)
+                            checkNode.recycle()
+                            state == GoogleMapsScreenState.DIRECTIONS_INPUT || state == GoogleMapsScreenState.LOCATION_DETAILS
+                        } else false
+                    }
+                    if (!reachedDirections) {
+                        Log.w(TAG, "Did not reach directions screen after back from transit route detail, pressing back once more")
+                        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                        delay(1500)
+                    }
+                }
                 GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
                     // We're on the search results list - need to select a result first
                     Log.d(TAG, "On search results list, selecting first non-sponsored result")
@@ -3677,6 +3695,10 @@ class ScreenAgentTools @Inject constructor(
                                 GoogleMapsScreenState.FILTERS_SCREEN -> {
                                     Log.d(TAG, "On Filters screen, pressing back again to close")
                                     // Continue the loop to press back again
+                                }
+                                GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL -> {
+                                    Log.d(TAG, "Now on transit route detail after pressing back")
+                                    break
                                 }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
@@ -4227,6 +4249,7 @@ class ScreenAgentTools @Inject constructor(
         ACTIVE_NAVIGATION,     // Turn-by-turn navigation is active
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
+        TRANSIT_ROUTE_DETAIL,  // Transit route detail screen (trip steps + "Start glanceable directions" button)
         UNKNOWN
     }
 
@@ -4257,6 +4280,17 @@ class ScreenAgentTools @Inject constructor(
             navContainerNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (nav_container found)")
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Check for transit route detail screen
+        // NOTE: trip_details_footer_layout also exists on the normal directions screen,
+        // but that case is already caught above by the directions_mode_tabs check (DIRECTIONS_INPUT).
+        // If we reach here, it means we have the footer but no mode tabs = transit route detail.
+        val tripDetailsFooterNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_details_footer_layout")
+        if (tripDetailsFooterNodes != null && tripDetailsFooterNodes.isNotEmpty()) {
+            tripDetailsFooterNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: TRANSIT_ROUTE_DETAIL (trip_details_footer_layout found, no directions_mode_tabs)")
+            return GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
         }
 
         // Check for search results list by looking for search_list_layout
