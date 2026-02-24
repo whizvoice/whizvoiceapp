@@ -4598,65 +4598,89 @@ class ScreenAgentTools @Inject constructor(
 
             // Only change mode if we have a valid modeText
             if (modeText != null) {
-                // First, check if the desired mode is already selected
-                val currentlySelected = findSelectedTransportMode(rootNode)
-                Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
-
-                // If the mode is not already selected, click it
-                if (currentlySelected != modeText) {
-                    val modeNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByContentDesc(rootNode, modeText, modeNodes)
-
-                    var modeChanged = false
-                    for (node in modeNodes) {
-                        val clickableNode = findClickableParent(node)
-                        if (clickableNode != null) {
-                            val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                            clickableNode.recycle()
-                            if (clicked) {
-                                Log.d(TAG, "Selected transport mode: $modeText")
-                                modeChanged = true
-                                break
-                            }
+                // Get a fresh root node from the accessibility service (the polling loop root may be stale)
+                val freshRoot = accessibilityService.getCurrentRootNode()
+                if (freshRoot == null) {
+                    Log.w(TAG, "Could not get fresh root node for transport mode selection")
+                } else {
+                    // Detect currently selected mode using built-in search (no depth limit)
+                    var currentlySelected: String? = null
+                    val allModeNodes = freshRoot.findAccessibilityNodeInfosByText("mode")
+                    for (modeNode in allModeNodes) {
+                        val desc = modeNode.contentDescription?.toString()
+                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                            currentlySelected = desc.substringBefore(":").trim()
+                            break
                         }
                     }
-                    modeNodes.forEach { it.recycle() }
+                    allModeNodes.forEach { it.recycle() }
+                    Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
 
-                    if (!modeChanged && currentlySelected != modeText) {
-                        Log.w(TAG, "Could not change transport mode to: $modeText")
-                        // Continue anyway - might already be on correct mode
-                    }
+                    // If the mode is not already selected, click it
+                    if (currentlySelected != modeText) {
+                        // Use Android's built-in findAccessibilityNodeInfosByText (searches both text and content-description, no depth limit)
+                        val modeNodes = freshRoot.findAccessibilityNodeInfosByText(modeText)
+                        Log.d(TAG, "Found ${modeNodes.size} nodes matching '$modeText' via built-in search")
 
-                    // Wait for mode change to complete
-                    if (modeChanged) {
-                        Thread.sleep(500)
+                        var modeChanged = false
+                        for (node in modeNodes) {
+                            val desc = node.contentDescription?.toString()
+                            if (desc != null && desc.contains(modeText, ignoreCase = true)) {
+                                val clickableNode = findClickableParent(node)
+                                if (clickableNode != null) {
+                                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    clickableNode.recycle()
+                                    if (clicked) {
+                                        Log.d(TAG, "Selected transport mode: $modeText")
+                                        modeChanged = true
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                        modeNodes.forEach { it.recycle() }
+
+                        if (!modeChanged && currentlySelected != modeText) {
+                            Log.w(TAG, "Could not change transport mode to: $modeText")
+                            // Continue anyway - might already be on correct mode
+                        }
+
+                        // Wait for mode change to complete
+                        if (modeChanged) {
+                            Thread.sleep(500)
+                        }
                     }
+                    freshRoot.recycle()
                 }
             }
         }
 
-        // Now click the Start button
-        val startNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByContentDesc(rootNode, "Start", startNodes)
+        // Now click the Start button using built-in search (no depth limit)
+        val freshStartRoot = accessibilityService.getCurrentRootNode()
+        if (freshStartRoot != null) {
+            val startNodes = freshStartRoot.findAccessibilityNodeInfosByText("Start")
 
-        for (node in startNodes) {
-            if (node.isClickable && node.className == "android.widget.Button") {
-                val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                node.recycle()
-                if (clicked) {
-                    Log.d(TAG, "Clicked Start button")
-                    startNodes.forEach { it.recycle() }
+            for (node in startNodes) {
+                if (node.isClickable && node.className == "android.widget.Button") {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    node.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Start button")
+                        startNodes.forEach { it.recycle() }
+                        freshStartRoot.recycle()
 
-                    // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
-                    dismissStartThisTripDialog(accessibilityService)
+                        // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
+                        dismissStartThisTripDialog(accessibilityService)
 
-                    // Check for and dismiss welcome popup (no wait needed - detect by text)
-                    dismissGoogleMapsWelcomePopup(accessibilityService)
+                        // Check for and dismiss welcome popup (no wait needed - detect by text)
+                        dismissGoogleMapsWelcomePopup(accessibilityService)
 
-                    return true
+                        return true
+                    }
                 }
+                node.recycle()
             }
-            node.recycle()
+            freshStartRoot.recycle()
         }
 
         Log.w(TAG, "Could not find or click Start button")
