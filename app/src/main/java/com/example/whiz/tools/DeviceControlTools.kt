@@ -159,6 +159,8 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             context.startActivity(intent)
+            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            BubbleOverlayService.start(context)
             JSONObject().apply {
                 put("success", true)
                 put("message", "Alarm dismissed")
@@ -526,31 +528,35 @@ class DeviceControlTools @Inject constructor(
 
         // --- Helper: click SHOW on snackbar, then dismiss ---
         suspend fun clickShowThenDismiss(): JSONObject {
-            val root = accessibilityService.getCurrentRootNode()
-            if (root != null) {
-                val showButtons = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_ACTION)
-                if (showButtons != null && showButtons.isNotEmpty()) {
-                    val showBtn = showButtons.first()
-                    val clicked = accessibilityService.clickNode(showBtn)
-                    Log.i(TAG, "Clicked SHOW snackbar button: $clicked")
-                    showButtons.forEach { it.recycle() }
-                    root.recycle()
-                    if (!clicked) {
-                        return JSONObject().apply {
-                            put("success", false)
-                            put("error", "Found AMdroid SHOW button but failed to click it")
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 3000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                val root = accessibilityService.getCurrentRootNode()
+                if (root != null) {
+                    val showButtons = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_ACTION)
+                    if (showButtons != null && showButtons.isNotEmpty()) {
+                        val showBtn = showButtons.first()
+                        val clicked = accessibilityService.clickNode(showBtn)
+                        Log.i(TAG, "Clicked SHOW snackbar button: $clicked")
+                        showButtons.forEach { it.recycle() }
+                        root.recycle()
+                        if (clicked) {
+                            // Wait for full-screen alarm view, then click dismiss
+                            delay(500)
+                            return clickDismissButton()
                         }
+                        // Click failed, retry after a short wait
+                        delay(300)
+                        continue
                     }
-                    // Wait for full-screen alarm view, then click dismiss
-                    delay(500)
-                    return clickDismissButton()
+                    showButtons?.forEach { it.recycle() }
+                    root.recycle()
                 }
-                showButtons?.forEach { it.recycle() }
-                root.recycle()
+                delay(300)
             }
             return JSONObject().apply {
                 put("success", false)
-                put("error", "AMdroid SHOW snackbar button not found")
+                put("error", "AMdroid SHOW snackbar button not found or not clickable")
             }
         }
 
@@ -593,6 +599,8 @@ class DeviceControlTools @Inject constructor(
             }
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(launchIntent)
+            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            BubbleOverlayService.start(context)
 
             val waitStart = System.currentTimeMillis()
             val waitTimeout = 5000L
