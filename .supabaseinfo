@@ -91,6 +91,31 @@ screen_agent_context | jsonb | optional extra debug info
 
 This table stores UI hierarchy dumps captured when the screen agent encounters navigation failures, used for debugging and improving screen agent code.
 
+wake_word_audio_clips table:
+
+id | int8
+created_at | timestamp with time zone | now()
+user_id | text | foreign key to users.user_id
+phrase | text | NOT NULL | e.g. 'hey_whiz'
+confidence | double precision | NOT NULL | Vosk confidence score
+accepted | boolean | NOT NULL | whether detection met the threshold
+detection_timestamp | int8 | NOT NULL | epoch millis when detection fired
+raw_vosk_json | text | full Vosk JSON result
+storage_path | text | NOT NULL | path in Supabase Storage bucket 'wake-word-audio'
+file_size_bytes | integer | WAV file size
+
+This table stores metadata for wake word detection audio clips. The actual WAV files are stored in the Supabase Storage bucket 'wake-word-audio'. Both accepted and rejected detections are captured for training data.
+
+This table has indexes:
+- idx_ww_audio_user on wake_word_audio_clips(user_id)
+- idx_ww_audio_created on wake_word_audio_clips(created_at DESC)
+
+policies:
+
+CREATE POLICY "Service role full access" ON wake_word_audio_clips FOR ALL USING (true) WITH CHECK (true);
+
+Use `whizvoice/export_wake_word_audio.py` to download all clips to local disk and purge from Supabase.
+
 This table has indexes:
 - idx_ui_dumps_user_id on screen_agent_ui_dumps(user_id)
 - idx_ui_dumps_dump_reason on screen_agent_ui_dumps(dump_reason)

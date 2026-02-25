@@ -2,13 +2,17 @@ package com.example.whiz.data.api
 
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.DELETE
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import android.util.Log
 import com.google.gson.annotations.SerializedName
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 
 interface ApiService {
     data class TokenUpdateRequest(
@@ -204,4 +208,21 @@ interface ApiService {
 
     @POST("/api/ui-dumps")
     suspend fun uploadUiDump(@Body request: UiDumpCreate): UiDumpResponse
+
+    // ========== WAKE WORD AUDIO ENDPOINTS ==========
+    data class WakeWordAudioResponse(
+        val id: Long,
+        @SerializedName("created_at") val createdAt: String
+    )
+
+    @Multipart
+    @POST("/api/wake-word-audio")
+    suspend fun uploadWakeWordAudio(
+        @Part file: MultipartBody.Part,
+        @Part("phrase") phrase: RequestBody,
+        @Part("confidence") confidence: RequestBody,
+        @Part("accepted") accepted: RequestBody,
+        @Part("timestamp") timestamp: RequestBody,
+        @Part("raw_vosk_json") rawVoskJson: RequestBody
+    ): WakeWordAudioResponse
 } 

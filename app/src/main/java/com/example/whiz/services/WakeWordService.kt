@@ -19,8 +19,13 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.whiz.AssistantActivity
 import com.example.whiz.R
+import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import dagger.hilt.android.AndroidEntryPoint
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,6 +52,12 @@ class WakeWordService : Service() {
         private const val DETECTION_COOLDOWN_MS = 5000L
         private const val WAKE_WORD_CONFIDENCE_THRESHOLD_HEY = 95.0
 
+        // Ring buffer: 3 seconds of 16kHz mono 16-bit PCM = 96000 bytes
+        private const val RING_BUFFER_SECONDS = 3
+        private const val RING_BUFFER_SIZE = RING_BUFFER_SECONDS * SAMPLE_RATE * 2
+        private const val MAX_AUDIO_FILES = 500
+        private const val MAX_AUDIO_DIR_BYTES = 50L * 1024 * 1024 // 50MB
+
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "en-us-0.22-lgraph"
@@ -72,7 +83,11 @@ class WakeWordService : Service() {
     @Inject
     lateinit var wakeWordPreferences: WakeWordPreferences
 
+    @Inject
+    lateinit var apiService: ApiService
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var audioRingBuffer: AudioRingBuffer? = null
     private var detectionJob: Job? = null
     private var audioRecord: AudioRecord? = null
     private var voskModel: Model? = null
@@ -209,6 +224,8 @@ class WakeWordService : Service() {
                 audioRecord?.startRecording()
                 Log.d(TAG, "Detection loop started")
 
+                audioRingBuffer = AudioRingBuffer(RING_BUFFER_SIZE)
+
                 val buffer = ByteArray(bufferSize)
                 var frameCount = 0L
                 var lastHeartbeatTime = System.currentTimeMillis()
@@ -251,6 +268,9 @@ class WakeWordService : Service() {
                         continue
                     }
 
+                    // Feed audio to ring buffer for detection clip capture
+                    audioRingBuffer?.write(buffer, 0, bytesRead)
+
                     frameCount++
                     val now = System.currentTimeMillis()
                     if (now - lastHeartbeatTime >= 10_000) {
@@ -291,6 +311,9 @@ class WakeWordService : Service() {
             wakeWordPreferences.recordDetection(phraseKey, confidence, accepted, jsonResult)
             val stats = wakeWordPreferences.getStats(phraseKey)
             Log.d(TAG, "Stats[$phraseKey]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.1f".format(stats.mean)}, stdDev=${"%.1f".format(stats.stdDev)}, last=${"%.1f".format(stats.lastConfidence)}")
+
+            // Capture audio clip for this detection
+            captureDetectionAudio(phraseKey, confidence, accepted, jsonResult)
 
             if (accepted) {
                 Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence, threshold=$threshold)")
@@ -345,6 +368,7 @@ class WakeWordService : Service() {
         audioManager?.unregisterAudioRecordingCallback(recordingCallback)
         detectionJob?.cancel()
         detectionJob = null
+        audioRingBuffer = null
         try {
             audioRecord?.let {
                 if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -400,6 +424,162 @@ class WakeWordService : Service() {
             wakeLock = null
         } catch (e: Exception) {
             Log.w(TAG, "Error releasing wake lock", e)
+        }
+    }
+
+    // ========== AUDIO CLIP CAPTURE ==========
+
+    /**
+     * Fixed-size circular byte buffer for retaining recent audio samples.
+     * Only used from the single audio read coroutine — not thread-safe.
+     */
+    private class AudioRingBuffer(private val capacity: Int) {
+        private val buffer = ByteArray(capacity)
+        private var writePos = 0
+        private var totalWritten = 0L
+
+        fun write(data: ByteArray, offset: Int, length: Int) {
+            var remaining = length
+            var srcOffset = offset
+            while (remaining > 0) {
+                val chunk = minOf(remaining, capacity - writePos)
+                System.arraycopy(data, srcOffset, buffer, writePos, chunk)
+                writePos = (writePos + chunk) % capacity
+                srcOffset += chunk
+                remaining -= chunk
+            }
+            totalWritten += length
+        }
+
+        /** Returns buffer contents in chronological order. */
+        fun snapshot(): ByteArray {
+            val available = minOf(totalWritten, capacity.toLong()).toInt()
+            if (available == 0) return ByteArray(0)
+
+            val result = ByteArray(available)
+            if (totalWritten < capacity) {
+                System.arraycopy(buffer, 0, result, 0, available)
+            } else {
+                val tailLen = capacity - writePos
+                System.arraycopy(buffer, writePos, result, 0, tailLen)
+                System.arraycopy(buffer, 0, result, tailLen, writePos)
+            }
+            return result
+        }
+    }
+
+    private fun captureDetectionAudio(
+        phrase: String,
+        confidence: Double,
+        accepted: Boolean,
+        rawVoskJson: String
+    ) {
+        val pcmSnapshot = audioRingBuffer?.snapshot()
+        if (pcmSnapshot == null || pcmSnapshot.isEmpty()) return
+
+        try {
+            val timestamp = System.currentTimeMillis()
+            val confStr = "%.0f".format(confidence)
+            val audioDir = File(getExternalFilesDir(null), "wake_word_audio")
+            audioDir.mkdirs()
+            val wavFile = File(audioDir, "detection_${timestamp}_${confStr}.wav")
+            saveWavFile(pcmSnapshot, wavFile)
+            Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM)")
+            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson)
+            enforceAudioStorageCap(audioDir)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save detection audio", e)
+        }
+    }
+
+    private fun saveWavFile(pcmData: ByteArray, file: File) {
+        val totalDataLen = pcmData.size + 36
+        val sampleRate = SAMPLE_RATE
+        val channels = 1
+        val bitsPerSample = 16
+        val byteRate = sampleRate * channels * bitsPerSample / 8
+
+        FileOutputStream(file).use { fos ->
+            fos.write("RIFF".toByteArray())
+            fos.write(intToByteArrayLE(totalDataLen))
+            fos.write("WAVE".toByteArray())
+            fos.write("fmt ".toByteArray())
+            fos.write(intToByteArrayLE(16)) // Sub-chunk size
+            fos.write(shortToByteArrayLE(1)) // PCM format
+            fos.write(shortToByteArrayLE(channels.toShort()))
+            fos.write(intToByteArrayLE(sampleRate))
+            fos.write(intToByteArrayLE(byteRate))
+            fos.write(shortToByteArrayLE((channels * bitsPerSample / 8).toShort()))
+            fos.write(shortToByteArrayLE(bitsPerSample.toShort()))
+            fos.write("data".toByteArray())
+            fos.write(intToByteArrayLE(pcmData.size))
+            fos.write(pcmData)
+        }
+    }
+
+    private fun intToByteArrayLE(value: Int): ByteArray = byteArrayOf(
+        (value and 0xFF).toByte(),
+        (value shr 8 and 0xFF).toByte(),
+        (value shr 16 and 0xFF).toByte(),
+        (value shr 24 and 0xFF).toByte()
+    )
+
+    private fun shortToByteArrayLE(value: Short): ByteArray = byteArrayOf(
+        (value.toInt() and 0xFF).toByte(),
+        (value.toInt() shr 8 and 0xFF).toByte()
+    )
+
+    private fun uploadWakeWordAudio(
+        wavFile: File,
+        phrase: String,
+        confidence: Double,
+        accepted: Boolean,
+        rawVoskJson: String
+    ) {
+        serviceScope.launch {
+            try {
+                val filePart = MultipartBody.Part.createFormData(
+                    "file",
+                    wavFile.name,
+                    wavFile.asRequestBody("audio/wav".toMediaType())
+                )
+                val textType = "text/plain".toMediaType()
+
+                apiService.uploadWakeWordAudio(
+                    file = filePart,
+                    phrase = phrase.toRequestBody(textType),
+                    confidence = confidence.toString().toRequestBody(textType),
+                    accepted = accepted.toString().toRequestBody(textType),
+                    timestamp = System.currentTimeMillis().toString().toRequestBody(textType),
+                    rawVoskJson = rawVoskJson.toRequestBody(textType)
+                )
+                wavFile.delete()
+                Log.d(TAG, "Uploaded and deleted wake word audio: ${wavFile.name}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to upload wake word audio (kept locally): ${e.message}")
+            }
+        }
+    }
+
+    private fun enforceAudioStorageCap(audioDir: File) {
+        try {
+            val files = audioDir.listFiles { f -> f.extension == "wav" }
+                ?.sortedBy { it.lastModified() } ?: return
+
+            var filesToDelete = files.size - MAX_AUDIO_FILES
+            var totalSize = files.sumOf { it.length() }
+
+            for (file in files) {
+                if (filesToDelete <= 0 && totalSize <= MAX_AUDIO_DIR_BYTES) break
+                val size = file.length()
+                if (file.delete()) {
+                    filesToDelete--
+                    totalSize -= size
+                    Log.d(TAG, "Deleted old audio file: ${file.name}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error enforcing audio storage cap", e)
         }
     }
 
