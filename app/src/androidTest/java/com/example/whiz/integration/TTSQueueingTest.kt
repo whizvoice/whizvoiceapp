@@ -396,8 +396,6 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 capturedViewModel = vm
             }
 
-            Thread.sleep(1000)
-
             // Navigate to new chat
             Log.d(TAG, "📱 Navigating to new chat...")
             if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
@@ -419,8 +417,26 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ App launched and ViewModel captured")
 
-            // Step 2: Send 2 messages and wait for responses (builds conversation history)
-            Log.d(TAG, "💬 Step 2: Sending 2 messages to build conversation...")
+            // Step 2: Enable TTS, continuous listening, and test mode BEFORE sending messages
+            // so the assistant's response to the 2nd message triggers TTS naturally
+            Log.d(TAG, "🔊 Step 2: Enabling TTS, continuous listening, and test mode...")
+            instrumentation.runOnMainSync {
+                capturedViewModel?.let { vm ->
+                    if (!vm.isVoiceResponseEnabled.value) {
+                        vm.toggleVoiceResponse()
+                        Log.d(TAG, "✅ TTS/voice response enabled")
+                    }
+                    if (!voiceManager.isContinuousListeningEnabled.value) {
+                        vm.toggleSpeechRecognition()
+                        Log.d(TAG, "✅ Continuous listening enabled")
+                    }
+                }
+            }
+            speechRecognitionService.enableTestMode()
+            Log.d(TAG, "✅ Speech recognition test mode enabled")
+
+            // Step 3: Send 2 messages — the assistant's response will trigger TTS
+            Log.d(TAG, "💬 Step 3: Sending 2 messages to build conversation...")
             val setupMessages = listOf(
                 "This is a barge-in test - ${System.currentTimeMillis()} . I'm really interested in space.",
                 "Can you tell me about Mars in 30 words exactly? - ${System.currentTimeMillis()}"
@@ -448,40 +464,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Voice message sent and displayed: '$message'")
             }
 
-            Log.d(TAG, "✅ Setup messages sent successfully")
+            Log.d(TAG, "✅ Messages sent, waiting for TTS to start from assistant response...")
 
-            // Step 3: Enable TTS and continuous listening
-            Log.d(TAG, "🔊 Step 3: Enabling TTS and continuous listening...")
-            instrumentation.runOnMainSync {
-                capturedViewModel?.let { vm ->
-                    if (!vm.isVoiceResponseEnabled.value) {
-                        vm.toggleVoiceResponse()
-                        Log.d(TAG, "✅ TTS/voice response enabled")
-                    }
-                    if (!voiceManager.isContinuousListeningEnabled.value) {
-                        vm.toggleSpeechRecognition()
-                        Log.d(TAG, "✅ Continuous listening enabled")
-                    }
-                }
-            }
-
-            delay(500)
-
-            // Step 4: Send a 3rd message and wait for TTS to start playing
-            Log.d(TAG, "💬 Step 4: Sending 3rd message to trigger TTS...")
-            val triggerMessage = "Tell me something interesting about Jupiter in exactly 50 words. - ${System.currentTimeMillis()}"
-            val messageSent = ComposeTestHelper.sendVoiceMessage(
-                message = triggerMessage,
-                voiceManager = voiceManager,
-                composeTestRule = composeTestRule
-            )
-
-            if (!messageSent) {
-                failWithScreenshot("bargein_trigger_not_sent", "Trigger message not sent")
-                return@runBlocking
-            }
-
-            // Wait for TTS to start playing
+            // Step 4: Wait for TTS to start playing (from the assistant's response)
             Log.d(TAG, "🔊 Waiting for TTS to start playing...")
             var ttsStarted = false
             val ttsWaitStart = System.currentTimeMillis()
@@ -502,16 +487,12 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 throw AssertionError("TTS should have started playing for the assistant's response")
             }
 
-            // Step 5: Enable test mode
-            Log.d(TAG, "🎤 Step 5: Enabling test mode for speech recognition...")
-            speechRecognitionService.enableTestMode()
-
-            // Step 6: Trigger barge-in — simulate user starting to speak during TTS
-            Log.d(TAG, "🎤 Step 6: Triggering barge-in (simulating user starting to speak)...")
+            // Step 5: Trigger barge-in — simulate user starting to speak during TTS
+            Log.d(TAG, "🎤 Step 5: Triggering barge-in (simulating user starting to speak)...")
             speechRecognitionService.testTriggerBeginningOfSpeech()
 
-            // Step 7: Assert TTS stops within ~1s
-            Log.d(TAG, "🔊 Step 7: Verifying TTS stops after barge-in...")
+            // Step 6: Assert TTS stops within ~1s
+            Log.d(TAG, "🔊 Step 6: Verifying TTS stops after barge-in...")
             var ttsStopped = false
             val stopWaitStart = System.currentTimeMillis()
             val stopWaitTimeout = 1000L
@@ -531,15 +512,15 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 throw AssertionError("TTS should stop when user starts speaking (barge-in)")
             }
 
-            // Step 8: Assert listening stays active
+            // Step 7: Assert listening stays active
             val isListeningNow = voiceManager.isListening.value
-            Log.d(TAG, "🎤 Step 8: Checking listening state: isListening=$isListeningNow")
+            Log.d(TAG, "🎤 Step 7: Checking listening state: isListening=$isListeningNow")
             if (!isListeningNow) {
                 Log.w(TAG, "⚠️ Listening not active after barge-in (may be expected if not full-duplex)")
             }
 
-            // Step 9: Inject partial transcriptions word-by-word — verify TTS stays stopped
-            Log.d(TAG, "🎤 Step 9: Sending partial transcriptions after barge-in...")
+            // Step 8: Inject partial transcriptions word-by-word — verify TTS stays stopped
+            Log.d(TAG, "🎤 Step 8: Sending partial transcriptions after barge-in...")
             val userMessage = "Actually I want to know about Saturn instead"
             val words = userMessage.split(" ")
             var partialText = ""
@@ -560,8 +541,8 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ All partials sent, TTS stayed stopped")
 
-            // Step 10: Send final transcription — verify user's message appears in chat
-            Log.d(TAG, "📤 Step 10: Sending final transcription...")
+            // Step 9: Send final transcription — verify user's message appears in chat
+            Log.d(TAG, "📤 Step 9: Sending final transcription...")
             speechRecognitionService.testSendFinalTranscription(userMessage)
 
             val userMessageAppeared = ComposeTestHelper.waitForElement(
@@ -577,7 +558,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ User's barge-in message appeared in chat: '$userMessage'")
 
-            // Step 11: Verify pendingTTSMessage was cleared (no stale TTS restart)
+            // Step 10: Verify pendingTTSMessage was cleared (no stale TTS restart)
             val pendingTTS = capturedViewModel?.let {
                 // Access pendingTTSMessage via reflection since it's private
                 try {
