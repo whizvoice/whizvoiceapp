@@ -3858,7 +3858,20 @@ class ScreenAgentTools @Inject constructor(
                 if (modeRootNode != null) {
                     // Check for Start button using built-in search (no depth limit - Start button is at depth ~22)
                     val startNodes = modeRootNode.findAccessibilityNodeInfosByText("Start")
-                    hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
+                    hasStartButton = startNodes.any { node ->
+                        if (node.isClickable && node.className == "android.widget.Button") {
+                            true
+                        } else {
+                            // The Start button may have text="" with desc="Start", and its child View
+                            // has text="Start" but is not clickable. Check if the parent is a clickable Button.
+                            val parent = node.parent
+                            val parentMatch = parent != null && parent.isClickable &&
+                                parent.className == "android.widget.Button" &&
+                                parent.contentDescription?.toString()?.equals("Start") == true
+                            parent?.recycle()
+                            parentMatch
+                        }
+                    }
                     startNodes.forEach { it.recycle() }
 
                     if (hasStartButton) {
@@ -4725,6 +4738,7 @@ class ScreenAgentTools @Inject constructor(
 
             for (node in startNodes) {
                 if (node.isClickable && node.className == "android.widget.Button") {
+                    // Direct match - clickable Button with "Start" text
                     val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     node.recycle()
                     if (clicked) {
@@ -4739,6 +4753,26 @@ class ScreenAgentTools @Inject constructor(
                         dismissGoogleMapsWelcomePopup(accessibilityService)
 
                         return true
+                    }
+                } else if (node.text?.toString() == "Start" || node.contentDescription?.toString() == "Start") {
+                    // Child View with text="Start" but not clickable - find clickable parent Button
+                    val clickableParent = findClickableParent(node)
+                    if (clickableParent != null && clickableParent.contentDescription?.toString() == "Start") {
+                        val clicked = clickableParent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickableParent.recycle()
+                        if (clicked) {
+                            Log.d(TAG, "Clicked Start button via clickable parent")
+                            node.recycle()
+                            startNodes.forEach { it.recycle() }
+                            freshStartRoot.recycle()
+
+                            dismissStartThisTripDialog(accessibilityService)
+                            dismissGoogleMapsWelcomePopup(accessibilityService)
+
+                            return true
+                        }
+                    } else {
+                        clickableParent?.recycle()
                     }
                 }
                 node.recycle()
