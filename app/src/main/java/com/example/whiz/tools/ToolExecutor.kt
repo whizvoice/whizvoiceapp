@@ -220,16 +220,22 @@ class ToolExecutor @Inject constructor(
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setTimer(it) }
                     }
                     "agent_dismiss_alarm" -> {
-                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissAlarm() }
+                        executeDismissAlarm(requestId)
                     }
                     "agent_dismiss_timer" -> {
-                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissTimer() }
+                        executeDismissTimer(requestId)
+                    }
+                    "agent_stop_ringing" -> {
+                        executeStopRinging(requestId)
                     }
                     "agent_get_next_alarm" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.getNextAlarm() }
                     }
                     "agent_delete_alarm" -> {
                         executeDeleteAlarm(requestId, params)
+                    }
+                    "agent_dismiss_amdroid_alarm" -> {
+                        executeDismissAmdroidAlarm(requestId)
                     }
                     "agent_toggle_flashlight" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.toggleFlashlight(it) }
@@ -1586,6 +1592,118 @@ class ToolExecutor @Inject constructor(
     }
 
     /**
+     * Dismiss a currently ringing alarm via ACTION_DISMISS_ALARM, with audio verification.
+     */
+    private suspend fun executeDismissAlarm(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_dismiss_alarm")
+            val resultJson = deviceControlTools.dismissAlarm()
+            Log.i(TAG, "[TOOL_RESULT] agent_dismiss_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_alarm",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_dismiss_alarm", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_alarm",
+                    requestId = requestId,
+                    error = "Failed to dismiss alarm: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Dismiss a currently ringing timer via ACTION_DISMISS_TIMER, with audio verification.
+     */
+    private suspend fun executeDismissTimer(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_dismiss_timer")
+            val resultJson = deviceControlTools.dismissTimer()
+            Log.i(TAG, "[TOOL_RESULT] agent_dismiss_timer result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_timer",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_dismiss_timer", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_timer",
+                    requestId = requestId,
+                    error = "Failed to dismiss timer: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Stop any currently ringing alarm or timer by trying all dismiss methods.
+     */
+    private suspend fun executeStopRinging(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_stop_ringing")
+            val resultJson = deviceControlTools.stopRinging()
+            Log.i(TAG, "[TOOL_RESULT] agent_stop_ringing result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_stop_ringing",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_stop_ringing", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_stop_ringing",
+                    requestId = requestId,
+                    error = "Failed to stop ringing: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Dismiss a currently ringing AMdroid alarm via accessibility UI automation.
+     */
+    private suspend fun executeDismissAmdroidAlarm(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_dismiss_amdroid_alarm")
+            val resultJson = deviceControlTools.dismissAmdroidAlarm()
+            Log.i(TAG, "[TOOL_RESULT] agent_dismiss_amdroid_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_amdroid_alarm",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_dismiss_amdroid_alarm", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_amdroid_alarm",
+                    requestId = requestId,
+                    error = "Failed to dismiss AMdroid alarm: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
      * Generic executor for device control tools (direct intents/APIs).
      * These are synchronous and don't require accessibility service.
      */
@@ -1621,7 +1739,7 @@ class ToolExecutor @Inject constructor(
 
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_get_next_alarm", "agent_delete_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_stop_ringing", "agent_get_next_alarm", "agent_delete_alarm", "agent_dismiss_amdroid_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

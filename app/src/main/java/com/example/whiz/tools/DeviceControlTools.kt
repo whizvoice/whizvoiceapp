@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.hardware.camera2.CameraManager
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -150,18 +151,49 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
-    fun dismissAlarm(): JSONObject {
+    private fun isAlarmAudioPlaying(): Boolean {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return audioManager.getActivePlaybackConfigurations().any { config ->
+            config.audioAttributes.usage == AudioAttributes.USAGE_ALARM
+        }
+    }
+
+    suspend fun dismissAlarm(): JSONObject {
         Log.i(TAG, "Dismissing alarm")
 
+        // Check if alarm audio is currently playing
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No alarm audio detected before dismiss attempt")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "No alarm is currently ringing")
+            }
+        }
+
+        Log.i(TAG, "Alarm audio detected, firing ACTION_DISMISS_ALARM")
         val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         return try {
             context.startActivity(intent)
+
+            // Poll up to ~1s to see if alarm audio stopped
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Alarm audio stopped after dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Alarm dismissed")
+                    }
+                }
+            }
+
+            Log.w(TAG, "Alarm audio still playing after dismiss attempt")
             JSONObject().apply {
-                put("success", true)
-                put("message", "Alarm dismissed")
+                put("success", false)
+                put("error", "Failed to dismiss alarm — it may not be from the standard Clock app")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dismiss alarm", e)
@@ -172,18 +204,42 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
-    fun dismissTimer(): JSONObject {
+    suspend fun dismissTimer(): JSONObject {
         Log.i(TAG, "Dismissing timer")
 
+        // Check if alarm audio is currently playing (timers also use USAGE_ALARM)
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No timer audio detected before dismiss attempt")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "No timer is currently ringing")
+            }
+        }
+
+        Log.i(TAG, "Timer audio detected, firing ACTION_DISMISS_TIMER")
         val intent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         return try {
             context.startActivity(intent)
+
+            // Poll up to ~1s to see if timer audio stopped
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Timer audio stopped after dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Timer dismissed")
+                    }
+                }
+            }
+
+            Log.w(TAG, "Timer audio still playing after dismiss attempt")
             JSONObject().apply {
-                put("success", true)
-                put("message", "Timer dismissed")
+                put("success", false)
+                put("error", "Failed to dismiss timer — it may not be from the standard Clock app")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dismiss timer", e)
@@ -191,6 +247,92 @@ class DeviceControlTools @Inject constructor(
                 put("success", false)
                 put("error", "Failed to dismiss timer: ${e.message}")
             }
+        }
+    }
+
+    suspend fun stopRinging(): JSONObject {
+        Log.i(TAG, "Attempting to stop any ringing alarm/timer")
+
+        // Check if anything is ringing
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No alarm/timer audio detected")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "Nothing is currently ringing")
+            }
+        }
+
+        // 1. Try standard alarm dismiss
+        Log.i(TAG, "Trying ACTION_DISMISS_ALARM")
+        try {
+            val alarmIntent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(alarmIntent)
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Ringing stopped after ACTION_DISMISS_ALARM")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Alarm dismissed")
+                        put("source", "standard_alarm")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_DISMISS_ALARM failed: ${e.message}")
+        }
+
+        // 2. Try standard timer dismiss
+        Log.i(TAG, "Trying ACTION_DISMISS_TIMER")
+        try {
+            val timerIntent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(timerIntent)
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Ringing stopped after ACTION_DISMISS_TIMER")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Timer dismissed")
+                        put("source", "standard_timer")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_DISMISS_TIMER failed: ${e.message}")
+        }
+
+        // 3. Try AMdroid if installed
+        val amdroidPackage = "com.amdroidalarmclock.amdroid"
+        val isAmdroidInstalled = context.packageManager.getLaunchIntentForPackage(amdroidPackage) != null
+        if (isAmdroidInstalled) {
+            Log.i(TAG, "AMdroid installed, trying AMdroid dismiss")
+            try {
+                val amdroidResult = dismissAmdroidAlarm()
+                if (amdroidResult.optBoolean("success", false)) {
+                    Log.i(TAG, "Ringing stopped after AMdroid dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "AMdroid alarm dismissed")
+                        put("source", "amdroid")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "AMdroid dismiss failed: ${e.message}")
+            }
+        }
+
+        // Nothing worked
+        Log.w(TAG, "All dismiss methods failed, audio still playing")
+        val tried = mutableListOf("standard alarm", "standard timer")
+        if (isAmdroidInstalled) tried.add("AMdroid")
+        return JSONObject().apply {
+            put("success", false)
+            put("error", "Failed to stop ringing — tried: ${tried.joinToString(", ")}")
         }
     }
 
@@ -459,6 +601,186 @@ class DeviceControlTools @Inject constructor(
             JSONObject().apply {
                 put("success", false)
                 put("error", "Failed to delete alarm: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Dismiss a currently ringing AMdroid alarm via accessibility service UI automation.
+     *
+     * Flow:
+     * 1. If already on AMdroid full-screen alarm view (has rltvLytAlarmFullScreen) → click fab_off
+     * 2. If AMdroid is in foreground with snackbar ("Ongoing alarm" + SHOW button) → click SHOW → wait → click fab_off
+     * 3. If AMdroid not in foreground → launch AMdroid → wait for snackbar or full-screen → handle as 1 or 2
+     * 4. No ringing alarm found → return error
+     */
+    suspend fun dismissAmdroidAlarm(): JSONObject {
+        Log.i(TAG, "Dismissing AMdroid alarm")
+
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return JSONObject().apply {
+                put("success", false)
+                put("error", "Accessibility service not available")
+            }
+
+        val AMDROID_PACKAGE = "com.amdroidalarmclock.amdroid"
+        val ID_FULL_SCREEN = "$AMDROID_PACKAGE:id/rltvLytAlarmFullScreen"
+        val ID_FAB_OFF = "$AMDROID_PACKAGE:id/fab_off"
+        val ID_SNACKBAR_TEXT = "$AMDROID_PACKAGE:id/snackbar_text"
+        val ID_SNACKBAR_ACTION = "$AMDROID_PACKAGE:id/snackbar_action"
+
+        // --- Helper: click fab_off dismiss button ---
+        suspend fun clickDismissButton(): JSONObject {
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 3000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                val root = accessibilityService.getCurrentRootNode()
+                if (root != null) {
+                    val fabNodes = root.findAccessibilityNodeInfosByViewId(ID_FAB_OFF)
+                    if (fabNodes != null && fabNodes.isNotEmpty()) {
+                        val fabOff = fabNodes.first()
+                        val clicked = accessibilityService.clickNode(fabOff)
+                        Log.i(TAG, "Clicked fab_off dismiss button: $clicked")
+                        fabNodes.forEach { it.recycle() }
+                        root.recycle()
+                        return if (clicked) {
+                            JSONObject().apply {
+                                put("success", true)
+                                put("message", "AMdroid alarm dismissed")
+                            }
+                        } else {
+                            JSONObject().apply {
+                                put("success", false)
+                                put("error", "Found AMdroid dismiss button but failed to click it")
+                            }
+                        }
+                    }
+                    fabNodes?.forEach { it.recycle() }
+                    root.recycle()
+                }
+                delay(200)
+            }
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "AMdroid dismiss button (fab_off) not found")
+            }
+        }
+
+        // --- Helper: click SHOW on snackbar, then dismiss ---
+        suspend fun clickShowThenDismiss(): JSONObject {
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 3000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                val root = accessibilityService.getCurrentRootNode()
+                if (root != null) {
+                    val showButtons = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_ACTION)
+                    if (showButtons != null && showButtons.isNotEmpty()) {
+                        val showBtn = showButtons.first()
+                        val clicked = accessibilityService.clickNode(showBtn)
+                        Log.i(TAG, "Clicked SHOW snackbar button: $clicked")
+                        showButtons.forEach { it.recycle() }
+                        root.recycle()
+                        if (clicked) {
+                            return clickDismissButton()
+                        }
+                        // Click failed, retry after a short wait
+                        delay(300)
+                        continue
+                    }
+                    showButtons?.forEach { it.recycle() }
+                    root.recycle()
+                }
+                delay(300)
+            }
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "AMdroid SHOW snackbar button not found or not clickable")
+            }
+        }
+
+        return try {
+            // Step 1: Check if already on full-screen alarm view
+            var root = accessibilityService.getCurrentRootNode()
+            if (root != null) {
+                val fullScreenNodes = root.findAccessibilityNodeInfosByViewId(ID_FULL_SCREEN)
+                if (fullScreenNodes != null && fullScreenNodes.isNotEmpty()) {
+                    Log.i(TAG, "Already on AMdroid full-screen alarm view")
+                    fullScreenNodes.forEach { it.recycle() }
+                    root.recycle()
+                    return clickDismissButton()
+                }
+                fullScreenNodes?.forEach { it.recycle() }
+
+                // Step 2: Check if AMdroid is in foreground with snackbar
+                val snackbarNodes = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_TEXT)
+                if (snackbarNodes != null && snackbarNodes.isNotEmpty()) {
+                    val text = snackbarNodes.firstOrNull()?.text?.toString() ?: ""
+                    Log.i(TAG, "Found AMdroid snackbar: '$text'")
+                    snackbarNodes.forEach { it.recycle() }
+                    root.recycle()
+                    if (text.contains("Ongoing alarm", ignoreCase = true)) {
+                        return clickShowThenDismiss()
+                    }
+                }
+                snackbarNodes?.forEach { it.recycle() }
+                root.recycle()
+            }
+
+            // Step 3: Launch AMdroid and wait for alarm UI
+            Log.i(TAG, "Launching AMdroid to find ringing alarm")
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(AMDROID_PACKAGE)
+            if (launchIntent == null) {
+                return JSONObject().apply {
+                    put("success", false)
+                    put("error", "AMdroid app not installed")
+                }
+            }
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(launchIntent)
+            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            BubbleOverlayService.start(context)
+
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 5000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                delay(300)
+                root = accessibilityService.getCurrentRootNode() ?: continue
+
+                // Check for full-screen alarm view first
+                val fullScreenNodes = root.findAccessibilityNodeInfosByViewId(ID_FULL_SCREEN)
+                if (fullScreenNodes != null && fullScreenNodes.isNotEmpty()) {
+                    Log.i(TAG, "AMdroid full-screen alarm view appeared after launch")
+                    fullScreenNodes.forEach { it.recycle() }
+                    root.recycle()
+                    return clickDismissButton()
+                }
+                fullScreenNodes?.forEach { it.recycle() }
+
+                // Check for snackbar
+                val snackbarNodes = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_TEXT)
+                if (snackbarNodes != null && snackbarNodes.isNotEmpty()) {
+                    val text = snackbarNodes.firstOrNull()?.text?.toString() ?: ""
+                    Log.i(TAG, "AMdroid snackbar appeared after launch: '$text'")
+                    snackbarNodes.forEach { it.recycle() }
+                    root.recycle()
+                    if (text.contains("Ongoing alarm", ignoreCase = true)) {
+                        return clickShowThenDismiss()
+                    }
+                }
+                snackbarNodes?.forEach { it.recycle() }
+                root.recycle()
+            }
+
+            // Step 4: No ringing alarm found
+            JSONObject().apply {
+                put("success", false)
+                put("error", "No ringing AMdroid alarm detected")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dismiss AMdroid alarm", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to dismiss AMdroid alarm: ${e.message}")
             }
         }
     }

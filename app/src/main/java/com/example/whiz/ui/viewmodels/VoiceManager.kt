@@ -160,6 +160,12 @@ class VoiceManager @Inject constructor(
     // Track continuous listening state before TTS started (to restore after TTS finishes)
     private var continuousListeningBeforeTTS: Boolean? = null
 
+    // TTS barge-in: when user starts speaking during TTS, stop TTS
+    @Volatile
+    var ttsBargingIn = false
+        private set
+    var onBargeIn: (() -> Unit)? = null
+
     // Track current voice settings to know when we need to reset
     private var currentVoiceSettings: com.example.whiz.data.preferences.VoiceSettings? = null
 
@@ -218,6 +224,14 @@ class VoiceManager @Inject constructor(
         // Set up callback for SpeechRecognitionService to check if it should actually be listening
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
         speechRecognitionService.shouldRestartCallback = { shouldBeListening() }
+
+        // TTS barge-in: when user starts speaking during TTS, stop TTS immediately
+        speechRecognitionService.onBeginningOfSpeechCallback = {
+            if (isSpeaking.value) {
+                Log.d(TAG, "Barge-in: user started speaking during TTS — stopping TTS")
+                handleBargeIn()
+            }
+        }
 
         // Set up audio focus callbacks
         setupAudioFocusCallbacks()
@@ -325,6 +339,7 @@ class VoiceManager @Inject constructor(
         ttsManager.setAudioEventCallbacks(
             onStarted = {
                 Log.d(TAG, "TTS started - continuous listening state before TTS: $continuousListeningBeforeTTS")
+                ttsBargingIn = false
                 // No need to set _isSpeaking - TTSManager handles it
             },
             onCompleted = {
@@ -350,10 +365,34 @@ class VoiceManager @Inject constructor(
             onError = {
                 Log.e(TAG, "TTS error occurred")
                 // No need to set _isSpeaking - TTSManager handles it
-                
+
                 // Also handle continuous listening restart on error if needed
                 if (!isInTTSWithListeningMode() && continuousListeningEnabled) {
                     startContinuousListening()
+                }
+            },
+            onStopped = { interrupted ->
+                Log.d(TAG, "TTS stopped (interrupted=$interrupted, bargingIn=$ttsBargingIn)")
+                if (ttsBargingIn) {
+                    // Barge-in: mic is already active (full-duplex or TTS_WITH_LISTENING),
+                    // don't restart continuous listening — just let user keep talking
+                    Log.d(TAG, "TTS stopped by barge-in — mic already active, skipping continuous listening restart")
+                    continuousListeningBeforeTTS = null
+                } else {
+                    // Normal stop (e.g., user tapped stop button) — restore like onCompleted
+                    val shouldRestoreContinuousListening = continuousListeningBeforeTTS ?: false
+                    continuousListeningBeforeTTS = null
+
+                    if (isListening.value) {
+                        Log.d(TAG, "TTS stopped - mic already active (full-duplex mode), no restart needed")
+                    } else if (isInTTSWithListeningMode()) {
+                        Log.d(TAG, "TTS stopped in TTS_WITH_LISTENING mode - mic was kept active")
+                    } else if (shouldRestoreContinuousListening) {
+                        Log.d(TAG, "TTS stopped - restarting continuous listening as it was enabled before TTS")
+                        startContinuousListening()
+                    } else {
+                        Log.d(TAG, "TTS stopped - not restarting continuous listening as it was disabled before TTS")
+                    }
                 }
             }
         )
@@ -665,6 +704,12 @@ class VoiceManager @Inject constructor(
     fun stopSpeaking() {
         ttsManager.stop()
         // No need to set _isSpeaking - TTSManager handles it
+    }
+
+    private fun handleBargeIn() {
+        ttsBargingIn = true
+        ttsManager.stop()
+        onBargeIn?.invoke()
     }
 
     fun testVoiceSettings(settings: com.example.whiz.data.preferences.VoiceSettings) {

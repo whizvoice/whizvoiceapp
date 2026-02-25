@@ -44,39 +44,40 @@ class AuthApi @Inject constructor(
                 .post(requestBody)
                 .build()
             
-            Log.d(TAG, "Sending authentication request to $SERVER_URL/auth/google")    
-            val response = okHttpClient.newCall(request).execute()
-            val responseBody = response.body?.string()
-            Log.d(TAG, "Raw /auth/google response body: $responseBody")
-            
-            if (!response.isSuccessful || responseBody == null) {
-                Log.e(TAG, "Authentication failed with code: ${response.code}, message: ${response.message}")
-                return@withContext Result.failure(IOException("Authentication failed: ${response.code}"))
-            }
-            
-            Log.d(TAG, "Authentication successful, processing response")
-            // Parse the response
-            val jsonResponse = JSONObject(responseBody)
-            val accessToken = jsonResponse.getString("access_token")
-            val tokenType = jsonResponse.getString("token_type")
-            val refreshToken = jsonResponse.getString("refresh_token")
-            val userJson = jsonResponse.getJSONObject("user")
-            
-            val user = User(
-                id = userJson.getString("sub"),
-                name = if (userJson.has("name")) userJson.getString("name") else null,
-                email = if (userJson.has("email")) userJson.getString("email") else null,
-                photoUrl = if (userJson.has("picture")) userJson.getString("picture") else null
-            )
-            
-            return@withContext Result.success(
-                AuthResponse(
-                    accessToken = accessToken,
-                    tokenType = tokenType,
-                    refreshToken = refreshToken,
-                    user = user
+            Log.d(TAG, "Sending authentication request to $SERVER_URL/auth/google")
+            okHttpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                Log.d(TAG, "Raw /auth/google response body: $responseBody")
+
+                if (!response.isSuccessful || responseBody == null) {
+                    Log.e(TAG, "Authentication failed with code: ${response.code}, message: ${response.message}")
+                    return@withContext Result.failure(IOException("Authentication failed: ${response.code}"))
+                }
+
+                Log.d(TAG, "Authentication successful, processing response")
+                // Parse the response
+                val jsonResponse = JSONObject(responseBody)
+                val accessToken = jsonResponse.getString("access_token")
+                val tokenType = jsonResponse.getString("token_type")
+                val refreshToken = jsonResponse.getString("refresh_token")
+                val userJson = jsonResponse.getJSONObject("user")
+
+                val user = User(
+                    id = userJson.getString("sub"),
+                    name = if (userJson.has("name")) userJson.getString("name") else null,
+                    email = if (userJson.has("email")) userJson.getString("email") else null,
+                    photoUrl = if (userJson.has("picture")) userJson.getString("picture") else null
                 )
-            )
+
+                return@withContext Result.success(
+                    AuthResponse(
+                        accessToken = accessToken,
+                        tokenType = tokenType,
+                        refreshToken = refreshToken,
+                        user = user
+                    )
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Exception during authenticateWithGoogle", e)
             return@withContext Result.failure(e)
@@ -117,39 +118,40 @@ class AuthApi @Inject constructor(
                 .post(requestBody)
                 .build()
             
-            Log.d(TAG, "Sending test authentication request to $SERVER_URL/auth/test")    
-            val response = okHttpClient.newCall(request).execute()
-            val responseBody = response.body?.string()
-            Log.d(TAG, "Raw /auth/test response body: $responseBody")
-            
-            if (!response.isSuccessful || responseBody == null) {
-                Log.e(TAG, "Test authentication failed with code: ${response.code}, message: ${response.message}")
-                return@withContext Result.failure(IOException("Test authentication failed: ${response.code}"))
-            }
-            
-            Log.d(TAG, "Test authentication successful, processing response")
-            // Parse the response (same format as Google auth)
-            val jsonResponse = JSONObject(responseBody)
-            val accessToken = jsonResponse.getString("access_token")
-            val tokenType = jsonResponse.getString("token_type")
-            val refreshToken = jsonResponse.getString("refresh_token")
-            val userJson = jsonResponse.getJSONObject("user")
-            
-            val user = User(
-                id = userJson.getString("sub"),
-                name = if (userJson.has("name") && !userJson.isNull("name")) userJson.getString("name") else null,
-                email = if (userJson.has("email")) userJson.getString("email") else null,
-                photoUrl = if (userJson.has("picture") && !userJson.isNull("picture")) userJson.getString("picture") else null
-            )
-            
-            return@withContext Result.success(
-                AuthResponse(
-                    accessToken = accessToken,
-                    tokenType = tokenType,
-                    refreshToken = refreshToken,
-                    user = user
+            Log.d(TAG, "Sending test authentication request to $SERVER_URL/auth/test")
+            okHttpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                Log.d(TAG, "Raw /auth/test response body: $responseBody")
+
+                if (!response.isSuccessful || responseBody == null) {
+                    Log.e(TAG, "Test authentication failed with code: ${response.code}, message: ${response.message}")
+                    return@withContext Result.failure(IOException("Test authentication failed: ${response.code}"))
+                }
+
+                Log.d(TAG, "Test authentication successful, processing response")
+                // Parse the response (same format as Google auth)
+                val jsonResponse = JSONObject(responseBody)
+                val accessToken = jsonResponse.getString("access_token")
+                val tokenType = jsonResponse.getString("token_type")
+                val refreshToken = jsonResponse.getString("refresh_token")
+                val userJson = jsonResponse.getJSONObject("user")
+
+                val user = User(
+                    id = userJson.getString("sub"),
+                    name = if (userJson.has("name") && !userJson.isNull("name")) userJson.getString("name") else null,
+                    email = if (userJson.has("email")) userJson.getString("email") else null,
+                    photoUrl = if (userJson.has("picture") && !userJson.isNull("picture")) userJson.getString("picture") else null
                 )
-            )
+
+                return@withContext Result.success(
+                    AuthResponse(
+                        accessToken = accessToken,
+                        tokenType = tokenType,
+                        refreshToken = refreshToken,
+                        user = user
+                    )
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Exception during test authentication", e)
             return@withContext Result.failure(e)
@@ -172,27 +174,25 @@ class AuthApi @Inject constructor(
                 .build()
 
             Log.d(TAG, "Sending refresh token request to $SERVER_URL/auth/refresh")
-            val response = okHttpClient.newCall(request).execute()
-            val responseBody = response.body?.string()
-            Log.d(TAG, "Raw /auth/refresh response body: $responseBody")
+            okHttpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                Log.d(TAG, "Raw /auth/refresh response body: $responseBody")
 
-            if (!response.isSuccessful || responseBody == null) {
-                Log.e(TAG, "Refresh token failed with code: ${response.code}, message: ${response.message}")
-                // For TokenAuthenticator to properly react, it expects an exception here if refresh fails due to auth (401/403)
-                // Throwing a specific exception would be better, but IOException works for now to signal failure.
-                // In a Retrofit setup, HttpException would be thrown automatically for non-2xx.
-                throw IOException("Refresh token failed: ${response.code} - ${response.message}") 
+                if (!response.isSuccessful || responseBody == null) {
+                    Log.e(TAG, "Refresh token failed with code: ${response.code}, message: ${response.message}")
+                    throw IOException("Refresh token failed: ${response.code} - ${response.message}")
+                }
+
+                Log.d(TAG, "Refresh token successful, processing response")
+                val jsonResponse = JSONObject(responseBody)
+                val newAccessToken = jsonResponse.getString("access_token")
+                val tokenType = jsonResponse.optString("token_type", "bearer") // Default to bearer if not present
+
+                NewAccessTokenResponse(
+                    access_token = newAccessToken,
+                    token_type = tokenType
+                )
             }
-
-            Log.d(TAG, "Refresh token successful, processing response")
-            val jsonResponse = JSONObject(responseBody)
-            val newAccessToken = jsonResponse.getString("access_token")
-            val tokenType = jsonResponse.optString("token_type", "bearer") // Default to bearer if not present
-            
-            NewAccessTokenResponse(
-                access_token = newAccessToken,
-                token_type = tokenType
-            )
         } catch (e: JSONException) {
             Log.e(TAG, "JSONException during refreshAccessToken", e)
             throw IOException("Failed to parse refresh token response", e) // Propagate as IOException or custom
@@ -215,24 +215,25 @@ class AuthApi @Inject constructor(
                 .header("Authorization", "Bearer $token")
                 .build()
                 
-            val response = okHttpClient.newCall(request).execute()
-            val responseBody = response.body?.string()
-            
-            if (!response.isSuccessful || responseBody == null) {
-                return@withContext Result.failure(IOException("Failed to get user profile: ${response.code}"))
+            okHttpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+
+                if (!response.isSuccessful || responseBody == null) {
+                    return@withContext Result.failure(IOException("Failed to get user profile: ${response.code}"))
+                }
+
+                // Parse the response
+                val jsonResponse = JSONObject(responseBody)
+
+                val user = User(
+                    id = jsonResponse.getString("sub"),
+                    name = if (jsonResponse.has("name")) jsonResponse.getString("name") else null,
+                    email = if (jsonResponse.has("email")) jsonResponse.getString("email") else null,
+                    photoUrl = null // Not included in the /me endpoint
+                )
+
+                return@withContext Result.success(user)
             }
-            
-            // Parse the response
-            val jsonResponse = JSONObject(responseBody)
-            
-            val user = User(
-                id = jsonResponse.getString("sub"),
-                name = if (jsonResponse.has("name")) jsonResponse.getString("name") else null,
-                email = if (jsonResponse.has("email")) jsonResponse.getString("email") else null,
-                photoUrl = null // Not included in the /me endpoint
-            )
-            
-            return@withContext Result.success(user)
         } catch (e: JSONException) {
             return@withContext Result.failure(e)
         } catch (e: IOException) {
@@ -259,12 +260,13 @@ class AuthApi @Inject constructor(
                 .build()
 
             Log.d(TAG, "Sending setUserTimezone request to $SERVER_URL/user/timezone")
-            val okHttpResponse = okHttpClient.newCall(request).execute()
-
-            if (okHttpResponse.isSuccessful) {
-                Response.success(Unit, okHttpResponse.headers)
-            } else {
-                Response.error(okHttpResponse.code, okHttpResponse.body?.source()?.readByteString()?.toResponseBody(okHttpResponse.body?.contentType()) ?: "".toResponseBody(null))
+            okHttpClient.newCall(request).execute().use { okHttpResponse ->
+                if (okHttpResponse.isSuccessful) {
+                    Response.success(Unit, okHttpResponse.headers)
+                } else {
+                    val errorBody = okHttpResponse.body?.string() ?: ""
+                    Response.error(okHttpResponse.code, errorBody.toResponseBody(null))
+                }
             }
         } catch (e: JSONException) {
             Log.e(TAG, "JSONException in setUserTimezone", e)
