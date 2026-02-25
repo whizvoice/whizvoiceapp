@@ -514,7 +514,9 @@ class MainActivity : ComponentActivity() {
                 setIntent(i)
                 // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
                 com.example.whiz.ui.viewmodels.ChatViewModel.isTransitioning = true
-                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true")
+                // Enable TTS synchronously so it's available immediately (not waiting for Compose LaunchedEffect)
+                voiceManager.setVoiceResponseEnabled(true)
+                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true, TTS enabled")
             }
         }
         Log.d(TAG, "=== END INTENT ANALYSIS ===")
