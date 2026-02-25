@@ -127,6 +127,13 @@ class ScreenAgentTools @Inject constructor(
         val speakerphoneEnabled: Boolean = false
     )
 
+    data class FitbitResult(
+        val success: Boolean,
+        val action: String? = null,
+        val calories: Int? = null,
+        val error: String? = null
+    )
+
     // ========== Phone Call Functions ==========
 
     /**
@@ -8452,8 +8459,583 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
     
+    // ========== Fitbit Functions ==========
+
+    /**
+     * Enum for detecting current Fitbit screen state
+     */
+    private enum class FitbitScreen {
+        TODAY_HOME,           // Main "Today" tab with todayLazyGrid
+        FOOD_DETAIL,          // Food detail page (action bar title "Food")
+        MORE_OPTIONS_DROPDOWN, // Dropdown with "Add Quick Calories"
+        ADD_QUICK_CALORIES,   // The Add Quick Calories entry screen
+        UNKNOWN
+    }
+
+    /**
+     * Detect the current Fitbit screen state from the root node
+     */
+    private fun detectFitbitScreen(rootNode: AccessibilityNodeInfo): FitbitScreen {
+        try {
+            // Check for Add Quick Calories screen (edit_calories field)
+            val editCalories = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.fitbit.FitbitMobile:id/edit_calories"
+            )
+            if (editCalories != null && editCalories.isNotEmpty()) {
+                editCalories.forEach { it.recycle() }
+                return FitbitScreen.ADD_QUICK_CALORIES
+            }
+            editCalories?.forEach { it.recycle() }
+
+            // Check for More Options dropdown (look for "Add Quick Calories" text in popup)
+            val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
+            if (addQuickCalNodes != null && addQuickCalNodes.isNotEmpty()) {
+                addQuickCalNodes.forEach { it.recycle() }
+                return FitbitScreen.MORE_OPTIONS_DROPDOWN
+            }
+            addQuickCalNodes?.forEach { it.recycle() }
+
+            // Check for Food detail page (title "Food" in action bar)
+            val foodTitleNodes = rootNode.findAccessibilityNodeInfosByText("Food")
+            if (foodTitleNodes != null && foodTitleNodes.isNotEmpty()) {
+                // Make sure we're on the detail page, not just seeing "Food" on the Today screen
+                // Look for "More options" content description which is on the Food detail page
+                val moreOptionsNodes = findNodesByContentDescription(rootNode, "More options")
+                val isDetailPage = moreOptionsNodes.isNotEmpty()
+                moreOptionsNodes.forEach { it.recycle() }
+                foodTitleNodes.forEach { it.recycle() }
+                if (isDetailPage) {
+                    return FitbitScreen.FOOD_DETAIL
+                }
+            }
+            foodTitleNodes?.forEach { it.recycle() }
+
+            // Check for Today home screen (todayLazyGrid)
+            val todayGrid = rootNode.findAccessibilityNodeInfosByViewId("todayLazyGrid")
+            if (todayGrid != null && todayGrid.isNotEmpty()) {
+                todayGrid.forEach { it.recycle() }
+                return FitbitScreen.TODAY_HOME
+            }
+            todayGrid?.forEach { it.recycle() }
+
+            return FitbitScreen.UNKNOWN
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting Fitbit screen", e)
+            return FitbitScreen.UNKNOWN
+        }
+    }
+
+    /**
+     * Find nodes by content description (recursive search)
+     */
+    private fun findNodesByContentDescription(
+        rootNode: AccessibilityNodeInfo,
+        contentDesc: String,
+        depth: Int = 0
+    ): List<AccessibilityNodeInfo> {
+        val results = mutableListOf<AccessibilityNodeInfo>()
+        if (depth > 20) return results
+
+        try {
+            val nodeContentDesc = rootNode.contentDescription?.toString()
+            if (nodeContentDesc != null && nodeContentDesc == contentDesc) {
+                results.add(rootNode)
+            }
+
+            for (i in 0 until rootNode.childCount) {
+                val child = rootNode.getChild(i) ?: continue
+                results.addAll(findNodesByContentDescription(child, contentDesc, depth + 1))
+                if (results.isEmpty()) {
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in findNodesByContentDescription", e)
+        }
+        return results
+    }
+
+    /**
+     * Add quick calories to Fitbit food log.
+     * Handles navigation from any Fitbit screen by pressing BACK to reach a known state.
+     */
+    suspend fun addFitbitQuickCalories(calories: Int): FitbitResult {
+        Log.i(TAG, "addFitbitQuickCalories called with calories=$calories")
+        trackAction("addFitbitQuickCalories: $calories")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return FitbitResult(
+                    success = false,
+                    error = "Accessibility service not enabled. Please enable it in settings."
+                )
+
+            // Launch Fitbit app
+            val launchResult = launchApp("Fitbit")
+            if (!launchResult.success) {
+                return FitbitResult(
+                    success = false,
+                    error = "Failed to launch Fitbit: ${launchResult.error}"
+                )
+            }
+
+            // Wait for Fitbit to be in foreground
+            val appReady = waitForAppReady(
+                accessibilityService = accessibilityService,
+                packageName = "com.fitbit.FitbitMobile",
+                maxWaitMs = 5000
+            )
+            if (!appReady) {
+                return FitbitResult(
+                    success = false,
+                    error = "Fitbit did not become ready in time"
+                )
+            }
+
+            // Give the app a moment to settle
+            delay(1000)
+
+            // Navigate to a known state by pressing BACK until we reach a recognized screen
+            var currentScreen = FitbitScreen.UNKNOWN
+            for (attempt in 0 until 5) {
+                val rootNode = accessibilityService.getCurrentRootNode()
+                if (rootNode != null) {
+                    currentScreen = detectFitbitScreen(rootNode)
+                    rootNode.recycle()
+                    Log.i(TAG, "Fitbit screen detection attempt $attempt: $currentScreen")
+
+                    if (currentScreen != FitbitScreen.UNKNOWN) {
+                        break
+                    }
+                }
+
+                // Press BACK to try to get to a known screen
+                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                delay(1000)
+            }
+
+            // Now navigate based on current screen
+            when (currentScreen) {
+                FitbitScreen.ADD_QUICK_CALORIES -> {
+                    // Already on the Add Quick Calories screen, go directly to entering calories
+                    return enterCaloriesAndLog(accessibilityService, calories)
+                }
+                FitbitScreen.MORE_OPTIONS_DROPDOWN -> {
+                    // Dropdown is open, tap "Add Quick Calories"
+                    return tapAddQuickCaloriesAndLog(accessibilityService, calories)
+                }
+                FitbitScreen.FOOD_DETAIL -> {
+                    // On Food detail page, tap "More options"
+                    return tapMoreOptionsAndLog(accessibilityService, calories)
+                }
+                FitbitScreen.TODAY_HOME -> {
+                    // On Today home, find and tap the Food tile
+                    return tapFoodTileAndLog(accessibilityService, calories)
+                }
+                FitbitScreen.UNKNOWN -> {
+                    return FitbitResult(
+                        success = false,
+                        error = "Could not navigate to a known Fitbit screen after multiple attempts"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in addFitbitQuickCalories", e)
+            return FitbitResult(
+                success = false,
+                error = "Failed to add quick calories: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * Starting from Today home screen, find and tap the Food tile then continue
+     */
+    private suspend fun tapFoodTileAndLog(
+        accessibilityService: WhizAccessibilityService,
+        calories: Int
+    ): FitbitResult {
+        Log.i(TAG, "tapFoodTileAndLog: Looking for Food tile on Today screen")
+
+        // Try to find the Food tile - it may need scrolling
+        var foodTileFound = false
+        val maxScrollAttempts = 5
+
+        for (scrollAttempt in 0..maxScrollAttempts) {
+            val rootNode = accessibilityService.getCurrentRootNode() ?: continue
+
+            // Try finding by text "Food"
+            val foodNodes = rootNode.findAccessibilityNodeInfosByText("Food")
+            if (foodNodes != null && foodNodes.isNotEmpty()) {
+                for (node in foodNodes) {
+                    // Find a clickable parent for the Food tile
+                    val clickable = findClickableParent(node)
+                    if (clickable != null) {
+                        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.i(TAG, "Clicked Food tile: $clicked")
+                        foodNodes.forEach { it.recycle() }
+                        rootNode.recycle()
+                        if (clicked) {
+                            foodTileFound = true
+                            break
+                        }
+                    }
+                }
+                if (foodTileFound) break
+                foodNodes.forEach { it.recycle() }
+            }
+
+            rootNode.recycle()
+
+            if (foodTileFound) break
+
+            // Scroll down to find the Food tile
+            if (scrollAttempt < maxScrollAttempts) {
+                Log.i(TAG, "Food tile not found, scrolling down (attempt ${scrollAttempt + 1})")
+                val scrollRoot = accessibilityService.getCurrentRootNode()
+                if (scrollRoot != null) {
+                    // Try to find a scrollable container
+                    val scrolled = scrollNodeDown(scrollRoot)
+                    scrollRoot.recycle()
+                    if (scrolled) {
+                        delay(1000)
+                    } else {
+                        // Try gesture-based scroll as fallback
+                        performSwipeGesture(accessibilityService, "up")
+                        delay(1000)
+                    }
+                }
+            }
+        }
+
+        if (!foodTileFound) {
+            return FitbitResult(
+                success = false,
+                error = "Could not find Food tile on Fitbit Today screen"
+            )
+        }
+
+        // Wait for Food detail page to load
+        val foodPageReady = waitForCondition(maxWaitMs = 5000) {
+            val node = accessibilityService.getCurrentRootNode()
+            if (node != null) {
+                val screen = detectFitbitScreen(node)
+                node.recycle()
+                screen == FitbitScreen.FOOD_DETAIL
+            } else false
+        }
+
+        if (!foodPageReady) {
+            return FitbitResult(
+                success = false,
+                error = "Food detail page did not load after tapping Food tile"
+            )
+        }
+
+        return tapMoreOptionsAndLog(accessibilityService, calories)
+    }
+
+    /**
+     * Starting from Food detail page, tap "More options" then continue
+     */
+    private suspend fun tapMoreOptionsAndLog(
+        accessibilityService: WhizAccessibilityService,
+        calories: Int
+    ): FitbitResult {
+        Log.i(TAG, "tapMoreOptionsAndLog: Looking for More options button")
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+            ?: return FitbitResult(success = false, error = "Could not get screen content")
+
+        // Find "More options" by content description
+        val moreOptionsNodes = findNodesByContentDescription(rootNode, "More options")
+        if (moreOptionsNodes.isEmpty()) {
+            rootNode.recycle()
+            return FitbitResult(
+                success = false,
+                error = "Could not find 'More options' button on Food detail page"
+            )
+        }
+
+        val moreOptionsNode = moreOptionsNodes.first()
+        val clickable = if (moreOptionsNode.isClickable) {
+            moreOptionsNode
+        } else {
+            findClickableParent(moreOptionsNode) ?: moreOptionsNode
+        }
+
+        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        Log.i(TAG, "Clicked More options: $clicked")
+        moreOptionsNodes.forEach { it.recycle() }
+        rootNode.recycle()
+
+        if (!clicked) {
+            return FitbitResult(
+                success = false,
+                error = "Failed to tap 'More options' button"
+            )
+        }
+
+        // Wait for dropdown to appear
+        val dropdownReady = waitForCondition(maxWaitMs = 3000) {
+            val node = accessibilityService.getCurrentRootNode()
+            if (node != null) {
+                val screen = detectFitbitScreen(node)
+                node.recycle()
+                screen == FitbitScreen.MORE_OPTIONS_DROPDOWN
+            } else false
+        }
+
+        if (!dropdownReady) {
+            return FitbitResult(
+                success = false,
+                error = "More options dropdown did not appear"
+            )
+        }
+
+        return tapAddQuickCaloriesAndLog(accessibilityService, calories)
+    }
+
+    /**
+     * From the More Options dropdown, tap "Add Quick Calories" then continue
+     */
+    private suspend fun tapAddQuickCaloriesAndLog(
+        accessibilityService: WhizAccessibilityService,
+        calories: Int
+    ): FitbitResult {
+        Log.i(TAG, "tapAddQuickCaloriesAndLog: Looking for 'Add Quick Calories' option")
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+            ?: return FitbitResult(success = false, error = "Could not get screen content")
+
+        val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
+        if (addQuickCalNodes == null || addQuickCalNodes.isEmpty()) {
+            rootNode.recycle()
+            return FitbitResult(
+                success = false,
+                error = "Could not find 'Add Quick Calories' in dropdown menu"
+            )
+        }
+
+        val targetNode = addQuickCalNodes.first()
+        val clickable = if (targetNode.isClickable) {
+            targetNode
+        } else {
+            findClickableParent(targetNode) ?: targetNode
+        }
+
+        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        Log.i(TAG, "Clicked 'Add Quick Calories': $clicked")
+        addQuickCalNodes.forEach { it.recycle() }
+        rootNode.recycle()
+
+        if (!clicked) {
+            return FitbitResult(
+                success = false,
+                error = "Failed to tap 'Add Quick Calories'"
+            )
+        }
+
+        // Wait for Add Quick Calories screen
+        val screenReady = waitForCondition(maxWaitMs = 5000) {
+            val node = accessibilityService.getCurrentRootNode()
+            if (node != null) {
+                val screen = detectFitbitScreen(node)
+                node.recycle()
+                screen == FitbitScreen.ADD_QUICK_CALORIES
+            } else false
+        }
+
+        if (!screenReady) {
+            return FitbitResult(
+                success = false,
+                error = "Add Quick Calories screen did not appear"
+            )
+        }
+
+        return enterCaloriesAndLog(accessibilityService, calories)
+    }
+
+    /**
+     * On the Add Quick Calories screen, enter calories and tap LOG THIS
+     */
+    private suspend fun enterCaloriesAndLog(
+        accessibilityService: WhizAccessibilityService,
+        calories: Int
+    ): FitbitResult {
+        Log.i(TAG, "enterCaloriesAndLog: Entering $calories calories")
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+            ?: return FitbitResult(success = false, error = "Could not get screen content")
+
+        // Find the edit_calories field
+        val editCaloriesNodes = rootNode.findAccessibilityNodeInfosByViewId(
+            "com.fitbit.FitbitMobile:id/edit_calories"
+        )
+        if (editCaloriesNodes == null || editCaloriesNodes.isEmpty()) {
+            rootNode.recycle()
+            return FitbitResult(
+                success = false,
+                error = "Could not find calories input field"
+            )
+        }
+
+        val editField = editCaloriesNodes.first()
+
+        // Focus the field and set text
+        editField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        delay(200)
+
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, calories.toString())
+        }
+        val textSet = editField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        Log.i(TAG, "Set calories text to $calories: $textSet")
+
+        editCaloriesNodes.forEach { it.recycle() }
+        rootNode.recycle()
+
+        if (!textSet) {
+            return FitbitResult(
+                success = false,
+                error = "Failed to enter calorie amount"
+            )
+        }
+
+        delay(500)
+
+        // Find and tap "LOG THIS" button
+        val logRootNode = accessibilityService.getCurrentRootNode()
+            ?: return FitbitResult(success = false, error = "Could not get screen content after entering calories")
+
+        val logBtnNodes = logRootNode.findAccessibilityNodeInfosByViewId(
+            "com.fitbit.FitbitMobile:id/log_this_btn"
+        )
+
+        // If resource ID doesn't work, fall back to text search
+        val logButton = if (logBtnNodes != null && logBtnNodes.isNotEmpty()) {
+            logBtnNodes.first()
+        } else {
+            logBtnNodes?.forEach { it.recycle() }
+            val textNodes = logRootNode.findAccessibilityNodeInfosByText("LOG THIS")
+            textNodes?.firstOrNull()
+        }
+
+        if (logButton == null) {
+            logRootNode.recycle()
+            return FitbitResult(
+                success = false,
+                error = "Could not find 'LOG THIS' button"
+            )
+        }
+
+        val clickable = if (logButton.isClickable) {
+            logButton
+        } else {
+            findClickableParent(logButton) ?: logButton
+        }
+
+        val logClicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        Log.i(TAG, "Clicked 'LOG THIS': $logClicked")
+        logButton.recycle()
+        logRootNode.recycle()
+
+        if (!logClicked) {
+            return FitbitResult(
+                success = false,
+                error = "Failed to tap 'LOG THIS' button"
+            )
+        }
+
+        // Wait a moment for the log to be saved
+        delay(1500)
+
+        // Press BACK twice to return to Fitbit home
+        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        delay(500)
+        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+        delay(500)
+
+        clearRecentActions()
+        Log.i(TAG, "Successfully logged $calories quick calories to Fitbit")
+
+        return FitbitResult(
+            success = true,
+            action = "add_quick_calories",
+            calories = calories
+        )
+    }
+
+    /**
+     * Scroll a node down by finding a scrollable container
+     */
+    private fun scrollNodeDown(node: AccessibilityNodeInfo, depth: Int = 0): Boolean {
+        if (depth > 20) return false
+
+        if (node.isScrollable) {
+            return node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (scrollNodeDown(child, depth + 1)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
+        }
+        return false
+    }
+
+    /**
+     * Perform a swipe gesture using accessibility service (API 24+)
+     */
+    private fun performSwipeGesture(
+        accessibilityService: WhizAccessibilityService,
+        direction: String
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+
+        try {
+            val displayMetrics = context.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            val centerX = screenWidth / 2f
+            val startY: Float
+            val endY: Float
+
+            when (direction) {
+                "up" -> {
+                    startY = screenHeight * 0.7f
+                    endY = screenHeight * 0.3f
+                }
+                "down" -> {
+                    startY = screenHeight * 0.3f
+                    endY = screenHeight * 0.7f
+                }
+                else -> return false
+            }
+
+            val path = android.graphics.Path().apply {
+                moveTo(centerX, startY)
+                lineTo(centerX, endY)
+            }
+
+            val gesture = android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 300))
+                .build()
+
+            accessibilityService.dispatchGesture(gesture, null, null)
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error performing swipe gesture", e)
+            return false
+        }
+    }
+
     // ========== Utility Functions ==========
-    
+
     fun getInstalledApps(): List<String> {
         val packageManager = context.packageManager
         val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
