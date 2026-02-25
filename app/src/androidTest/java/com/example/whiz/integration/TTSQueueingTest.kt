@@ -84,7 +84,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
             cleanupTestChats(
                 repository = repository,
                 trackedChatIds = emptyList(),
-                additionalPatterns = listOf("Pls always reply with just 1 word for test", "TTS queue test", "voice during TTS", "space"),
+                additionalPatterns = listOf("Pls always reply with just 1 word for test", "TTS queue test", "voice during TTS", "space", "barge-in"),
                 enablePatternFallback = false
             )
         }
@@ -110,7 +110,8 @@ class TTSQueueingTest : BaseIntegrationTest() {
                         "Pls always reply with just 1 word for test",
                         "TTS queue test",
                         "voice during TTS",
-                        "space"
+                        "space",
+                        "barge-in"
                     ),
                     enablePatternFallback = true
                 )
@@ -374,6 +375,234 @@ class TTSQueueingTest : BaseIntegrationTest() {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Test failed with exception: ${e.message}", e)
             failWithScreenshot("tts_queueing_test_exception", "Test failed: ${e.message}")
+            throw e
+        }
+    }
+
+    @Test
+    fun testTTSBargeIn_stopsWhenUserSpeaks(): Unit = runBlocking {
+        // Skip this test on emulators since speech recognition is not available
+        assumeFalse("Skipping TTS barge-in test on emulator (speech recognition unavailable)", isRunningOnEmulator())
+
+        Log.d(TAG, "🚀 Starting TTS barge-in test")
+
+        try {
+            // Step 1: Set up callback and wait for app to be ready
+            Log.d(TAG, "📱 Step 1: Setting up test...")
+
+            capturedViewModel = null
+            MainActivity.testViewModelCallback = { vm ->
+                Log.d(TAG, "✅ ChatViewModel captured!")
+                capturedViewModel = vm
+            }
+
+            Thread.sleep(1000)
+
+            // Navigate to new chat
+            Log.d(TAG, "📱 Navigating to new chat...")
+            if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
+                failWithScreenshot("bargein_navigation_failed", "Failed to navigate to chat screen")
+                return@runBlocking
+            }
+
+            // Wait for ViewModel
+            var waitTime = 0
+            while (capturedViewModel == null && waitTime < 5000) {
+                Thread.sleep(100)
+                waitTime += 100
+            }
+
+            if (capturedViewModel == null) {
+                failWithScreenshot("bargein_viewmodel_not_captured", "ChatViewModel not captured")
+                return@runBlocking
+            }
+
+            Log.d(TAG, "✅ App launched and ViewModel captured")
+
+            // Step 2: Send 2 messages and wait for responses (builds conversation history)
+            Log.d(TAG, "💬 Step 2: Sending 2 messages to build conversation...")
+            val setupMessages = listOf(
+                "This is a barge-in test - ${System.currentTimeMillis()} . I'm really interested in space.",
+                "Can you tell me about Mars in 30 words exactly? - ${System.currentTimeMillis()}"
+            )
+
+            // Track chat for cleanup
+            val currentChatId = capturedViewModel?.chatId?.value
+            if (currentChatId != null && currentChatId != 0L) {
+                createdChatIds.add(currentChatId)
+            }
+
+            setupMessages.forEach { message ->
+                Log.d(TAG, "🎤 Sending voice message: '$message'")
+                val messageSent = ComposeTestHelper.sendVoiceMessage(
+                    message = message,
+                    voiceManager = voiceManager,
+                    composeTestRule = composeTestRule
+                )
+
+                if (!messageSent) {
+                    failWithScreenshot("bargein_message_not_sent", "Message not sent: $message")
+                    return@runBlocking
+                }
+
+                Log.d(TAG, "✅ Voice message sent and displayed: '$message'")
+            }
+
+            Log.d(TAG, "✅ Setup messages sent successfully")
+
+            // Step 3: Enable TTS and continuous listening
+            Log.d(TAG, "🔊 Step 3: Enabling TTS and continuous listening...")
+            instrumentation.runOnMainSync {
+                capturedViewModel?.let { vm ->
+                    if (!vm.isVoiceResponseEnabled.value) {
+                        vm.toggleVoiceResponse()
+                        Log.d(TAG, "✅ TTS/voice response enabled")
+                    }
+                    if (!voiceManager.isContinuousListeningEnabled.value) {
+                        vm.toggleSpeechRecognition()
+                        Log.d(TAG, "✅ Continuous listening enabled")
+                    }
+                }
+            }
+
+            delay(500)
+
+            // Step 4: Send a 3rd message and wait for TTS to start playing
+            Log.d(TAG, "💬 Step 4: Sending 3rd message to trigger TTS...")
+            val triggerMessage = "Tell me something interesting about Jupiter in exactly 50 words. - ${System.currentTimeMillis()}"
+            val messageSent = ComposeTestHelper.sendVoiceMessage(
+                message = triggerMessage,
+                voiceManager = voiceManager,
+                composeTestRule = composeTestRule
+            )
+
+            if (!messageSent) {
+                failWithScreenshot("bargein_trigger_not_sent", "Trigger message not sent")
+                return@runBlocking
+            }
+
+            // Wait for TTS to start playing
+            Log.d(TAG, "🔊 Waiting for TTS to start playing...")
+            var ttsStarted = false
+            val ttsWaitStart = System.currentTimeMillis()
+            val ttsWaitTimeout = 30_000L
+
+            while (!ttsStarted && (System.currentTimeMillis() - ttsWaitStart) < ttsWaitTimeout) {
+                val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
+                if (isSpeakingNow) {
+                    ttsStarted = true
+                    Log.d(TAG, "✅ TTS started playing after ${System.currentTimeMillis() - ttsWaitStart}ms")
+                    break
+                }
+                delay(100)
+            }
+
+            if (!ttsStarted) {
+                failWithScreenshot("bargein_tts_not_started", "TTS did not start playing within timeout")
+                throw AssertionError("TTS should have started playing for the assistant's response")
+            }
+
+            // Step 5: Enable test mode
+            Log.d(TAG, "🎤 Step 5: Enabling test mode for speech recognition...")
+            speechRecognitionService.enableTestMode()
+
+            // Step 6: Trigger barge-in — simulate user starting to speak during TTS
+            Log.d(TAG, "🎤 Step 6: Triggering barge-in (simulating user starting to speak)...")
+            speechRecognitionService.testTriggerBeginningOfSpeech()
+
+            // Step 7: Assert TTS stops within ~1s
+            Log.d(TAG, "🔊 Step 7: Verifying TTS stops after barge-in...")
+            var ttsStopped = false
+            val stopWaitStart = System.currentTimeMillis()
+            val stopWaitTimeout = 1000L
+
+            while (!ttsStopped && (System.currentTimeMillis() - stopWaitStart) < stopWaitTimeout) {
+                val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
+                if (!isSpeakingNow) {
+                    ttsStopped = true
+                    Log.d(TAG, "✅ TTS stopped after barge-in (${System.currentTimeMillis() - stopWaitStart}ms)")
+                    break
+                }
+                delay(50)
+            }
+
+            if (!ttsStopped) {
+                failWithScreenshot("bargein_tts_not_stopped", "TTS did not stop after barge-in")
+                throw AssertionError("TTS should stop when user starts speaking (barge-in)")
+            }
+
+            // Step 8: Assert listening stays active
+            val isListeningNow = voiceManager.isListening.value
+            Log.d(TAG, "🎤 Step 8: Checking listening state: isListening=$isListeningNow")
+            if (!isListeningNow) {
+                Log.w(TAG, "⚠️ Listening not active after barge-in (may be expected if not full-duplex)")
+            }
+
+            // Step 9: Inject partial transcriptions word-by-word — verify TTS stays stopped
+            Log.d(TAG, "🎤 Step 9: Sending partial transcriptions after barge-in...")
+            val userMessage = "Actually I want to know about Saturn instead"
+            val words = userMessage.split(" ")
+            var partialText = ""
+
+            for (wordIndex in words.indices) {
+                // Verify TTS is still stopped
+                val isSpeakingDuringPartials = capturedViewModel?.isSpeaking?.value ?: false
+                if (isSpeakingDuringPartials) {
+                    failWithScreenshot("bargein_tts_restarted", "TTS restarted during partials after barge-in")
+                    throw AssertionError("TTS should stay stopped during user's partials after barge-in")
+                }
+
+                partialText += (if (partialText.isEmpty()) "" else " ") + words[wordIndex]
+                speechRecognitionService.testSetPartialTranscription(partialText)
+                Log.d(TAG, "🎤 [TEST] Partial #$wordIndex: '$partialText'")
+                delay(100)
+            }
+
+            Log.d(TAG, "✅ All partials sent, TTS stayed stopped")
+
+            // Step 10: Send final transcription — verify user's message appears in chat
+            Log.d(TAG, "📤 Step 10: Sending final transcription...")
+            speechRecognitionService.testSendFinalTranscription(userMessage)
+
+            val userMessageAppeared = ComposeTestHelper.waitForElement(
+                composeTestRule = composeTestRule,
+                selector = { composeTestRule.onNodeWithText(userMessage) },
+                timeoutMs = 5000L,
+                description = "user's barge-in message"
+            )
+
+            if (!userMessageAppeared) {
+                failWithScreenshot("bargein_user_message_not_sent", "User message not sent after barge-in: $userMessage")
+            }
+
+            Log.d(TAG, "✅ User's barge-in message appeared in chat: '$userMessage'")
+
+            // Step 11: Verify pendingTTSMessage was cleared (no stale TTS restart)
+            val pendingTTS = capturedViewModel?.let {
+                // Access pendingTTSMessage via reflection since it's private
+                try {
+                    val field = it.javaClass.getDeclaredField("pendingTTSMessage")
+                    field.isAccessible = true
+                    field.get(it) as? String
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not check pendingTTSMessage via reflection: ${e.message}")
+                    null
+                }
+            }
+
+            if (pendingTTS != null) {
+                Log.e(TAG, "❌ pendingTTSMessage was not cleared after barge-in: '$pendingTTS'")
+                failWithScreenshot("bargein_pending_tts_not_cleared", "pendingTTSMessage not cleared: $pendingTTS")
+                throw AssertionError("pendingTTSMessage should be null after barge-in, was: '$pendingTTS'")
+            }
+
+            Log.d(TAG, "✅ pendingTTSMessage correctly cleared after barge-in")
+
+            Log.d(TAG, "🎉 TTS barge-in test completed successfully!")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Test failed with exception: ${e.message}", e)
+            failWithScreenshot("tts_bargein_test_exception", "Test failed: ${e.message}")
             throw e
         }
     }

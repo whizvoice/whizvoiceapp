@@ -33,6 +33,7 @@ class TTSManager @Inject constructor(
     private var onSpeechStarted: (() -> Unit)? = null
     private var onSpeechCompleted: (() -> Unit)? = null
     private var onSpeechError: (() -> Unit)? = null
+    private var onSpeechStopped: ((interrupted: Boolean) -> Unit)? = null
 
     // Queue of callbacks waiting for initialization
     private val pendingCallbacks = mutableListOf<(Boolean) -> Unit>()
@@ -107,7 +108,11 @@ class TTSManager @Inject constructor(
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
                 Log.d(TAG, "TTS stopped for utterance: $utteranceId, interrupted: $interrupted")
                 _isSpeaking.value = false
-                onSpeechCompleted?.invoke()
+                if (onSpeechStopped != null) {
+                    onSpeechStopped?.invoke(interrupted)
+                } else {
+                    onSpeechCompleted?.invoke()
+                }
             }
         })
     }
@@ -115,11 +120,13 @@ class TTSManager @Inject constructor(
     fun setAudioEventCallbacks(
         onStarted: (() -> Unit)? = null,
         onCompleted: (() -> Unit)? = null,
-        onError: (() -> Unit)? = null
+        onError: (() -> Unit)? = null,
+        onStopped: ((interrupted: Boolean) -> Unit)? = null
     ) {
         this.onSpeechStarted = onStarted
         this.onSpeechCompleted = onCompleted
         this.onSpeechError = onError
+        this.onSpeechStopped = onStopped
     }
     
     private fun stripMarkdown(text: String): String {
@@ -265,5 +272,6 @@ class TTSManager @Inject constructor(
         onSpeechStarted = null
         onSpeechCompleted = null
         onSpeechError = null
+        onSpeechStopped = null
     }
 } 

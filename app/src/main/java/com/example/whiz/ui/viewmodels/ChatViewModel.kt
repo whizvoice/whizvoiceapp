@@ -330,6 +330,12 @@ class ChatViewModel @Inject constructor(
         // Initialize TTS using the new event-driven approach
         initializeTTS()
 
+        // TTS barge-in: clear queued TTS when user interrupts
+        voiceManager.onBargeIn = {
+            Log.d(TAG, "Barge-in: clearing pendingTTSMessage")
+            pendingTTSMessage = null
+        }
+
         // Start observing messages immediately
         if (configUseRemoteAgent) {
             Log.d(TAG, "Init: Using remote agent. WebSocket will connect when sending first message or loading existing chat.")

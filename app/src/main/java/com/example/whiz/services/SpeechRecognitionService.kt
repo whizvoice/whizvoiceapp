@@ -92,6 +92,9 @@ class SpeechRecognitionService @Inject constructor(
     // Callback to check if we should actually restart listening (considers all conditions)
     var shouldRestartCallback: (() -> Boolean)? = null
 
+    // Callback fired when the user begins speaking (for TTS barge-in)
+    var onBeginningOfSpeechCallback: (() -> Unit)? = null
+
     // --- Test Support ---
     // Allow tests to simulate partial transcriptions without real speech recognizer
     @Volatile
@@ -416,6 +419,7 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onBeginningOfSpeech() {
                 Log.d(TAG, "[DEBUG] onBeginningOfSpeech")
+                onBeginningOfSpeechCallback?.invoke()
             }
 
             override fun onRmsChanged(rmsdB: Float) { /* ... */ }
@@ -1159,6 +1163,28 @@ class SpeechRecognitionService @Inject constructor(
             isTestInjectedCallback = true
             try {
                 recognitionListener?.onResults(bundle)
+            } finally {
+                isTestInjectedCallback = false
+            }
+        }
+    }
+
+    /**
+     * Simulate the beginning-of-speech event by injecting through the real onBeginningOfSpeech callback.
+     * Used to test TTS barge-in: when user starts speaking during TTS, TTS should stop.
+     */
+    suspend fun testTriggerBeginningOfSpeech() {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testTriggerBeginningOfSpeech called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Injecting onBeginningOfSpeech through real callback")
+
+        withContext(Dispatchers.Main) {
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onBeginningOfSpeech()
             } finally {
                 isTestInjectedCallback = false
             }
