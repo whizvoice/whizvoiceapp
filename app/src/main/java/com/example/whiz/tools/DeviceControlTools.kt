@@ -204,18 +204,42 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
-    fun dismissTimer(): JSONObject {
+    suspend fun dismissTimer(): JSONObject {
         Log.i(TAG, "Dismissing timer")
 
+        // Check if alarm audio is currently playing (timers also use USAGE_ALARM)
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No timer audio detected before dismiss attempt")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "No timer is currently ringing")
+            }
+        }
+
+        Log.i(TAG, "Timer audio detected, firing ACTION_DISMISS_TIMER")
         val intent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         return try {
             context.startActivity(intent)
+
+            // Poll up to ~1s to see if timer audio stopped
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Timer audio stopped after dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Timer dismissed")
+                    }
+                }
+            }
+
+            Log.w(TAG, "Timer audio still playing after dismiss attempt")
             JSONObject().apply {
-                put("success", true)
-                put("message", "Timer dismissed")
+                put("success", false)
+                put("error", "Failed to dismiss timer — it may not be from the standard Clock app")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dismiss timer", e)
@@ -223,6 +247,92 @@ class DeviceControlTools @Inject constructor(
                 put("success", false)
                 put("error", "Failed to dismiss timer: ${e.message}")
             }
+        }
+    }
+
+    suspend fun stopRinging(): JSONObject {
+        Log.i(TAG, "Attempting to stop any ringing alarm/timer")
+
+        // Check if anything is ringing
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No alarm/timer audio detected")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "Nothing is currently ringing")
+            }
+        }
+
+        // 1. Try standard alarm dismiss
+        Log.i(TAG, "Trying ACTION_DISMISS_ALARM")
+        try {
+            val alarmIntent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(alarmIntent)
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Ringing stopped after ACTION_DISMISS_ALARM")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Alarm dismissed")
+                        put("source", "standard_alarm")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_DISMISS_ALARM failed: ${e.message}")
+        }
+
+        // 2. Try standard timer dismiss
+        Log.i(TAG, "Trying ACTION_DISMISS_TIMER")
+        try {
+            val timerIntent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(timerIntent)
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Ringing stopped after ACTION_DISMISS_TIMER")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Timer dismissed")
+                        put("source", "standard_timer")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_DISMISS_TIMER failed: ${e.message}")
+        }
+
+        // 3. Try AMdroid if installed
+        val amdroidPackage = "com.amdroidalarmclock.amdroid"
+        val isAmdroidInstalled = context.packageManager.getLaunchIntentForPackage(amdroidPackage) != null
+        if (isAmdroidInstalled) {
+            Log.i(TAG, "AMdroid installed, trying AMdroid dismiss")
+            try {
+                val amdroidResult = dismissAmdroidAlarm()
+                if (amdroidResult.optBoolean("success", false)) {
+                    Log.i(TAG, "Ringing stopped after AMdroid dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "AMdroid alarm dismissed")
+                        put("source", "amdroid")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "AMdroid dismiss failed: ${e.message}")
+            }
+        }
+
+        // Nothing worked
+        Log.w(TAG, "All dismiss methods failed, audio still playing")
+        val tried = mutableListOf("standard alarm", "standard timer")
+        if (isAmdroidInstalled) tried.add("AMdroid")
+        return JSONObject().apply {
+            put("success", false)
+            put("error", "Failed to stop ringing — tried: ${tried.joinToString(", ")}")
         }
     }
 
