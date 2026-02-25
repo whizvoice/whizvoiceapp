@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.hardware.camera2.CameraManager
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -150,20 +151,49 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
-    fun dismissAlarm(): JSONObject {
+    private fun isAlarmAudioPlaying(): Boolean {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return audioManager.getActivePlaybackConfigurations().any { config ->
+            config.audioAttributes.usage == AudioAttributes.USAGE_ALARM
+        }
+    }
+
+    suspend fun dismissAlarm(): JSONObject {
         Log.i(TAG, "Dismissing alarm")
 
+        // Check if alarm audio is currently playing
+        if (!isAlarmAudioPlaying()) {
+            Log.i(TAG, "No alarm audio detected before dismiss attempt")
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "No alarm is currently ringing")
+            }
+        }
+
+        Log.i(TAG, "Alarm audio detected, firing ACTION_DISMISS_ALARM")
         val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         return try {
             context.startActivity(intent)
-            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
-            BubbleOverlayService.start(context)
+
+            // Poll up to ~1s to see if alarm audio stopped
+            repeat(5) {
+                delay(200)
+                if (!isAlarmAudioPlaying()) {
+                    Log.i(TAG, "Alarm audio stopped after dismiss")
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("message", "Alarm dismissed")
+                    }
+                }
+            }
+
+            Log.w(TAG, "Alarm audio still playing after dismiss attempt")
             JSONObject().apply {
-                put("success", true)
-                put("message", "Alarm dismissed")
+                put("success", false)
+                put("error", "Failed to dismiss alarm — it may not be from the standard Clock app")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dismiss alarm", e)
@@ -541,8 +571,6 @@ class DeviceControlTools @Inject constructor(
                         showButtons.forEach { it.recycle() }
                         root.recycle()
                         if (clicked) {
-                            // Wait for full-screen alarm view, then click dismiss
-                            delay(500)
                             return clickDismissButton()
                         }
                         // Click failed, retry after a short wait

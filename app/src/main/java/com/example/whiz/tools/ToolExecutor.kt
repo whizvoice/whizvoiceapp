@@ -220,7 +220,7 @@ class ToolExecutor @Inject constructor(
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setTimer(it) }
                     }
                     "agent_dismiss_alarm" -> {
-                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissAlarm() }
+                        executeDismissAlarm(requestId)
                     }
                     "agent_dismiss_timer" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissTimer() }
@@ -1583,6 +1583,34 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_delete_alarm",
                     requestId = requestId,
                     error = "Failed to delete alarm: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Dismiss a currently ringing alarm via ACTION_DISMISS_ALARM, with audio verification.
+     */
+    private suspend fun executeDismissAlarm(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_dismiss_alarm")
+            val resultJson = deviceControlTools.dismissAlarm()
+            Log.i(TAG, "[TOOL_RESULT] agent_dismiss_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_alarm",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_dismiss_alarm", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_alarm",
+                    requestId = requestId,
+                    error = "Failed to dismiss alarm: ${e.message}"
                 )
             )
         }
