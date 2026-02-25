@@ -710,13 +710,13 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Step 2a: Wait for bubble mode to be set (should be TTS_WITH_LISTENING since voice launch enabled TTS)
             // BUT: TTS may not be available in CI emulator environment, so we accept CONTINUOUS_LISTENING too
             Log.d(TAG, "🔍 step 2a: waiting for bubble mode to be set...")
-            val ttsAvailable = isTTSAvailable()
-            val expectedMode = if (ttsAvailable) {
+            val voiceResponseEnabled = voiceManager.isVoiceResponseEnabled.value
+            val expectedMode = if (voiceResponseEnabled) {
                 com.example.whiz.services.ListeningMode.TTS_WITH_LISTENING
             } else {
                 com.example.whiz.services.ListeningMode.CONTINUOUS_LISTENING
             }
-            Log.d(TAG, "Expected mode: $expectedMode (TTS available: $ttsAvailable)")
+            Log.d(TAG, "Expected mode: $expectedMode (voiceResponseEnabled: $voiceResponseEnabled)")
 
             var modeSet = false
             val modeStartTime = System.currentTimeMillis()
@@ -747,9 +747,9 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
             Log.d(TAG, "✅ Continuous listening is ON: $enabledState")
 
-            // Step 2b: Verify TTS is enabled (preserved from voice launch) - only if TTS is available
+            // Step 2b: Verify TTS is enabled (preserved from voice launch) - only if voice response is enabled
             Log.d(TAG, "🔍 step 2b: verifying TTS state (preserved from voice launch)...")
-            if (ttsAvailable) {
+            if (voiceResponseEnabled) {
                 val ttsState = capturedViewModel?.isVoiceResponseEnabled?.value ?: false
                 if (!ttsState) {
                     Log.e(TAG, "❌ FAILURE: TTS should be ON (preserved from voice launch)")
@@ -761,8 +761,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 Log.d(TAG, "⚠️ Skipping TTS state check (TTS not available in this environment)")
             }
 
-            // Steps 6-9: Test TTS enable/disable - only if TTS is available
-            if (ttsAvailable) {
+            // Steps 6-9: Test TTS enable/disable - only if voice response is enabled
+            if (voiceResponseEnabled) {
                 // Capture assistant message count BEFORE sending turn-off command
                 // This ensures we wait for the actual response to our command
                 val messageCountBeforeTurnOff = capturedViewModel?.messages?.value?.count {
@@ -904,10 +904,10 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             Log.d(TAG, "🎉 voice control tools test (voice mode) PASSED!")
-            if (ttsAvailable) {
+            if (voiceResponseEnabled) {
                 Log.d(TAG, "✅ Test validated: voice mode with TTS preservation, disable/enable TTS, disable continuous listening")
             } else {
-                Log.d(TAG, "✅ Test validated: voice mode (TTS tests skipped - not available in environment), disable continuous listening")
+                Log.d(TAG, "✅ Test validated: voice mode (TTS tests skipped - voice response not enabled), disable continuous listening")
             }
 
             // Track final chat ID

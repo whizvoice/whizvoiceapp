@@ -8,8 +8,11 @@ import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.By
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.testing.UninstallModules
+import com.example.whiz.di.AppModule
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -41,6 +44,7 @@ import android.util.Log
  * This test reproduces the production bug where TTS continues speaking
  * even after the app is backgrounded.
  */
+@UninstallModules(AppModule::class)
 @LargeTest
 @RunWith(AndroidJUnit4::class)
 @HiltAndroidTest
@@ -48,11 +52,14 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
 
     companion object {
         private val TAG = "TTSBackgroundingTest"
-        
+
         // Capture ViewModel from navigation scope (same approach as MessageFlowVoiceComposeTest)
         @Volatile
         var capturedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
     }
+
+    @get:Rule(order = 2)
+    val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject
     lateinit var repository: WhizRepository
@@ -129,6 +136,10 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         capturedViewModel = null
         MainActivity.testViewModelCallback = null
         
+        // Close auto-launched activity from composeTestRule before manual voice launch
+        composeTestRule.activityRule.scenario.close()
+        Thread.sleep(500)
+
         // Step 1: Voice launch the app (simulates "Hey Google, talk to WhizVoice")
         Log.d(TAG, "📱 Step 1: Voice launching app...")
         val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
@@ -216,10 +227,11 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         // Simulate voice transcription and automatic sending (as voice input typically does)
         // Use rapid=false to verify the message actually appears, and pass SpeechRecognitionService for real callback mechanism
         val voiceSendSuccess = simulateVoiceTranscriptionAndSend(
-            testMessage, 
-            rapid = false, 
+            testMessage,
+            rapid = false,
             chatViewModel = chatViewModel,
-            speechRecognitionService = speechRecognitionService
+            speechRecognitionService = speechRecognitionService,
+            composeTestRule = composeTestRule
         )
         if (!voiceSendSuccess) {
             failWithScreenshot("Failed to send voice message via transcription simulation")
