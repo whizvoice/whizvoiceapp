@@ -64,6 +64,8 @@ class BubbleOverlayService : Service() {
     private var recognitionJob: Job? = null
     private var botResponseJob: Job? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var partialDisplayJob: Job? = null
+    private var isShowingPartial: Boolean = false
     private var hideMessageRunnable: Runnable? = null
     private var lastMessageShownTimestamp: Long = 0L
     private var hasUnreadMessage: Boolean = false
@@ -204,6 +206,15 @@ class BubbleOverlayService : Service() {
                 if (transcription.isNotBlank() && isActive) {
                     Log.d(TAG, "Transcription received from flow in bubble mode: '$transcription'")
                     _userTranscriptionFlow.emit(transcription)
+                }
+            }
+        }
+
+        // Collect partial transcription state and show in bubble as user speaks
+        partialDisplayJob = serviceScope.launch {
+            voiceManager.transcriptionState.collect { partialText ->
+                if (isActive && voiceManager.isListening.value && partialText.isNotBlank()) {
+                    showPartialMessage(partialText)
                 }
             }
         }
@@ -746,13 +757,18 @@ class BubbleOverlayService : Service() {
         handler.post {
             val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
             val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
-            
+
+            // Capture and reset partial flag before processing
+            val wasShowingPartial = isShowingPartial
+            isShowingPartial = false
+
             // Cancel any pending hide
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
 
             // Check if previous message was superseded in under 1 second
             // Skip when previous message was a system message (mode change) since those aren't real messages
-            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage) {
+            // Skip when transitioning from partial to final result (natural transition, not a superseded message)
+            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage && !wasShowingPartial) {
                 val elapsed = System.currentTimeMillis() - lastMessageShownTimestamp
                 if (elapsed < UNREAD_THRESHOLD_MS) {
                     hasUnreadMessage = true
@@ -784,6 +800,28 @@ class BubbleOverlayService : Service() {
                 messageBubble?.visibility = View.GONE
             }
             handler.postDelayed(hideMessageRunnable!!, MESSAGE_DISPLAY_DURATION)
+        }
+    }
+
+    private fun showPartialMessage(text: String) {
+        handler.post {
+            val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
+            val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
+
+            // Cancel any pending auto-hide timer — bubble stays visible while partials stream
+            hideMessageRunnable?.let { handler.removeCallbacks(it) }
+
+            // Set partial text with trailing "..." to indicate in-progress
+            messageText?.text = "$text..."
+            messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
+            messageBubble?.setCardBackgroundColor(
+                resources.getColor(R.color.user_bubble, null)
+            )
+
+            // Show message bubble
+            messageBubble?.visibility = View.VISIBLE
+            isShowingPartial = true
+            // No auto-hide scheduled — stays visible as long as partials keep arriving
         }
     }
 
@@ -845,6 +883,7 @@ class BubbleOverlayService : Service() {
 
         recognitionJob?.cancel()
         botResponseJob?.cancel()
+        partialDisplayJob?.cancel()
         hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
             chatHeadView?.let { windowManager.removeView(it) }
