@@ -108,9 +108,6 @@ import android.provider.Settings
 import com.example.whiz.ui.components.OverlayPermissionDialog
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
-import android.app.Activity
-import android.view.WindowManager
-import androidx.compose.ui.platform.LocalView
 
 // Helper data class for the tuple
 private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -262,7 +259,7 @@ fun ChatInputBar(
         else -> inputText // Default to input text (could be empty)
     }
     
-    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else "Type or tap mic..."
+    val placeholderText = if ((isListening || shouldShowMuteButton) && inputText.isBlank()) "Listening..." else if (isSpeaking && inputText.isBlank()) "Speaking..." else "Type or tap mic..."
     
 
 
@@ -331,9 +328,18 @@ fun ChatInputBar(
                                 MaterialTheme.colorScheme.onSurface
                             )
                         }
+                        isSpeaking && isListening -> {
+                            // PRIORITY 2a: Full-duplex mode - both TTS and mic active
+                            // Show MicOff to let user stop listening (mic IS on, tap to mute)
+                            Tuple4(
+                                Icons.Filled.MicOff,
+                                "Listening while speaking",
+                                onMicClick,
+                                MaterialTheme.colorScheme.error
+                            )
+                        }
                         isSpeaking -> {
-                            // PRIORITY 2: When TTS is speaking, always show Mic button to allow interrupt
-                            // This allows user to interrupt TTS and start speaking
+                            // PRIORITY 2b: TTS only, mic off - show mic to start listening/interrupt
                             Tuple4(
                                 Icons.Filled.Mic,
                                 "Interrupt and speak",
@@ -574,27 +580,8 @@ fun ChatScreen(
     val isSpeaking by voiceManager.isSpeaking.collectAsState() // TTS actively speaking
     val isContinuousListeningEnabled by voiceManager.isContinuousListeningEnabled.collectAsState() // Track continuous listening mode
 
-    // Keep screen on when continuous listening is enabled
-    val view = LocalView.current
-    DisposableEffect(isContinuousListeningEnabled) {
-        val window = (view.context as Activity).window
-        if (isContinuousListeningEnabled) {
-            Log.d("ChatScreen", "Enabling FLAG_KEEP_SCREEN_ON - continuous listening active")
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            Log.d("ChatScreen", "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-        // Log actual flag state for debugging
-        val flags = window.attributes.flags
-        val isSet = (flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
-        Log.d("ChatScreen", "FLAG_KEEP_SCREEN_ON state after update: $isSet (full flags: $flags)")
-
-        onDispose {
-            Log.d("ChatScreen", "ChatScreen disposing - clearing FLAG_KEEP_SCREEN_ON")
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
+    // NOTE: FLAG_KEEP_SCREEN_ON is now managed by MainActivity lifecycle observer
+    // to prevent the flag from being cleared during activity/composable transitions
 
     // UI State
     val listState = rememberLazyListState()
@@ -653,6 +640,10 @@ fun ChatScreen(
     
     // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
+        if (BubbleOverlayService.isActive) {
+            Log.d("ChatScreen", "[LOG] Mic click ignored - bubble overlay is active")
+            return
+        }
         if (!effectiveHasPermission) {
             Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
@@ -746,10 +737,16 @@ fun ChatScreen(
     }
     
     // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
+    // Track previous viewModelChatId to distinguish real migrations (new chat → server ID)
+    // from stale state (screen re-composed while ViewModel still has old chat ID)
+    var previousViewModelChatId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(viewModelChatId) {
-        // Handle migration if the chat ID has changed from the initial -1
-        // This handles both optimistic IDs (negative) and real IDs (positive)
-        if (chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
+        val prev = previousViewModelChatId
+        previousViewModelChatId = viewModelChatId
+        // Only migrate if the PREVIOUS value was -1 (we were in new chat state)
+        // and the current value is a real chat ID. This prevents stale migration when
+        // the screen first composes with an old viewModelChatId from a previous chat.
+        if (prev == -1L && chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
             Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
             // This is a migration (new chat creation), not a chat switch
             // Use migrateChatId to avoid disconnecting WebSocket

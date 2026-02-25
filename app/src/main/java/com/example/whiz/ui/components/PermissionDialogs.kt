@@ -109,6 +109,116 @@ fun OverlayPermissionDialog(
 }
 
 @Composable
+fun ContactsPermissionDialog(
+    onDismiss: () -> Unit,
+    onGrantPermission: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Contacts permission dialog"
+        },
+        title = {
+            Text(
+                "Contacts Permission Required",
+                modifier = Modifier.semantics {
+                    contentDescription = "Contacts permission required title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Whiz needs access to your contacts to look up phone numbers, emails, and addresses. Would you like to grant contacts permission now?",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Contacts permission explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onGrantPermission()
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Grant contacts permission button"
+                }
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.Black
+                ),
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss contacts permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
+fun CalendarPermissionDialog(
+    onDismiss: () -> Unit,
+    onGrantPermission: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Calendar permission dialog"
+        },
+        title = {
+            Text(
+                "Calendar Permission Required",
+                modifier = Modifier.semantics {
+                    contentDescription = "Calendar permission required title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Whiz needs access to your calendar to save events. Would you like to grant calendar permission now?",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Calendar permission explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onGrantPermission()
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Grant calendar permission button"
+                }
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = Color.Black
+                ),
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss calendar permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
 fun AccessibilityPermissionDialog(
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit

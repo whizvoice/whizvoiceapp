@@ -19,7 +19,9 @@ import android.content.Intent
 import android.net.Uri
 import com.example.whiz.data.auth.AuthenticationRequiredException
 import com.example.whiz.services.TTSManager
+import com.example.whiz.services.WakeWordService
 import com.example.whiz.data.local.SubscriptionStatus
+import com.example.whiz.data.preferences.WakeWordPreferences
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -27,6 +29,7 @@ class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val userPreferences: UserPreferences,
     private val ttsManager: TTSManager,
+    private val wakeWordPreferences: WakeWordPreferences,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
     private val TAG = "SettingsViewModel"
@@ -70,6 +73,24 @@ class SettingsViewModel @Inject constructor(
     
     private val _isProcessingSubscription = MutableStateFlow(false)
     val isProcessingSubscription: StateFlow<Boolean> = _isProcessingSubscription.asStateFlow()
+
+    val isWakeWordEnabled: StateFlow<Boolean> = wakeWordPreferences.isEnabled
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                wakeWordPreferences.setEnabled(enabled)
+                if (enabled) {
+                    WakeWordService.start(context)
+                } else {
+                    WakeWordService.stop(context)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting wake word enabled=$enabled", e)
+                _errorMessage.value = "Failed to update wake word setting: ${e.message}"
+            }
+        }
+    }
 
     init {
         Log.d(TAG, "Initializing SettingsViewModel")

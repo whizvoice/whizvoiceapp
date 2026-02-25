@@ -5,10 +5,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.KeyguardManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -25,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -66,6 +69,18 @@ class MainActivity : ComponentActivity() {
         // Callback for self-close tool to finish the activity and remove from recents
         @Volatile
         var finishAndRemoveTaskCallback: (() -> Unit)? = null
+
+        // Callback for on-demand unlock when screen agent tools need the device unlocked
+        @Volatile
+        var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
+        @Volatile
+        var requestContactsPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
+        @Volatile
+        var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -89,6 +104,9 @@ class MainActivity : ComponentActivity() {
     lateinit var appLifecycleService: com.example.whiz.services.AppLifecycleService
 
     @Inject
+    lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
+
+    @Inject
     lateinit var apiService: ApiService
 
     // ViewModel for creating new chats on assistant relaunch
@@ -97,6 +115,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var navController: NavHostController
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var closeAppReceiver: BroadcastReceiver? = null
+
+    // Clears showWhenLocked after user unlocks so the app doesn't persist over subsequent lock screens
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                setShowWhenLocked(false)
+                Log.d(TAG, "User unlocked - cleared showWhenLocked")
+            }
+        }
+    }
 
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
@@ -108,7 +136,7 @@ class MainActivity : ComponentActivity() {
         try {
             // Update permission state safely
             permissionManager.updateMicrophonePermission(isGranted)
-            
+
             // Log for debugging
             Log.d("MainActivity", "Microphone permission result: $isGranted")
         } catch (e: Exception) {
@@ -116,7 +144,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Contacts permission launcher (on-demand, triggered by tool execution)
+    private var contactsPermissionOnGranted: (() -> Unit)? = null
+    private var contactsPermissionOnDenied: (() -> Unit)? = null
+    private val showContactsPermissionDialog = mutableStateOf(false)
+
+    private val requestContactsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d(TAG, "Contacts permission result: $isGranted")
+        showContactsPermissionDialog.value = false
+        if (isGranted) {
+            contactsPermissionOnGranted?.invoke()
+        } else {
+            contactsPermissionOnDenied?.invoke()
+        }
+        contactsPermissionOnGranted = null
+        contactsPermissionOnDenied = null
+    }
+
+    // Calendar permission launcher (on-demand, triggered by save calendar event)
+    private var calendarPermissionOnGranted: (() -> Unit)? = null
+    private var calendarPermissionOnDenied: (() -> Unit)? = null
+    private val showCalendarPermissionDialog = mutableStateOf(false)
+
+    private val requestCalendarPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        Log.d(TAG, "Calendar permission result: $allGranted (details: $permissions)")
+        showCalendarPermissionDialog.value = false
+        if (allGranted) {
+            calendarPermissionOnGranted?.invoke()
+        } else {
+            calendarPermissionOnDenied?.invoke()
+        }
+        calendarPermissionOnGranted = null
+        calendarPermissionOnDenied = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Handle wake word lock screen flags before super.onCreate()
+        val fromWakeWord = intent?.getBooleanExtra("FROM_WAKE_WORD", false) ?: false
+        if (fromWakeWord) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            Log.d(TAG, "Wake word launch - set showWhenLocked, turnScreenOn")
+        }
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
@@ -132,10 +207,42 @@ class MainActivity : ComponentActivity() {
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
         setupCloseAppReceiver()
 
+        // Register receiver to clear showWhenLocked when user unlocks the device
+        registerReceiver(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
+
         // Set up static callback for self-close tool (more reliable than broadcast)
         finishAndRemoveTaskCallback = {
             Log.d(TAG, "finishAndRemoveTaskCallback invoked - calling finishAndRemoveTask()")
             finishAndRemoveTask()
+        }
+
+        // Set up static callback for on-demand unlock (used by screen agent tools on lock screen)
+        requestUnlockCallback = { onSuccess, onCancelled ->
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            if (km.isKeyguardLocked) {
+                km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() { onSuccess() }
+                    override fun onDismissCancelled() { onCancelled() }
+                })
+            } else {
+                onSuccess() // Already unlocked
+            }
+        }
+
+        // Set up static callback for on-demand contacts permission (used by lookup tool)
+        requestContactsPermissionCallback = { onGranted, onDenied ->
+            Log.d(TAG, "requestContactsPermissionCallback invoked - showing contacts permission dialog")
+            contactsPermissionOnGranted = onGranted
+            contactsPermissionOnDenied = onDenied
+            showContactsPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand calendar permission (used by save calendar event)
+        requestCalendarPermissionCallback = { onGranted, onDenied ->
+            Log.d(TAG, "requestCalendarPermissionCallback invoked - showing calendar permission dialog")
+            calendarPermissionOnGranted = onGranted
+            calendarPermissionOnDenied = onDenied
+            showCalendarPermissionDialog.value = true
         }
 
         setContent {
@@ -270,6 +377,39 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     
+                    // On-demand contacts permission dialog (triggered by tool execution)
+                    if (showContactsPermissionDialog.value) {
+                        com.example.whiz.ui.components.ContactsPermissionDialog(
+                            onDismiss = {
+                                showContactsPermissionDialog.value = false
+                                contactsPermissionOnDenied?.invoke()
+                                contactsPermissionOnGranted = null
+                                contactsPermissionOnDenied = null
+                            },
+                            onGrantPermission = {
+                                requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                            }
+                        )
+                    }
+
+                    // On-demand calendar permission dialog (triggered by save calendar event)
+                    if (showCalendarPermissionDialog.value) {
+                        com.example.whiz.ui.components.CalendarPermissionDialog(
+                            onDismiss = {
+                                showCalendarPermissionDialog.value = false
+                                calendarPermissionOnDenied?.invoke()
+                                calendarPermissionOnGranted = null
+                                calendarPermissionOnDenied = null
+                            },
+                            onGrantPermission = {
+                                requestCalendarPermissionLauncher.launch(arrayOf(
+                                    Manifest.permission.READ_CALENDAR,
+                                    Manifest.permission.WRITE_CALENDAR
+                                ))
+                            }
+                        )
+                    }
+
                     // Handle navigation after navController is initialized
                     LaunchedEffect(navController) {
                         handleIntentNavigation(intent)
@@ -277,13 +417,37 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // Manage FLAG_KEEP_SCREEN_ON at the Activity level so it persists across
+        // composable transitions (ChatScreen dispose/recompose won't clear it)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                voiceManager.isContinuousListeningEnabled.collect { enabled ->
+                    if (enabled) {
+                        Log.d(TAG, "Enabling FLAG_KEEP_SCREEN_ON - continuous listening active")
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        Log.d(TAG, "Clearing FLAG_KEEP_SCREEN_ON - continuous listening disabled")
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+            }
+        }
     }
-    
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Set intent first so logDetailedIntentInfo can use it
         logDetailedIntentInfo(intent, "onNewIntent")
-        
+
+        // Handle wake word lock screen flags (same as onCreate, needed when activity is reused via SINGLE_TOP)
+        val fromWakeWord = intent.getBooleanExtra("FROM_WAKE_WORD", false)
+        if (fromWakeWord) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            Log.d(TAG, "Wake word launch (onNewIntent) - set showWhenLocked, turnScreenOn")
+        }
+
         // If navController is already initialized, LaunchedEffect(navController) won't trigger
         // So we need to manually call handleIntentNavigation
         if (::navController.isInitialized) {
@@ -350,7 +514,9 @@ class MainActivity : ComponentActivity() {
                 setIntent(i)
                 // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
                 com.example.whiz.ui.viewmodels.ChatViewModel.isTransitioning = true
-                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true")
+                // Enable TTS synchronously so it's available immediately (not waiting for Compose LaunchedEffect)
+                voiceManager.setVoiceResponseEnabled(true)
+                Log.d(TAG, "🎤 Updated activity intent with voice launch flags, isTransitioning=true, TTS enabled")
             }
         }
         Log.d(TAG, "=== END INTENT ANALYSIS ===")
@@ -687,6 +853,11 @@ class MainActivity : ComponentActivity() {
             voiceManager.stopListening()
         }
 
+        // Abandon ducking focus so other apps resume normal volume
+        if (!bubbleActive && !bubblePending) {
+            audioFocusManager.abandonDuckingFocus()
+        }
+
         // Stop TTS when app is backgrounded, UNLESS bubble is in Speaking Mode
         if (!shouldKeepTTS) {
             try {
@@ -704,8 +875,15 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
 
-        // Clear the static callback
+        // Release any held audio focus as a safety net
+        audioFocusManager.abandonDuckingFocus()
+        audioFocusManager.abandonFocus()
+
+        // Clear the static callbacks
         finishAndRemoveTaskCallback = null
+        requestUnlockCallback = null
+        requestContactsPermissionCallback = null
+        requestCalendarPermissionCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {
@@ -725,6 +903,13 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 Log.w(TAG, "Error unregistering close app receiver", e)
             }
+        }
+
+        // Unregister user present receiver
+        try {
+            unregisterReceiver(userPresentReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering user present receiver", e)
         }
     }
 

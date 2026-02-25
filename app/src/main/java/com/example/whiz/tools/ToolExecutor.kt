@@ -1,10 +1,17 @@
 package com.example.whiz.tools
 
+import android.Manifest
+import android.app.KeyguardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.provider.Telephony
+import androidx.core.content.ContextCompat
+import com.example.whiz.MainActivity
 import com.example.whiz.services.BubbleOverlayService
+import com.example.whiz.services.MessageDraftOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,9 +20,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
 
 sealed class ToolExecutionResult {
     data class Success(
@@ -29,17 +39,37 @@ sealed class ToolExecutionResult {
         val requestId: String,
         val error: String
     ) : ToolExecutionResult()
+
+    data class Status(
+        val toolName: String,
+        val requestId: String,
+        val status: String,
+        val message: String
+    ) : ToolExecutionResult()
 }
 
 @Singleton
 class ToolExecutor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val screenAgentTools: ScreenAgentTools,
+    private val deviceControlTools: DeviceControlTools,
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
     private val authRepository: com.example.whiz.data.auth.AuthRepository
 ) {
     private val TAG = "ToolExecutor"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private val toolsRequiringUnlock = setOf(
+        "agent_launch_app",
+        "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
+        "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
+        "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
+        "agent_search_google_maps_location", "agent_search_google_maps_phrase",
+        "agent_get_google_maps_directions", "agent_recenter_google_maps",
+        "agent_fullscreen_google_maps", "agent_select_location_from_list",
+        "agent_press_call_button",
+        "agent_save_calendar_event"
+    )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
@@ -64,6 +94,60 @@ class ToolExecutor @Inject constructor(
 
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
+
+                // Check if device is locked and tool requires unlock
+                val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                if (km.isKeyguardLocked && toolName in toolsRequiringUnlock) {
+                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and waiting")
+                    val unlockCallback = MainActivity.requestUnlockCallback
+                    if (unlockCallback == null) {
+                        Log.e(TAG, "🔒 No unlock callback available - MainActivity may not be active")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Phone is locked and cannot show unlock prompt. Please unlock your phone and try again."
+                        ))
+                        return@launch
+                    }
+
+                    // Notify server that we're waiting for unlock so it can extend its timeout
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "waiting_for_unlock",
+                        message = "Phone is locked. Waiting for user to unlock."
+                    ))
+
+                    // Suspend and wait for user to unlock (or cancel), with 60s timeout
+                    val unlocked = withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Boolean> { cont ->
+                            unlockCallback(
+                                { // onSuccess
+                                    Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
+                                    if (cont.isActive) cont.resume(true)
+                                },
+                                { // onCancelled
+                                    Log.i(TAG, "🔒 User cancelled unlock - aborting tool $toolName")
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            )
+                        }
+                    }
+
+                    if (unlocked != true) {
+                        val reason = if (unlocked == null) "Unlock timed out" else "User cancelled unlock"
+                        Log.i(TAG, "🔒 $reason for tool $toolName")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Phone is locked. Please unlock your phone to use this feature."
+                        ))
+                        return@launch
+                    }
+
+                    // Small delay after unlock to let the system settle
+                    delay(500)
+                }
 
                 when (toolName) {
                     "agent_launch_app" -> {
@@ -97,6 +181,9 @@ class ToolExecutor @Inject constructor(
                     "agent_close_app" -> {
                         executeCloseApp(requestId)
                     }
+                    "agent_dismiss_draft" -> {
+                        executeDismissDraft(requestId)
+                    }
                     "agent_play_youtube_music" -> {
                         executePlayYouTubeMusic(requestId, params)
                     }
@@ -124,6 +211,79 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_select_location_from_list" -> {
                         executeSelectLocationFromList(requestId, params)
+                    }
+                    // ========== Device Control Tools (direct intents/APIs) ==========
+                    "agent_set_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setAlarm(it) }
+                    }
+                    "agent_set_timer" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setTimer(it) }
+                    }
+                    "agent_dismiss_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissAlarm() }
+                    }
+                    "agent_dismiss_timer" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dismissTimer() }
+                    }
+                    "agent_get_next_alarm" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.getNextAlarm() }
+                    }
+                    "agent_delete_alarm" -> {
+                        executeDeleteAlarm(requestId, params)
+                    }
+                    "agent_toggle_flashlight" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.toggleFlashlight(it) }
+                    }
+                    "agent_draft_calendar_event" -> {
+                        executeDraftCalendarEvent(requestId, params)
+                    }
+                    "agent_save_calendar_event" -> {
+                        executeSaveCalendarEvent(requestId, params)
+                    }
+                    "agent_dial_phone_number" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.dialPhoneNumber(it) }
+                    }
+                    "agent_press_call_button" -> {
+                        executePhoneCallButton(requestId, params)
+                    }
+                    "agent_set_volume" -> {
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.setVolume(it) }
+                    }
+                    "agent_lookup_phone_contacts" -> {
+                        // Check contacts permission and prompt user if needed
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+                            != PackageManager.PERMISSION_GRANTED) {
+                            val permCallback = MainActivity.requestContactsPermissionCallback
+                            if (permCallback != null) {
+                                Log.i(TAG, "📇 READ_CONTACTS not granted - showing permission dialog")
+                                _toolResults.emit(ToolExecutionResult.Status(
+                                    toolName = toolName,
+                                    requestId = requestId,
+                                    status = "waiting_for_contacts_permission",
+                                    message = "Contacts permission required. Waiting for user to grant."
+                                ))
+                                val granted = withTimeoutOrNull(60_000L) {
+                                    suspendCancellableCoroutine<Boolean> { cont ->
+                                        permCallback(
+                                            { // onGranted
+                                                Log.i(TAG, "📇 User granted contacts permission")
+                                                if (cont.isActive) cont.resume(true)
+                                            },
+                                            { // onDenied
+                                                Log.i(TAG, "📇 User denied contacts permission")
+                                                if (cont.isActive) cont.resume(false)
+                                            }
+                                        )
+                                    }
+                                }
+                                if (granted != true) {
+                                    val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                                    Log.i(TAG, "📇 $reason for contacts lookup")
+                                }
+                                // Proceed regardless - lookupPhoneContacts handles missing permission gracefully
+                            }
+                        }
+                        executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -718,6 +878,41 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    private suspend fun executeDismissDraft(requestId: String) {
+        try {
+            val wasActive = MessageDraftOverlayService.isActive
+            Log.i(TAG, "Dismissing draft overlay (wasActive=$wasActive)")
+
+            if (wasActive) {
+                MessageDraftOverlayService.stop(context)
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", if (wasActive) "Draft overlay dismissed" else "No active draft to dismiss")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Dismiss draft result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_dismiss_draft",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error dismissing draft overlay", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_dismiss_draft",
+                    requestId = requestId,
+                    error = "Failed to dismiss draft: ${e.message}"
+                )
+            )
+        }
+    }
+
     private suspend fun executePlayYouTubeMusic(requestId: String, params: JSONObject) {
         try {
             val query = params.getString("query")
@@ -1072,9 +1267,361 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    /**
+     * Press the call button in the dialer via accessibility service.
+     */
+    private suspend fun executePhoneCallButton(requestId: String, params: JSONObject) {
+        try {
+            val expectedNumber = if (params.has("expected_number")) params.getString("expected_number") else null
+            val speakerphone = if (params.has("speakerphone")) params.getBoolean("speakerphone") else true
+            Log.i(TAG, "Pressing call button, expectedNumber=$expectedNumber, speakerphone=$speakerphone")
+
+            val result = screenAgentTools.pressCallButton(expectedNumber, speakerphone)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.dialedNumber?.let { put("dialed_number", it) }
+                result.error?.let { put("error", it) }
+                if (result.speakerphoneEnabled) put("speakerphone_enabled", true)
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_press_call_button result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_press_call_button",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing press call button", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_press_call_button",
+                    requestId = requestId,
+                    error = "Failed to press call button: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Draft a calendar event. Always dismisses any existing calendar draft first
+     * (handles both redrafts and cases where the user was drafting outside the app).
+     */
+    private suspend fun executeDraftCalendarEvent(requestId: String, params: JSONObject) {
+        try {
+            // Always dismiss any existing calendar draft before launching a new one.
+            // This handles both explicit redrafts and cases where the user was already
+            // drafting an event outside of Whiz (which would show a discard dialog).
+            Log.i(TAG, "Dismissing any existing calendar draft before drafting new event")
+            val dismissed = deviceControlTools.dismissCalendarDraft()
+            Log.i(TAG, "dismissCalendarDraft result: $dismissed")
+
+            val resultJson = deviceControlTools.draftCalendarEvent(params)
+            Log.i(TAG, "[TOOL_RESULT] agent_draft_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_draft_calendar_event",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_draft_calendar_event", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_draft_calendar_event",
+                    requestId = requestId,
+                    error = "Failed to draft calendar event: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Save calendar event via ContentProvider insert, then dismiss the draft UI.
+     * Checks WRITE_CALENDAR permission first and prompts user if needed.
+     */
+    private suspend fun executeSaveCalendarEvent(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Saving calendar event via ContentProvider")
+
+            // Check READ_CALENDAR + WRITE_CALENDAR permission and prompt user if needed
+            val hasCalendarPerms = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            if (!hasCalendarPerms) {
+                val permCallback = MainActivity.requestCalendarPermissionCallback
+                if (permCallback != null) {
+                    Log.i(TAG, "Calendar permissions not granted - showing permission dialog")
+
+                    // If bubble overlay is active, we need to bring MainActivity to foreground
+                    // so the user can see the permission dialog
+                    val wasBubbleActive = BubbleOverlayService.isActive
+                    if (wasBubbleActive) {
+                        Log.i(TAG, "Bubble overlay active - stopping bubble and bringing MainActivity to foreground for permission dialog")
+                        BubbleOverlayService.stop(context)
+                        val bringToFrontIntent = android.content.Intent(context, MainActivity::class.java).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        }
+                        context.startActivity(bringToFrontIntent)
+                        delay(500) // Let MainActivity come to foreground
+                    }
+
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = "agent_save_calendar_event",
+                        requestId = requestId,
+                        status = "waiting_for_calendar_permission",
+                        message = "Calendar permission required. Waiting for user to grant."
+                    ))
+                    val granted = withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Boolean> { cont ->
+                            permCallback(
+                                { // onGranted
+                                    Log.i(TAG, "User granted calendar permission")
+                                    if (cont.isActive) cont.resume(true)
+                                },
+                                { // onDenied
+                                    Log.i(TAG, "User denied calendar permission")
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            )
+                        }
+                    }
+
+                    if (granted != true) {
+                        val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                        Log.i(TAG, "$reason for calendar save")
+                        // Restore bubble if it was active
+                        if (wasBubbleActive) {
+                            BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                            BubbleOverlayService.start(context)
+                        }
+                        _toolResults.emit(
+                            ToolExecutionResult.Error(
+                                toolName = "agent_save_calendar_event",
+                                requestId = requestId,
+                                error = "$reason. Cannot save calendar event without calendar permission."
+                            )
+                        )
+                        return
+                    }
+
+                    // Wait for permission to propagate, then restore bubble overlay
+                    if (wasBubbleActive) {
+                        // Poll until permission is actually usable (up to 3 seconds)
+                        val permWaitStart = System.currentTimeMillis()
+                        while (System.currentTimeMillis() - permWaitStart < 3000) {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                                && ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED) {
+                                Log.i(TAG, "Calendar permissions confirmed after ${System.currentTimeMillis() - permWaitStart}ms")
+                                break
+                            }
+                            delay(200)
+                        }
+                        // Restart bubble overlay and bring calendar back to foreground
+                        Log.i(TAG, "Restarting bubble overlay after permission grant")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        BubbleOverlayService.start(context)
+                        // Bring Google Calendar back to foreground so bubble overlays on calendar, not chat
+                        val calendarIntent = context.packageManager.getLaunchIntentForPackage("com.google.android.calendar")
+                        if (calendarIntent != null) {
+                            calendarIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                            context.startActivity(calendarIntent)
+                            Log.i(TAG, "Brought Google Calendar back to foreground")
+                        }
+                        delay(500)
+                    }
+                } else {
+                    Log.w(TAG, "Calendar permissions not granted and no permission callback available")
+                    _toolResults.emit(
+                        ToolExecutionResult.Error(
+                            toolName = "agent_save_calendar_event",
+                            requestId = requestId,
+                            error = "Calendar permission not granted and cannot request it (no active Activity)."
+                        )
+                    )
+                    return
+                }
+            }
+
+            // Insert event via ContentProvider
+            val resultJson = deviceControlTools.saveCalendarEventViaContentProvider(params)
+
+            Log.i(TAG, "[TOOL_RESULT] agent_save_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            // On success, dismiss the Calendar draft UI, wait for sync, then show the event
+            if (resultJson.optBoolean("success", false)) {
+                Log.i(TAG, "ContentProvider insert succeeded, dismissing calendar draft UI")
+                deviceControlTools.dismissCalendarDraft()
+
+                val accountName = resultJson.optString("account_name", "")
+                val accountType = resultJson.optString("account_type", "")
+                val eventUri = resultJson.optString("event_uri", "")
+
+                // Request a sync so Google Calendar's internal cache picks up our insert.
+                // Without this, EventInfoActivity shows "The requested event was not found".
+                // The sync can take 6-15+ seconds (JobScheduler delay + network), so we wait.
+                try {
+                    val account = android.accounts.Account(accountName, accountType)
+                    val extras = android.os.Bundle().apply {
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                    }
+                    android.content.ContentResolver.requestSync(account, android.provider.CalendarContract.AUTHORITY, extras)
+                    Log.i(TAG, "Requested calendar sync for account=$accountName ($accountType)")
+
+                    // Wait for sync to start, then wait for it to finish
+                    val syncStart = System.currentTimeMillis()
+                    val syncTimeout = 20_000L // 20s — sync can take a while via JobScheduler
+
+                    // Phase 1: wait for sync to become active
+                    var syncStarted = false
+                    while (System.currentTimeMillis() - syncStart < syncTimeout) {
+                        if (android.content.ContentResolver.isSyncActive(account, android.provider.CalendarContract.AUTHORITY)) {
+                            syncStarted = true
+                            Log.i(TAG, "Calendar sync started after ${System.currentTimeMillis() - syncStart}ms")
+                            break
+                        }
+                        delay(200)
+                    }
+
+                    if (syncStarted) {
+                        // Phase 2: wait for sync to complete
+                        while (System.currentTimeMillis() - syncStart < syncTimeout) {
+                            if (!android.content.ContentResolver.isSyncActive(account, android.provider.CalendarContract.AUTHORITY)) {
+                                Log.i(TAG, "Calendar sync completed after ${System.currentTimeMillis() - syncStart}ms")
+                                break
+                            }
+                            delay(200)
+                        }
+                    }
+
+                    val elapsed = System.currentTimeMillis() - syncStart
+                    if (elapsed >= syncTimeout) {
+                        Log.w(TAG, "Calendar sync timed out after ${syncTimeout}ms, proceeding anyway")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Calendar sync wait failed (non-fatal): ${e.message}")
+                }
+
+                // Open the event in Google Calendar
+                if (eventUri.isNotEmpty()) {
+                    val uri = android.net.Uri.parse(eventUri)
+                    val eventDetails = context.contentResolver.query(
+                        uri, arrayOf("_id", "dtstart", "dtend"), null, null, null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            Triple(
+                                cursor.getLong(cursor.getColumnIndexOrThrow("_id")),
+                                cursor.getLong(cursor.getColumnIndexOrThrow("dtstart")),
+                                cursor.getLong(cursor.getColumnIndexOrThrow("dtend"))
+                            )
+                        } else null
+                    }
+
+                    if (eventDetails != null) {
+                        val (eventId, beginTime, endTime) = eventDetails
+                        Log.i(TAG, "Opening event (id=$eventId, begin=$beginTime, end=$endTime): $eventUri")
+                        val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            setPackage("com.google.android.calendar")
+                            putExtra("beginTime", beginTime)
+                            putExtra("endTime", endTime)
+                        }
+                        context.startActivity(viewIntent)
+                    } else {
+                        Log.w(TAG, "Event not found in ContentProvider after insert: $eventUri")
+                    }
+                }
+            }
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_save_calendar_event",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing save calendar event", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_save_calendar_event",
+                    requestId = requestId,
+                    error = "Failed to save calendar event: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Delete a scheduled alarm by finding it in the Clock app's alarm list.
+     */
+    private suspend fun executeDeleteAlarm(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Executing agent_delete_alarm")
+            val resultJson = deviceControlTools.deleteAlarm(params)
+            Log.i(TAG, "[TOOL_RESULT] agent_delete_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_delete_alarm",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_delete_alarm", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_delete_alarm",
+                    requestId = requestId,
+                    error = "Failed to delete alarm: ${e.message}"
+                )
+            )
+        }
+    }
+
+    /**
+     * Generic executor for device control tools (direct intents/APIs).
+     * These are synchronous and don't require accessibility service.
+     */
+    private suspend fun executeDeviceControlTool(
+        toolName: String,
+        requestId: String,
+        params: JSONObject,
+        action: (JSONObject) -> JSONObject
+    ) {
+        try {
+            Log.i(TAG, "Executing device control tool: $toolName")
+            val resultJson = action(params)
+            Log.i(TAG, "[TOOL_RESULT] $toolName result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = toolName,
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing $toolName", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = toolName,
+                    requestId = requestId,
+                    error = "Failed to execute $toolName: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
-        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list")
+        return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_get_next_alarm", "agent_delete_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
     // Method to get tool schema (useful for the server to know what parameters are needed)

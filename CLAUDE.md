@@ -16,6 +16,10 @@ On my phone, which is what I use for testing as well as running the production a
 
 ## Testing
 
+### Logcat
+
+When i ask you to run or stream logcat, i mean stream logcat from the connected android device onto a file on the computer. We have a lot of logs and logcat rotates quickly, so just pulling it isn't enough.
+
 ### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.
@@ -54,6 +58,23 @@ cd whizvoiceapp && ./venv/bin/pytest run_screen_agent_tests.py::test_google_maps
 Test output for screen agent tests is stored in whizvoiceapp/screen_agent_test_output directory:
 - **screen_agent_logcat.log** - Android logcat output during screen agent test execution
 - Screenshots from tests are also saved in this directory
+
+## Wake Word Detection Metrics
+
+Running aggregate stats (count, accepted count, mean, std dev) are stored in SharedPreferences (`wake_word_settings`) using Welford's online algorithm. A human-readable summary is also written to the app's external files dir after each detection.
+
+To pull the stats file:
+```
+# Debug:
+adb pull /sdcard/Android/data/com.example.whiz.debug/files/wake_word_stats.txt
+
+# Production:
+adb pull /sdcard/Android/data/com.example.whiz/files/wake_word_stats.txt
+```
+
+Key files:
+- `WakeWordPreferences.kt` - `recordDetection()`, `getStats()`, `getRecentDetections()`, `clearMetrics()`. Also stores a rolling window of the last 10 detections (confidence, accepted/rejected, timestamp) as JSON in SharedPreferences. These are included in the stats file under "recent (last N):"
+- `WakeWordService.kt` - calls `recordDetection()` in `checkForWakeWord()` and logs stats summary
 
 ## Database
 

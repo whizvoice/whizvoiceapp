@@ -75,6 +75,15 @@ class SpeechRecognitionService @Inject constructor(
     val isInitialized: Boolean
         get() = _isInitialized
 
+    /**
+     * Returns true when AEC (Acoustic Echo Cancellation) is active.
+     * This is the case on API 33+ with continuous listening using AudioPipeRecorder,
+     * which auto-enables AcousticEchoCanceler.
+     */
+    fun isAECActive(): Boolean {
+        return audioPipeRecorder != null && useSegmentedSession
+    }
+
     // --- Continuous Listening State ---
     // Note: Continuous listening state is now managed by VoiceManager
     // This callback provides the current state when needed
@@ -756,6 +765,12 @@ class SpeechRecognitionService @Inject constructor(
             override fun onSegmentResults(segmentResults: Bundle) {
                 if (!useSegmentedSession) return  // Shouldn't happen, but guard
 
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled && !isTestInjectedCallback) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer segment results callback")
+                    return
+                }
+
                 val matches = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val segmentText = matches?.firstOrNull() ?: ""
 
@@ -782,6 +797,12 @@ class SpeechRecognitionService @Inject constructor(
             }
 
             override fun onEndOfSegmentedSession() {
+                // If in test mode, ignore real speech recognizer callbacks to prevent conflicts
+                if (testModeEnabled) {
+                    Log.d(TAG, "[TEST MODE] Ignoring real speech recognizer end-of-segmented-session callback")
+                    return
+                }
+
                 Log.d(TAG, "🔄 SEGMENTED: onEndOfSegmentedSession")
 
                 val shouldRestart = shouldRestartCallback?.invoke() ?: (continuousListeningCallback?.invoke() ?: false)
@@ -1023,6 +1044,35 @@ class SpeechRecognitionService @Inject constructor(
         }
     }
 
+    /**
+     * Inject a previously-captured partial transcription so that the existing
+     * partial-concatenation mechanism prepends it to the next recognition session.
+     * Called by VoiceManager when the app returns to foreground after setAlarm
+     * briefly stole focus and killed the recognizer mid-utterance.
+     */
+    fun injectSavedPartial(text: String) {
+        Log.i(TAG, "injectSavedPartial: injecting '$text'")
+        savedPartialForConcatenation = text
+        savedPartialIsAfterFinalResult = false
+        peakPartialLength = 0
+
+        // Start the existing timeout so the partial is sent as a final result
+        // if the user doesn't continue speaking
+        savedPartialTimeoutJob?.cancel()
+        savedPartialTimeoutJob = serviceScope.launch {
+            delay(SAVED_PARTIAL_TIMEOUT_MS)
+            if (savedPartialForConcatenation.isNotBlank()) {
+                Log.d(TAG, "injectSavedPartial: timed out after ${SAVED_PARTIAL_TIMEOUT_MS}ms, sending as final: '$savedPartialForConcatenation'")
+                val partialToSend = savedPartialForConcatenation
+                savedPartialForConcatenation = ""
+                savedPartialIsAfterFinalResult = false
+                _transcriptionState.value = partialToSend
+                recognitionCallback?.invoke(partialToSend)
+                _transcriptionState.value = ""
+            }
+        }
+    }
+
     // ==================== TEST SUPPORT METHODS ====================
 
     /**
@@ -1032,7 +1082,14 @@ class SpeechRecognitionService @Inject constructor(
      */
     fun enableTestMode() {
         testModeEnabled = true
-        Log.d(TAG, "[TEST] Test mode enabled - will inject results through real callbacks")
+        Log.d(TAG, "[TEST] Test mode enabled - stopping real recognizer and injecting results through callbacks")
+        // Stop real recognizer if running (but keep isListening=true for test)
+        // SpeechRecognizer must be accessed from the main thread
+        Handler(Looper.getMainLooper()).post {
+            speechRecognizer?.cancel()
+        }
+        audioPipeRecorder?.cleanup()
+        audioPipeRecorder = null
     }
 
     /**

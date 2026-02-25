@@ -7,9 +7,15 @@ import android.media.AudioManager
 import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,10 +40,31 @@ class AudioFocusManager @Inject constructor(
 
     private var audioFocusRequest: AudioFocusRequest? = null
 
+    // Ducking focus: separate from the main focus request, used to duck other apps'
+    // audio during continuous listening sessions
+    private var duckingFocusRequest: AudioFocusRequest? = null
+    private val _isDuckingActive = MutableStateFlow(false)
+    val isDuckingActive: StateFlow<Boolean> = _isDuckingActive.asStateFlow()
+
     // Callbacks for focus changes - VoiceManager will set these
     var onFocusGained: (() -> Unit)? = null
     var onFocusLostTransient: (() -> Unit)? = null
     var onFocusLostPermanent: (() -> Unit)? = null
+
+    // Ducking re-request support: when another app steals focus, we re-request
+    // ducking so the other app ducks its volume while Whiz is active.
+    companion object {
+        private const val DUCKING_RE_REQUEST_DELAY_MS = 500L
+        private const val MAX_DUCKING_RETRIES = 3
+    }
+
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var duckingReRequestJob: Job? = null
+    private var duckingRetryCount: Int = 0
+    private var intentionalDuckingAbandon: Boolean = false
+
+    // Policy callback: VoiceManager sets this to decide if ducking should be re-requested
+    var shouldReRequestDucking: (() -> Boolean)? = null
 
     /**
      * Request audio focus for voice recording.
@@ -114,6 +141,55 @@ class AudioFocusManager @Inject constructor(
         return _focusState.value == AudioFocusState.FOCUS_GRANTED
     }
 
+    /**
+     * Request ducking focus to lower other apps' audio volume.
+     * Uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK so the system automatically ducks
+     * other apps' audio by ~14dB while we hold focus.
+     * This is separate from the main focus request (requestFocus/abandonFocus).
+     * @return true if ducking focus was granted
+     */
+    fun requestDuckingFocus(): Boolean {
+        if (_isDuckingActive.value) return true
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+        duckingFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(audioAttributes)
+            .setAcceptsDelayedFocusGain(false)
+            .setOnAudioFocusChangeListener(this)
+            .build()
+
+        val result = audioManager.requestAudioFocus(duckingFocusRequest!!)
+        _isDuckingActive.value = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        if (_isDuckingActive.value) {
+            duckingRetryCount = 0
+        }
+        Log.d(TAG, "requestDuckingFocus: result=${if (_isDuckingActive.value) "GRANTED" else "FAILED($result)"}")
+        return _isDuckingActive.value
+    }
+
+    /**
+     * Abandon ducking focus so other apps resume normal volume.
+     */
+    fun abandonDuckingFocus() {
+        if (!_isDuckingActive.value && duckingFocusRequest == null) return
+        Log.d(TAG, "Abandoning ducking focus")
+        duckingReRequestJob?.cancel()
+        duckingReRequestJob = null
+        intentionalDuckingAbandon = true
+        duckingRetryCount = 0
+        duckingFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        _isDuckingActive.value = false
+        duckingFocusRequest = null
+    }
+
+    fun isHoldingDuckingFocus(): Boolean {
+        return _isDuckingActive.value
+    }
+
     override fun onAudioFocusChange(focusChange: Int) {
         Log.d(TAG, "Audio focus changed: ${focusChangeToString(focusChange)}")
 
@@ -121,6 +197,12 @@ class AudioFocusManager @Inject constructor(
             AudioManager.AUDIOFOCUS_GAIN -> {
                 Log.d(TAG, "Audio focus gained")
                 _focusState.value = AudioFocusState.FOCUS_GRANTED
+                // If this GAIN is for our ducking request being re-granted, update state
+                if (duckingFocusRequest != null) {
+                    _isDuckingActive.value = true
+                    duckingRetryCount = 0
+                    Log.d(TAG, "Ducking focus re-request granted!")
+                }
                 onFocusGained?.invoke()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
@@ -131,9 +213,53 @@ class AudioFocusManager @Inject constructor(
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
                 Log.d(TAG, "Audio focus lost permanently")
+                val wasDuckingActive = _isDuckingActive.value
+                _isDuckingActive.value = false
                 _focusState.value = AudioFocusState.FOCUS_LOST_PERMANENT
                 onFocusLostPermanent?.invoke()
+
+                // If ducking was active and we didn't intentionally abandon it,
+                // another app stole focus — try to re-request ducking
+                if (wasDuckingActive && !intentionalDuckingAbandon) {
+                    Log.d(TAG, "Ducking focus was stolen externally, attempting re-request")
+                    attemptDuckingReRequest()
+                } else if (intentionalDuckingAbandon) {
+                    Log.d(TAG, "Ducking focus loss was intentional, not re-requesting")
+                    intentionalDuckingAbandon = false
+                }
             }
+        }
+    }
+
+    private fun attemptDuckingReRequest() {
+        // Cancel any pending re-request (debounce)
+        duckingReRequestJob?.cancel()
+
+        if (duckingRetryCount >= MAX_DUCKING_RETRIES) {
+            Log.w(TAG, "Max ducking retries ($MAX_DUCKING_RETRIES) exceeded, giving up")
+            duckingRetryCount = 0
+            return
+        }
+
+        // Check policy callback — bail if VoiceManager says we shouldn't re-request
+        if (shouldReRequestDucking?.invoke() != true) {
+            Log.d(TAG, "shouldReRequestDucking returned false, not re-requesting")
+            return
+        }
+
+        duckingRetryCount++
+        Log.d(TAG, "Scheduling ducking re-request (attempt $duckingRetryCount/$MAX_DUCKING_RETRIES)")
+
+        duckingReRequestJob = coroutineScope.launch {
+            delay(DUCKING_RE_REQUEST_DELAY_MS)
+
+            // Re-check policy after delay (conditions may have changed)
+            if (shouldReRequestDucking?.invoke() != true) {
+                Log.d(TAG, "shouldReRequestDucking returned false after delay, aborting re-request")
+                return@launch
+            }
+
+            requestDuckingFocus()
         }
     }
 

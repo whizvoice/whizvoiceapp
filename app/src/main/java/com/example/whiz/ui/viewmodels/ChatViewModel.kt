@@ -61,9 +61,27 @@ class ChatViewModel @Inject constructor(
          * Flag to prevent old ChatViewModel from disabling continuous listening
          * when transitioning to a new chat via assistant long-press.
          * Set to true by AssistantActivity before launching MainActivity.
+         * Auto-expires after 5 seconds to prevent getting permanently stuck.
          */
+        private const val TRANSITION_TIMEOUT_MS = 5000L
         @Volatile
-        var isTransitioning = false
+        private var _isTransitioning = false
+        @Volatile
+        private var transitionStartTimeMs = 0L
+
+        var isTransitioning: Boolean
+            get() {
+                if (!_isTransitioning) return false
+                if (System.currentTimeMillis() - transitionStartTimeMs > TRANSITION_TIMEOUT_MS) {
+                    _isTransitioning = false
+                    return false
+                }
+                return true
+            }
+            set(value) {
+                _isTransitioning = value
+                if (value) transitionStartTimeMs = System.currentTimeMillis()
+            }
     }
 
     private val TAG = "ChatViewModel"
@@ -417,6 +435,13 @@ class ChatViewModel @Inject constructor(
                             Log.d(TAG, "WebSocketEvent.Connected: Syncing messages for chat $currentChatId (reconnect=$isReconnectingAfterDisconnect)")
                             viewModelScope.launch {
                                 try {
+                                    // Clean up temporary error messages from offline state
+                                    val deletedCount = repository.deleteAssistantMessageByRequestId(currentChatId, "CONNECTION_ERROR")
+                                    if (deletedCount > 0) {
+                                        Log.d(TAG, "WebSocketEvent.Connected: Cleaned up $deletedCount CONNECTION_ERROR message(s)")
+                                        repository.refreshMessages()
+                                    }
+
                                     // Fetch any messages we might have missed
                                     // Server now handles optimistic chat IDs via optimistic_chat_id column
                                     // Use retry mechanism to handle race conditions with optimistic chats
@@ -523,13 +548,17 @@ class ChatViewModel @Inject constructor(
                             _connectionError.value = null
                         }
                         // Check if this is a final retry failure (contains "after X attempts")
-                        else if (errorMessage.contains("after") && errorMessage.contains("attempts")) {
+                        // or a final connection loss after max reconnect attempts
+                        else if ((errorMessage.contains("after") && errorMessage.contains("attempts")) ||
+                                 errorMessage.contains("Connection lost")) {
                             // This is a final failure after all retries - show to user
                             _connectionError.value = "Failed to send message. Please check your connection and try again."
-                            if (_chatId.value > 0) { // Only add if a chat is active
-                                repository.addAssistantMessage(
+                            if (_chatId.value != 0L && _chatId.value != -1L) { // Only add if a chat is active (includes temporary negative IDs)
+                                // Use optimistic (local-only) insert since we're likely offline
+                                repository.addAssistantMessageOptimistic(
                                     chatId = _chatId.value,
-                                    content = "Error: Unable to send message. Please try again."
+                                    content = "Error: Unable to send message. Please try again.",
+                                    requestId = "CONNECTION_ERROR"
                                 )
                             }
                             // Clear all pending requests on final connection error
@@ -541,12 +570,11 @@ class ChatViewModel @Inject constructor(
                         } else {
                             // This is likely a temporary connection issue - handle silently
                             Log.w(TAG, "Temporary connection error (will retry): $errorMessage")
-                            
-                            // Clear responding state for temporary connection errors too
-                            // When message retries have failed completely (~6-8 seconds of trying),
-                            // clear the responding state to allow user to interact with the microphone button
-                            if (_isResponding.value) {
-                                Log.d(TAG, "Clearing responding state due to connection error to unblock UI")
+
+                            // Only clear responding state if there are no messages waiting in the retry queue
+                            // This keeps the typing indicator visible while retries are still happening
+                            if (_isResponding.value && whizServerRepository.isRetryQueueEmpty()) {
+                                Log.d(TAG, "Clearing responding state due to connection error (no pending retries)")
                                 Log.d(TAG, "🔥 TEMPORARY CONNECTION ERROR: CLEARING all pending requests: $pendingRequests")
                                 _isResponding.value = false
                                 pendingRequests.clear()
@@ -634,6 +662,12 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
+
+                        if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
+                            Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
+                            pendingRequests.remove(event.requestId)
+                            updateRespondingStateForCurrentChat()
+                        }
 
                         // Only delete if this message is for the current chat
                         if (event.conversationId == _chatId.value) {
@@ -1126,17 +1160,20 @@ class ChatViewModel @Inject constructor(
                                         // Don't stop listening, let user finish
                                     } else {
                                         // No active speech - start TTS immediately
-                                        if (isListening.value) {
+                                        // Full-duplex: keep mic active when AEC/headphones available
+                                        if (isListening.value && !voiceManager.isFullDuplexAvailable()) {
                                             wasListeningBeforeTTS = true
                                             voiceManager.stopListening() // Stop STT before TTS speaks
                                         }
-                                        val utteranceId = UUID.randomUUID().toString()
                                         ttsManager.speak(messageContentForChat, "chat_message")
                                         // TTSManager will handle the isSpeaking state
                                     }
                                 } else {
-                                    // Always restart continuous listening after assistant reply if enabled and not speaking
-                                    if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
+                                    // Restart listening after assistant reply if needed
+                                    if (isListening.value) {
+                                        // Already listening (full-duplex mode) - nothing to restart
+                                        Log.d(TAG, "[LOG] Already listening (full-duplex), no restart needed after assistant reply.")
+                                    } else if (voiceManager.isContinuousListeningEnabled.value && !isSpeaking.value) {
                                         Log.d(TAG, "[LOG] Restarting continuous listening after assistant reply.")
                                         startContinuousListening()
                                     } else if (wasListeningBeforeTTS && !isSpeaking.value) {
@@ -1237,6 +1274,16 @@ class ChatViewModel @Inject constructor(
                         if (!success) {
                             Log.e(TAG, "Failed to send tool error result to server")
                         }
+                    }
+                    is ToolExecutionResult.Status -> {
+                        Log.i(TAG, "[TOOL_COLLECTOR] Tool status: ${result.status} for ${result.requestId}")
+                        whizServerRepository.sendToolStatus(
+                            toolName = result.toolName,
+                            requestId = result.requestId,
+                            status = result.status,
+                            message = result.message,
+                            chatId = currentChatId
+                        )
                     }
                 }
             }
@@ -2197,15 +2244,33 @@ class ChatViewModel @Inject constructor(
                 _isRefreshing.value = true
                 try {
                     Log.d(TAG, "refreshMessages: Starting refresh for chat $currentChatId")
-                    
+
                     // Use fetchMessagesWithRetry which includes deduplication and retry logic
                     val serverMessages = repository.fetchMessagesWithRetry(currentChatId)
                     Log.d(TAG, "refreshMessages: Retrieved ${serverMessages.size} messages from server")
-                    
+
                     // The fetchMessagesWithRetry already handles storing messages with deduplication
                     // Just trigger UI refresh
                     repository.refreshMessages()
-                    
+
+                    // If REST fetch succeeded, try reconnecting WebSocket if it's disconnected
+                    // This handles the case where internet was restored after max reconnect attempts
+                    if (!whizServerRepository.isConnected()) {
+                        Log.d(TAG, "refreshMessages: REST fetch succeeded but WebSocket disconnected, attempting reconnect")
+                        // Track retry queue messages in pendingRequests BEFORE connecting,
+                        // so when processRetryQueue sends them and responses arrive,
+                        // pendingRequests is properly cleared and isResponding resets to false
+                        val retryRequestIds = whizServerRepository.getRetryQueueRequestIds()
+                        if (retryRequestIds.isNotEmpty()) {
+                            Log.d(TAG, "refreshMessages: Adding ${retryRequestIds.size} retry queue request(s) to pendingRequests")
+                            for (requestId in retryRequestIds) {
+                                pendingRequests[requestId] = currentChatId
+                            }
+                            _isResponding.value = true
+                        }
+                        whizServerRepository.connect(currentChatId)
+                    }
+
                     _errorState.value = null
                 } catch (e: Exception) {
                     Log.e(TAG, "Error refreshing messages for chat $currentChatId", e)
@@ -2285,6 +2350,11 @@ class ChatViewModel @Inject constructor(
     private fun startQueuedTTS() {
         pendingTTSMessage?.let { message ->
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
+            // Full-duplex: keep mic active when AEC/headphones available
+            if (isListening.value && !voiceManager.isFullDuplexAvailable()) {
+                wasListeningBeforeTTS = true
+                voiceManager.stopListening()
+            }
             viewModelScope.launch(Dispatchers.Main) {
                 ttsManager.speak(message, "chat_message")
             }
@@ -2309,18 +2379,18 @@ class ChatViewModel @Inject constructor(
                     onStarted = {
                         Log.d(TAG, "TTS started - audio focus acquired")
 
-                        // Stop listening to prevent mic from picking up TTS audio (unless headphones connected)
-                        // Must run on main thread for speech recognizer
-                        if (!ttsManager.areHeadphonesConnected()) {
-                            // Check if continuous listening is ENABLED (the user's intent)
-                            // not if we're currently listening (which can be transiently false during restarts)
+                        // Full-duplex: keep mic active when AEC or headphones available
+                        if (!voiceManager.isFullDuplexAvailable()) {
+                            // No full-duplex: stop listening to prevent mic from picking up TTS audio
                             if (voiceManager.isContinuousListeningEnabled.value) {
-                                Log.d(TAG, "Stopping listening to prevent TTS echo (no headphones)")
+                                Log.d(TAG, "Stopping listening to prevent TTS echo (no full-duplex)")
                                 wasListeningBeforeTTS = true
                             }
                             viewModelScope.launch(Dispatchers.Main) {
                                 voiceManager.stopListening()
                             }
+                        } else {
+                            Log.d(TAG, "Full-duplex available - keeping mic active during TTS")
                         }
                         // TTSManager handles its own isSpeaking state
                     },
@@ -2330,13 +2400,17 @@ class ChatViewModel @Inject constructor(
                         // Restart listening if we stopped it when TTS started
                         // Must run on main thread for speech recognizer
                         viewModelScope.launch(Dispatchers.Main) {
-                            if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
+                            if (isListening.value) {
+                                // Already listening (full-duplex mode) - no restart needed
+                                Log.d(TAG, "TTS completed - mic already active (full-duplex), no restart needed")
+                                wasListeningBeforeTTS = false
+                            } else if (wasListeningBeforeTTS && voiceManager.isContinuousListeningEnabled.value) {
                                 Log.d(TAG, "TTS completed - restarting listening that was paused for TTS")
                                 wasListeningBeforeTTS = false
                                 startContinuousListening()
-                            } else if (voiceManager.isContinuousListeningEnabled.value && ttsManager.areHeadphonesConnected()) {
-                                // Headphones case: always restart
-                                Log.d(TAG, "TTS completed with continuous listening and headphones - auto-resuming listening")
+                            } else if (voiceManager.isContinuousListeningEnabled.value) {
+                                // Continuous listening enabled but mic not active - restart
+                                Log.d(TAG, "TTS completed with continuous listening enabled - auto-resuming listening")
                                 startContinuousListening()
                             }
                         }

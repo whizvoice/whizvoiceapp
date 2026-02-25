@@ -46,7 +46,7 @@ sealed class WebSocketEvent {
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
-    data class DeleteMessage(val messageId: Long, val conversationId: Long, val requestId: String?, val reason: String?) : WebSocketEvent()
+    data class DeleteMessage(val messageId: Long?, val conversationId: Long, val requestId: String?, val reason: String?) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
     object Reconnecting : WebSocketEvent()
@@ -598,24 +598,24 @@ class WhizServerRepository @Inject constructor(
                             }
                             // Handle delete_message notifications
                             else if (jsonObject.has("type") && jsonObject.getString("type") == "delete_message") {
-                                val messageId = if (jsonObject.has("message_id")) {
+                                val messageId = if (jsonObject.has("message_id") && !jsonObject.isNull("message_id")) {
                                     jsonObject.getLong("message_id")
                                 } else null
-                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                val conversationId = if (jsonObject.has("conversation_id") && !jsonObject.isNull("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
-                                val deleteRequestId = if (jsonObject.has("request_id")) {
+                                val deleteRequestId = if (jsonObject.has("request_id") && !jsonObject.isNull("request_id")) {
                                     jsonObject.getString("request_id")
                                 } else null
-                                val reason = if (jsonObject.has("reason")) {
+                                val reason = if (jsonObject.has("reason") && !jsonObject.isNull("reason")) {
                                     jsonObject.getString("reason")
                                 } else null
 
-                                if (messageId != null && conversationId != null) {
+                                if (conversationId != null) {
                                     Log.d(TAG, "📥 Delete message notification: messageId=$messageId, conversationId=$conversationId, requestId=$deleteRequestId, reason=$reason")
                                     scope.launch { emitEvent(WebSocketEvent.DeleteMessage(messageId, conversationId, deleteRequestId, reason)) }
                                 } else {
-                                    Log.w(TAG, "Received delete_message without message_id or conversation_id")
+                                    Log.w(TAG, "Received delete_message without conversation_id")
                                 }
                                 messageHandled = true
                             }
@@ -885,6 +885,31 @@ class WhizServerRepository @Inject constructor(
                 Log.d(TAG, "Scheduling reconnect after unexpected error: ${e.message}")
                 scheduleReconnect()
             }
+        }
+    }
+
+    fun sendToolStatus(toolName: String, requestId: String, status: String, message: String, chatId: Long): Boolean {
+        return try {
+            val currentSocket = webSocket
+            if (currentSocket != null && connectionState == ConnectionState.CONNECTED && !persistentDisconnectForTest) {
+                val statusJson = org.json.JSONObject().apply {
+                    put("type", "tool_status")
+                    put("tool", toolName)
+                    put("request_id", requestId)
+                    put("status", status)
+                    put("message", message)
+                    put("timestamp", formatTimestamp(System.currentTimeMillis()))
+                    if (chatId > 0) put("conversation_id", chatId)
+                    else if (chatId < 0) put("client_conversation_id", chatId)
+                }
+                currentSocket.send(statusJson.toString())
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending tool status", e)
+            false
         }
     }
 

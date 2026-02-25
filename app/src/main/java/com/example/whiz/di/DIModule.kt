@@ -24,6 +24,7 @@ import com.example.whiz.data.remote.AuthApi
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.auth.TokenAuthenticator
 import com.example.whiz.data.preferences.UserPreferences
+import com.example.whiz.data.preferences.WakeWordPreferences
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.GsonBuilder
@@ -212,5 +213,13 @@ object AppModule {
         @ApplicationContext context: Context
     ): AccessibilityChecker {
         return AccessibilityCheckerImpl(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideWakeWordPreferences(
+        @ApplicationContext context: Context
+    ): WakeWordPreferences {
+        return WakeWordPreferences(context)
     }
 }

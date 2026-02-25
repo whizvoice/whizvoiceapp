@@ -122,6 +122,38 @@ class TTSManager @Inject constructor(
         this.onSpeechError = onError
     }
     
+    private fun stripMarkdown(text: String): String {
+        var result = text
+        // Code fences: ```...``` → content only
+        result = result.replace(Regex("```[a-zA-Z]*\\n?([\\s\\S]*?)```"), "$1")
+        // Inline code: `code` → code
+        result = result.replace(Regex("`([^`]+)`"), "$1")
+        // Images: ![alt](url) → alt
+        result = result.replace(Regex("!\\[([^\\]]*)\\]\\([^)]*\\)"), "$1")
+        // Links: [text](url) → text
+        result = result.replace(Regex("\\[([^\\]]*)\\]\\([^)]*\\)"), "$1")
+        // Bold/italic: **text**, *text*, __text__, _text_ → text
+        result = result.replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
+        result = result.replace(Regex("__(.+?)__"), "$1")
+        result = result.replace(Regex("\\*(.+?)\\*"), "$1")
+        result = result.replace(Regex("(?<=\\s|^)_(.+?)_(?=\\s|$)", RegexOption.MULTILINE), "$1")
+        // Strikethrough: ~~text~~ → text
+        result = result.replace(Regex("~~(.+?)~~"), "$1")
+        // Headers: # , ## , etc. → removed
+        result = result.replace(Regex("^#{1,6}\\s+", RegexOption.MULTILINE), "")
+        // Horizontal rules: lines that are just ---, ***, ___ → removed
+        result = result.replace(Regex("^[-*_]{3,}\\s*$", RegexOption.MULTILINE), "")
+        // Blockquotes: > at line start → removed
+        result = result.replace(Regex("^>\\s?", RegexOption.MULTILINE), "")
+        // Unordered list markers: - , * , + at line start → removed
+        result = result.replace(Regex("^\\s*[-*+]\\s+", RegexOption.MULTILINE), "")
+        // Ordered list markers: 1. , 2. at line start → removed
+        result = result.replace(Regex("^\\s*\\d+\\.\\s+", RegexOption.MULTILINE), "")
+        // Clean up extra blank lines
+        result = result.replace(Regex("\n{3,}"), "\n\n")
+        return result.trim()
+    }
+
     fun speak(text: String, utteranceId: String = "default") {
         if (!isInitialized || tts == null) {
             Log.w(TAG, "TTS not initialized or engine null (isInitialized=$isInitialized, tts=${tts != null}), cannot speak")
@@ -129,7 +161,8 @@ class TTSManager @Inject constructor(
             return
         }
 
-        Log.d(TAG, "Speaking text (${text.take(50)}...) with utteranceId=$utteranceId")
+        val strippedText = stripMarkdown(text)
+        Log.d(TAG, "Speaking text (${strippedText.take(50)}...) with utteranceId=$utteranceId")
 
         // Send text to bubble overlay if it's running
         try {
@@ -139,7 +172,7 @@ class TTSManager @Inject constructor(
         }
 
         try {
-            val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            val result = tts?.speak(strippedText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
             Log.d(TAG, "TTS speak() returned: $result (SUCCESS=0, ERROR=-1)")
             if (result != TextToSpeech.SUCCESS) {
                 Log.w(TAG, "TTS speak() failed with result: $result")

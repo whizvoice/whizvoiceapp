@@ -14,10 +14,12 @@ import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.TTSManager
+import com.example.whiz.tools.DeviceControlTools
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -68,6 +70,8 @@ class VoiceManager @Inject constructor(
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.d(TAG, "Screen turned off - stopping microphone and destroying recognizer")
                     _isScreenLocked.value = true
+                    isWakeWordActiveSession = false
+                    audioFocusManager.abandonDuckingFocus()
                     // Stop and completely destroy the recognizer when screen turns off
                     if (isListening.value) {
                         stopListening()
@@ -85,7 +89,7 @@ class VoiceManager @Inject constructor(
                     val isLocked = keyguardManager.isKeyguardLocked
                     _isScreenLocked.value = isLocked
 
-                    if (isLocked) {
+                    if (isLocked && !isWakeWordActiveSession && !(continuousListeningEnabled && appLifecycleService.isInForeground())) {
                         Log.d(TAG, "Screen is on but still locked - destroying recognizer to prevent audio pickup")
                         if (isListening.value) {
                             stopListening()
@@ -93,15 +97,34 @@ class VoiceManager @Inject constructor(
                         // Force destroy any lingering recognizer instances
                         speechRecognitionService.release()
                         speechRecognitionService.initialize()
+                    } else if (isLocked && isWakeWordActiveSession) {
+                        Log.d(TAG, "Screen is on and locked but wake word session active - restarting listening")
+                        coroutineScope.launch {
+                            delay(300L)
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
+                    } else if (isLocked && continuousListeningEnabled && appLifecycleService.isInForeground()) {
+                        Log.d(TAG, "Screen is on and locked but continuous listening active in foreground - restarting listening")
+                        audioFocusManager.requestDuckingFocus()
+                        coroutineScope.launch {
+                            delay(300L)
+                            if (shouldBeListening()) {
+                                startContinuousListening()
+                            }
+                        }
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     Log.d(TAG, "Screen unlocked (user present)")
                     _isScreenLocked.value = false
+                    isWakeWordActiveSession = false
                     // Restart listening if continuous mode was enabled
                     // Check both foreground AND bubble active - in bubble mode the app isn't in foreground
                     if (continuousListeningEnabled && (appLifecycleService.isInForeground() || BubbleOverlayService.isActive)) {
                         Log.d(TAG, "Screen unlocked - restarting continuous listening (foreground=${appLifecycleService.isInForeground()}, bubble=${BubbleOverlayService.isActive})")
+                        audioFocusManager.requestDuckingFocus()
                         coroutineScope.launch {
                             delay(100L) // Small delay to ensure state is settled
                             if (shouldBeListening()) {
@@ -145,11 +168,33 @@ class VoiceManager @Inject constructor(
     @Volatile
     var ttsStateBeforeBackground: Boolean? = null
 
+    // Flag indicating the current session was started by wake word detection on lock screen
+    // When true, allows voice listening even when screen is locked
+    @Volatile
+    var isWakeWordActiveSession = false
+        set(value) {
+            field = value
+            if (value && continuousListeningEnabled) {
+                Log.d(TAG, "isWakeWordActiveSession set to true — re-evaluating continuous listening")
+                coroutineScope.launch {
+                    if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                        startContinuousListening()
+                    }
+                }
+            }
+        }
+
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
         set(value) {
             _isContinuousListeningEnabled.value = value
         }
+
+    // Desync detection: heals state where UI shows continuous listening but recognizer is stopped
+    private var desyncCheckJob: Job? = null
+    private var consecutiveDesyncCount = 0
+    private val MAX_DESYNC_RETRIES = 3
+    private val DESYNC_BACKOFF_MS = 10_000L
 
     // Audio focus management - kept for potential future use (e.g., phone call detection)
     // Note: We no longer request/use audio focus for mic recording
@@ -176,6 +221,9 @@ class VoiceManager @Inject constructor(
 
         // Set up audio focus callbacks
         setupAudioFocusCallbacks()
+
+        // Start desync detection to heal listening state mismatches
+        startDesyncHealing()
     }
 
     private fun setupAudioFocusCallbacks() {
@@ -195,8 +243,32 @@ class VoiceManager @Inject constructor(
         audioFocusManager.onFocusLostPermanent = {
             Log.d(TAG, "Audio focus lost permanently (ignored - not used for mic recording)")
         }
+
+        // Policy callback for ducking re-request: only re-request if we're still
+        // actively in a voice session (continuous listening on, app visible, screen unlocked or wake word session)
+        audioFocusManager.shouldReRequestDucking = {
+            continuousListeningEnabled &&
+                (appLifecycleService.isInForeground() || BubbleOverlayService.isActive) &&
+                (!isScreenLocked.value || isWakeWordActiveSession)
+        }
     }
     
+    private fun isInTTSWithListeningMode(): Boolean {
+        return BubbleOverlayService.isActive &&
+               BubbleOverlayService.bubbleListeningMode == ListeningMode.TTS_WITH_LISTENING
+    }
+
+    /**
+     * Returns true when full-duplex audio (mic + TTS simultaneously) is safe.
+     * Full-duplex is available when:
+     * 1. Headphones are connected (TTS won't feed into mic), OR
+     * 2. AEC is active (API 33+ with AudioPipeRecorder)
+     */
+    fun isFullDuplexAvailable(): Boolean {
+        return ttsManager.areHeadphonesConnected() ||
+               speechRecognitionService.isAECActive()
+    }
+
     /**
      * Determines if the speech service should actually be listening right now.
      * This is the authoritative check that considers all conditions.
@@ -205,7 +277,7 @@ class VoiceManager @Inject constructor(
         val isInForeground = appLifecycleService.isInForeground()
         val isBubbleActive = BubbleOverlayService.isActive
         val hasPermission = permissionManager.microphonePermissionGranted.value
-        val notSpeaking = !isSpeaking.value
+        val notSpeaking = !isSpeaking.value || isFullDuplexAvailable() || isInTTSWithListeningMode()
         val screenNotLocked = !isScreenLocked.value
 
         // Check bubble mode - if bubble is active and mic is off, don't listen
@@ -215,16 +287,18 @@ class VoiceManager @Inject constructor(
 
         // Keep listening if either in foreground OR bubble is active (with mic enabled)
         // BUT only if screen is NOT locked - mic should always stop when screen is off
+        // EXCEPTION: wake word active session allows listening on lock screen
         // Note: Audio focus is NOT required here - it's cooperative, not enforced.
         // We request focus to notify other apps, but don't block listening if not granted.
         // The onFocusLostTransient callback will pause listening when another app takes focus.
         val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    screenNotLocked
+                    (screenNotLocked || isWakeWordActiveSession || isInForeground)
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
-                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, result=$should")
+                "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, " +
+                "isWakeWordActiveSession=$isWakeWordActiveSession, result=$should")
 
         return should
     }
@@ -262,7 +336,11 @@ class VoiceManager @Inject constructor(
                 val shouldRestoreContinuousListening = continuousListeningBeforeTTS ?: false
                 continuousListeningBeforeTTS = null // Clear the saved state
 
-                if (shouldRestoreContinuousListening) {
+                if (isListening.value) {
+                    Log.d(TAG, "TTS completed - mic already active (full-duplex mode), no restart needed")
+                } else if (isInTTSWithListeningMode()) {
+                    Log.d(TAG, "TTS completed in TTS_WITH_LISTENING mode - mic was kept active")
+                } else if (shouldRestoreContinuousListening) {
                     Log.d(TAG, "TTS completed - restarting continuous listening as it was enabled before TTS")
                     startContinuousListening()
                 } else {
@@ -274,7 +352,7 @@ class VoiceManager @Inject constructor(
                 // No need to set _isSpeaking - TTSManager handles it
                 
                 // Also handle continuous listening restart on error if needed
-                if (continuousListeningEnabled) {
+                if (!isInTTSWithListeningMode() && continuousListeningEnabled) {
                     startContinuousListening()
                 }
             }
@@ -379,6 +457,7 @@ class VoiceManager @Inject constructor(
                     ListeningMode.MIC_OFF -> {
                         // Stop both listening and TTS when mic is turned off
                         Log.d(TAG, "MIC_OFF mode - stopping speech recognition and TTS")
+                        audioFocusManager.abandonDuckingFocus()
                         stopListening()
                         ttsManager.stop()
                     }
@@ -388,6 +467,11 @@ class VoiceManager @Inject constructor(
                         if (ttsManager.isSpeaking.value) {
                             Log.d(TAG, "Stopping TTS as bubble switched to listening-only mode")
                             ttsManager.stop()
+                        }
+
+                        // Resume ducking when switching back to a listening mode
+                        if (continuousListeningEnabled) {
+                            audioFocusManager.requestDuckingFocus()
                         }
 
                         // Re-evaluate if we should be listening
@@ -407,6 +491,10 @@ class VoiceManager @Inject constructor(
                     ListeningMode.TTS_WITH_LISTENING -> {
                         // Re-evaluate if we should be listening
                         Log.d(TAG, "TTS_WITH_LISTENING mode - keeping TTS enabled")
+                        // Resume ducking when switching back to a listening mode
+                        if (continuousListeningEnabled) {
+                            audioFocusManager.requestDuckingFocus()
+                        }
                         if (continuousListeningEnabled && !isSpeaking.value && shouldBeListening()) {
                             Log.d(TAG, "Restarting speech recognition for mode: TTS_WITH_LISTENING")
                             // Force restart the continuous listening
@@ -437,6 +525,68 @@ class VoiceManager @Inject constructor(
         }
     }
     
+    private fun startDesyncHealing() {
+        // Monitor app foreground events - check after returning to foreground
+        coroutineScope.launch {
+            appLifecycleService.appForegroundEvent.collect {
+                delay(500L)
+                performDesyncCheck("APP_FOREGROUNDED")
+            }
+        }
+
+        // Monitor isListening flipping to false while continuous listening is enabled
+        coroutineScope.launch {
+            speechRecognitionService.isListening.collect { listening ->
+                if (!listening && continuousListeningEnabled) {
+                    // Give normal restart logic time to complete before checking
+                    delay(2000L)
+                    performDesyncCheck("LISTENING_STOPPED")
+                }
+            }
+        }
+
+        // Monitor TTS stopping while continuous listening is enabled
+        coroutineScope.launch {
+            ttsManager.isSpeaking.collect { speaking ->
+                if (!speaking && continuousListeningEnabled) {
+                    delay(1000L)
+                    performDesyncCheck("TTS_STOPPED")
+                }
+            }
+        }
+    }
+
+    private fun performDesyncCheck(reason: String) {
+        val shouldListen = shouldBeListening()
+        val actuallyListening = speechRecognitionService.isListening.value
+
+        if (shouldListen && !actuallyListening) {
+            consecutiveDesyncCount++
+            Log.w(TAG, "DESYNC_CHECK ($reason): shouldBeListening=true but isListening=false " +
+                    "(attempt $consecutiveDesyncCount/$MAX_DESYNC_RETRIES)")
+
+            if (consecutiveDesyncCount <= MAX_DESYNC_RETRIES) {
+                Log.d(TAG, "DESYNC_HEALED ($reason): Restarting continuous listening")
+                startContinuousListening()
+            } else {
+                Log.w(TAG, "DESYNC_CHECK ($reason): Max retries reached, backing off for ${DESYNC_BACKOFF_MS}ms")
+                desyncCheckJob?.cancel()
+                desyncCheckJob = coroutineScope.launch {
+                    delay(DESYNC_BACKOFF_MS)
+                    consecutiveDesyncCount = 0
+                    Log.d(TAG, "DESYNC_CHECK: Backoff complete, retries reset")
+                    performDesyncCheck("BACKOFF_RETRY")
+                }
+            }
+        } else if (shouldListen && actuallyListening) {
+            // State is correct - reset counter
+            if (consecutiveDesyncCount > 0) {
+                Log.d(TAG, "DESYNC_CHECK ($reason): State is now correct, resetting counter")
+                consecutiveDesyncCount = 0
+            }
+        }
+    }
+
     private fun onAppBackgrounded() {
         Log.d(TAG, "onAppBackgrounded called. continuousListeningEnabled=$continuousListeningEnabled")
 
@@ -449,6 +599,9 @@ class VoiceManager @Inject constructor(
             // Important: Don't stop listening and don't change continuousListeningEnabled
             return
         }
+
+        // No bubble — stop ducking along with stopping the mic
+        audioFocusManager.abandonDuckingFocus()
 
         // Stop listening but preserve the setting
         if (isListening.value) {
@@ -464,6 +617,30 @@ class VoiceManager @Inject constructor(
     }
     
     private fun onAppForegrounded() {
+        // Refresh screen lock state - if the app is in foreground, the screen should be unlocked
+        // This fixes a race condition where long-pressing the power button triggers both
+        // the assistant launch and a screen-off event, leaving _isScreenLocked stuck as true
+        val actuallyLocked = keyguardManager.isKeyguardLocked
+        if (_isScreenLocked.value != actuallyLocked) {
+            Log.d(TAG, "onAppForegrounded: Correcting stale lock state from ${_isScreenLocked.value} to $actuallyLocked")
+            _isScreenLocked.value = actuallyLocked
+        }
+
+        // Restore any partial transcription buffered before a focus-stealing intent
+        // (e.g., setAlarm fires a Clock intent that briefly kills the recognizer)
+        val bufferedText = DeviceControlTools.bufferedPartial
+        val bufferedAge = System.currentTimeMillis() - DeviceControlTools.bufferedPartialTimestamp
+        if (bufferedText.isNotBlank() && bufferedAge < 10_000L) {
+            Log.i(TAG, "onAppForegrounded: Restoring buffered partial '$bufferedText' (age=${bufferedAge}ms)")
+            speechRecognitionService.injectSavedPartial(bufferedText)
+            DeviceControlTools.bufferedPartial = ""
+            DeviceControlTools.bufferedPartialTimestamp = 0L
+        } else if (bufferedText.isNotBlank()) {
+            Log.d(TAG, "onAppForegrounded: Discarding stale buffered partial '$bufferedText' (age=${bufferedAge}ms)")
+            DeviceControlTools.bufferedPartial = ""
+            DeviceControlTools.bufferedPartialTimestamp = 0L
+        }
+
         // Note: We don't automatically restart continuous listening here
         // It should be restarted by ChatScreen when appropriate
         // This prevents unwanted mic activation when returning to non-chat screens
@@ -476,7 +653,8 @@ class VoiceManager @Inject constructor(
             Log.d(TAG, "speak: Saved continuous listening state before TTS: $continuousListeningBeforeTTS")
 
             // Stop any ongoing speech recognition before speaking
-            if (isListening.value) {
+            // Keep mic active when full-duplex is available (AEC handles echo) or in TTS_WITH_LISTENING mode
+            if (isListening.value && !isFullDuplexAvailable() && !isInTTSWithListeningMode()) {
                 speechRecognitionService.stopListening()
             }
 
@@ -585,18 +763,20 @@ class VoiceManager @Inject constructor(
     fun updateContinuousListeningEnabled(enabled: Boolean) {
         Log.d(TAG, "[DEBUG] updateContinuousListeningEnabled called with: $enabled (was: $continuousListeningEnabled)")
         continuousListeningEnabled = enabled
+        consecutiveDesyncCount = 0
         Log.d(TAG, "updateContinuousListeningEnabled: $enabled")
 
         if (enabled) {
-            // Note: We don't request audio focus for mic recording.
-            // Audio focus is for coordinating playback, not recording.
-            // SpeechRecognizer handles its own audio capture internally.
+            // Duck other apps' audio for the entire continuous listening session
+            // (persists during TTS too, so assistant voice is easier to hear)
+            audioFocusManager.requestDuckingFocus()
             Log.d(TAG, "[DEBUG] Calling startContinuousListening()")
             startContinuousListening()
             Log.d(TAG, "[DEBUG] startContinuousListening() returned")
         } else {
-            // Stop listening
+            // Stop listening and release ducking focus
             stopListening()
+            audioFocusManager.abandonDuckingFocus()
         }
     }
     
@@ -609,23 +789,22 @@ class VoiceManager @Inject constructor(
         return ttsManager.shouldShowMicButtonDuringTTS()
     }
 
-    // Handle mic button click during TTS - interrupt TTS and start listening
+    // Handle mic button click during TTS - start listening alongside TTS (full-duplex) or interrupt TTS
     fun handleMicClickDuringTTS() {
         if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "handleMicClickDuringTTS: User interrupted TTS - enabling conversation mode")
-
-            // Stop TTS immediately (user wants to speak)
-            stopSpeaking()
-
-            // Enable continuous listening for conversation mode
-            // When user clicks "Interrupt and speak", they want to have a conversation
-            coroutineScope.launch {
-                // Wait for TTS to actually stop
-                ttsManager.isSpeaking.first { !it }
-                Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, enabling continuous listening for conversation")
-
-                // Enable and start continuous listening
+            if (isFullDuplexAvailable()) {
+                // Full-duplex: start listening alongside TTS without stopping it
+                Log.d(TAG, "handleMicClickDuringTTS: Full-duplex available - starting listening alongside TTS")
                 updateContinuousListeningEnabled(true)
+            } else {
+                // No full-duplex: stop TTS first, then listen (original behavior)
+                Log.d(TAG, "handleMicClickDuringTTS: No full-duplex - stopping TTS then enabling listening")
+                stopSpeaking()
+                coroutineScope.launch {
+                    ttsManager.isSpeaking.first { !it }
+                    Log.d(TAG, "handleMicClickDuringTTS: TTS stopped, enabling continuous listening for conversation")
+                    updateContinuousListeningEnabled(true)
+                }
             }
         }
     }
@@ -634,11 +813,14 @@ class VoiceManager @Inject constructor(
     // As a Singleton, this will rarely be called in practice
     fun cleanup() {
         Log.d(TAG, "Cleaning up VoiceManager resources")
+        desyncCheckJob?.cancel()
         try {
             context.unregisterReceiver(screenStateReceiver)
         } catch (e: Exception) {
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
+        audioFocusManager.abandonDuckingFocus()
+        audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()

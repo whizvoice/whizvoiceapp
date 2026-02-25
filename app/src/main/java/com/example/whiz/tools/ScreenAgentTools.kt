@@ -4,6 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.Uri
+import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -117,6 +120,166 @@ class ScreenAgentTools @Inject constructor(
         val error: String? = null
     )
 
+    data class CallButtonResult(
+        val success: Boolean,
+        val dialedNumber: String? = null,
+        val error: String? = null,
+        val speakerphoneEnabled: Boolean = false
+    )
+
+    // ========== Phone Call Functions ==========
+
+    /**
+     * Press the call button in the Google Dialer app via accessibility service.
+     * Verifies the dialer is in the foreground and optionally checks the displayed number.
+     */
+    suspend fun pressCallButton(expectedNumber: String?, speakerphone: Boolean = true): CallButtonResult {
+        Log.i(TAG, "pressCallButton called, expectedNumber=$expectedNumber, speakerphone=$speakerphone")
+
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return CallButtonResult(
+                success = false,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+
+        val rootNode = accessibilityService.getCurrentRootNode()
+            ?: return CallButtonResult(
+                success = false,
+                error = "Could not get current screen. Is the dialer open?"
+            )
+
+        val displayedNumber: String?
+        try {
+            // Verify the dialer app is in the foreground
+            val currentPackage = rootNode.packageName?.toString() ?: ""
+            if (currentPackage != "com.google.android.dialer") {
+                return CallButtonResult(
+                    success = false,
+                    error = "Dialer is not in the foreground. Current app: $currentPackage"
+                )
+            }
+
+            // Read the displayed number from the dialer
+            val digitsNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.dialer:id/digits"
+            )
+            displayedNumber = digitsNodes?.firstOrNull()?.text?.toString()
+            Log.i(TAG, "Displayed number in dialer: $displayedNumber")
+
+            // If expectedNumber is provided, verify it matches
+            if (expectedNumber != null && displayedNumber != null) {
+                val normalizedExpected = expectedNumber.replace(Regex("[^0-9]"), "")
+                val normalizedDisplayed = displayedNumber.replace(Regex("[^0-9]"), "")
+
+                val longer = if (normalizedExpected.length >= normalizedDisplayed.length) normalizedExpected else normalizedDisplayed
+                val shorter = if (normalizedExpected.length < normalizedDisplayed.length) normalizedExpected else normalizedDisplayed
+
+                if (!longer.endsWith(shorter)) {
+                    return CallButtonResult(
+                        success = false,
+                        dialedNumber = displayedNumber,
+                        error = "Number mismatch: expected '$expectedNumber' but dialer shows '$displayedNumber'"
+                    )
+                }
+            }
+
+            // Find and click the call button
+            val callButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.dialer:id/dialpad_voice_call_button"
+            )
+            val callButton = callButtonNodes?.firstOrNull()
+            if (callButton == null) {
+                return CallButtonResult(
+                    success = false,
+                    dialedNumber = displayedNumber,
+                    error = "Call button not found in dialer. Is the dialpad visible?"
+                )
+            }
+
+            val clicked = callButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.i(TAG, "Call button click result: $clicked")
+
+            if (!clicked) {
+                return CallButtonResult(
+                    success = false,
+                    dialedNumber = displayedNumber,
+                    error = "Failed to click call button"
+                )
+            }
+        } finally {
+            rootNode.recycle()
+        }
+
+        // Enable speakerphone by clicking the Speaker button in the in-call UI
+        var speakerphoneEnabled = false
+        if (speakerphone) {
+            speakerphoneEnabled = enableSpeakerphoneViaAccessibility(accessibilityService)
+        }
+
+        return CallButtonResult(
+            success = true,
+            dialedNumber = displayedNumber,
+            speakerphoneEnabled = speakerphoneEnabled
+        )
+    }
+
+    /**
+     * Wait for the in-call UI to appear and click the Speaker button via accessibility.
+     * Polls for up to 5 seconds for the Speaker button to become available.
+     */
+    private suspend fun enableSpeakerphoneViaAccessibility(
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        // Wait for the in-call UI to load after placing the call
+        for (attempt in 1..10) {
+            delay(500)
+            val root = accessibilityService.getCurrentRootNode() ?: continue
+            try {
+                val currentPackage = root.packageName?.toString() ?: ""
+                if (currentPackage != "com.google.android.dialer") {
+                    Log.d(TAG, "Speakerphone attempt $attempt: not in dialer ($currentPackage)")
+                    continue
+                }
+
+                // Find the Speaker button by content description
+                val speakerNode = findNodeByContentDesc(root, "Speaker")
+                if (speakerNode != null) {
+                    // The clickable parent is the checkable view wrapping the Speaker icon
+                    val clickTarget = findClickableParent(speakerNode) ?: speakerNode
+                    val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Speaker button click result: $clicked (attempt $attempt)")
+                    return clicked
+                }
+                Log.d(TAG, "Speakerphone attempt $attempt: Speaker button not found yet")
+            } finally {
+                root.recycle()
+            }
+        }
+        Log.w(TAG, "Failed to find Speaker button after all attempts")
+        return false
+    }
+
+    private fun findNodeByContentDesc(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? {
+        if (root.contentDescription?.toString() == desc) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = findNodeByContentDesc(child, desc)
+            if (found != null) return found
+            child.recycle()
+        }
+        return null
+    }
+
+    private fun findClickableParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var current = node.parent ?: return null
+        while (true) {
+            if (current.isClickable) return current
+            val parent = current.parent ?: return null
+            current.recycle()
+            current = parent
+        }
+    }
+
     // ========== App Launch Functions ==========
     
     private fun hasOverlayPermission(): Boolean {
@@ -174,8 +337,8 @@ class ScreenAgentTools @Inject constructor(
                     var overlayPermissionRequired = false
                     Log.d(TAG, "Checking overlay (fuzzy): enableOverlay=$enableOverlay, isWhizApp=${isWhizApp(packageName)}, hasPermission=${hasOverlayPermission()}")
                     if (enableOverlay && !isWhizApp(packageName) && hasOverlayPermission()) {
-                        BubbleOverlayService.isPendingStart = true
-                        Log.d(TAG, "Set isPendingStart=true before launching (fuzzy)")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        Log.d(TAG, "Set pendingStartTimestamp before launching (fuzzy)")
                     }
 
                     context.startActivity(launchIntent)
@@ -192,8 +355,8 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Bubble overlay started (fuzzy): $overlayStarted")
                             // Clear pending flag if bubble failed to start
                             if (!overlayStarted) {
-                                BubbleOverlayService.isPendingStart = false
-                                Log.d(TAG, "Cleared isPendingStart because bubble failed to start (fuzzy)")
+                                BubbleOverlayService.pendingStartTimestamp = 0L
+                                Log.d(TAG, "Cleared pendingStartTimestamp because bubble failed to start (fuzzy)")
                             }
                         } else {
                             overlayPermissionRequired = true
@@ -267,8 +430,8 @@ class ScreenAgentTools @Inject constructor(
                     var overlayPermissionRequired = false
                     Log.i(TAG, "🔵 BUBBLE CHECK: enableOverlay=$enableOverlay, packageName=$mappedPackage, isWhizApp=${isWhizApp(mappedPackage)}, hasPermission=${hasOverlayPermission()}")
                     if (enableOverlay && !isWhizApp(mappedPackage) && hasOverlayPermission()) {
-                        BubbleOverlayService.isPendingStart = true
-                        Log.i(TAG, "🔵 Set isPendingStart=true before launching (common mappings)")
+                        BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                        Log.i(TAG, "🔵 Set pendingStartTimestamp before launching (common mappings)")
                     }
 
                     try {
@@ -290,8 +453,8 @@ class ScreenAgentTools @Inject constructor(
                                 Log.i(TAG, "🔵 BUBBLE OVERLAY RESULT: $overlayStarted")
                                 // Clear pending flag if bubble failed to start
                                 if (!overlayStarted) {
-                                    BubbleOverlayService.isPendingStart = false
-                                    Log.i(TAG, "🔵 Cleared isPendingStart because bubble failed to start")
+                                    BubbleOverlayService.pendingStartTimestamp = 0L
+                                    Log.i(TAG, "🔵 Cleared pendingStartTimestamp because bubble failed to start")
                                 }
                             } else {
                                 overlayPermissionRequired = true
@@ -312,7 +475,7 @@ class ScreenAgentTools @Inject constructor(
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to launch $mappedPackage: ${e.message}", e)
                         // Clear pending flag on launch failure
-                        BubbleOverlayService.isPendingStart = false
+                        BubbleOverlayService.pendingStartTimestamp = 0L
                     }
                 }
             }
@@ -343,7 +506,64 @@ class ScreenAgentTools @Inject constructor(
             )
         }
     }
-    
+
+    /**
+     * Launch Google Maps directly to search results using a geo: intent.
+     * This bypasses the fragile search bar automation (find search box, click, type, submit).
+     */
+    private fun launchGoogleMapsSearch(query: String, enableOverlay: Boolean = true): LaunchResult {
+        Log.d(TAG, "Launching Google Maps search with geo: intent for query: $query")
+        trackAction("launchGoogleMapsSearch: $query")
+
+        val mapsPackage = "com.google.android.apps.maps"
+        var overlayStarted = false
+        var overlayPermissionRequired = false
+
+        try {
+            val uri = Uri.parse("geo:0,0?q=${Uri.encode(query)}")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage(mapsPackage)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+
+            // Set pending overlay flag BEFORE launching (same pattern as launchApp)
+            if (enableOverlay && hasOverlayPermission()) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            }
+
+            context.startActivity(intent)
+
+            // Start bubble overlay if enabled
+            if (enableOverlay) {
+                if (hasOverlayPermission()) {
+                    overlayStarted = startBubbleOverlay()
+                    if (!overlayStarted) {
+                        BubbleOverlayService.pendingStartTimestamp = 0L
+                    }
+                } else {
+                    overlayPermissionRequired = true
+                }
+            }
+
+            return LaunchResult(
+                success = true,
+                appName = "Maps",
+                packageName = mapsPackage,
+                overlayStarted = overlayStarted,
+                overlayPermissionRequired = overlayPermissionRequired
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch Google Maps search", e)
+            BubbleOverlayService.pendingStartTimestamp = 0L
+            return LaunchResult(
+                success = false,
+                appName = "Maps",
+                packageName = mapsPackage,
+                error = "Failed to launch Maps search: ${e.message}"
+            )
+        }
+    }
+
     private fun isWhizApp(packageName: String): Boolean {
         // Only return true if the package name matches THIS app's package name exactly
         // This ensures production and debug apps don't interfere with each other
@@ -579,10 +799,49 @@ class ScreenAgentTools @Inject constructor(
                     
                     // Recycle nodes
                     chatNodes.forEach { it.recycle() }
+                } else if (searchAttempted && chatNodes.isEmpty()) {
+                    // Search was performed but text matching couldn't find a match.
+                    // This happens for group chats where the search query differs from the display name.
+                    // Fall back to clicking the first search result.
+                    Log.i(TAG, "Text matching failed after search, trying to click first search result directly")
+                    val firstResult = findFirstSearchResult(rootNode)
+                    if (firstResult != null) {
+                        val clicked = accessibilityService.clickNode(firstResult)
+                        if (clicked) {
+                            // Wait to verify we entered a chat
+                            val inChat = waitForCondition(maxWaitMs = 2000) {
+                                val checkRoot = accessibilityService.getCurrentRootNode()
+                                if (checkRoot != null) {
+                                    val screen = detectWhatsAppScreen(checkRoot)
+                                    val isInChat = screen == WhatsAppScreen.INSIDE_CHAT
+                                    checkRoot.recycle()
+                                    isInChat
+                                } else {
+                                    false
+                                }
+                            }
+
+                            if (inChat) {
+                                firstResult.recycle()
+                                rootNode.recycle()
+
+                                return WhatsAppResult(
+                                    success = true,
+                                    action = "select_chat",
+                                    chatName = chatName
+                                )
+                            } else {
+                                Log.w(TAG, "Clicked first search result but not in chat - pressing back to retry")
+                                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                                delay(300)
+                            }
+                        }
+                        firstResult.recycle()
+                    }
                 } else if (!searchAttempted && attempts == 1) {
                     // If we couldn't find the chat on the first attempt, try searching
                     Log.i(TAG, "Chat not visible, attempting to search for: $chatName")
-                    
+
                     // Check if search is already active
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     val searchSuccess = if (currentScreen == WhatsAppScreen.SEARCH_ACTIVE) {
@@ -593,9 +852,9 @@ class ScreenAgentTools @Inject constructor(
                         // Open search and enter text
                         performWhatsAppSearch(rootNode, chatName, accessibilityService)
                     }
-                    
+
                     searchAttempted = true
-                    
+
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
@@ -2542,30 +2801,38 @@ class ScreenAgentTools @Inject constructor(
         query: String,
         contentType: String = "song"
     ): MusicActionResult {
-        Log.d(TAG, "Attempting to play on YouTube Music: $query (contentType=$contentType)")
+        Log.d(TAG, "Playing on YouTube Music via deep link + accessibility: $query (contentType=$contentType)")
         trackAction("playYouTubeMusicSong: $query")
 
         try {
-            // Auto-launch YouTube Music if not already open
-            val launchResult = launchApp("YouTube Music", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch YouTube Music: ${launchResult.error}")
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Failed to open YouTube Music: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "YouTube Music launched successfully")
-            delay(1000) // Wait for YouTube Music to fully load
+            val ytMusicPackage = "com.google.android.apps.youtube.music"
 
+            // 1. Build deep link to YouTube Music search results
+            val deepLinkUrl = "https://music.youtube.com/search?q=${Uri.encode(query)}"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkUrl)).apply {
+                setPackage(ytMusicPackage)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            // 2. Start bubble overlay before launching (same pattern as launchApp)
+            if (hasOverlayPermission()) {
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+            }
+
+            context.startActivity(intent)
+
+            // Start overlay if permission granted
+            if (hasOverlayPermission()) {
+                startBubbleOverlay()
+            }
+
+            // 3. Wait for YouTube Music to be in foreground
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 logScreenAgentError(
                     reason = "accessibility_unavailable",
                     errorMessage = "Accessibility service not available for playYouTubeMusicSong",
-                    packageName = "com.google.android.apps.youtube.music"
+                    packageName = ytMusicPackage
                 )
                 return MusicActionResult(
                     success = false,
@@ -2575,11 +2842,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for YouTube Music to be ready (max 3 seconds)
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
-                packageName = "com.google.android.apps.youtube.music",
-                maxWaitMs = 3000
+                packageName = ytMusicPackage,
+                maxWaitMs = 5000
             )
 
             if (!appReady) {
@@ -2591,189 +2857,67 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to a searchable screen (speed dial or search screen)
-            val navigationSuccess = navigateToYouTubeMusicSearchableScreen(accessibilityService)
-            if (!navigationSuccess) {
-                // UI dump for navigation failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "ytmusic_nav_to_search_failed", "Could not navigate to searchable screen in YouTube Music")
-                    dumpRoot.recycle()
-                }
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Could not navigate to searchable screen in YouTube Music"
-                )
-            }
-
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = "Could not get root node"
-                )
-            }
-
-            // Perform search with filter chip selection (shared logic)
-            val searchResult = performYouTubeMusicSearch(rootNode, query, contentType, accessibilityService)
-            rootNode.recycle()
-
-            if (searchResult is YouTubeMusicSearchResult.Error) {
-                // UI dump for search failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "ytmusic_search_failed", searchResult.message)
-                    dumpRoot.recycle()
-                }
-                return MusicActionResult(
-                    success = false,
-                    action = "play_song",
-                    query = query,
-                    error = searchResult.message
-                )
-            }
-
-            // Poll for the result to appear (max 3 seconds)
+            // 4. Wait for search results to load and click the first result
+            //    Use a longer wait since the deep link needs to load the search page
             val clickResult = waitForAndClickPlayButton(
-                accessibilityService,
+                accessibilityService = accessibilityService,
                 contentType = contentType,
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
-            return if (clickResult.clicked) {
-                Log.d(TAG, "Successfully clicked result on search, verifying song is playing...")
-
-                // For List-type content (album, playlist, artist), we just verify music started
-                // We can't match the playlist name to the song title since now-playing shows the current song
-                val isListType = contentType.lowercase() in listOf("album", "community_playlist", "artist")
-
-                if (isListType) {
-                    // For playlists/albums, just verify that some music started playing
-                    delay(1500) // Give time for playback to start
-                    val verifyRoot = accessibilityService.getCurrentRootNode()
-                    if (verifyRoot != null) {
-                        val nowPlayingTitle = getMiniPlayerTitle(verifyRoot)
-                        verifyRoot.recycle()
-
-                        if (nowPlayingTitle != null && nowPlayingTitle.isNotEmpty()) {
-                            Log.d(TAG, "List-type content playing: '$nowPlayingTitle' from playlist/album '${clickResult.clickedTitle}'")
-                            return MusicActionResult(
-                                success = true,
-                                action = "play_song",
-                                query = query,
-                                nowPlaying = nowPlayingTitle
-                            )
-                        }
-                    }
-                    // Fallback - if we can't verify, assume success since we clicked play
-                    Log.d(TAG, "Could not verify list-type playback, but Play was clicked successfully")
-                    return MusicActionResult(
-                        success = true,
-                        action = "play_song",
-                        query = query,
-                        nowPlaying = clickResult.clickedTitle
-                    )
+            if (!clickResult.clicked) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_play_deeplink_no_result", "Deep link search loaded but could not find/click result for: $query")
+                    dumpRoot.recycle()
                 }
+                return MusicActionResult(
+                    success = false,
+                    action = "play_song",
+                    query = query,
+                    error = "Could not find search result to click after deep link"
+                )
+            }
 
-                // For Song-type content, verify the correct song is playing
-                // Use the actual title we clicked on for verification (more accurate than parsing query)
-                // Fall back to parsing query if we couldn't extract the title
-                val expectedSong = clickResult.clickedTitle
-                    ?: query.split(" by ", " from ", " - ").firstOrNull()?.trim()
-                    ?: query
-                Log.d(TAG, "Expecting to verify song: '$expectedSong'")
-
-                // Poll for the correct song to appear in player (max 3 seconds)
-                val startTime = System.currentTimeMillis()
-                val maxWaitMs = 3000L
-                val pollIntervalMs = 200L
-
-                while (System.currentTimeMillis() - startTime < maxWaitMs) {
-                    val verifyRoot = accessibilityService.getCurrentRootNode()
-                    if (verifyRoot != null) {
-                        val nowPlayingTitle = getMiniPlayerTitle(verifyRoot)
-                        verifyRoot.recycle()
-
-                        if (nowPlayingTitle != null && nowPlayingTitle.contains(expectedSong, ignoreCase = true)) {
-                            Log.d(TAG, "Verified: '$nowPlayingTitle' matches expected '$expectedSong' after ${System.currentTimeMillis() - startTime}ms")
-                            return MusicActionResult(
-                                success = true,
-                                action = "play_song",
-                                query = query,
-                                nowPlaying = nowPlayingTitle
-                            )
-                        }
-                    }
-                    delay(pollIntervalMs)
-                }
-
-                // Timeout - check what's actually playing
-                val finalRoot = accessibilityService.getCurrentRootNode()
-                val finalTitle = if (finalRoot != null) {
-                    val title = getMiniPlayerTitle(finalRoot)
-                    finalRoot.recycle()
+            // 5. Verify playback started
+            val isSongType = contentType.lowercase() in listOf("song", "video")
+            if (isSongType) {
+                // For songs/videos, wait for mini player to show the playing title
+                delay(2000)
+                val verifyRoot = accessibilityService.getCurrentRootNode()
+                val nowPlaying = if (verifyRoot != null) {
+                    val title = getMiniPlayerTitle(verifyRoot)
+                    verifyRoot.recycle()
                     title
                 } else null
 
-                if (finalTitle != null) {
-                    // If we got a title from now playing, check if it matches what we clicked
-                    if (clickResult.clickedTitle != null && finalTitle.contains(clickResult.clickedTitle, ignoreCase = true)) {
-                        Log.d(TAG, "Verified via clicked title: '$finalTitle' matches clicked '${clickResult.clickedTitle}'")
-                        MusicActionResult(
-                            success = true,
-                            action = "play_song",
-                            query = query,
-                            nowPlaying = finalTitle
-                        )
-                    } else {
-                        Log.w(TAG, "Wrong song playing: expected '$expectedSong', got '$finalTitle'")
-                        MusicActionResult(
-                            success = false,
-                            action = "play_song",
-                            query = query,
-                            error = "Wrong song playing: expected '$expectedSong', got '$finalTitle'"
-                        )
-                    }
-                } else {
-                    Log.w(TAG, "Could not verify song - player title not found after ${maxWaitMs}ms")
-                    MusicActionResult(
-                        success = false,
-                        action = "play_song",
-                        query = query,
-                        error = "Could not verify song is playing"
-                    )
-                }
-            } else {
-                // Dump UI for debugging
-                val debugRoot = accessibilityService.getCurrentRootNode()
-                if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_no_play_button", "Could not find play button after waiting for search results")
-                    debugRoot.recycle()
-                }
-                MusicActionResult(
-                    success = false,
+                return MusicActionResult(
+                    success = true,
                     action = "play_song",
                     query = query,
-                    error = "Could not find play button after waiting for search results"
+                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query
+                )
+            } else {
+                // For albums/playlists/artists, clicking opens the page — playback may not start immediately
+                return MusicActionResult(
+                    success = true,
+                    action = "play_song",
+                    query = query,
+                    nowPlaying = clickResult.clickedTitle ?: query
                 )
             }
-
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing YouTube Music song", e)
+            Log.e(TAG, "Error playing YouTube Music via deep link", e)
             logScreenAgentError(
                 reason = "ytmusic_play_error",
-                errorMessage = "Exception playing YouTube Music song '$query': ${e.message}",
+                errorMessage = "Exception playing YouTube Music '$query': ${e.message}",
                 packageName = "com.google.android.apps.youtube.music"
             )
             return MusicActionResult(
                 success = false,
                 action = "play_song",
                 query = query,
-                error = "Error playing song: ${e.message}"
+                error = "Failed to play via deep link: ${e.message}"
             )
         }
     }
@@ -2941,157 +3085,43 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Pause or resume YouTube Music playback by clicking the play/pause button.
+     * Pause or resume YouTube Music playback via media key event.
      * This function toggles between playing and paused states.
      */
     suspend fun pauseYouTubeMusic(): MusicActionResult {
-        Log.d(TAG, "Attempting to pause/resume YouTube Music")
+        Log.d(TAG, "Toggling YouTube Music playback via media key event")
         trackAction("pauseYouTubeMusic")
 
         try {
-            val accessibilityService = WhizAccessibilityService.getInstance()
-            if (accessibilityService == null) {
-                logScreenAgentError(
-                    reason = "accessibility_unavailable",
-                    errorMessage = "Accessibility service not available for pauseYouTubeMusic",
-                    packageName = "com.google.android.apps.youtube.music"
-                )
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "Accessibility service not enabled"
-                )
-            }
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val wasPlaying = audioManager.isMusicActive
 
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "Could not get root node"
-                )
-            }
-
-            // Check if we're in YouTube Music
-            val currentPackage = rootNode.packageName?.toString()
-            if (currentPackage != "com.google.android.apps.youtube.music") {
-                rootNode.recycle()
-                return MusicActionResult(
-                    success = false,
-                    action = "pause_music",
-                    error = "YouTube Music is not the active app (current: $currentPackage)"
-                )
-            }
-
-            // Try to find the play/pause button by resource ID
-            val playPauseButton = rootNode.findAccessibilityNodeInfosByViewId(
-                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
+            // Dispatch MEDIA_PLAY_PAUSE key event (down + up)
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            )
+            audioManager.dispatchMediaKeyEvent(
+                KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
             )
 
-            if (playPauseButton != null && playPauseButton.isNotEmpty()) {
-                val button = playPauseButton.first()
-                val contentDesc = button.contentDescription?.toString() ?: ""
-                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
+            delay(300) // Brief wait for state to update
 
-                Log.d(TAG, "Found play/pause button with contentDesc: '$contentDesc', wasPlaying: $wasPlaying")
+            val isNowPlaying = audioManager.isMusicActive
+            val newState = if (isNowPlaying) "playing" else "paused"
 
-                if (button.isClickable) {
-                    val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    playPauseButton.forEach { it.recycle() }
-                    rootNode.recycle()
-
-                    if (clicked) {
-                        // Wait briefly for the state to update
-                        delay(300)
-
-                        // Verify the new state
-                        val verifyRoot = accessibilityService.getCurrentRootNode()
-                        val newState = if (verifyRoot != null) {
-                            val newButton = verifyRoot.findAccessibilityNodeInfosByViewId(
-                                "com.google.android.apps.youtube.music:id/player_control_play_pause_replay_button"
-                            )
-                            val newDesc = newButton?.firstOrNull()?.contentDescription?.toString() ?: ""
-                            newButton?.forEach { it.recycle() }
-                            verifyRoot.recycle()
-                            if (newDesc.contains("Pause", ignoreCase = true)) "playing" else "paused"
-                        } else {
-                            if (wasPlaying) "paused" else "playing"
-                        }
-
-                        Log.d(TAG, "Play/pause button clicked, new state: $newState")
-                        return MusicActionResult(
-                            success = true,
-                            action = "pause_music",
-                            nowPlaying = newState
-                        )
-                    } else {
-                        Log.w(TAG, "Failed to click play/pause button")
-                        return MusicActionResult(
-                            success = false,
-                            action = "pause_music",
-                            error = "Failed to click play/pause button"
-                        )
-                    }
-                } else {
-                    playPauseButton.forEach { it.recycle() }
-                    rootNode.recycle()
-                    return MusicActionResult(
-                        success = false,
-                        action = "pause_music",
-                        error = "Play/pause button is not clickable"
-                    )
-                }
-            }
-
-            // Fallback: search recursively for any node with "Pause video" or "Play video" content description
-            val foundButton = findPlayPauseButtonRecursive(rootNode)
-            rootNode.recycle()
-
-            if (foundButton != null) {
-                val contentDesc = foundButton.contentDescription?.toString() ?: ""
-                val wasPlaying = contentDesc.contains("Pause", ignoreCase = true)
-
-                Log.d(TAG, "Found play/pause button via recursive search, contentDesc: '$contentDesc'")
-
-                val clicked = foundButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                foundButton.recycle()
-
-                if (clicked) {
-                    delay(300)
-                    val newState = if (wasPlaying) "paused" else "playing"
-                    Log.d(TAG, "Play/pause button clicked via fallback, new state: $newState")
-                    return MusicActionResult(
-                        success = true,
-                        action = "pause_music",
-                        nowPlaying = newState
-                    )
-                }
-            }
-
-            // UI dump for debugging
-            val dumpRoot = accessibilityService.getCurrentRootNode()
-            if (dumpRoot != null) {
-                dumpUIHierarchy(dumpRoot, "ytmusic_pause_button_not_found", "Could not find play/pause button in YouTube Music")
-                dumpRoot.recycle()
-            }
+            Log.d(TAG, "Media key dispatched, wasPlaying=$wasPlaying, newState=$newState")
 
             return MusicActionResult(
-                success = false,
+                success = true,
                 action = "pause_music",
-                error = "Could not find play/pause button in YouTube Music"
+                nowPlaying = newState
             )
-
         } catch (e: Exception) {
-            Log.e(TAG, "Error pausing/resuming YouTube Music", e)
-            logScreenAgentError(
-                reason = "ytmusic_pause_error",
-                errorMessage = "Exception pausing/resuming YouTube Music: ${e.message}",
-                packageName = "com.google.android.apps.youtube.music"
-            )
+            Log.e(TAG, "Error toggling playback via media key", e)
             return MusicActionResult(
                 success = false,
                 action = "pause_music",
-                error = "Error pausing/resuming music: ${e.message}"
+                error = "Failed to toggle playback: ${e.message}"
             )
         }
     }
@@ -3124,10 +3154,9 @@ class ScreenAgentTools @Inject constructor(
         trackAction("searchGoogleMapsLocation: $address")
 
         try {
-            // Auto-launch Google Maps if not already open
-            val launchResult = launchApp("Maps", enableOverlay = true)
+            // Launch Google Maps with geo: intent directly to search results
+            val launchResult = launchGoogleMapsSearch(address)
             if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -3135,8 +3164,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Failed to open Google Maps: ${launchResult.error}"
                 )
             }
-            Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            Log.i(TAG, "Google Maps geo: search launched for: $address")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -3153,13 +3181,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
+            // Wait for Maps to be in foreground
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 5000
             )
-
             if (!appReady) {
                 return MapsActionResult(
                     success = false,
@@ -3169,85 +3196,29 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to main screen with search box, then click and type in one operation
-            var searchSuccess = false
-            var attempts = 0
-            val maxAttempts = 5
-
-            while (!searchSuccess && attempts < maxAttempts) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode == null) {
-                    return MapsActionResult(
-                        success = false,
-                        action = "search_location",
-                        location = address,
-                        error = "Could not get root node"
-                    )
-                }
-
-                // Try to click and type into the search box
-                searchSuccess = clickAndTypeGoogleMapsSearch(rootNode, address)
-
-                if (!searchSuccess) {
-                    // Search box not found or couldn't type, press back and try again
-                    Log.d(TAG, "Search box not usable, pressing back (attempt ${attempts + 1}/$maxAttempts)")
-                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                    attempts++
-                    delay(500) // Wait for UI to update
-                } else {
-                    Log.d(TAG, "Successfully entered search query on attempt ${attempts + 1}")
-                }
-                rootNode.recycle()
+            // Poll for search results to load (wait for search_list_layout or location details to appear)
+            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+                val node = accessibilityService.getCurrentRootNode()
+                if (node != null) {
+                    // Dismiss "Exit navigation?" dialog if present
+                    dismissExitNavigationDialog(node)
+                    val state = detectGoogleMapsScreenState(node)
+                    node.recycle()
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                } else false
             }
-
-            if (!searchSuccess) {
-                // UI dump for search failure
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_not_found", "Could not find search box in Google Maps after $maxAttempts attempts")
-                    dumpRoot.recycle()
-                }
+            if (!resultsLoaded) {
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
                     location = address,
-                    error = "Could not find search box or enter query in Google Maps"
+                    error = "Search results did not load in time"
                 )
             }
 
-            // Wait for suggestions to appear
-            delay(800)
-
-            // Press Enter to submit search (don't click autocomplete suggestions)
-            // This ensures we get location-aware results near the user, not random worldwide matches
-            val suggestionRootNode = accessibilityService.getCurrentRootNode()
-            if (suggestionRootNode == null) {
-                return MapsActionResult(
-                    success = false,
-                    action = "search_location",
-                    location = address,
-                    error = "Could not get root node after entering query"
-                )
-            }
-
-            val searchSubmitted = pressEnterToSubmitSearch(suggestionRootNode)
-            suggestionRootNode.recycle()
-
-            if (!searchSubmitted) {
-                return MapsActionResult(
-                    success = false,
-                    action = "search_location",
-                    location = address,
-                    error = "Could not submit search"
-                )
-            }
-
-            // Wait for results to load
-            delay(1500)
-
-            // After pressing Enter, we get a list of results - select the first non-sponsored one
+            // Select the first non-sponsored result from the list
             // If all visible results are sponsored, scroll down and retry
-            Log.d(TAG, "Search submitted, selecting first non-sponsored location from results")
+            Log.d(TAG, "Search results loaded, selecting first non-sponsored location from results")
 
             val maxScrollAttempts = 3
             var locationSelected = false
@@ -3619,6 +3590,24 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                 }
+                GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL -> {
+                    Log.d(TAG, "On transit route detail, pressing back once to return to mode selection")
+                    rootNode.recycle()
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    val reachedDirections = waitForCondition(maxWaitMs = 3000) {
+                        val checkNode = accessibilityService.getCurrentRootNode()
+                        if (checkNode != null) {
+                            val state = detectGoogleMapsScreenState(checkNode)
+                            checkNode.recycle()
+                            state == GoogleMapsScreenState.DIRECTIONS_INPUT || state == GoogleMapsScreenState.LOCATION_DETAILS
+                        } else false
+                    }
+                    if (!reachedDirections) {
+                        Log.w(TAG, "Did not reach directions screen after back from transit route detail, pressing back once more")
+                        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                        delay(1500)
+                    }
+                }
                 GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
                     // We're on the search results list - need to select a result first
                     Log.d(TAG, "On search results list, selecting first non-sponsored result")
@@ -3706,6 +3695,10 @@ class ScreenAgentTools @Inject constructor(
                                 GoogleMapsScreenState.FILTERS_SCREEN -> {
                                     Log.d(TAG, "On Filters screen, pressing back again to close")
                                     // Continue the loop to press back again
+                                }
+                                GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL -> {
+                                    Log.d(TAG, "Now on transit route detail after pressing back")
+                                    break
                                 }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
@@ -3863,10 +3856,22 @@ class ScreenAgentTools @Inject constructor(
             for (attempt in 1..5) {
                 modeRootNode = accessibilityService.getCurrentRootNode()
                 if (modeRootNode != null) {
-                    // Check for Start button
-                    val startNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByContentDesc(modeRootNode, "Start", startNodes)
-                    hasStartButton = startNodes.any { it.isClickable && it.className == "android.widget.Button" }
+                    // Check for Start button using built-in search (no depth limit - Start button is at depth ~22)
+                    val startNodes = modeRootNode.findAccessibilityNodeInfosByText("Start")
+                    hasStartButton = startNodes.any { node ->
+                        if (node.isClickable && node.className == "android.widget.Button") {
+                            true
+                        } else {
+                            // The Start button may have text="" with desc="Start", and its child View
+                            // has text="Start" but is not clickable. Check if the parent is a clickable Button.
+                            val parent = node.parent
+                            val parentMatch = parent != null && parent.isClickable &&
+                                parent.className == "android.widget.Button" &&
+                                parent.contentDescription?.toString()?.equals("Start") == true
+                            parent?.recycle()
+                            parentMatch
+                        }
+                    }
                     startNodes.forEach { it.recycle() }
 
                     if (hasStartButton) {
@@ -3875,16 +3880,23 @@ class ScreenAgentTools @Inject constructor(
                         break
                     }
 
-                    // If no Start button, check for mode tabs (indicates we're on directions screen)
-                    val modeTabNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByResourceId(modeRootNode, "com.google.android.apps.maps:id/directions_mode_tabs", modeTabNodes)
-                    val hasModeTabs = modeTabNodes.isNotEmpty()
-                    modeTabNodes.forEach { it.recycle() }
+                    // If no Start button, check for mode tabs using built-in search (no depth limit)
+                    val modeTabNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+                    val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
+                    modeTabNodes?.forEach { it.recycle() }
 
                     if (hasModeTabs) {
-                        // Check what mode we're in - only break early for transit mode
-                        // For driving/walking/biking, the Start button should exist, so keep waiting
-                        val currentMode = findSelectedTransportMode(modeRootNode)
+                        // Check what mode we're in using built-in search (no depth limit)
+                        var currentMode: String? = null
+                        val allModeCheckNodes = modeRootNode.findAccessibilityNodeInfosByText("mode")
+                        for (modeNode in allModeCheckNodes) {
+                            val desc = modeNode.contentDescription?.toString()
+                            if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                                currentMode = desc.substringBefore(":").trim()
+                                break
+                            }
+                        }
+                        allModeCheckNodes.forEach { it.recycle() }
                         val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
 
                         if (isTransitMode) {
@@ -4165,10 +4177,9 @@ class ScreenAgentTools @Inject constructor(
         trackAction("searchGoogleMapsPhrase: $searchPhrase")
 
         try {
-            // Auto-launch Google Maps to bring it to foreground
-            val launchResult = launchApp("Maps", enableOverlay = true)
+            // Launch Google Maps with geo: intent directly to search results
+            val launchResult = launchGoogleMapsSearch(searchPhrase)
             if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch Google Maps: ${launchResult.error}")
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4176,8 +4187,7 @@ class ScreenAgentTools @Inject constructor(
                     error = "Failed to open Google Maps: ${launchResult.error}"
                 )
             }
-            Log.i(TAG, "Google Maps launched/foregrounded successfully")
-            delay(1000) // Wait for Maps to fully load
+            Log.i(TAG, "Google Maps geo: search launched for phrase: $searchPhrase")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -4189,13 +4199,11 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 5000
             )
-
             if (!appReady) {
                 return MapsActionResult(
                     success = false,
@@ -4205,65 +4213,25 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Navigate to main screen with search box, then click and type in one operation
-            var searchSuccess = false
-            var attempts = 0
-            val maxAttempts = 5
-
-            while (!searchSuccess && attempts < maxAttempts) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode == null) {
-                    return MapsActionResult(
-                        success = false,
-                        action = "search_phrase",
-                        location = searchPhrase,
-                        error = "Could not get root node"
-                    )
-                }
-
-                // Try to click and type into the search box
-                searchSuccess = clickAndTypeGoogleMapsSearch(rootNode, searchPhrase)
-
-                if (!searchSuccess) {
-                    // Search box not found or couldn't type, press back and try again
-                    Log.d(TAG, "Search box not usable, pressing back (attempt ${attempts + 1}/$maxAttempts)")
-                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                    attempts++
-                    delay(500) // Wait for UI to update
-                } else {
-                    Log.d(TAG, "Successfully entered search query on attempt ${attempts + 1}")
-                }
-                rootNode.recycle()
+            // Poll for search results to load
+            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+                val node = accessibilityService.getCurrentRootNode()
+                if (node != null) {
+                    // Dismiss "Exit navigation?" dialog if present
+                    dismissExitNavigationDialog(node)
+                    val state = detectGoogleMapsScreenState(node)
+                    node.recycle()
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                } else false
             }
-
-            if (!searchSuccess) {
+            if (!resultsLoaded) {
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
                     location = searchPhrase,
-                    error = "Could not find search box or enter query in Google Maps"
+                    error = "Search results did not load in time"
                 )
             }
-
-            // Wait for suggestions to appear
-            delay(800)
-
-            // Click matching suggestion (or first suggestion if no match)
-            Log.d(TAG, "Attempting to click matching suggestion for phrase: $searchPhrase")
-            val rootNodeAfterType = accessibilityService.getCurrentRootNode()
-            if (rootNodeAfterType != null) {
-                val (suggestionClicked, wasSeeLocations) = clickMatchingSuggestion(rootNodeAfterType, searchPhrase, accessibilityService)
-                rootNodeAfterType.recycle()
-
-                if (suggestionClicked) {
-                    Log.d(TAG, "Successfully clicked suggestion${if (wasSeeLocations) " (See locations)" else ""}")
-                } else {
-                    Log.w(TAG, "Could not click suggestion, search may not have submitted")
-                }
-            }
-
-            // Wait for search results to appear
-            delay(2000)
 
             return MapsActionResult(
                 success = true,
@@ -4294,6 +4262,7 @@ class ScreenAgentTools @Inject constructor(
         ACTIVE_NAVIGATION,     // Turn-by-turn navigation is active
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
+        TRANSIT_ROUTE_DETAIL,  // Transit route detail screen (trip steps + "Start glanceable directions" button)
         UNKNOWN
     }
 
@@ -4324,6 +4293,17 @@ class ScreenAgentTools @Inject constructor(
             navContainerNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: ACTIVE_NAVIGATION (nav_container found)")
             return GoogleMapsScreenState.ACTIVE_NAVIGATION
+        }
+
+        // Check for transit route detail screen
+        // NOTE: trip_details_footer_layout also exists on the normal directions screen,
+        // but that case is already caught above by the directions_mode_tabs check (DIRECTIONS_INPUT).
+        // If we reach here, it means we have the footer but no mode tabs = transit route detail.
+        val tripDetailsFooterNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_details_footer_layout")
+        if (tripDetailsFooterNodes != null && tripDetailsFooterNodes.isNotEmpty()) {
+            tripDetailsFooterNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: TRANSIT_ROUTE_DETAIL (trip_details_footer_layout found, no directions_mode_tabs)")
+            return GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
         }
 
         // Check for search results list by looking for search_list_layout
@@ -4629,23 +4609,46 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun clickGoogleMapsDirections(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
-        // Look for "Directions" button
-        val directionNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByText(rootNode, "Directions", directionNodes)
+        // Use Android's built-in search (no depth limit) - the Directions button can be ~22 levels deep
+        val freshRoot = accessibilityService.getCurrentRootNode()
+        if (freshRoot == null) {
+            Log.w(TAG, "Could not get fresh root node for Directions button search")
+            return false
+        }
 
-        // Don't recycle nodes during iteration - recycling nodes that share the same
-        // underlying view hierarchy can cause issues when we need to try multiple nodes.
-        // Let the GC handle cleanup instead.
+        val directionNodes = freshRoot.findAccessibilityNodeInfosByText("Directions")
+        Log.d(TAG, "Found ${directionNodes.size} nodes matching 'Directions' via built-in search")
+
         for (node in directionNodes) {
-            val clickableNode = findClickableParent(node)
-            if (clickableNode != null) {
-                val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                if (clicked) {
-                    Log.d(TAG, "Clicked Directions button")
-                    return true
+            val desc = node.contentDescription?.toString() ?: ""
+            // Match the Directions button (content-desc starts with "Directions to") or text is "Directions"
+            if (desc.startsWith("Directions to", ignoreCase = true) || node.text?.toString() == "Directions") {
+                // If the node itself is clickable, click it directly
+                if (node.isClickable) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Directions button directly")
+                        directionNodes.forEach { it.recycle() }
+                        freshRoot.recycle()
+                        return true
+                    }
+                }
+                // Otherwise find clickable parent
+                val clickableNode = findClickableParent(node)
+                if (clickableNode != null) {
+                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickableNode.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Directions button via parent")
+                        directionNodes.forEach { it.recycle() }
+                        freshRoot.recycle()
+                        return true
+                    }
                 }
             }
         }
+        directionNodes.forEach { it.recycle() }
+        freshRoot.recycle()
 
         Log.w(TAG, "Could not find Directions button")
         return false
@@ -4671,62 +4674,110 @@ class ScreenAgentTools @Inject constructor(
 
             // Only change mode if we have a valid modeText
             if (modeText != null) {
-                // First, check if the desired mode is already selected
-                val currentlySelected = findSelectedTransportMode(rootNode)
-                Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
-
-                // If the mode is not already selected, click it
-                if (currentlySelected != modeText) {
-                    val modeNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findNodesByContentDesc(rootNode, modeText, modeNodes)
-
-                    var modeChanged = false
-                    for (node in modeNodes) {
-                        val clickableNode = findClickableParent(node)
-                        if (clickableNode != null) {
-                            val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                            clickableNode.recycle()
-                            if (clicked) {
-                                Log.d(TAG, "Selected transport mode: $modeText")
-                                modeChanged = true
-                                break
-                            }
+                // Get a fresh root node from the accessibility service (the polling loop root may be stale)
+                val freshRoot = accessibilityService.getCurrentRootNode()
+                if (freshRoot == null) {
+                    Log.w(TAG, "Could not get fresh root node for transport mode selection")
+                } else {
+                    // Detect currently selected mode using built-in search (no depth limit)
+                    var currentlySelected: String? = null
+                    val allModeNodes = freshRoot.findAccessibilityNodeInfosByText("mode")
+                    for (modeNode in allModeNodes) {
+                        val desc = modeNode.contentDescription?.toString()
+                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                            currentlySelected = desc.substringBefore(":").trim()
+                            break
                         }
                     }
-                    modeNodes.forEach { it.recycle() }
+                    allModeNodes.forEach { it.recycle() }
+                    Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
 
-                    if (!modeChanged && currentlySelected != modeText) {
-                        Log.w(TAG, "Could not change transport mode to: $modeText")
-                        // Continue anyway - might already be on correct mode
-                    }
+                    // If the mode is not already selected, click it
+                    if (currentlySelected != modeText) {
+                        // Use Android's built-in findAccessibilityNodeInfosByText (searches both text and content-description, no depth limit)
+                        val modeNodes = freshRoot.findAccessibilityNodeInfosByText(modeText)
+                        Log.d(TAG, "Found ${modeNodes.size} nodes matching '$modeText' via built-in search")
 
-                    // Wait for mode change to complete
-                    if (modeChanged) {
-                        Thread.sleep(500)
+                        var modeChanged = false
+                        for (node in modeNodes) {
+                            val desc = node.contentDescription?.toString()
+                            if (desc != null && desc.contains(modeText, ignoreCase = true)) {
+                                val clickableNode = findClickableParent(node)
+                                if (clickableNode != null) {
+                                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    clickableNode.recycle()
+                                    if (clicked) {
+                                        Log.d(TAG, "Selected transport mode: $modeText")
+                                        modeChanged = true
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                        modeNodes.forEach { it.recycle() }
+
+                        if (!modeChanged && currentlySelected != modeText) {
+                            Log.w(TAG, "Could not change transport mode to: $modeText")
+                            // Continue anyway - might already be on correct mode
+                        }
+
+                        // Wait for mode change to complete
+                        if (modeChanged) {
+                            Thread.sleep(500)
+                        }
                     }
+                    freshRoot.recycle()
                 }
             }
         }
 
-        // Now click the Start button
-        val startNodes = mutableListOf<AccessibilityNodeInfo>()
-        findNodesByContentDesc(rootNode, "Start", startNodes)
+        // Now click the Start button using built-in search (no depth limit)
+        val freshStartRoot = accessibilityService.getCurrentRootNode()
+        if (freshStartRoot != null) {
+            val startNodes = freshStartRoot.findAccessibilityNodeInfosByText("Start")
 
-        for (node in startNodes) {
-            if (node.isClickable && node.className == "android.widget.Button") {
-                val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                node.recycle()
-                if (clicked) {
-                    Log.d(TAG, "Clicked Start button")
-                    startNodes.forEach { it.recycle() }
+            for (node in startNodes) {
+                if (node.isClickable && node.className == "android.widget.Button") {
+                    // Direct match - clickable Button with "Start" text
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    node.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Clicked Start button")
+                        startNodes.forEach { it.recycle() }
+                        freshStartRoot.recycle()
 
-                    // Check for and dismiss welcome popup (no wait needed - detect by text)
-                    dismissGoogleMapsWelcomePopup(accessibilityService)
+                        // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
+                        dismissStartThisTripDialog(accessibilityService)
 
-                    return true
+                        // Check for and dismiss welcome popup (no wait needed - detect by text)
+                        dismissGoogleMapsWelcomePopup(accessibilityService)
+
+                        return true
+                    }
+                } else if (node.text?.toString() == "Start" || node.contentDescription?.toString() == "Start") {
+                    // Child View with text="Start" but not clickable - find clickable parent Button
+                    val clickableParent = findClickableParent(node)
+                    if (clickableParent != null && clickableParent.contentDescription?.toString() == "Start") {
+                        val clicked = clickableParent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickableParent.recycle()
+                        if (clicked) {
+                            Log.d(TAG, "Clicked Start button via clickable parent")
+                            node.recycle()
+                            startNodes.forEach { it.recycle() }
+                            freshStartRoot.recycle()
+
+                            dismissStartThisTripDialog(accessibilityService)
+                            dismissGoogleMapsWelcomePopup(accessibilityService)
+
+                            return true
+                        }
+                    } else {
+                        clickableParent?.recycle()
+                    }
                 }
+                node.recycle()
             }
-            node.recycle()
+            freshStartRoot.recycle()
         }
 
         Log.w(TAG, "Could not find or click Start button")
@@ -4735,24 +4786,29 @@ class ScreenAgentTools @Inject constructor(
         if (mode?.lowercase() == "transit") {
             Log.d(TAG, "Transit mode: looking for route options to click first")
 
-            // Wait for transit UI to fully load after mode switch
-            Thread.sleep(500)
+            // Poll for transit route cards using Android's built-in search (no depth limit)
+            var tripCardNodeList = emptyList<AccessibilityNodeInfo>()
+            var transitRoot: AccessibilityNodeInfo? = null
+            for (transitAttempt in 1..25) {
+                Thread.sleep(200)
+                transitRoot?.recycle()
+                transitRoot = accessibilityService.getCurrentRootNode()
+                if (transitRoot == null) {
+                    Log.w(TAG, "Transit mode: could not get fresh root node on attempt $transitAttempt")
+                    continue
+                }
+                tripCardNodeList = transitRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_card_main_header")
+                Log.d(TAG, "Transit mode: found ${tripCardNodeList.size} trip card nodes on attempt $transitAttempt")
+                if (tripCardNodeList.isNotEmpty()) break
+            }
 
-            // Get fresh root node - the UI has changed since switching to transit mode
-            val transitRoot = accessibilityService.getCurrentRootNode()
             if (transitRoot == null) {
-                Log.w(TAG, "Transit mode: could not get fresh root node")
+                Log.w(TAG, "Transit mode: could not get fresh root node after all attempts")
                 return false
             }
 
-            // Find route cards by looking for trip_card_main_header resource ID
-            // This is more robust than searching by content-desc text
-            val tripCardNodes = mutableListOf<AccessibilityNodeInfo>()
-            findNodesByResourceId(transitRoot, "com.google.android.apps.maps:id/trip_card_main_header", tripCardNodes)
-            Log.d(TAG, "Transit mode: found ${tripCardNodes.size} trip card nodes")
-
-            if (tripCardNodes.isNotEmpty()) {
-                val tripCardNode = tripCardNodes[0]
+            if (tripCardNodeList.isNotEmpty()) {
+                val tripCardNode = tripCardNodeList[0]
                 val clickableRoute = findClickableParent(tripCardNode)
                 if (clickableRoute != null) {
                     clickableRoute.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -4776,9 +4832,13 @@ class ScreenAgentTools @Inject constructor(
                                 clickableStart.recycle()
                                 if (clicked) {
                                     Log.d(TAG, "Clicked Start glanceable directions button")
+
+                                    // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
+                                    dismissStartThisTripDialog(accessibilityService)
+
                                     glanceableNodes.forEach { it.recycle() }
                                     newRoot.recycle()
-                                    tripCardNodes.forEach { it.recycle() }
+                                    tripCardNodeList.forEach { it.recycle() }
                                     transitRoot.recycle()
                                     return true
                                 }
@@ -4793,7 +4853,7 @@ class ScreenAgentTools @Inject constructor(
             } else {
                 Log.w(TAG, "Transit mode: no trip cards found in UI")
             }
-            tripCardNodes.forEach { it.recycle() }
+            tripCardNodeList.forEach { it.recycle() }
             transitRoot.recycle()
         }
 
@@ -4837,6 +4897,90 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing welcome popup: ${e.message}")
+        }
+    }
+
+    private fun dismissStartThisTripDialog(accessibilityService: WhizAccessibilityService) {
+        try {
+            // Brief delay to allow the dialog to appear
+            Thread.sleep(500)
+
+            val rootNode = accessibilityService.getCurrentRootNode() ?: return
+
+            // Check if the "Start this trip?" dialog is present by looking for dialog_title
+            val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_title")
+            val hasStartTripDialog = titleNodes.any { it.text?.toString() == "Start this trip?" }
+            titleNodes.forEach { it.recycle() }
+
+            if (!hasStartTripDialog) {
+                Log.d(TAG, "No 'Start this trip?' dialog detected")
+                rootNode.recycle()
+                return
+            }
+
+            Log.d(TAG, "Found 'Start this trip?' dialog, clicking 'Start trip' button")
+
+            // Click the positive button ("Start trip")
+            val positiveButtons = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_positive_button")
+            try {
+                for (button in positiveButtons) {
+                    if (button.isClickable) {
+                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.d(TAG, "Dismissed 'Start this trip?' dialog by clicking 'Start trip'")
+                            return
+                        }
+                    }
+                }
+                Log.w(TAG, "Could not click 'Start trip' button in dialog")
+            } finally {
+                positiveButtons.forEach { it.recycle() }
+                rootNode.recycle()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing 'Start this trip?' dialog: ${e.message}")
+        }
+    }
+
+    private fun dismissExitNavigationDialog(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            val exitNavNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Exit navigation?", exitNavNodes)
+
+            if (exitNavNodes.isEmpty()) {
+                return false
+            }
+
+            Log.d(TAG, "Found 'Exit navigation?' dialog, clicking 'Yes' to dismiss")
+
+            val yesNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Yes", yesNodes)
+
+            for (node in yesNodes) {
+                if (node.isClickable) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed 'Exit navigation?' dialog")
+                        return true
+                    }
+                }
+                // If the node itself isn't clickable, try finding a clickable parent
+                val clickableParent = findClickableParent(node)
+                if (clickableParent != null) {
+                    val clicked = clickableParent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clickableParent.recycle()
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed 'Exit navigation?' dialog via clickable parent")
+                        return true
+                    }
+                }
+            }
+
+            Log.w(TAG, "Found 'Exit navigation?' dialog but could not click 'Yes'")
+            return false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing 'Exit navigation?' dialog: ${e.message}")
+            return false
         }
     }
 
@@ -6875,7 +7019,7 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun findNodesByResourceId(node: AccessibilityNodeInfo, resourceId: String, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
-        if (depth > 15) return // Limit recursion depth
+        if (depth > 40) return // Limit recursion depth (Google Maps nests UI elements ~28 levels deep)
 
         try {
             // Check if this node matches the resource ID
@@ -7062,12 +7206,21 @@ class ScreenAgentTools @Inject constructor(
         return waitForCondition(maxWaitMs = maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
-                // Check if search results are visible by looking for chat items
+                // Try text matching first
                 val chatNodes = findChatNodes(rootNode, searchQuery)
                 val hasResults = chatNodes.isNotEmpty()
                 chatNodes.forEach { it.recycle() }
+                if (hasResults) {
+                    rootNode.recycle()
+                    return@waitForCondition true
+                }
+                // Fallback: check if any clickable result exists below search input
+                // This handles group chats where the search query differs from the display name
+                val firstResult = findFirstSearchResult(rootNode)
+                val hasAnyResult = firstResult != null
+                firstResult?.recycle()
                 rootNode.recycle()
-                hasResults
+                hasAnyResult
             } else {
                 false
             }
@@ -7609,7 +7762,7 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
-    private fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
+    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
         try {
             val timestamp = System.currentTimeMillis()
             val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"
@@ -7697,23 +7850,7 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private fun dumpNodeRecursive(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
-        val indent = "  ".repeat(depth)
-        val resourceId = node.viewIdResourceName ?: ""
-        val text = node.text?.toString() ?: ""
-        val contentDesc = node.contentDescription?.toString() ?: ""
-        val className = node.className?.toString()?.substringAfterLast('.') ?: ""
-        val bounds = android.graphics.Rect()
-        node.getBoundsInScreen(bounds)
-
-        sb.appendLine("$indent[$className] id=$resourceId text=\"$text\" desc=\"$contentDesc\" bounds=$bounds clickable=${node.isClickable}")
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                dumpNodeRecursive(child, sb, depth + 1)
-                // Don't recycle children here as we're just traversing
-            }
-        }
+        com.example.whiz.accessibility.AccessibilityDumpUtil.dumpNodeRecursive(node, sb, depth)
     }
 
     private fun logCurrentScreen(rootNode: AccessibilityNodeInfo) {
@@ -8080,6 +8217,95 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    /**
+     * Find the first clickable search result in WhatsApp search results.
+     * Used as a fallback when text matching fails (e.g., group chats where
+     * the search query differs from the group's display name).
+     */
+    private fun findFirstSearchResult(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        try {
+            // Find the search input field to determine where results start
+            val searchInputIds = listOf(
+                "com.whatsapp:id/search_input",
+                "com.whatsapp:id/search_src_text"
+            )
+            var searchInputBottom = 0
+            for (id in searchInputIds) {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    val rect = android.graphics.Rect()
+                    nodes[0].getBoundsInScreen(rect)
+                    searchInputBottom = rect.bottom
+                    nodes.forEach { it.recycle() }
+                    break
+                }
+            }
+
+            if (searchInputBottom == 0) {
+                Log.d(TAG, "findFirstSearchResult: Could not find search input field")
+                return null
+            }
+
+            val screenWidth = context.resources.displayMetrics.widthPixels
+            val minWidth = (screenWidth * 0.4).toInt()
+
+            // Section headers to skip
+            val sectionHeaders = setOf("chats", "messages", "groups in common", "contacts", "more")
+
+            // Collect all clickable nodes
+            val clickableNodes = mutableListOf<AccessibilityNodeInfo>()
+            findClickableChildren(rootNode, clickableNodes)
+
+            // Filter and find the topmost valid result
+            var bestNode: AccessibilityNodeInfo? = null
+            var bestTop = Int.MAX_VALUE
+
+            for (node in clickableNodes) {
+                val rect = android.graphics.Rect()
+                node.getBoundsInScreen(rect)
+
+                // Must be below the search input
+                if (rect.top <= searchInputBottom) {
+                    node.recycle()
+                    continue
+                }
+
+                // Must span a significant portion of screen width (skip small buttons)
+                if (rect.width() < minWidth) {
+                    node.recycle()
+                    continue
+                }
+
+                // Skip section headers
+                val nodeText = getNodeTextRecursive(node).lowercase().trim()
+                if (nodeText.isNotEmpty() && nodeText in sectionHeaders) {
+                    node.recycle()
+                    continue
+                }
+
+                // Track the topmost result
+                if (rect.top < bestTop) {
+                    bestNode?.recycle()
+                    bestNode = node
+                    bestTop = rect.top
+                } else {
+                    node.recycle()
+                }
+            }
+
+            if (bestNode != null) {
+                Log.i(TAG, "findFirstSearchResult: Found first result at y=$bestTop")
+            } else {
+                Log.d(TAG, "findFirstSearchResult: No valid search results found below search input")
+            }
+
+            return bestNode
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in findFirstSearchResult", e)
+            return null
+        }
+    }
+
     private fun findClickableParent(node: AccessibilityNodeInfo, skipProfilePictures: Boolean = false): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = AccessibilityNodeInfo.obtain(node)
 

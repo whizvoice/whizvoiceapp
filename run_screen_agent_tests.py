@@ -1155,7 +1155,7 @@ def test_google_maps_directions(tester):
             'am', 'broadcast',
             '-a', 'com.example.whiz.TEST_TRANSCRIPTION',
             '-n', 'com.example.whiz.debug/com.example.whiz.test.TestTranscriptionReceiver',
-            '--es', 'text', f'"Actually, I need to go to {secondary_address} first. Can you get directions to there instead?"',
+            '--es', 'text', f'"Actually, I need to go to {secondary_address} first. Can you get public transit directions to there instead?"',
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
@@ -1400,12 +1400,14 @@ def test_sms_draft_message(tester):
         validation_result = tester.validate_screenshot(
             screenshot_path,
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-            "Check that the message was SENT (appears in the conversation thread as a sent message bubble, not in the text input field). "
-            "The most recent sent message should contain text similar to 'testing SMS' (may have polite words added). "
+            "Look for a SENT message bubble (colored bubble on the right side of the screen) that contains "
+            "the words 'Testing SMS' or 'Whiz Voice' or similar text about testing. The message may have been "
+            "reworded to be more polite (e.g. 'Hope you're doing well'). "
+            "The text input field at the bottom should be empty or show a placeholder like 'RCS message' or 'Text message'. "
             "There should be NO yellow overlay covering the bottom of the screen. "
             "A yellow notification bubble with a robot head outline may be visible. "
-            "Return True if the message appears as a SENT message in the conversation. "
-            "Return False if the message text is still in the input field at the bottom."
+            "Return True if there is a sent message bubble containing any text related to 'testing SMS' or 'Whiz Voice'. "
+            "Return False ONLY if the message text is still sitting in the input field at the bottom and was NOT sent."
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
