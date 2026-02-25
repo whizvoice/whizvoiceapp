@@ -65,7 +65,7 @@ class SpeechRecognitionService @Inject constructor(
     private var savedPartialIsAfterFinalResult = false  // True when saved partial is a NEW sub-utterance spoken AFTER the finalized text
     private var peakPartialLength = 0  // Longest partial seen in current recognition session, used to detect partial buffer resets
     private val PREMATURE_END_THRESHOLD_MS = 1500L // If end-of-speech fires within this time of last partial, it's probably premature
-    private val SAVED_PARTIAL_TIMEOUT_MS = 5000L // Wait for user to continue speaking (premature end case)
+    private val SAVED_PARTIAL_TIMEOUT_MS = 3000L // Wait for user to continue speaking (premature end case)
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
     private var savedPartialTimeoutJob: kotlinx.coroutines.Job? = null
     private var restartAfterResults = false  // Defer restart to onResults to avoid ERROR_CLIENT from premature startListening

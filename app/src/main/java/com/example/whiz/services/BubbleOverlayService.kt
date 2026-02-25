@@ -66,6 +66,8 @@ class BubbleOverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var partialDisplayJob: Job? = null
     private var isShowingPartial: Boolean = false
+    private var stuckPartialTimeoutJob: Job? = null
+    private var lastPartialText: String = ""
     private var hideMessageRunnable: Runnable? = null
     private var lastMessageShownTimestamp: Long = 0L
     private var hasUnreadMessage: Boolean = false
@@ -83,6 +85,7 @@ class BubbleOverlayService : Service() {
         private const val LONG_PRESS_THRESHOLD = 500L // 500ms for long press
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
+        private const val BUBBLE_STUCK_PARTIAL_TIMEOUT_MS = 5000L
 
         // Track if the bubble overlay is active
         @Volatile
@@ -205,6 +208,8 @@ class BubbleOverlayService : Service() {
             voiceManager.transcriptionFlow.collect { transcription ->
                 if (transcription.isNotBlank() && isActive) {
                     Log.d(TAG, "Transcription received from flow in bubble mode: '$transcription'")
+                    stuckPartialTimeoutJob?.cancel()
+                    lastPartialText = ""
                     _userTranscriptionFlow.emit(transcription)
                 }
             }
@@ -659,6 +664,8 @@ class BubbleOverlayService : Service() {
                 Log.d(TAG, "[APPLY_MODE] Disabling continuous listening (mic off, TTS off)")
                 voiceManager.updateContinuousListeningEnabled(false)
                 Log.d(TAG, "[APPLY_MODE] Called updateContinuousListeningEnabled(false)")
+                stuckPartialTimeoutJob?.cancel()
+                lastPartialText = ""
                 // TTS is automatically disabled when not in TTS_WITH_LISTENING mode
             }
             ListeningMode.TTS_WITH_LISTENING -> {
@@ -821,6 +828,20 @@ class BubbleOverlayService : Service() {
             // Show message bubble
             messageBubble?.visibility = View.VISIBLE
             isShowingPartial = true
+            lastPartialText = text
+
+            // Safety-net: auto-send stuck partial if no final transcription arrives
+            stuckPartialTimeoutJob?.cancel()
+            stuckPartialTimeoutJob = serviceScope.launch {
+                delay(BUBBLE_STUCK_PARTIAL_TIMEOUT_MS)
+                if (isShowingPartial && lastPartialText.isNotBlank()) {
+                    Log.w(TAG, "Stuck partial timeout fired after ${BUBBLE_STUCK_PARTIAL_TIMEOUT_MS}ms, auto-sending: '$lastPartialText'")
+                    val textToSend = lastPartialText
+                    lastPartialText = ""
+                    isShowingPartial = false
+                    _userTranscriptionFlow.emit(textToSend)
+                }
+            }
             // No auto-hide scheduled — stays visible as long as partials keep arriving
         }
     }
@@ -884,6 +905,7 @@ class BubbleOverlayService : Service() {
         recognitionJob?.cancel()
         botResponseJob?.cancel()
         partialDisplayJob?.cancel()
+        stuckPartialTimeoutJob?.cancel()
         hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
             chatHeadView?.let { windowManager.removeView(it) }
