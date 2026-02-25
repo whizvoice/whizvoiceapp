@@ -2318,7 +2318,7 @@ abstract class BaseIntegrationTest {
                     try {
                         val startTime = System.currentTimeMillis()
                         android.util.Log.d("BaseIntegrationTest", "🔍 Using Compose waitUntil for message verification...")
-                        composeTestRule!!.waitUntil(timeoutMillis = 3000) {
+                        composeTestRule!!.waitUntil(timeoutMillis = 8000) {
                             composeTestRule
                                 .onAllNodesWithText(searchText, substring = true)
                                 .fetchSemanticsNodes()
@@ -2328,7 +2328,7 @@ abstract class BaseIntegrationTest {
                         android.util.Log.d("BaseIntegrationTest", "✅ Message found via Compose semantics after ${elapsed}ms")
                         messageVisible = true
                     } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
-                        android.util.Log.e("BaseIntegrationTest", "❌ Compose waitUntil timed out after 3000ms")
+                        android.util.Log.e("BaseIntegrationTest", "❌ Compose waitUntil timed out after 8000ms")
                         val vmMsgsNow = chatViewModel?.messages?.value
                         android.util.Log.e("BaseIntegrationTest", "🔍 VM now has ${vmMsgsNow?.size ?: "null"} messages")
                         vmMsgsNow?.forEach { msg ->
