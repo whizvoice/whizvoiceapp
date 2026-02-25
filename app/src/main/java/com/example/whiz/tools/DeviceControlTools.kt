@@ -463,6 +463,182 @@ class DeviceControlTools @Inject constructor(
         }
     }
 
+    /**
+     * Dismiss a currently ringing AMdroid alarm via accessibility service UI automation.
+     *
+     * Flow:
+     * 1. If already on AMdroid full-screen alarm view (has rltvLytAlarmFullScreen) → click fab_off
+     * 2. If AMdroid is in foreground with snackbar ("Ongoing alarm" + SHOW button) → click SHOW → wait → click fab_off
+     * 3. If AMdroid not in foreground → launch AMdroid → wait for snackbar or full-screen → handle as 1 or 2
+     * 4. No ringing alarm found → return error
+     */
+    suspend fun dismissAmdroidAlarm(): JSONObject {
+        Log.i(TAG, "Dismissing AMdroid alarm")
+
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return JSONObject().apply {
+                put("success", false)
+                put("error", "Accessibility service not available")
+            }
+
+        val AMDROID_PACKAGE = "com.amdroidalarmclock.amdroid"
+        val ID_FULL_SCREEN = "$AMDROID_PACKAGE:id/rltvLytAlarmFullScreen"
+        val ID_FAB_OFF = "$AMDROID_PACKAGE:id/fab_off"
+        val ID_SNACKBAR_TEXT = "$AMDROID_PACKAGE:id/snackbar_text"
+        val ID_SNACKBAR_ACTION = "$AMDROID_PACKAGE:id/snackbar_action"
+
+        // --- Helper: click fab_off dismiss button ---
+        suspend fun clickDismissButton(): JSONObject {
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 3000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                val root = accessibilityService.getCurrentRootNode()
+                if (root != null) {
+                    val fabNodes = root.findAccessibilityNodeInfosByViewId(ID_FAB_OFF)
+                    if (fabNodes != null && fabNodes.isNotEmpty()) {
+                        val fabOff = fabNodes.first()
+                        val clicked = accessibilityService.clickNode(fabOff)
+                        Log.i(TAG, "Clicked fab_off dismiss button: $clicked")
+                        fabNodes.forEach { it.recycle() }
+                        root.recycle()
+                        return if (clicked) {
+                            JSONObject().apply {
+                                put("success", true)
+                                put("message", "AMdroid alarm dismissed")
+                            }
+                        } else {
+                            JSONObject().apply {
+                                put("success", false)
+                                put("error", "Found AMdroid dismiss button but failed to click it")
+                            }
+                        }
+                    }
+                    fabNodes?.forEach { it.recycle() }
+                    root.recycle()
+                }
+                delay(200)
+            }
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "AMdroid dismiss button (fab_off) not found")
+            }
+        }
+
+        // --- Helper: click SHOW on snackbar, then dismiss ---
+        suspend fun clickShowThenDismiss(): JSONObject {
+            val root = accessibilityService.getCurrentRootNode()
+            if (root != null) {
+                val showButtons = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_ACTION)
+                if (showButtons != null && showButtons.isNotEmpty()) {
+                    val showBtn = showButtons.first()
+                    val clicked = accessibilityService.clickNode(showBtn)
+                    Log.i(TAG, "Clicked SHOW snackbar button: $clicked")
+                    showButtons.forEach { it.recycle() }
+                    root.recycle()
+                    if (!clicked) {
+                        return JSONObject().apply {
+                            put("success", false)
+                            put("error", "Found AMdroid SHOW button but failed to click it")
+                        }
+                    }
+                    // Wait for full-screen alarm view, then click dismiss
+                    delay(500)
+                    return clickDismissButton()
+                }
+                showButtons?.forEach { it.recycle() }
+                root.recycle()
+            }
+            return JSONObject().apply {
+                put("success", false)
+                put("error", "AMdroid SHOW snackbar button not found")
+            }
+        }
+
+        return try {
+            // Step 1: Check if already on full-screen alarm view
+            var root = accessibilityService.getCurrentRootNode()
+            if (root != null) {
+                val fullScreenNodes = root.findAccessibilityNodeInfosByViewId(ID_FULL_SCREEN)
+                if (fullScreenNodes != null && fullScreenNodes.isNotEmpty()) {
+                    Log.i(TAG, "Already on AMdroid full-screen alarm view")
+                    fullScreenNodes.forEach { it.recycle() }
+                    root.recycle()
+                    return clickDismissButton()
+                }
+                fullScreenNodes?.forEach { it.recycle() }
+
+                // Step 2: Check if AMdroid is in foreground with snackbar
+                val snackbarNodes = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_TEXT)
+                if (snackbarNodes != null && snackbarNodes.isNotEmpty()) {
+                    val text = snackbarNodes.firstOrNull()?.text?.toString() ?: ""
+                    Log.i(TAG, "Found AMdroid snackbar: '$text'")
+                    snackbarNodes.forEach { it.recycle() }
+                    root.recycle()
+                    if (text.contains("Ongoing alarm", ignoreCase = true)) {
+                        return clickShowThenDismiss()
+                    }
+                }
+                snackbarNodes?.forEach { it.recycle() }
+                root.recycle()
+            }
+
+            // Step 3: Launch AMdroid and wait for alarm UI
+            Log.i(TAG, "Launching AMdroid to find ringing alarm")
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(AMDROID_PACKAGE)
+            if (launchIntent == null) {
+                return JSONObject().apply {
+                    put("success", false)
+                    put("error", "AMdroid app not installed")
+                }
+            }
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(launchIntent)
+
+            val waitStart = System.currentTimeMillis()
+            val waitTimeout = 5000L
+            while (System.currentTimeMillis() - waitStart < waitTimeout) {
+                delay(300)
+                root = accessibilityService.getCurrentRootNode() ?: continue
+
+                // Check for full-screen alarm view first
+                val fullScreenNodes = root.findAccessibilityNodeInfosByViewId(ID_FULL_SCREEN)
+                if (fullScreenNodes != null && fullScreenNodes.isNotEmpty()) {
+                    Log.i(TAG, "AMdroid full-screen alarm view appeared after launch")
+                    fullScreenNodes.forEach { it.recycle() }
+                    root.recycle()
+                    return clickDismissButton()
+                }
+                fullScreenNodes?.forEach { it.recycle() }
+
+                // Check for snackbar
+                val snackbarNodes = root.findAccessibilityNodeInfosByViewId(ID_SNACKBAR_TEXT)
+                if (snackbarNodes != null && snackbarNodes.isNotEmpty()) {
+                    val text = snackbarNodes.firstOrNull()?.text?.toString() ?: ""
+                    Log.i(TAG, "AMdroid snackbar appeared after launch: '$text'")
+                    snackbarNodes.forEach { it.recycle() }
+                    root.recycle()
+                    if (text.contains("Ongoing alarm", ignoreCase = true)) {
+                        return clickShowThenDismiss()
+                    }
+                }
+                snackbarNodes?.forEach { it.recycle() }
+                root.recycle()
+            }
+
+            // Step 4: No ringing alarm found
+            JSONObject().apply {
+                put("success", false)
+                put("error", "No ringing AMdroid alarm detected")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to dismiss AMdroid alarm", e)
+            JSONObject().apply {
+                put("success", false)
+                put("error", "Failed to dismiss AMdroid alarm: ${e.message}")
+            }
+        }
+    }
+
     fun getNextAlarm(): JSONObject {
         Log.i(TAG, "Getting next alarm")
 
