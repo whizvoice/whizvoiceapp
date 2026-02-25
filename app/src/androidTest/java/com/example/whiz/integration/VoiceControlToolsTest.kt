@@ -237,7 +237,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 message = disableMessage,
                 rapid = false,
                 chatViewModel = chatViewModel,
-                speechRecognitionService = null
+                speechRecognitionService = null,
+                composeTestRule = composeTestRule
             )
 
             if (!disableMessageSent) {
@@ -428,7 +429,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 message = enableTTSVoiceMessage,
                 rapid = false,
                 chatViewModel = chatViewModel,
-                speechRecognitionService = null
+                speechRecognitionService = null,
+                composeTestRule = composeTestRule
             )
 
             if (!enableTTSVoiceMessageSent) {
@@ -480,7 +482,8 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 message = disableTTSVoiceMessage,
                 rapid = false,
                 chatViewModel = chatViewModel,
-                speechRecognitionService = null
+                speechRecognitionService = null,
+                composeTestRule = composeTestRule
             )
 
             if (!disableTTSVoiceMessageSent) {

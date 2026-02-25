@@ -8,6 +8,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 import androidx.test.uiautomator.UiSelector
+import androidx.compose.ui.test.onAllNodesWithText
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -2281,10 +2282,11 @@ abstract class BaseIntegrationTest {
      * @param chatViewModel Optional ChatViewModel to use real voice pathway. If null, falls back to typing simulation.
      */
     protected fun simulateVoiceTranscriptionAndSend(
-        message: String, 
+        message: String,
         rapid: Boolean = false,
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null,
-        speechRecognitionService: com.example.whiz.services.SpeechRecognitionService? = null
+        speechRecognitionService: com.example.whiz.services.SpeechRecognitionService? = null,
+        composeTestRule: androidx.compose.ui.test.junit4.ComposeTestRule? = null
     ): Boolean {
         android.util.Log.d("BaseIntegrationTest", "🎤 Simulating voice transcription: '${message.take(30)}...' (rapid=$rapid)")
         
@@ -2310,44 +2312,31 @@ abstract class BaseIntegrationTest {
                 // For non-rapid calls, verify the message actually appeared
                 if (!rapid) {
                     android.util.Log.d("BaseIntegrationTest", "🔍 Non-rapid mode: Verifying message appeared in chat...")
-                    
-                    // Retry with delays to allow optimistic UI to update, but with a time limit
+                    val searchText = message.take(20)
                     var messageVisible = false
-                    val startTime = System.currentTimeMillis()
-                    val maxWaitTime = 3000L // 3 seconds max
-                    val retryDelayMs = 100L // 100ms between retries
-                    var attempt = 0
-                    
-                    while (System.currentTimeMillis() - startTime < maxWaitTime && !messageVisible) {
-                        attempt++
-                        val elapsedTime = System.currentTimeMillis() - startTime
-                        android.util.Log.d("BaseIntegrationTest", "🔍 Verification attempt $attempt (${elapsedTime}ms elapsed)...")
-                        
-                        // Quick check without scrolling
-                        val searchText = message.take(20)
-                        messageVisible = device.hasObject(By.textContains(searchText).pkg(packageName))
-                        
-                        if (messageVisible) {
-                            android.util.Log.d("BaseIntegrationTest", "✅ Message found on attempt $attempt after ${elapsedTime}ms")
-                            break
+
+                    try {
+                        val startTime = System.currentTimeMillis()
+                        android.util.Log.d("BaseIntegrationTest", "🔍 Using Compose waitUntil for message verification...")
+                        composeTestRule!!.waitUntil(timeoutMillis = 3000) {
+                            composeTestRule
+                                .onAllNodesWithText(searchText, substring = true)
+                                .fetchSemanticsNodes()
+                                .isNotEmpty()
                         }
-                        
-                        // Only sleep if we haven't exceeded the time limit
-                        if (elapsedTime + retryDelayMs < maxWaitTime) {
-                            android.util.Log.d("BaseIntegrationTest", "⏳ Message not found, waiting ${retryDelayMs}ms before retry...")
-                            Thread.sleep(retryDelayMs)
+                        val elapsed = System.currentTimeMillis() - startTime
+                        android.util.Log.d("BaseIntegrationTest", "✅ Message found via Compose semantics after ${elapsed}ms")
+                        messageVisible = true
+                    } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+                        android.util.Log.e("BaseIntegrationTest", "❌ Compose waitUntil timed out after 3000ms")
+                        val vmMsgsNow = chatViewModel?.messages?.value
+                        android.util.Log.e("BaseIntegrationTest", "🔍 VM now has ${vmMsgsNow?.size ?: "null"} messages")
+                        vmMsgsNow?.forEach { msg ->
+                            android.util.Log.e("BaseIntegrationTest", "🔍   VM message: type=${msg.type} content='${msg.content.take(30)}...'")
                         }
                     }
-                    
+
                     if (!messageVisible) {
-                        val totalTime = System.currentTimeMillis() - startTime
-                        android.util.Log.e("BaseIntegrationTest", "❌ Message not visible after $attempt attempts over ${totalTime}ms")
-                        // Log the current state of the UI
-                        val allText = device.findObjects(By.clazz("android.widget.TextView").pkg(packageName))
-                        android.util.Log.e("BaseIntegrationTest", "📱 Current visible text elements: ${allText.size}")
-                        allText.take(5).forEach { textView ->
-                            android.util.Log.e("BaseIntegrationTest", "   - ${textView.text?.take(50)}")
-                        }
                         return false
                     }
                     android.util.Log.d("BaseIntegrationTest", "✅ Direct voice message confirmed visible in chat")
