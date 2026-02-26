@@ -98,6 +98,9 @@ class ChatViewModel @Inject constructor(
     
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
+
+    // Track request IDs that were superseded by newer requests (to prevent orphaned retry)
+    private val supersededRequestIds = mutableSetOf<String>()
     
     /**
      * Check if a specific request ID is in the pending requests list
@@ -668,6 +671,10 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
+
+                        if (event.requestId != null && event.reason == "superseded_by_new_request") {
+                            supersededRequestIds.add(event.requestId)
+                        }
 
                         if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
                             Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
@@ -1360,6 +1367,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
+                // Clear superseded request tracking on chat load
+                supersededRequestIds.clear()
+
                 // 🔧 Clear pending requests for OTHER chats only - preserve requests for current chat
                 // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
@@ -2508,7 +2518,13 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Message ${message.id} (requestId: $requestId) is in pending requests, skipping")
                     continue
                 }
-                
+
+                // Check if it was already superseded by a newer request
+                if (supersededRequestIds.contains(requestId)) {
+                    Log.d(TAG, "Message ${message.id} (requestId: $requestId) was superseded, skipping retry")
+                    continue
+                }
+
                 // This message needs to be retried
                 Log.d(TAG, "Retrying orphaned message ${message.id} (requestId: $requestId): ${message.content.take(50)}...")
                 
