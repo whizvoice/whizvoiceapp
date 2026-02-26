@@ -16,6 +16,14 @@ On my phone, which is what I use for testing as well as running the production a
 
 ## Testing
 
+### Server Logs
+
+Server logs can be retrieved from the server machine with journalctl. Ask the user to run the command with the appropriate timestamps (use UTC). Example:
+```
+sudo journalctl -u whizvoice --since "2026-02-26 21:49:00 UTC" --until "2026-02-26 21:51:00 UTC" --no-pager > whizvoice_server_logs.txt
+```
+To figure out the right UTC timestamps, look at WebSocket log timestamps in logcat (e.g. `"timestamp":"2026-02-26T21:50:27.963Z"`) and add a buffer around the event of interest.
+
 ### Logcat
 
 When i ask you to run or stream logcat, i mean stream logcat from the connected android device onto a file on the computer. We have a lot of logs and logcat rotates quickly, so just pulling it isn't enough.
