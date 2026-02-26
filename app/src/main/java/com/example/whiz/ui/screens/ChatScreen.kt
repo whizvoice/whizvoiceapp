@@ -824,27 +824,9 @@ fun ChatScreen(
         // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
         // For existing chats, respect the user's current continuous listening state
         if (effectiveHasPermission && viewModelChatId < 0) {
-            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening for first time")
-
-            // For voice launches with TTS mode, set up continuous listening immediately
-            if (enableTTSMode) {
-                Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
-                // Enable continuous listening via VoiceManager (single source of truth)
-                voiceManager.updateContinuousListeningEnabled(true)
-
-                // Ensure ChatViewModel starts listening
-                viewModel.ensureContinuousListeningEnabled()
-            } else {
-                // For non-voice launches, use delay
-                kotlinx.coroutines.delay(500L) // Wait for UI to be ready
-
-                // Enable continuous listening via VoiceManager (single source of truth)
-                voiceManager.updateContinuousListeningEnabled(true)
-
-                // Ensure ChatViewModel starts listening
-                viewModel.ensureContinuousListeningEnabled()
-            }
-
+            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening")
+            voiceManager.updateContinuousListeningEnabled(true)
+            viewModel.ensureContinuousListeningEnabled()
             Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
             voiceInitialized.value = true
         } else if (!effectiveHasPermission) {
