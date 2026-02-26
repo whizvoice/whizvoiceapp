@@ -594,7 +594,7 @@ fun ChatScreen(
 
     // 🔧 AUTO-SCROLL: ViewModel-driven trigger. Uses snapshotFlow to wait for LazyColumn
     // layout to reflect new items before scrolling, with a safety timeout.
-    LaunchedEffect(scrollTrigger) {
+    LaunchedEffect(scrollTrigger, messages.size) {
         if (scrollTrigger > 0 && messages.isNotEmpty()) {
             // Wait for LazyColumn to lay out all items (or timeout after 500ms)
             withTimeoutOrNull(500L) {
