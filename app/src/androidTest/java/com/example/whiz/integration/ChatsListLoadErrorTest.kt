@@ -172,7 +172,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             // Perform pull-to-refresh gesture
             Log.d(TAG, "Performing pull-to-refresh gesture...")
             try {
-                composeTestRule.onRoot().performTouchInput {
+                composeTestRule.onAllNodes(isRoot()).onFirst().performTouchInput {
                     swipeDown(
                         startY = centerY - (height * 0.2f),
                         endY = centerY + (height * 0.2f)
