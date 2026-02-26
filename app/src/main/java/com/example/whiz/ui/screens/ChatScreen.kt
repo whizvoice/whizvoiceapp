@@ -593,23 +593,31 @@ fun ChatScreen(
     // Uses snapshotFlow to detect message count changes instead of SharedFlow event passing,
     // which can silently drop events across ViewModel instances and navigation transitions.
     LaunchedEffect(Unit) {
+        var previousSize = 0
         snapshotFlow { messages.size }
             .distinctUntilChanged()
             .debounce(100L)
             .collect { size ->
                 if (size > 0) {
+                    // Always scroll on initial load (0→N), e.g. navigating to an existing chat.
+                    // On the small CI emulator (320x640), the dedup storm during chat load
+                    // can leave the LazyColumn layout in a state where isNearBottom is false
+                    // even though the user hasn't scrolled anywhere.
+                    val isInitialLoad = previousSize == 0
                     val layoutInfo = listState.layoutInfo
                     val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
-                    // Auto-scroll if: user is near bottom, OR all items fit on screen, OR no items visible yet
                     val isNearBottom = lastVisibleItem == null ||
                         lastVisibleItem.index >= size - 3 ||
                         layoutInfo.visibleItemsInfo.size >= layoutInfo.totalItemsCount
 
-                    if (isNearBottom) {
+                    if (isInitialLoad || isNearBottom) {
                         listState.scrollToItem(size - 1)
-                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index ${size - 1} (total: $size)")
+                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index ${size - 1} (total: $size, prevSize: $previousSize, isInitialLoad: $isInitialLoad)")
+                    } else {
+                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: SKIPPED scroll (size: $size, prevSize: $previousSize, lastVisible: ${lastVisibleItem?.index}, visibleCount: ${layoutInfo.visibleItemsInfo.size}, totalCount: ${layoutInfo.totalItemsCount})")
                     }
                 }
+                previousSize = size
             }
     }
 
