@@ -126,6 +126,13 @@ if [[ "$USE_EMULATOR" == "true" ]]; then
     fi
     export ANDROID_SERIAL="$EMULATOR_SERIAL"
     echo "🤖 Targeting emulator: $EMULATOR_SERIAL"
+else
+    # Prefer physical device over emulator when both are connected
+    DEVICE_SERIAL=$(adb devices | grep -v "^emulator-" | grep "device$" | head -1 | cut -f1)
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        export ANDROID_SERIAL="$DEVICE_SERIAL"
+        echo "📱 Targeting physical device: $DEVICE_SERIAL"
+    fi
 fi
 
 # Clear previous log files
@@ -572,9 +579,9 @@ run_integration_tests_with_logcat() {
     {
         if [[ "$VERBOSE_LOGGING" == "true" ]]; then
             echo "📱 Verbose logging enabled - adding WhizServerRepo:V to logcat filter" >> test_summary.log
-            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' 'BubbleOverlayService:V' 'VoiceManager:V' 'ScreenAgentTools:V' 'BaseIntegrationTest:V' >> test_logcat_output.log 2>&1 &
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'WhizServerRepo:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' 'BubbleOverlayService:V' 'VoiceManager:V' 'ScreenAgentTools:V' 'BaseIntegrationTest:V' 'WebSocketReconnectionTest:V' 'ComposeTestHelper:V' 'ChatScreen:V' >> test_logcat_output.log 2>&1 &
         else
-            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' 'BubbleOverlayService:V' 'VoiceManager:V' 'ScreenAgentTools:V' 'BaseIntegrationTest:V' >> test_logcat_output.log 2>&1 &
+            adb logcat -v time '*:E' '*:W' 'TestRunner:V' 'com.example.whiz*:V' 'ToolExecutor:V' 'AndroidRuntime:V' 'TTSManager:V' 'ChatViewModel:V' 'BubbleOverlayService:V' 'VoiceManager:V' 'ScreenAgentTools:V' 'BaseIntegrationTest:V' 'WebSocketReconnectionTest:V' 'ComposeTestHelper:V' 'ChatScreen:V' >> test_logcat_output.log 2>&1 &
         fi
         local logcat_pid=$!
     }

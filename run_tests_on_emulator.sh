@@ -123,6 +123,9 @@ else
     EMULATOR_DEVICE=$(get_emulator_serial)
 fi
 
+# Tell Gradle/ADB to only target the emulator, not any physical device
+export ANDROID_SERIAL="$EMULATOR_DEVICE"
+
 echo ""
 
 # Build and install the latest debug APK
@@ -147,7 +150,7 @@ echo ""
 echo "📱 Running instrumented tests on emulator..."
 echo "   Target device: $EMULATOR_DEVICE"
 
-GRADLE_CMD="./gradlew connectedDebugAndroidTest"
+GRADLE_CMD="./gradlew connectedDebugAndroidTest --no-daemon"
 if [[ -n "$SINGLE_TEST" ]]; then
     # Fix common path typo
     if [[ "$SINGLE_TEST" == "com.example.whiz.WebSocketReconnectionTest"* ]]; then
@@ -158,8 +161,6 @@ if [[ -n "$SINGLE_TEST" ]]; then
     echo "🎯 Running single test: $SINGLE_TEST"
 fi
 
-# Tell Gradle to only use the emulator, not the phone
-export ANDROID_SERIAL="$EMULATOR_DEVICE"
 $GRADLE_CMD
 
 echo ""

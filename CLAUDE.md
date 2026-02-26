@@ -30,7 +30,7 @@ cd whizvoiceapp && ./run_tests_on_debug.sh --skip-unit --test "com.example.whiz.
 
 the tests take a long time so please run it with your max timeout (10mins)
 
-**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete. Also, there is no need to build with Gradle or install the app before testing; the test will build and install already, so just run the test directly.
+**IMPORTANT:** Always run tests without timeout as they can take several minutes to complete. Also, there is no need to build with Gradle or install the app before testing; the test will build and install already, so just run the test directly. Prefer running tests on the physical device rather than the emulator — the physical device is more performant and reliable. Do not use `ANDROID_SERIAL` or `--emulator` to target the emulator.
 
 When investigating test failures, check these log files for detailed information:
 
