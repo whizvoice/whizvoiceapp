@@ -8466,8 +8466,7 @@ class ScreenAgentTools @Inject constructor(
      */
     private enum class FitbitScreen {
         TODAY_HOME,           // Main "Today" tab with todayLazyGrid
-        FOOD_DETAIL,          // Food detail page (action bar title "Food")
-        MORE_OPTIONS_DROPDOWN, // Dropdown with "Add Quick Calories"
+        FOOD_DETAIL,          // Food detail page (with or without "More options" dropdown open)
         ADD_QUICK_CALORIES,   // The Add Quick Calories entry screen
         UNKNOWN
     }
@@ -8487,15 +8486,15 @@ class ScreenAgentTools @Inject constructor(
             }
             editCalories?.forEach { it.recycle() }
 
-            // Check for More Options dropdown (look for "Add Quick Calories" text in popup)
+            // Check for Food detail page — either the dropdown is open (has "Add Quick Calories" text)
+            // or it's the base page (has "More options" button and "Food" title)
             val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
             if (addQuickCalNodes != null && addQuickCalNodes.isNotEmpty()) {
                 addQuickCalNodes.forEach { it.recycle() }
-                return FitbitScreen.MORE_OPTIONS_DROPDOWN
+                return FitbitScreen.FOOD_DETAIL
             }
             addQuickCalNodes?.forEach { it.recycle() }
 
-            // Check for Food detail page (title "Food" in action bar)
             val foodTitleNodes = rootNode.findAccessibilityNodeInfosByText("Food")
             if (foodTitleNodes != null && foodTitleNodes.isNotEmpty()) {
                 // Make sure we're on the detail page, not just seeing "Food" on the Today screen
@@ -8592,26 +8591,36 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Give the app a moment to settle
-            delay(1000)
-
-            // Navigate to a known state by pressing BACK until we reach a recognized screen
+            // Wait for a recognizable Fitbit screen to appear (handles loading/splash)
             var currentScreen = FitbitScreen.UNKNOWN
-            for (attempt in 0 until 5) {
+            val initialDetected = waitForCondition(maxWaitMs = 5000) {
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode != null) {
                     currentScreen = detectFitbitScreen(rootNode)
                     rootNode.recycle()
-                    Log.i(TAG, "Fitbit screen detection attempt $attempt: $currentScreen")
+                    currentScreen != FitbitScreen.UNKNOWN
+                } else false
+            }
 
-                    if (currentScreen != FitbitScreen.UNKNOWN) {
-                        break
+            // If we detected a known screen, use it; otherwise press BACK to navigate to one
+            if (!initialDetected) {
+                for (attempt in 0 until 5) {
+                    accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+
+                    val found = waitForCondition(maxWaitMs = 2000) {
+                        val rootNode = accessibilityService.getCurrentRootNode()
+                        if (rootNode != null) {
+                            currentScreen = detectFitbitScreen(rootNode)
+                            rootNode.recycle()
+                            currentScreen != FitbitScreen.UNKNOWN
+                        } else false
                     }
-                }
 
-                // Press BACK to try to get to a known screen
-                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                delay(1000)
+                    Log.i(TAG, "Fitbit screen detection after BACK $attempt: $currentScreen")
+                    if (found) break
+                }
+            } else {
+                Log.i(TAG, "Fitbit screen detected on launch: $currentScreen")
             }
 
             // Now navigate based on current screen
@@ -8620,12 +8629,8 @@ class ScreenAgentTools @Inject constructor(
                     // Already on the Add Quick Calories screen, go directly to entering calories
                     return enterCaloriesAndLog(accessibilityService, calories)
                 }
-                FitbitScreen.MORE_OPTIONS_DROPDOWN -> {
-                    // Dropdown is open, tap "Add Quick Calories"
-                    return tapAddQuickCaloriesAndLog(accessibilityService, calories)
-                }
                 FitbitScreen.FOOD_DETAIL -> {
-                    // On Food detail page, tap "More options"
+                    // On Food detail page (with or without dropdown open), tap "More options" → "Add Quick Calories"
                     return tapMoreOptionsAndLog(accessibilityService, calories)
                 }
                 FitbitScreen.TODAY_HOME -> {
@@ -8697,12 +8702,20 @@ class ScreenAgentTools @Inject constructor(
                     // Try to find a scrollable container
                     val scrolled = scrollNodeDown(scrollRoot)
                     scrollRoot.recycle()
-                    if (scrolled) {
-                        delay(1000)
-                    } else {
+                    if (!scrolled) {
                         // Try gesture-based scroll as fallback
                         performSwipeGesture(accessibilityService, "up")
-                        delay(1000)
+                    }
+                    // Wait for scroll to settle and new content to appear
+                    waitForCondition(maxWaitMs = 2000) {
+                        val node = accessibilityService.getCurrentRootNode()
+                        if (node != null) {
+                            val foodNodes = node.findAccessibilityNodeInfosByText("Food")
+                            val found = foodNodes != null && foodNodes.isNotEmpty()
+                            foodNodes?.forEach { it.recycle() }
+                            node.recycle()
+                            found
+                        } else false
                     }
                 }
             }
@@ -8742,12 +8755,22 @@ class ScreenAgentTools @Inject constructor(
         accessibilityService: WhizAccessibilityService,
         calories: Int
     ): FitbitResult {
-        Log.i(TAG, "tapMoreOptionsAndLog: Looking for More options button")
+        Log.i(TAG, "tapMoreOptionsAndLog: On Food detail page")
 
         val rootNode = accessibilityService.getCurrentRootNode()
             ?: return FitbitResult(success = false, error = "Could not get screen content")
 
-        // Find "More options" by content description
+        // Check if the dropdown is already open (has "Add Quick Calories" text visible)
+        val existingDropdown = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
+        if (existingDropdown != null && existingDropdown.isNotEmpty()) {
+            Log.i(TAG, "Dropdown already open, skipping 'More options' tap")
+            existingDropdown.forEach { it.recycle() }
+            rootNode.recycle()
+            return tapAddQuickCaloriesAndLog(accessibilityService, calories)
+        }
+        existingDropdown?.forEach { it.recycle() }
+
+        // Find and tap "More options" by content description
         val moreOptionsNodes = findNodesByContentDescription(rootNode, "More options")
         if (moreOptionsNodes.isEmpty()) {
             rootNode.recycle()
@@ -8776,13 +8799,15 @@ class ScreenAgentTools @Inject constructor(
             )
         }
 
-        // Wait for dropdown to appear
+        // Wait for dropdown to appear (look for "Add Quick Calories" text)
         val dropdownReady = waitForCondition(maxWaitMs = 3000) {
             val node = accessibilityService.getCurrentRootNode()
             if (node != null) {
-                val screen = detectFitbitScreen(node)
+                val addQuickCalNodes = node.findAccessibilityNodeInfosByText("Add Quick Calories")
+                val found = addQuickCalNodes != null && addQuickCalNodes.isNotEmpty()
+                addQuickCalNodes?.forEach { it.recycle() }
                 node.recycle()
-                screen == FitbitScreen.MORE_OPTIONS_DROPDOWN
+                found
             } else false
         }
 
@@ -8884,7 +8909,6 @@ class ScreenAgentTools @Inject constructor(
 
         // Focus the field and set text
         editField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        delay(200)
 
         val arguments = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, calories.toString())
@@ -8901,8 +8925,6 @@ class ScreenAgentTools @Inject constructor(
                 error = "Failed to enter calorie amount"
             )
         }
-
-        delay(500)
 
         // Find and tap "LOG THIS" button
         val logRootNode = accessibilityService.getCurrentRootNode()
@@ -8947,14 +8969,28 @@ class ScreenAgentTools @Inject constructor(
             )
         }
 
-        // Wait a moment for the log to be saved
-        delay(1500)
+        // Wait for the Add Quick Calories screen to go away (log saved)
+        waitForCondition(maxWaitMs = 5000) {
+            val node = accessibilityService.getCurrentRootNode()
+            if (node != null) {
+                val screen = detectFitbitScreen(node)
+                node.recycle()
+                screen != FitbitScreen.ADD_QUICK_CALORIES
+            } else false
+        }
 
-        // Press BACK twice to return to Fitbit home
-        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-        delay(500)
-        accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-        delay(500)
+        // Press BACK to return to Fitbit home, waiting for screen change after each press
+        for (i in 0 until 2) {
+            accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            waitForCondition(maxWaitMs = 2000) {
+                val node = accessibilityService.getCurrentRootNode()
+                if (node != null) {
+                    val screen = detectFitbitScreen(node)
+                    node.recycle()
+                    screen == FitbitScreen.TODAY_HOME
+                } else false
+            }
+        }
 
         clearRecentActions()
         Log.i(TAG, "Successfully logged $calories quick calories to Fitbit")
