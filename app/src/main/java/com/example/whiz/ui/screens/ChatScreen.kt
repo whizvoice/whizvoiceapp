@@ -500,7 +500,9 @@ fun ChatScreen(
     voiceManager: VoiceManager,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
-    viewModel: ChatViewModel = hiltViewModel(),
+    viewModel: ChatViewModel = hiltViewModel(
+        viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
+    ),
     navController: NavController,
     onViewModelReady: ((ChatViewModel) -> Unit)? = null // Test hook for accessing navigation-scoped ViewModel
 ) {

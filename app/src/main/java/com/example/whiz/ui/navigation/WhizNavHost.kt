@@ -108,8 +108,8 @@ fun WhizNavHost(
             Log.d("WhizNavHost", "  ✅ Voice launch with specific chat ID: chat/$chatId")
             "chat/$chatId"
         } else if (fromAssistant) {
-            Log.d("WhizNavHost", "  🎤 Voice launch to new chat - using assistant_chat")
-            Screen.AssistantChat.route
+            Log.d("WhizNavHost", "  🎤 Voice launch to new chat - using chat/-1")
+            "chat/-1"
         } else {
             Log.d("WhizNavHost", "  🏠 Regular launch - using home screen")
             Screen.Home.route
@@ -175,7 +175,7 @@ fun WhizNavHost(
                     navController.navigate("chat/$chatId")
                 },
                 onNewChatClick = {
-                    navController.navigate(Screen.AssistantChat.route)
+                    navController.navigate("chat/-1")
                 },
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route)
@@ -240,8 +240,13 @@ fun WhizNavHost(
             },
             popEnterTransition = { null },
             popExitTransition = { null }
-        ) {
-            val chatId = it.arguments?.getLong("chatId") ?: -1L
+        ) { backStackEntry ->
+            val chatId = backStackEntry.arguments?.getLong("chatId") ?: -1L
+
+            // For voice launch, enable voice mode
+            if (isVoiceLaunch) {
+                backStackEntry.savedStateHandle["ENABLE_VOICE_MODE"] = true
+            }
 
             // Preload chat messages if not already done
             LaunchedEffect(chatId) {
@@ -273,53 +278,5 @@ fun WhizNavHost(
             )
         }
 
-        composable(
-            route = Screen.AssistantChat.route,
-            enterTransition = { null },
-            exitTransition = {
-                when (targetState.destination.route) {
-                    Screen.Home.route -> {
-                        slideOutOfContainer(
-                            towards = AnimatedContentTransitionScope.SlideDirection.End,
-                            animationSpec = tween(ANIMATION_DURATION)
-                        )
-                    }
-                    else -> null
-                }
-            },
-            popEnterTransition = { null },
-            popExitTransition = { null }
-        ) { backStackEntry ->
-            // For voice launch, we need to enable voice mode
-            if (isVoiceLaunch) {
-                // Set ENABLE_VOICE_MODE for voice launches immediately
-                backStackEntry.savedStateHandle["ENABLE_VOICE_MODE"] = true
-            }
-            
-            // For assistant chat (new chat), use SavedStateHandle
-            // Pass -1 initially, but ViewModel can update it via SavedStateHandle
-            ChatScreen(
-                chatId = -1L, // Initial value, will be updated via SavedStateHandle
-                onChatsListClick = {
-                    // Preload chats list before navigating
-                    preloadManager.preloadChatsList()
-                    navController.navigate(Screen.Home.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
-                },
-                permissionManager = permissionManager,
-                voiceManager = voiceManager,
-                hasPermission = hasPermission,
-                onRequestPermission = onRequestPermission,
-                navController = navController,
-                onViewModelReady = { viewModel ->
-                    // Call the test callback if provided
-                    onChatViewModelReady?.invoke(viewModel)
-
-                    // Register for test transcription (no-op in release builds)
-                    viewModel.registerForTestTranscription()
-                }
-            )
-        }
     }
 } 

@@ -74,6 +74,9 @@ class ToolExecutor @Inject constructor(
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
+
+    // Dedup guard: prevents the same requestId from being executed concurrently
+    private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     
     fun executeToolFromJson(
         toolRequest: JSONObject,
@@ -92,6 +95,14 @@ class ToolExecutor @Inject constructor(
                 } else {
                     JSONObject()
                 }
+
+                // Dedup guard: skip if this requestId is already in flight
+                if (!inFlightRequestIds.add(requestId)) {
+                    Log.w(TAG, "🚫 DEDUP: requestId $requestId already in flight, skipping duplicate execution of $toolName")
+                    return@launch
+                }
+
+                try {
 
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
@@ -306,6 +317,10 @@ class ToolExecutor @Inject constructor(
                         )
                     }
                 }
+
+                } finally {
+                    inFlightRequestIds.remove(requestId)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing tool request", e)
                 try {
@@ -319,7 +334,8 @@ class ToolExecutor @Inject constructor(
                     } else {
                         "unknown"
                     }
-                    
+                    inFlightRequestIds.remove(requestId)
+
                     _toolResults.emit(
                         ToolExecutionResult.Error(
                             toolName = toolName,
