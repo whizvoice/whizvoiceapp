@@ -8509,13 +8509,15 @@ class ScreenAgentTools @Inject constructor(
             }
             foodTitleNodes?.forEach { it.recycle() }
 
-            // Check for Today home screen (todayLazyGrid)
-            val todayGrid = rootNode.findAccessibilityNodeInfosByViewId("todayLazyGrid")
-            if (todayGrid != null && todayGrid.isNotEmpty()) {
-                todayGrid.forEach { it.recycle() }
+            // Check for Today home screen
+            // todayLazyGrid is a Compose test tag (bare resource-id without package prefix),
+            // so findAccessibilityNodeInfosByViewId won't match it.
+            // Instead, detect by the Fitbit package being in foreground — if we're in Fitbit
+            // but not on Food detail or Add Quick Calories, we're on the Today/home screen.
+            val currentPackage = rootNode.packageName?.toString()
+            if (currentPackage == "com.fitbit.FitbitMobile") {
                 return FitbitScreen.TODAY_HOME
             }
-            todayGrid?.forEach { it.recycle() }
 
             return FitbitScreen.UNKNOWN
         } catch (e: Exception) {
@@ -8656,68 +8658,120 @@ class ScreenAgentTools @Inject constructor(
     /**
      * Starting from Today home screen, find and tap the Food tile then continue
      */
+    /**
+     * Recursively find a node by exact text match.
+     * Used because findAccessibilityNodeInfosByText doesn't work with Compose nodes.
+     */
+    private fun findNodeByText(node: AccessibilityNodeInfo, text: String, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > 25) return null
+
+        if (node.text?.toString() == text) {
+            return node
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNodeByText(child, text, depth + 1)
+            if (found != null) return found
+            child.recycle()
+        }
+        return null
+    }
+
+    /**
+     * Collect all visible text nodes for scroll-change detection.
+     */
+    private fun collectVisibleTexts(node: AccessibilityNodeInfo, depth: Int = 0): Set<String> {
+        val texts = mutableSetOf<String>()
+        if (depth > 25) return texts
+
+        node.text?.toString()?.let { if (it.isNotEmpty()) texts.add(it) }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            texts.addAll(collectVisibleTexts(child, depth + 1))
+            child.recycle()
+        }
+        return texts
+    }
+
     private suspend fun tapFoodTileAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
     ): FitbitResult {
         Log.i(TAG, "tapFoodTileAndLog: Looking for Food tile on Today screen")
 
-        // Try to find the Food tile - it may need scrolling
+        val displayMetrics = context.resources.displayMetrics
+        val centerX = displayMetrics.widthPixels / 2f
+        val screenHeight = displayMetrics.heightPixels
+
+        // Step 1: Scroll to top first (like delete alarm tool)
+        Log.i(TAG, "Scrolling to top of Fitbit Today screen")
+        for (i in 1..10) {
+            accessibilityService.performScrollGesture(
+                centerX, screenHeight * 0.3f, centerX, screenHeight * 0.7f, duration = 300
+            )
+            delay(400)
+
+            // Check if we've reached the top by comparing content before/after another scroll
+            val rootBefore = accessibilityService.getCurrentRootNode()
+            val textsBefore = if (rootBefore != null) collectVisibleTexts(rootBefore) else emptySet()
+            rootBefore?.recycle()
+
+            accessibilityService.performScrollGesture(
+                centerX, screenHeight * 0.3f, centerX, screenHeight * 0.7f, duration = 300
+            )
+            delay(400)
+
+            val rootAfter = accessibilityService.getCurrentRootNode()
+            val textsAfter = if (rootAfter != null) collectVisibleTexts(rootAfter) else emptySet()
+            rootAfter?.recycle()
+
+            if (textsBefore.isNotEmpty() && textsBefore == textsAfter) {
+                Log.i(TAG, "Reached top of Today screen after $i scroll-to-top attempts")
+                break
+            }
+        }
+
+        // Step 2: Scroll down looking for Food tile
         var foodTileFound = false
-        val maxScrollAttempts = 5
+        val maxScrollAttempts = 20
 
         for (scrollAttempt in 0..maxScrollAttempts) {
             val rootNode = accessibilityService.getCurrentRootNode() ?: continue
 
-            // Try finding by text "Food"
-            val foodNodes = rootNode.findAccessibilityNodeInfosByText("Food")
-            if (foodNodes != null && foodNodes.isNotEmpty()) {
-                for (node in foodNodes) {
-                    // Find a clickable parent for the Food tile
-                    val clickable = findClickableParent(node)
-                    if (clickable != null) {
-                        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.i(TAG, "Clicked Food tile: $clicked")
-                        foodNodes.forEach { it.recycle() }
-                        rootNode.recycle()
-                        if (clicked) {
-                            foodTileFound = true
-                            break
-                        }
+            // Use recursive search since findAccessibilityNodeInfosByText
+            // doesn't work with Compose nodes
+            val foodNode = findNodeByText(rootNode, "Food")
+            if (foodNode != null) {
+                Log.i(TAG, "Found 'Food' text node on attempt $scrollAttempt")
+                val clickable = findClickableParent(foodNode)
+                if (clickable != null) {
+                    val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Clicked Food tile: $clicked")
+                    foodNode.recycle()
+                    rootNode.recycle()
+                    if (clicked) {
+                        foodTileFound = true
+                        break
                     }
+                } else {
+                    Log.w(TAG, "Found 'Food' text but no clickable parent")
+                    foodNode.recycle()
                 }
-                if (foodTileFound) break
-                foodNodes.forEach { it.recycle() }
             }
 
             rootNode.recycle()
 
             if (foodTileFound) break
 
-            // Scroll down to find the Food tile
+            // Scroll down (same distance as delete alarm tool)
             if (scrollAttempt < maxScrollAttempts) {
-                Log.i(TAG, "Food tile not found, scrolling down (attempt ${scrollAttempt + 1})")
-                val scrollRoot = accessibilityService.getCurrentRootNode()
-                if (scrollRoot != null) {
-                    // Try to find a scrollable container
-                    val scrolled = scrollNodeDown(scrollRoot)
-                    scrollRoot.recycle()
-                    if (!scrolled) {
-                        // Try gesture-based scroll as fallback
-                        performSwipeGesture(accessibilityService, "up")
-                    }
-                    // Wait for scroll to settle and new content to appear
-                    waitForCondition(maxWaitMs = 2000) {
-                        val node = accessibilityService.getCurrentRootNode()
-                        if (node != null) {
-                            val foodNodes = node.findAccessibilityNodeInfosByText("Food")
-                            val found = foodNodes != null && foodNodes.isNotEmpty()
-                            foodNodes?.forEach { it.recycle() }
-                            node.recycle()
-                            found
-                        } else false
-                    }
-                }
+                Log.d(TAG, "Food tile not found, scrolling down (attempt ${scrollAttempt + 1})")
+                accessibilityService.performScrollGesture(
+                    centerX, screenHeight * 0.7f, centerX, screenHeight * 0.3f, duration = 300
+                )
+                delay(400)
             }
         }
 
