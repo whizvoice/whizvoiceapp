@@ -18,6 +18,30 @@ PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
 os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
 os.environ['ANDROID_HOME'] = ANDROID_HOME
 
+def get_physical_device_serial():
+    """Find the serial of a physical (non-emulator) Android device.
+
+    Returns the serial string, or None if no physical device is found.
+    Emulators typically have serials like 'emulator-5554'.
+    """
+    result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, check=True)
+    lines = result.stdout.strip().split('\n')[1:]  # Skip "List of devices attached" header
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == 'device':
+            serial = parts[0]
+            if not serial.startswith('emulator-'):
+                return serial
+    return None
+
+
+# Auto-select physical device so all adb commands target it
+_physical_serial = get_physical_device_serial()
+if _physical_serial:
+    os.environ['ANDROID_SERIAL'] = _physical_serial
+    print(f"📱 Targeting physical device: {_physical_serial}")
+
+
 # Load Anthropic API key from export_anthropic_key.sh
 def load_anthropic_api_key():
     """Load ANTHROPIC_API_KEY from export_anthropic_key.sh file."""
@@ -458,7 +482,7 @@ def tester(app_installed):
     subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_HOME'], check=False)
     time.sleep(0.5)
 
-    tester = android_accessibility_tester.AndroidAccessibilityTester()
+    tester = android_accessibility_tester.AndroidAccessibilityTester(device_id=os.environ.get('ANDROID_SERIAL'))
     tester.open_app("com.example.whiz.debug")
 
     # Give the app time to fully launch
