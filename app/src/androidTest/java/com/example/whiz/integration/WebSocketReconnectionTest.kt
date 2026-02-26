@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onRoot
@@ -498,6 +500,15 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                     )
                 }
                 
+                // Scroll the chat list to make the second message visible (may be off-screen on small emulator displays)
+                try {
+                    composeTestRule.onNodeWithContentDescription("Chat messages list")
+                        .performScrollToNode(hasText(secondMessage))
+                    composeTestRule.waitForIdle()
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Could not scroll to second message node: ${e.message}")
+                }
+
                 // Check second message is still visible
                 val secondMessageStillVisible = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
