@@ -47,6 +47,7 @@ import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
@@ -588,16 +589,26 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // 🔧 AUTO-SCROLL FIX: Collect scroll events from ViewModel instead of using unreliable snapshotFlow
-    // This is triggered when user sends a message or bot responds (not during sync/load)
+    // 🔧 AUTO-SCROLL: Watch messages list directly for reliable scrolling
+    // Uses snapshotFlow to detect message count changes instead of SharedFlow event passing,
+    // which can silently drop events across ViewModel instances and navigation transitions.
     LaunchedEffect(Unit) {
-        viewModel.scrollToBottomEvent
+        snapshotFlow { messages.size }
+            .distinctUntilChanged()
             .debounce(100L)
-            .collect {
-                if (messages.isNotEmpty()) {
-                    val targetIndex = messages.size - 1
-                    listState.scrollToItem(targetIndex)
-                    android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${messages.size})")
+            .collect { size ->
+                if (size > 0) {
+                    val layoutInfo = listState.layoutInfo
+                    val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
+                    // Auto-scroll if: user is near bottom, OR all items fit on screen, OR no items visible yet
+                    val isNearBottom = lastVisibleItem == null ||
+                        lastVisibleItem.index >= size - 3 ||
+                        layoutInfo.visibleItemsInfo.size >= layoutInfo.totalItemsCount
+
+                    if (isNearBottom) {
+                        listState.scrollToItem(size - 1)
+                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index ${size - 1} (total: $size)")
+                    }
                 }
             }
     }
