@@ -46,10 +46,7 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -589,36 +586,25 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // 🔧 AUTO-SCROLL: Watch messages list directly for reliable scrolling
-    // Uses snapshotFlow to detect message count changes instead of SharedFlow event passing,
-    // which can silently drop events across ViewModel instances and navigation transitions.
-    LaunchedEffect(Unit) {
-        var previousSize = 0
-        snapshotFlow { messages.size }
-            .distinctUntilChanged()
-            .debounce(100L)
-            .collect { size ->
-                if (size > 0) {
-                    // Always scroll on initial load (0→N), e.g. navigating to an existing chat.
-                    // On the small CI emulator (320x640), the dedup storm during chat load
-                    // can leave the LazyColumn layout in a state where isNearBottom is false
-                    // even though the user hasn't scrolled anywhere.
-                    val isInitialLoad = previousSize == 0
-                    val layoutInfo = listState.layoutInfo
-                    val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
-                    val isNearBottom = lastVisibleItem == null ||
-                        lastVisibleItem.index >= size - 3 ||
-                        layoutInfo.visibleItemsInfo.size >= layoutInfo.totalItemsCount
-
-                    if (isInitialLoad || isNearBottom) {
-                        listState.scrollToItem(size - 1)
-                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index ${size - 1} (total: $size, prevSize: $previousSize, isInitialLoad: $isInitialLoad)")
-                    } else {
-                        android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: SKIPPED scroll (size: $size, prevSize: $previousSize, lastVisible: ${lastVisibleItem?.index}, visibleCount: ${layoutInfo.visibleItemsInfo.size}, totalCount: ${layoutInfo.totalItemsCount})")
-                    }
-                }
-                previousSize = size
+    // 🔧 AUTO-SCROLL: Scroll to bottom when message count changes.
+    // Uses LaunchedEffect(messages.size) instead of snapshotFlow+debounce, because the latter
+    // silently breaks across Compose Navigation transitions (the collect block never fires
+    // after navigating back to a chat — confirmed by zero AUTO-SCROLL logs on CI).
+    // LaunchedEffect(key) is guaranteed to re-fire on every key change via recomposition.
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            val lastIndex = messages.size - 1
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
+            // Auto-scroll if near bottom or layout hasn't caught up yet (totalItemsCount=0)
+            val isNearBottom = lastVisibleItem == null ||
+                layoutInfo.totalItemsCount <= 0 ||
+                lastVisibleItem.index >= layoutInfo.totalItemsCount - 3
+            if (isNearBottom) {
+                listState.scrollToItem(lastIndex)
+                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $lastIndex (total: ${messages.size})")
             }
+        }
     }
 
     // Observe permission state directly from PermissionManager for reactive UI updates
