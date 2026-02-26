@@ -191,13 +191,13 @@ abstract class BaseIntegrationTest {
      * Restore original permission states
      */
     private fun restoreOriginalPermissions() {
-        // Restore microphone permission
+        // Only re-grant if needed. Never revoke during teardown — both `pm revoke`
+        // and `uiAutomation.revokeRuntimePermission()` cause Android to kill the
+        // app process, crashing the instrumentation runner.
         if (originalMicrophonePermission && !isMicrophoneGranted()) {
             grantMicrophonePermission()
-        } else if (!originalMicrophonePermission && isMicrophoneGranted()) {
-            revokeMicrophonePermission()
         }
-        
+
         // Note: Accessibility mocking is now handled by TestAccessibilityChecker
     }
     
