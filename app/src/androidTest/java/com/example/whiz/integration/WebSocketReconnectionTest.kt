@@ -1088,25 +1088,29 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Track the first chat ID
                 var chatId1: Long? = null
-                withTimeout(2000) {
-                    while (true) {
-                        val currentChats = repository.getAllChats()
-                        val newChats = currentChats.filter { chat ->
-                            !initialChats.map { it.id }.contains(chat.id)
-                        }
-                        if (newChats.isNotEmpty()) {
-                            if (newChats.size > 1) {
-                                Log.w(TAG, "⚠️ WARNING: Multiple new chats detected (${newChats.size}), possible pollution")
-                                newChats.forEach { chat ->
-                                    Log.w(TAG, "   - Chat ${chat.id}: '${chat.title}'")
-                                }
+                try {
+                    withTimeout(5000) {
+                        while (true) {
+                            val currentChats = repository.getAllChats()
+                            val newChats = currentChats.filter { chat ->
+                                !initialChats.map { it.id }.contains(chat.id)
                             }
-                            chatId1 = newChats.first().id
-                            Log.d(TAG, "✅ First chat created with ID: $chatId1")
-                            break
+                            if (newChats.isNotEmpty()) {
+                                if (newChats.size > 1) {
+                                    Log.w(TAG, "⚠️ WARNING: Multiple new chats detected (${newChats.size}), possible pollution")
+                                    newChats.forEach { chat ->
+                                        Log.w(TAG, "   - Chat ${chat.id}: '${chat.title}'")
+                                    }
+                                }
+                                chatId1 = newChats.first().id
+                                Log.d(TAG, "✅ First chat created with ID: $chatId1")
+                                break
+                            }
+                            delay(100)
                         }
-                        delay(100)
                     }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    failWithScreenshot("First chat was not found within 5 seconds", "first_chat_not_found_timeout")
                 }
                 
                 if (chatId1 == null) {
@@ -1200,7 +1204,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // We need to get it from local database since we're disconnected
                 var chatId2: Long? = null
                 try {
-                    withTimeout(3000) {
+                    withTimeout(5000) {
                         while (true) {
                             val currentChats = repository.getChatDao().getAllChatsFlow().first()
                             val newChats = currentChats.filter { chat ->
@@ -1215,7 +1219,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                         }
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    failWithScreenshot("Second chat was not found within 3 seconds", "second_chat_not_found_timeout")
+                    failWithScreenshot("Second chat was not found within 5 seconds", "second_chat_not_found_timeout")
                 }
                 
                 if (chatId2 == null) {

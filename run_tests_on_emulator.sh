@@ -3,6 +3,7 @@
 # Run tests on Android Emulator
 # This runs tests on an emulator instead of your physical device.
 # If no emulator is running, it auto-starts the first available AVD.
+# Works even when a physical phone is also connected.
 #
 # Usage:
 #   ./run_tests_on_emulator.sh                          # Run all tests
@@ -56,9 +57,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Helper: get the serial of a running emulator (e.g. emulator-5554)
+get_emulator_serial() {
+    adb devices | grep "^emulator-" | head -1 | cut -f1
+}
+
 # Function to check if any emulator is running
 check_emulator_running() {
-    adb devices | grep -q "emulator.*device"
+    adb devices | grep -q "^emulator-.*device"
 }
 
 # Function to wait for emulator to fully boot
@@ -77,24 +83,26 @@ wait_for_boot() {
         return 1
     fi
 
-    echo "⏳ Waiting for boot to complete..."
-    adb wait-for-device
-    while [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ] && [ $elapsed -lt $timeout ]; do
+    local serial
+    serial=$(get_emulator_serial)
+    echo "⏳ Waiting for $serial to finish booting..."
+    adb -s "$serial" wait-for-device
+    while [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ] && [ $elapsed -lt $timeout ]; do
         sleep 3
         elapsed=$((elapsed + 3))
     done
 
-    if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then
+    if [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then
         echo "❌ Emulator did not finish booting within ${timeout}s"
         return 1
     fi
 
-    echo "✅ Emulator booted"
+    echo "✅ Emulator booted: $serial"
 }
 
 # Start or reuse emulator
 if check_emulator_running; then
-    EMULATOR_DEVICE=$(adb devices | grep "emulator" | head -1 | cut -f1)
+    EMULATOR_DEVICE=$(get_emulator_serial)
     echo "✅ Emulator already running: $EMULATOR_DEVICE"
 else
     FIRST_EMULATOR=$(emulator -list-avds | head -1)
@@ -112,7 +120,7 @@ else
         exit 1
     fi
 
-    EMULATOR_DEVICE=$(adb devices | grep "emulator" | head -1 | cut -f1)
+    EMULATOR_DEVICE=$(get_emulator_serial)
 fi
 
 echo ""
@@ -121,8 +129,8 @@ echo ""
 echo "🔨 Building latest debug version..."
 ./gradlew assembleDebug
 
-echo "📱 Installing latest debug APK on emulator..."
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+echo "📱 Installing latest debug APK on emulator ($EMULATOR_DEVICE)..."
+adb -s "$EMULATOR_DEVICE" install -r app/build/outputs/apk/debug/app-debug.apk
 echo "✅ Latest debug version installed on emulator"
 echo ""
 
@@ -150,6 +158,8 @@ if [[ -n "$SINGLE_TEST" ]]; then
     echo "🎯 Running single test: $SINGLE_TEST"
 fi
 
+# Tell Gradle to only use the emulator, not the phone
+export ANDROID_SERIAL="$EMULATOR_DEVICE"
 $GRADLE_CMD
 
 echo ""
