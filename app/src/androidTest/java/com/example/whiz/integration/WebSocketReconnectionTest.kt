@@ -10,6 +10,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onFirst
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -433,7 +435,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
 
                 // Trigger recomposition to ensure messages are rendered
                 Log.d(TAG, "🔄 Triggering recomposition...")
-                composeTestRule.onRoot().performClick()
+                composeTestRule.onAllNodes(isRoot()).onFirst().performClick()
 
                 val botResponseAfterReconnect = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
@@ -1360,8 +1362,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Trigger recomposition with simplest possible action
                 Log.d(TAG, "🔄 Triggering recomposition...")
-                composeTestRule.onRoot().performClick()
-                
+                composeTestRule.onAllNodes(isRoot()).onFirst().performClick()
+
                 // Check for Paris response (should NOT contain Rome/Italy)
                 val parisResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
@@ -1547,7 +1549,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
 
                 // Trigger recomposition to ensure messages are rendered
                 Log.d(TAG, "🔄 Triggering recomposition...")
-                composeTestRule.onRoot().performClick()
+                composeTestRule.onAllNodes(isRoot()).onFirst().performClick()
 
                 // Check for Rome response (should NOT contain Paris/France)
                 val romeResponseFound = ComposeTestHelper.waitForElement(
