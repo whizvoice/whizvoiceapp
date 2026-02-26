@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # Run tests on Android Emulator
-# This runs all tests on an emulator instead of your physical device
+# This runs tests on an emulator instead of your physical device.
+# If no emulator is running, it auto-starts the first available AVD.
+#
+# Usage:
+#   ./run_tests_on_emulator.sh                          # Run all tests
+#   ./run_tests_on_emulator.sh --skip-unit              # Skip unit tests
+#   ./run_tests_on_emulator.sh --skip-unit --test "com.example.whiz.integration.SomeTest#testMethod"
 
 set -e
 
@@ -17,90 +23,99 @@ fi
 # Check if emulator command is available
 if ! command -v emulator &> /dev/null; then
     echo "❌ Emulator command not found. Please ensure Android SDK is properly installed."
-    echo "   Add to PATH: export PATH=\$PATH:\$ANDROID_HOME/emulator"
+    echo "   Add to PATH: export PATH=\$PATH:/opt/homebrew/share/android-commandlinetools/emulator"
     exit 1
 fi
+
+# Parse command line arguments
+SKIP_UNIT_TESTS=false
+SINGLE_TEST=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --skip-unit)
+            SKIP_UNIT_TESTS=true
+            shift
+            ;;
+        --test)
+            SINGLE_TEST="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--skip-unit] [--test <test_class_or_method>]"
+            echo "Examples:"
+            echo "  $0 --skip-unit --test com.example.whiz.integration.WebSocketReconnectionTest#testMultiChatOfflineMessaging"
+            echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--skip-unit] [--test <test_class_or_method>]"
+            exit 1
+            ;;
+    esac
+done
 
 # Function to check if any emulator is running
 check_emulator_running() {
     adb devices | grep -q "emulator.*device"
 }
 
-# Function to list available emulators
-list_emulators() {
-    echo "📱 Available emulators:"
-    emulator -list-avds | while read -r avd; do
-        if [ -n "$avd" ]; then
-            echo "   • $avd"
-        fi
+# Function to wait for emulator to fully boot
+wait_for_boot() {
+    local timeout=300
+    local elapsed=0
+
+    echo "⏳ Waiting for emulator to appear in adb..."
+    while ! check_emulator_running && [ $elapsed -lt $timeout ]; do
+        sleep 5
+        elapsed=$((elapsed + 5))
     done
+
+    if ! check_emulator_running; then
+        echo "❌ Emulator did not appear within ${timeout}s"
+        return 1
+    fi
+
+    echo "⏳ Waiting for boot to complete..."
+    adb wait-for-device
+    while [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ] && [ $elapsed -lt $timeout ]; do
+        sleep 3
+        elapsed=$((elapsed + 3))
+    done
+
+    if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then
+        echo "❌ Emulator did not finish booting within ${timeout}s"
+        return 1
+    fi
+
+    echo "✅ Emulator booted"
 }
 
-# Check if an emulator is already running
+# Start or reuse emulator
 if check_emulator_running; then
-    echo "✅ Emulator is running"
     EMULATOR_DEVICE=$(adb devices | grep "emulator" | head -1 | cut -f1)
-    echo "   Using: $EMULATOR_DEVICE"
+    echo "✅ Emulator already running: $EMULATOR_DEVICE"
 else
-    echo "❌ No emulator is currently running"
-    echo ""
-    
-    # List available emulators
-    AVAILABLE_EMULATORS=$(emulator -list-avds)
-    if [ -z "$AVAILABLE_EMULATORS" ]; then
-        echo "❌ No emulators found. Please create one first:"
-        echo "   1. Open Android Studio"
-        echo "   2. Go to Tools > AVD Manager"
-        echo "   3. Create a new Virtual Device"
+    FIRST_EMULATOR=$(emulator -list-avds | head -1)
+    if [ -z "$FIRST_EMULATOR" ]; then
+        echo "❌ No AVDs found. Create one first (see README for setup instructions)."
         exit 1
     fi
-    
-    list_emulators
-    echo ""
-    echo "🚀 Options:"
-    echo "   1. Start an emulator manually: emulator -avd <emulator_name>"
-    echo "   2. Auto-start the first available emulator"
-    echo ""
-    
-    read -p "Would you like to auto-start the first emulator? (y/N): " AUTO_START
-    if [[ $AUTO_START =~ ^[Yy]$ ]]; then
-        FIRST_EMULATOR=$(emulator -list-avds | head -1)
-        if [ -n "$FIRST_EMULATOR" ]; then
-            echo "🚀 Starting emulator: $FIRST_EMULATOR"
-            echo "   This may take a few minutes..."
-            emulator -avd "$FIRST_EMULATOR" -no-snapshot-save -no-boot-anim &
-            EMULATOR_PID=$!
-            
-            echo "⏳ Waiting for emulator to boot..."
-            # Wait for emulator to be ready
-            timeout=300  # 5 minutes timeout
-            elapsed=0
-            while ! check_emulator_running && [ $elapsed -lt $timeout ]; do
-                sleep 5
-                elapsed=$((elapsed + 5))
-                echo "   Still waiting... (${elapsed}s)"
-            done
-            
-            if check_emulator_running; then
-                echo "✅ Emulator is ready!"
-                EMULATOR_DEVICE=$(adb devices | grep "emulator" | head -1 | cut -f1)
-            else
-                echo "❌ Emulator failed to start within $timeout seconds"
-                kill $EMULATOR_PID 2>/dev/null || true
-                exit 1
-            fi
-        fi
-    else
-        echo "❌ Please start an emulator first and then run this script again"
+
+    echo "🚀 Starting emulator: $FIRST_EMULATOR"
+    emulator -avd "$FIRST_EMULATOR" -no-snapshot-save -no-boot-anim -memory 4096 &
+    EMULATOR_PID=$!
+
+    if ! wait_for_boot; then
+        kill $EMULATOR_PID 2>/dev/null || true
         exit 1
     fi
+
+    EMULATOR_DEVICE=$(adb devices | grep "emulator" | head -1 | cut -f1)
 fi
 
 echo ""
-
-# Wait a bit more for emulator to be fully ready
-echo "⏳ Ensuring emulator is fully ready..."
-sleep 10
 
 # Build and install the latest debug APK
 echo "🔨 Building latest debug version..."
@@ -111,22 +126,38 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 echo "✅ Latest debug version installed on emulator"
 echo ""
 
-# Run unit tests first (fast, don't need device for this part)
-echo "🔬 Running unit tests with latest code..."
-./gradlew testDebugUnitTest
+# Unit tests
+if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
+    echo "⏭️  Skipping unit tests (--skip-unit)"
+else
+    echo "🔬 Running unit tests..."
+    ./gradlew testDebugUnitTest
+fi
 echo ""
 
-# Run instrumented tests on emulator
-echo "📱 Running instrumented tests on emulator with latest code..."
+# Instrumented tests on emulator
+echo "📱 Running instrumented tests on emulator..."
 echo "   Target device: $EMULATOR_DEVICE"
-./gradlew connectedDebugAndroidTest
+
+GRADLE_CMD="./gradlew connectedDebugAndroidTest"
+if [[ -n "$SINGLE_TEST" ]]; then
+    # Fix common path typo
+    if [[ "$SINGLE_TEST" == "com.example.whiz.WebSocketReconnectionTest"* ]]; then
+        SINGLE_TEST="${SINGLE_TEST/com.example.whiz.WebSocketReconnectionTest/com.example.whiz.integration.WebSocketReconnectionTest}"
+        echo "🔧 Fixed test path: $SINGLE_TEST"
+    fi
+    GRADLE_CMD="$GRADLE_CMD -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST"
+    echo "🎯 Running single test: $SINGLE_TEST"
+fi
+
+$GRADLE_CMD
 
 echo ""
-echo "✅ All tests completed on emulator with latest changes!"
+echo "✅ All tests completed on emulator!"
 echo ""
 echo "📊 Test reports available at:"
 echo "   • Unit tests: app/build/reports/tests/testDebugUnitTest/index.html"
 echo "   • Instrumented tests: app/build/reports/androidTests/connected/debug/index.html"
 echo ""
 echo "🛑 To stop the emulator:"
-echo "   adb -s $EMULATOR_DEVICE emu kill" 
+echo "   adb -s $EMULATOR_DEVICE emu kill"
