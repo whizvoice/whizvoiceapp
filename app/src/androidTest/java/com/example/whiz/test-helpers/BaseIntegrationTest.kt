@@ -54,6 +54,9 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 abstract class BaseIntegrationTest {
     
+    @get:Rule(order = 0)
+    var testNameRule = org.junit.rules.TestName()
+
     @get:Rule(order = 1)
     var hiltRule = HiltAndroidRule(this)
     
@@ -1816,11 +1819,13 @@ abstract class BaseIntegrationTest {
      */
     private fun getCurrentTestMethodName(): String {
         return try {
+            val ruleName = testNameRule.methodName
+            if (!ruleName.isNullOrBlank()) return ruleName
+            // Fallback to stack trace walk (filtered to our package)
             val stackTrace = Thread.currentThread().stackTrace
-            // Look for test method (starts with "test" or has @Test annotation)
-            val testMethod = stackTrace.find { 
-                it.methodName.startsWith("test") || 
-                it.methodName.contains("_")  // Common pattern like "testSomething_shouldDoSomething"
+            val testMethod = stackTrace.find {
+                it.className.startsWith("com.example.whiz") &&
+                (it.methodName.startsWith("test") || it.methodName.contains("_"))
             }
             testMethod?.methodName ?: "unknownTest"
         } catch (e: Exception) {
