@@ -228,12 +228,17 @@ abstract class BaseIntegrationTest {
      */
     protected fun revokeMicrophonePermission() {
         try {
-            val revokeResult = device.executeShellCommand("pm revoke $packageName ${Manifest.permission.RECORD_AUDIO}")
-            android.util.Log.d("BaseIntegrationTest", "Microphone permission revoke result: $revokeResult")
+            // Use UiAutomation API instead of "pm revoke" shell command.
+            // "pm revoke" causes Android to kill the app process, which crashes
+            // the instrumentation runner and masks the real test result.
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                .uiAutomation
+                .revokeRuntimePermission(packageName, Manifest.permission.RECORD_AUDIO)
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission revoked via UiAutomation")
             Thread.sleep(300) // Give the system time to process
-            
+
             // Note: Child classes may have their own permissionManager injection
-            
+
             val currentState = isMicrophoneGranted()
             android.util.Log.d("BaseIntegrationTest", "Microphone permission after revoke: $currentState")
         } catch (e: Exception) {
