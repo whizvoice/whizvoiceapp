@@ -46,7 +46,9 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -586,23 +588,26 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // 🔧 AUTO-SCROLL: Scroll to bottom when message count changes.
-    // Uses LaunchedEffect(messages.size) instead of snapshotFlow+debounce, because the latter
-    // silently breaks across Compose Navigation transitions (the collect block never fires
-    // after navigating back to a chat — confirmed by zero AUTO-SCROLL logs on CI).
-    // LaunchedEffect(key) is guaranteed to re-fire on every key change via recomposition.
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
+    val scrollTrigger by viewModel.scrollTrigger.collectAsState()
+
+    // 🔧 AUTO-SCROLL: ViewModel-driven trigger. Uses snapshotFlow to wait for LazyColumn
+    // layout to reflect new items before scrolling, with a safety timeout.
+    LaunchedEffect(scrollTrigger) {
+        if (scrollTrigger > 0 && messages.isNotEmpty()) {
+            // Wait for LazyColumn to lay out all items (or timeout after 500ms)
+            withTimeoutOrNull(500L) {
+                snapshotFlow { listState.layoutInfo.totalItemsCount }
+                    .first { it >= messages.size }
+            }
             val lastIndex = messages.size - 1
             val layoutInfo = listState.layoutInfo
             val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
-            // Auto-scroll if near bottom or layout hasn't caught up yet (totalItemsCount=0)
             val isNearBottom = lastVisibleItem == null ||
                 layoutInfo.totalItemsCount <= 0 ||
                 lastVisibleItem.index >= layoutInfo.totalItemsCount - 3
             if (isNearBottom) {
                 listState.scrollToItem(lastIndex)
-                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $lastIndex (total: ${messages.size})")
+                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to index $lastIndex (trigger=$scrollTrigger)")
             }
         }
     }
@@ -1109,7 +1114,7 @@ fun MessagesList(
     android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
 
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
-    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollToBottomEvent
+    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollTrigger
 
     LazyColumn(
         state = listState,

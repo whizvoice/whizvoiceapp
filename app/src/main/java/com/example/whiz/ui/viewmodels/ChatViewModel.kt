@@ -133,9 +133,9 @@ class ChatViewModel @Inject constructor(
 
     // Track locally-saved interrupt messages to prevent server duplication
 
-    // Scroll-to-bottom event for UI - emitted when new messages are added (not during sync/load)
-    private val _scrollToBottomEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val scrollToBottomEvent: SharedFlow<Unit> = _scrollToBottomEvent.asSharedFlow()
+    // Scroll-to-bottom trigger for UI - incremented when new messages are added or synced
+    private val _scrollTrigger = MutableStateFlow(0)
+    val scrollTrigger: StateFlow<Int> = _scrollTrigger.asStateFlow()
 
     // Messages in the current chat with deduplication to handle optimistic UI transitions
     val messages = _chatId
@@ -460,7 +460,8 @@ class ChatViewModel @Inject constructor(
                                     // The fetchMessagesWithDeduplication already handles storing messages
                                     // Just trigger UI refresh
                                     repository.refreshMessages()
-                                    
+                                    _scrollTrigger.value += 1 // Scroll to show synced messages after reconnection
+
                                     // Check for orphaned messages that need to be sent
                                     // This handles messages that were created while offline
                                     checkAndRetryOrphanedMessages(currentChatId)
@@ -1095,7 +1096,7 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
-                                            _scrollToBottomEvent.tryEmit(Unit) // Scroll to show bot response
+                                            _scrollTrigger.value += 1 // Scroll to show bot response
                                         }
                                     } catch (e: Exception) {
                                     }
@@ -1516,6 +1517,7 @@ class ChatViewModel @Inject constructor(
                         // The fetchMessagesWithRetry method already handles storing messages and deduplication
                         // Just trigger messages refresh to update UI
                         repository.refreshMessages()
+                        _scrollTrigger.value += 1 // Scroll to show synced messages after loadChat
                     } catch (e: Exception) {
                         Log.e(TAG, "Error syncing messages during loadChat", e)
                         _errorState.value = "Failed to sync messages: ${e.message}"
@@ -1596,6 +1598,7 @@ class ChatViewModel @Inject constructor(
                     // The fetchMessagesWithRetry method already handles storing messages and deduplication
                     // Just trigger messages refresh to update UI
                     repository.refreshMessages()
+                    _scrollTrigger.value += 1 // Scroll to show synced messages on screen resume
                 } else {
                     Log.d(TAG, "📥 Skipping sync - chat ID mismatch or invalid. Current: ${_chatId.value}, Requested: $chatId")
                 }
@@ -1817,7 +1820,7 @@ class ChatViewModel @Inject constructor(
                 
                 // Add the message first with the captured timestamp
                 val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId, messageTimestamp)
-                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+                _scrollTrigger.value += 1 // Scroll to show new user message
 
                 // Now update the chat ID - the message is already in the database
                 _chatId.value = tempChatId
@@ -1844,7 +1847,7 @@ class ChatViewModel @Inject constructor(
                 
                 // Always use optimistic UI since configUseRemoteAgent is always true
                 val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId, messageTimestamp)
-                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+                _scrollTrigger.value += 1 // Scroll to show new user message
 
                 // Ensure WebSocket is connected to the correct conversation
                 // This handles the case where we're switching between existing chats

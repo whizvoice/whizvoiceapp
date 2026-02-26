@@ -9,6 +9,7 @@
 #   ./run_tests_on_debug.sh              # Run tests sequentially (default)
 #   ./run_tests_on_debug.sh --clean      # Run tests sequentially and uninstall app after
 #   ./run_tests_on_debug.sh --skip-unit  # Skip unit tests, run only integration tests
+#   ./run_tests_on_debug.sh --emulator   # Run on emulator instead of physical device (with full logcat/screenshots)
 
 set -e
 
@@ -72,6 +73,7 @@ CLEAN_AFTER_TESTS=false
 SKIP_UNIT_TESTS=false
 SKIP_APP_INSTALL=false
 VERBOSE_LOGGING=false
+USE_EMULATOR=false
 SINGLE_TEST=""
 
 while [[ $# -gt 0 ]]; do
@@ -96,18 +98,35 @@ while [[ $# -gt 0 ]]; do
             VERBOSE_LOGGING=true
             shift
             ;;
+        --emulator)
+            USE_EMULATOR=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [-v|--verbose] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--emulator] [-v|--verbose] [--test <test_class_or_method>]"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
             echo "  $0 --skip-app-install --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 -v --test <test>  # Run with verbose WebSocket logging (adds WhizServerRepo:V to logcat)"
+            echo "  $0 --emulator --skip-unit --test <test>  # Run on emulator with full logcat/screenshot capture"
             exit 1
             ;;
     esac
 done
+
+# If --emulator flag is set, find and target the running emulator
+if [[ "$USE_EMULATOR" == "true" ]]; then
+    EMULATOR_SERIAL=$(adb devices | grep "^emulator-" | head -1 | cut -f1)
+    if [[ -z "$EMULATOR_SERIAL" ]]; then
+        echo "❌ No running emulator found. Start one first with: emulator -avd <avd_name>"
+        echo "   Available AVDs: $(emulator -list-avds 2>/dev/null | tr '\n' ', ')"
+        exit 1
+    fi
+    export ANDROID_SERIAL="$EMULATOR_SERIAL"
+    echo "🤖 Targeting emulator: $EMULATOR_SERIAL"
+fi
 
 # Clear previous log files
 > test_gradle_output.log
