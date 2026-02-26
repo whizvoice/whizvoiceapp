@@ -8509,14 +8509,15 @@ class ScreenAgentTools @Inject constructor(
             }
             foodTitleNodes?.forEach { it.recycle() }
 
-            // Check for Today home screen
-            // todayLazyGrid is a Compose test tag (bare resource-id without package prefix),
-            // so findAccessibilityNodeInfosByViewId won't match it.
-            // Instead, detect by the Fitbit package being in foreground — if we're in Fitbit
-            // but not on Food detail or Add Quick Calories, we're on the Today/home screen.
+            // Check for Today home screen — look for the "Today" title text
             val currentPackage = rootNode.packageName?.toString()
             if (currentPackage == "com.fitbit.FitbitMobile") {
-                return FitbitScreen.TODAY_HOME
+                val todayTitleNode = findNodeByText(rootNode, "Today")
+                if (todayTitleNode != null) {
+                    todayTitleNode.recycle()
+                    return FitbitScreen.TODAY_HOME
+                }
+                // Not on Today home — fall through to UNKNOWN so the BACK-pressing logic kicks in
             }
 
             return FitbitScreen.UNKNOWN
