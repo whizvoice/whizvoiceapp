@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.util.Base64
 import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -7790,13 +7793,36 @@ class ScreenAgentTools @Inject constructor(
             file.writeText(uiHierarchy)
             Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
 
-            // Upload to server asynchronously (fire-and-forget)
-            uploadUiDumpToServer(
-                dumpReason = reason,
-                errorMessage = errorMessage,
-                uiHierarchy = uiHierarchy,
-                packageName = packageName
-            )
+            // Take screenshot, then upload with it (or without if screenshot fails)
+            WhizAccessibilityService.takeScreenshotAsync { bitmap ->
+                val screenshotBase64 = bitmap?.let {
+                    try {
+                        val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
+                        val stream = ByteArrayOutputStream()
+                        softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                        softwareBitmap.recycle()
+                        it.recycle()
+                        Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to encode screenshot for UI dump", e)
+                        null
+                    }
+                }
+
+                val screenAgentContext = if (screenshotBase64 != null) {
+                    mapOf("screenshot_base64" to screenshotBase64)
+                } else {
+                    null
+                }
+
+                uploadUiDumpToServer(
+                    dumpReason = reason,
+                    errorMessage = errorMessage,
+                    uiHierarchy = uiHierarchy,
+                    packageName = packageName,
+                    screenAgentContext = screenAgentContext
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dump UI hierarchy", e)
         }
@@ -7809,7 +7835,8 @@ class ScreenAgentTools @Inject constructor(
         dumpReason: String,
         errorMessage: String?,
         uiHierarchy: String?,
-        packageName: String?
+        packageName: String?,
+        screenAgentContext: Map<String, Any>? = null
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -7831,7 +7858,7 @@ class ScreenAgentTools @Inject constructor(
                     appVersion = BuildConfig.VERSION_NAME,
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
-                    screenAgentContext = null // Could add more context here
+                    screenAgentContext = screenAgentContext
                 )
 
                 val response = apiService.uploadUiDump(request)
