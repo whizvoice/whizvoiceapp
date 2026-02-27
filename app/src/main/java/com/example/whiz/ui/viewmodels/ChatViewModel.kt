@@ -98,6 +98,9 @@ class ChatViewModel @Inject constructor(
     
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
+
+    // Track request IDs that were superseded by newer requests (to prevent orphaned retry)
+    private val supersededRequestIds = mutableSetOf<String>()
     
     /**
      * Check if a specific request ID is in the pending requests list
@@ -130,9 +133,9 @@ class ChatViewModel @Inject constructor(
 
     // Track locally-saved interrupt messages to prevent server duplication
 
-    // Scroll-to-bottom event for UI - emitted when new messages are added (not during sync/load)
-    private val _scrollToBottomEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val scrollToBottomEvent: SharedFlow<Unit> = _scrollToBottomEvent.asSharedFlow()
+    // Scroll-to-bottom trigger for UI - incremented when new messages are added or synced
+    private val _scrollTrigger = MutableStateFlow(0)
+    val scrollTrigger: StateFlow<Int> = _scrollTrigger.asStateFlow()
 
     // Messages in the current chat with deduplication to handle optimistic UI transitions
     val messages = _chatId
@@ -457,7 +460,8 @@ class ChatViewModel @Inject constructor(
                                     // The fetchMessagesWithDeduplication already handles storing messages
                                     // Just trigger UI refresh
                                     repository.refreshMessages()
-                                    
+                                    _scrollTrigger.value += 1 // Scroll to show synced messages after reconnection
+
                                     // Check for orphaned messages that need to be sent
                                     // This handles messages that were created while offline
                                     checkAndRetryOrphanedMessages(currentChatId)
@@ -668,6 +672,10 @@ class ChatViewModel @Inject constructor(
                     }
                     is WebSocketEvent.DeleteMessage -> {
                         Log.d(TAG, "🗑️ Delete message notification: messageId=${event.messageId}, conversationId=${event.conversationId}, requestId=${event.requestId}, reason=${event.reason}")
+
+                        if (event.requestId != null && event.reason == "superseded_by_new_request") {
+                            supersededRequestIds.add(event.requestId)
+                        }
 
                         if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
                             Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
@@ -1088,7 +1096,7 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
-                                            _scrollToBottomEvent.tryEmit(Unit) // Scroll to show bot response
+                                            _scrollTrigger.value += 1 // Scroll to show bot response
                                         }
                                     } catch (e: Exception) {
                                     }
@@ -1360,6 +1368,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
+                // Clear superseded request tracking on chat load
+                supersededRequestIds.clear()
+
                 // 🔧 Clear pending requests for OTHER chats only - preserve requests for current chat
                 // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
@@ -1506,6 +1517,7 @@ class ChatViewModel @Inject constructor(
                         // The fetchMessagesWithRetry method already handles storing messages and deduplication
                         // Just trigger messages refresh to update UI
                         repository.refreshMessages()
+                        _scrollTrigger.value += 1 // Scroll to show synced messages after loadChat
                     } catch (e: Exception) {
                         Log.e(TAG, "Error syncing messages during loadChat", e)
                         _errorState.value = "Failed to sync messages: ${e.message}"
@@ -1586,6 +1598,7 @@ class ChatViewModel @Inject constructor(
                     // The fetchMessagesWithRetry method already handles storing messages and deduplication
                     // Just trigger messages refresh to update UI
                     repository.refreshMessages()
+                    _scrollTrigger.value += 1 // Scroll to show synced messages on screen resume
                 } else {
                     Log.d(TAG, "📥 Skipping sync - chat ID mismatch or invalid. Current: ${_chatId.value}, Requested: $chatId")
                 }
@@ -1807,7 +1820,7 @@ class ChatViewModel @Inject constructor(
                 
                 // Add the message first with the captured timestamp
                 val localMessageId = repository.addUserMessageOptimistic(tempChatId, trimmedText, requestId, messageTimestamp)
-                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+                _scrollTrigger.value += 1 // Scroll to show new user message
 
                 // Now update the chat ID - the message is already in the database
                 _chatId.value = tempChatId
@@ -1834,7 +1847,7 @@ class ChatViewModel @Inject constructor(
                 
                 // Always use optimistic UI since configUseRemoteAgent is always true
                 val localMessageId = repository.addUserMessageOptimistic(actualChatId, trimmedText, requestId, messageTimestamp)
-                _scrollToBottomEvent.tryEmit(Unit) // Scroll to show new user message
+                _scrollTrigger.value += 1 // Scroll to show new user message
 
                 // Ensure WebSocket is connected to the correct conversation
                 // This handles the case where we're switching between existing chats
@@ -2508,7 +2521,13 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "Message ${message.id} (requestId: $requestId) is in pending requests, skipping")
                     continue
                 }
-                
+
+                // Check if it was already superseded by a newer request
+                if (supersededRequestIds.contains(requestId)) {
+                    Log.d(TAG, "Message ${message.id} (requestId: $requestId) was superseded, skipping retry")
+                    continue
+                }
+
                 // This message needs to be retried
                 Log.d(TAG, "Retrying orphaned message ${message.id} (requestId: $requestId): ${message.content.take(50)}...")
                 

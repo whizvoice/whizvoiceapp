@@ -611,7 +611,7 @@ class MainActivity : ComponentActivity() {
 
             // Check if we're already at the target destination
             val currentRoute = navController.currentDestination?.route
-            if (currentRoute == Screen.AssistantChat.route || currentRoute?.startsWith("chat/") == true) {
+            if (currentRoute?.startsWith("chat/") == true) {
                 Log.d(TAG, "🔄 Already at chat screen ($currentRoute) - forcing new chat")
 
                 // Signal ChatScreen to create a new chat by setting a unique timestamp
@@ -631,13 +631,13 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
-            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to ${Screen.AssistantChat.route}")
+            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to chat/-1")
             Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
 
             // Navigate to new chat screen without pre-creating optimistic chat
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
-            Log.d(TAG, "🚨 About to call navigateWhenReady for ${Screen.AssistantChat.route}")
-            navigateWhenReady(Screen.AssistantChat.route) {
+            Log.d(TAG, "🚨 About to call navigateWhenReady for chat/-1")
+            navigateWhenReady("chat/-1") {
                 Log.d(TAG, "🚨 Inside navigateWhenReady callback - navigation should be complete")
                 // Pass the voice mode flag and initial transcription to the ChatScreen
                 if (enableVoiceMode) {

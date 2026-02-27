@@ -54,6 +54,9 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 abstract class BaseIntegrationTest {
     
+    @get:Rule(order = 0)
+    var testNameRule = org.junit.rules.TestName()
+
     @get:Rule(order = 1)
     var hiltRule = HiltAndroidRule(this)
     
@@ -188,13 +191,13 @@ abstract class BaseIntegrationTest {
      * Restore original permission states
      */
     private fun restoreOriginalPermissions() {
-        // Restore microphone permission
+        // Only re-grant if needed. Never revoke during teardown — both `pm revoke`
+        // and `uiAutomation.revokeRuntimePermission()` cause Android to kill the
+        // app process, crashing the instrumentation runner.
         if (originalMicrophonePermission && !isMicrophoneGranted()) {
             grantMicrophonePermission()
-        } else if (!originalMicrophonePermission && isMicrophoneGranted()) {
-            revokeMicrophonePermission()
         }
-        
+
         // Note: Accessibility mocking is now handled by TestAccessibilityChecker
     }
     
@@ -225,12 +228,17 @@ abstract class BaseIntegrationTest {
      */
     protected fun revokeMicrophonePermission() {
         try {
-            val revokeResult = device.executeShellCommand("pm revoke $packageName ${Manifest.permission.RECORD_AUDIO}")
-            android.util.Log.d("BaseIntegrationTest", "Microphone permission revoke result: $revokeResult")
+            // Use UiAutomation API instead of "pm revoke" shell command.
+            // "pm revoke" causes Android to kill the app process, which crashes
+            // the instrumentation runner and masks the real test result.
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                .uiAutomation
+                .revokeRuntimePermission(packageName, Manifest.permission.RECORD_AUDIO)
+            android.util.Log.d("BaseIntegrationTest", "Microphone permission revoked via UiAutomation")
             Thread.sleep(300) // Give the system time to process
-            
+
             // Note: Child classes may have their own permissionManager injection
-            
+
             val currentState = isMicrophoneGranted()
             android.util.Log.d("BaseIntegrationTest", "Microphone permission after revoke: $currentState")
         } catch (e: Exception) {
@@ -1816,11 +1824,13 @@ abstract class BaseIntegrationTest {
      */
     private fun getCurrentTestMethodName(): String {
         return try {
+            val ruleName = testNameRule.methodName
+            if (!ruleName.isNullOrBlank()) return ruleName
+            // Fallback to stack trace walk (filtered to our package)
             val stackTrace = Thread.currentThread().stackTrace
-            // Look for test method (starts with "test" or has @Test annotation)
-            val testMethod = stackTrace.find { 
-                it.methodName.startsWith("test") || 
-                it.methodName.contains("_")  // Common pattern like "testSomething_shouldDoSomething"
+            val testMethod = stackTrace.find {
+                it.className.startsWith("com.example.whiz") &&
+                (it.methodName.startsWith("test") || it.methodName.contains("_"))
             }
             testMethod?.methodName ?: "unknownTest"
         } catch (e: Exception) {

@@ -68,11 +68,15 @@ class ToolExecutor @Inject constructor(
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
         "agent_fullscreen_google_maps", "agent_select_location_from_list",
         "agent_press_call_button",
-        "agent_save_calendar_event"
+        "agent_save_calendar_event",
+        "agent_fitbit_add_quick_calories"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
+
+    // Dedup guard: prevents the same requestId from being executed concurrently
+    private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     
     fun executeToolFromJson(
         toolRequest: JSONObject,
@@ -91,6 +95,14 @@ class ToolExecutor @Inject constructor(
                 } else {
                     JSONObject()
                 }
+
+                // Dedup guard: skip if this requestId is already in flight
+                if (!inFlightRequestIds.add(requestId)) {
+                    Log.w(TAG, "🚫 DEDUP: requestId $requestId already in flight, skipping duplicate execution of $toolName")
+                    return@launch
+                }
+
+                try {
 
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
@@ -291,6 +303,9 @@ class ToolExecutor @Inject constructor(
                         }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
+                    "agent_fitbit_add_quick_calories" -> {
+                        executeFitbitAddQuickCalories(requestId, params)
+                    }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
                         _toolResults.emit(
@@ -301,6 +316,10 @@ class ToolExecutor @Inject constructor(
                             )
                         )
                     }
+                }
+
+                } finally {
+                    inFlightRequestIds.remove(requestId)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing tool request", e)
@@ -315,7 +334,8 @@ class ToolExecutor @Inject constructor(
                     } else {
                         "unknown"
                     }
-                    
+                    inFlightRequestIds.remove(requestId)
+
                     _toolResults.emit(
                         ToolExecutionResult.Error(
                             toolName = toolName,
@@ -1742,6 +1762,41 @@ class ToolExecutor @Inject constructor(
         return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_stop_ringing", "agent_get_next_alarm", "agent_delete_alarm", "agent_dismiss_amdroid_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
+    private suspend fun executeFitbitAddQuickCalories(requestId: String, params: JSONObject) {
+        try {
+            val calories = params.getInt("calories")
+            Log.i(TAG, "Adding quick calories to Fitbit: $calories")
+
+            val result = screenAgentTools.addFitbitQuickCalories(calories)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.action?.let { put("action", it) }
+                result.calories?.let { put("calories", it) }
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_fitbit_add_quick_calories result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_fitbit_add_quick_calories",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing Fitbit add quick calories", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_fitbit_add_quick_calories",
+                    requestId = requestId,
+                    error = "Failed to add quick calories: ${e.message}"
+                )
+            )
+        }
+    }
+
     // Method to get tool schema (useful for the server to know what parameters are needed)
     fun getToolSchema(toolName: String): JSONObject? {
         return when (toolName) {

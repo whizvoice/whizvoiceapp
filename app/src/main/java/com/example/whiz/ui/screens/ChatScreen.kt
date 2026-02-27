@@ -46,9 +46,9 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.animation.core.RepeatMode // Import RepeatMode
 import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
@@ -500,7 +500,9 @@ fun ChatScreen(
     voiceManager: VoiceManager,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
-    viewModel: ChatViewModel = hiltViewModel(),
+    viewModel: ChatViewModel = hiltViewModel(
+        viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
+    ),
     navController: NavController,
     onViewModelReady: ((ChatViewModel) -> Unit)? = null // Test hook for accessing navigation-scoped ViewModel
 ) {
@@ -588,18 +590,28 @@ fun ChatScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    // 🔧 AUTO-SCROLL FIX: Collect scroll events from ViewModel instead of using unreliable snapshotFlow
-    // This is triggered when user sends a message or bot responds (not during sync/load)
-    LaunchedEffect(Unit) {
-        viewModel.scrollToBottomEvent
-            .debounce(100L)
-            .collect {
-                if (messages.isNotEmpty()) {
-                    val targetIndex = messages.size - 1
-                    listState.scrollToItem(targetIndex)
-                    android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to message index $targetIndex (total: ${messages.size})")
-                }
+    val scrollTrigger by viewModel.scrollTrigger.collectAsState()
+
+    // 🔧 AUTO-SCROLL: ViewModel-driven trigger. Uses snapshotFlow to wait for LazyColumn
+    // layout to reflect new items before scrolling, with a safety timeout.
+    LaunchedEffect(scrollTrigger, messages.size) {
+        if (scrollTrigger > 0 && messages.isNotEmpty()) {
+            // Wait for LazyColumn to lay out all items (or timeout after 500ms)
+            withTimeoutOrNull(500L) {
+                snapshotFlow { listState.layoutInfo.totalItemsCount }
+                    .first { it >= messages.size }
             }
+            val lastIndex = messages.size - 1
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
+            val isNearBottom = lastVisibleItem == null ||
+                layoutInfo.totalItemsCount <= 0 ||
+                lastVisibleItem.index >= layoutInfo.totalItemsCount - 3
+            if (isNearBottom) {
+                listState.scrollToItem(lastIndex)
+                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to index $lastIndex (trigger=$scrollTrigger)")
+            }
+        }
     }
 
     // Observe permission state directly from PermissionManager for reactive UI updates
@@ -812,27 +824,9 @@ fun ChatScreen(
         // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
         // For existing chats, respect the user's current continuous listening state
         if (effectiveHasPermission && viewModelChatId < 0) {
-            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening for first time")
-
-            // For voice launches with TTS mode, set up continuous listening immediately
-            if (enableTTSMode) {
-                Log.d("ChatScreen", "[LOG] TTS mode enabled - setting up continuous listening immediately")
-                // Enable continuous listening via VoiceManager (single source of truth)
-                voiceManager.updateContinuousListeningEnabled(true)
-
-                // Ensure ChatViewModel starts listening
-                viewModel.ensureContinuousListeningEnabled()
-            } else {
-                // For non-voice launches, use delay
-                kotlinx.coroutines.delay(500L) // Wait for UI to be ready
-
-                // Enable continuous listening via VoiceManager (single source of truth)
-                voiceManager.updateContinuousListeningEnabled(true)
-
-                // Ensure ChatViewModel starts listening
-                viewModel.ensureContinuousListeningEnabled()
-            }
-
+            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening")
+            voiceManager.updateContinuousListeningEnabled(true)
+            viewModel.ensureContinuousListeningEnabled()
             Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
             voiceInitialized.value = true
         } else if (!effectiveHasPermission) {
@@ -1104,7 +1098,7 @@ fun MessagesList(
     android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
 
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
-    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollToBottomEvent
+    // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollTrigger
 
     LazyColumn(
         state = listState,

@@ -34,6 +34,32 @@ cd whizvoiceapp
 ./run_tests_on_emulator.sh
 ```
 
+#### emulator setup (one-time)
+
+install the emulator and a system image matching CI (API 31, 320x640):
+
+```
+sdkmanager "emulator" "platforms;android-31" "system-images;android-31;default;arm64-v8a"
+avdmanager create avd -n "ci_small" -k "system-images;android-31;default;arm64-v8a" -d "pixel"
+cat >> ~/.android/avd/ci_small.avd/config.ini << 'EOF'
+hw.lcd.width=320
+hw.lcd.height=640
+hw.lcd.density=160
+skin.name=320x640
+EOF
+```
+
+to start the emulator:
+
+```
+emulator -avd ci_small -memory 4096 &
+adb wait-for-device && adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 1; done' && echo "Booted"
+```
+
+make sure your physical phone is disconnected (or only the emulator shows in `adb devices`) before running tests.
+
+to shut down: `adb -s emulator-5554 emu kill` or close the window.
+
 ### get test logs from server
 
 ```
