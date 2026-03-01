@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.pow
+import com.example.whiz.data.remote.WhizServerRepository
+import com.example.whiz.tools.ToolExecutor
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -55,6 +57,12 @@ class BubbleOverlayService : Service() {
 
     @Inject
     lateinit var voiceManager: VoiceManager
+
+    @Inject
+    lateinit var whizServerRepository: WhizServerRepository
+
+    @Inject
+    lateinit var toolExecutor: ToolExecutor
 
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
@@ -74,6 +82,7 @@ class BubbleOverlayService : Service() {
     private var lastMessageWasSystemMessage: Boolean = false
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var isDismissTargetVisible = false
+    private var dismissedByUser = false
 
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
     
@@ -400,6 +409,7 @@ class BubbleOverlayService : Service() {
                     // Check if bubble is over dismiss target
                     if (isDragging && isOverDismissTarget(params)) {
                         hideDismissTarget()
+                        dismissedByUser = true
                         stopSelf()
                         return@setOnTouchListener true
                     }
@@ -874,6 +884,14 @@ class BubbleOverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
+
+        // Cancel active server requests and in-flight tools only when user drag-dismissed the bubble
+        if (dismissedByUser) {
+            Log.d(TAG, "Bubble dismissed by user - cancelling active requests and tools")
+            whizServerRepository.cancelAllActiveRequests()
+            toolExecutor.cancelAllInFlight()
+        }
+
         isActive = false
         serviceInstance = null
 

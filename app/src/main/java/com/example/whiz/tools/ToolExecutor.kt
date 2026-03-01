@@ -15,6 +15,7 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -57,7 +58,8 @@ class ToolExecutor @Inject constructor(
     private val authRepository: com.example.whiz.data.auth.AuthRepository
 ) {
     private val TAG = "ToolExecutor"
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val supervisorJob = SupervisorJob()
+    private val scope = CoroutineScope(supervisorJob + Dispatchers.Main)
 
     private val toolsRequiringUnlock = setOf(
         "agent_launch_app",
@@ -77,7 +79,19 @@ class ToolExecutor @Inject constructor(
 
     // Dedup guard: prevents the same requestId from being executed concurrently
     private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    
+
+    /**
+     * Cancel all in-flight tool executions. Called when user dismisses the bubble.
+     * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
+     */
+    fun cancelAllInFlight() {
+        val count = inFlightRequestIds.size
+        Log.d(TAG, "Cancelling all in-flight tool executions (count: $count)")
+        supervisorJob.cancelChildren()
+        inFlightRequestIds.clear()
+        Log.d(TAG, "Cancelled $count in-flight tool execution(s)")
+    }
+
     fun executeToolFromJson(
         toolRequest: JSONObject,
         voiceManager: com.example.whiz.ui.viewmodels.VoiceManager? = null,

@@ -99,6 +99,9 @@ class WhizServerRepository @Inject constructor(
     // when webSocket reference is null but we need to know what we're connecting to for migration checks)
     private var connectingToConversationId: Long? = null
     
+    // Track active (in-flight) request IDs for cancellation on bubble dismiss
+    private val activeRequestIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     // Debug: Track event history for troubleshooting
     private val eventHistory = mutableListOf<TimestampedEvent>()
     private val maxEventHistorySize = 100 // Keep last 100 events
@@ -147,6 +150,73 @@ class WhizServerRepository @Inject constructor(
      */
     private fun formatTimestamp(epochMillis: Long): String {
         return isoTimestampFormatter.format(java.time.Instant.ofEpochMilli(epochMillis))
+    }
+
+    /**
+     * Track an active request ID for cancellation support.
+     */
+    fun trackRequest(requestId: String) {
+        activeRequestIds.add(requestId)
+        Log.d(TAG, "Tracking request $requestId (active count: ${activeRequestIds.size})")
+    }
+
+    /**
+     * Untrack a request ID (when response received or cancelled).
+     */
+    fun untrackRequest(requestId: String) {
+        activeRequestIds.remove(requestId)
+        Log.d(TAG, "Untracked request $requestId (active count: ${activeRequestIds.size})")
+    }
+
+    /**
+     * Send a cancel request for a specific request ID via WebSocket.
+     * Returns true if sent successfully, false otherwise.
+     */
+    fun sendCancelRequest(cancelRequestId: String): Boolean {
+        return try {
+            val currentSocket = webSocket
+            if (currentSocket != null && connectionState == ConnectionState.CONNECTED) {
+                val cancelJson = org.json.JSONObject().apply {
+                    put("type", "cancel")
+                    put("cancel_request_id", cancelRequestId)
+                }
+                val success = currentSocket.send(cancelJson.toString())
+                if (success) {
+                    Log.d(TAG, "Sent cancel request for $cancelRequestId")
+                } else {
+                    Log.w(TAG, "Failed to send cancel request for $cancelRequestId")
+                }
+                success
+            } else {
+                Log.w(TAG, "WebSocket not connected - cannot send cancel for $cancelRequestId")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending cancel request for $cancelRequestId", e)
+            false
+        }
+    }
+
+    /**
+     * Cancel all active requests. Called when user dismisses the bubble.
+     * Returns the number of cancel requests sent.
+     */
+    fun cancelAllActiveRequests(): Int {
+        val requestIds = activeRequestIds.toSet() // snapshot
+        if (requestIds.isEmpty()) {
+            Log.d(TAG, "No active requests to cancel")
+            return 0
+        }
+        Log.d(TAG, "Cancelling ${requestIds.size} active request(s): $requestIds")
+        var sentCount = 0
+        for (requestId in requestIds) {
+            if (sendCancelRequest(requestId)) {
+                sentCount++
+            }
+            activeRequestIds.remove(requestId)
+        }
+        Log.d(TAG, "Sent $sentCount cancel request(s), cleared active request tracking")
+        return sentCount
     }
 
     // Expose persistent disconnect state for testing

@@ -665,6 +665,7 @@ class ChatViewModel @Inject constructor(
                         // Remove the cancelled request from pending requests
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
+                        whizServerRepository.untrackRequest(event.cancelledRequestId)
                         Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
                         // 🔧 DON'T update responding state here - animation should continue until
                         // a real (non-cancelled) response arrives. This prevents the typing indicator
@@ -680,6 +681,7 @@ class ChatViewModel @Inject constructor(
                         if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
                             Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
                             pendingRequests.remove(event.requestId)
+                            whizServerRepository.untrackRequest(event.requestId)
                             updateRespondingStateForCurrentChat()
                         }
 
@@ -832,6 +834,7 @@ class ChatViewModel @Inject constructor(
                                         Log.d(TAG, "🐛 VOICE_DEBUG: Found requestId in pendingRequests, originalChatId = $originalChatId")
                                         // Remove completed request from pending requests
                                         pendingRequests.remove(event.requestId) // Remove completed request
+                                        whizServerRepository.untrackRequest(event.requestId)
                                         
                         // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
                         if (originalChatId == -1L && effectiveConversationId != null) {
@@ -1934,7 +1937,8 @@ class ChatViewModel @Inject constructor(
                 // 🔧 FIX: Ensure requestId is non-null for WebSocket operations
                 val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
                 pendingRequests[nonNullRequestId] = chatIdForWebSocket
-                
+                whizServerRepository.trackRequest(nonNullRequestId)
+
                 // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
                 updateRespondingStateForCurrentChat()
                 
