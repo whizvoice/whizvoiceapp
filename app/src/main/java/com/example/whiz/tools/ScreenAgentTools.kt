@@ -809,12 +809,12 @@ class ScreenAgentTools @Inject constructor(
 
         for (scrollAttempt in 0..7) {
             if (scrollAttempt > 0) {
-                // Scroll right in the recents carousel (swipe left)
+                // Scroll left in the recents carousel (swipe right) to see older apps
                 Log.d(TAG, "Scrolling recents carousel, attempt $scrollAttempt")
                 accessibilityService.performScrollGesture(
-                    startX = screenWidth * 0.8f,
+                    startX = screenWidth * 0.2f,
                     startY = screenHeight * 0.5f,
-                    endX = screenWidth * 0.2f,
+                    endX = screenWidth * 0.8f,
                     endY = screenHeight * 0.5f,
                     duration = 300
                 )
@@ -824,24 +824,36 @@ class ScreenAgentTools @Inject constructor(
             val rootNode = accessibilityService.getCurrentRootNode() ?: continue
 
             try {
-                // Search by text matching
+                // Recents cards use content descriptions on snapshot children, not text.
+                // Search content descriptions recursively for the app label.
+                val descNode = findNodeByContentDescContaining(rootNode, normalizedLabel)
+                if (descNode != null) {
+                    // Only dismiss if the card is actually on-screen (positive X bounds)
+                    val rect = android.graphics.Rect()
+                    descNode.getBoundsInScreen(rect)
+                    if (rect.right > 0 && rect.left < screenWidth.toInt()) {
+                        Log.i(TAG, "Found app card for '$appLabel' via content description, bounds=$rect")
+                        val swipeResult = swipeUpToDismiss(accessibilityService, descNode, screenWidth, screenHeight)
+                        if (swipeResult) return true
+                    } else {
+                        Log.d(TAG, "Found '$appLabel' but off-screen (bounds=$rect), scrolling more")
+                    }
+                }
+
+                // Also try text-based search as fallback
                 val textNodes = rootNode.findAccessibilityNodeInfosByText(appLabel)
                 for (node in textNodes) {
                     val nodeText = node.text?.toString()?.lowercase() ?: ""
                     val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
                     if (nodeText.contains(normalizedLabel) || nodeDesc.contains(normalizedLabel)) {
-                        Log.i(TAG, "Found app card for '$appLabel' via text match")
-                        val swipeResult = swipeUpToDismiss(accessibilityService, node, screenWidth, screenHeight)
-                        if (swipeResult) return true
+                        val textRect = android.graphics.Rect()
+                        node.getBoundsInScreen(textRect)
+                        if (textRect.right > 0 && textRect.left < screenWidth.toInt()) {
+                            Log.i(TAG, "Found app card for '$appLabel' via text match, bounds=$textRect")
+                            val swipeResult = swipeUpToDismiss(accessibilityService, node, screenWidth, screenHeight)
+                            if (swipeResult) return true
+                        }
                     }
-                }
-
-                // Fallback: search content descriptions recursively
-                val descNode = findNodeByContentDescContaining(rootNode, normalizedLabel)
-                if (descNode != null) {
-                    Log.i(TAG, "Found app card for '$appLabel' via content description")
-                    val swipeResult = swipeUpToDismiss(accessibilityService, descNode, screenWidth, screenHeight)
-                    if (swipeResult) return true
                 }
             } finally {
                 rootNode.recycle()
@@ -871,8 +883,8 @@ class ScreenAgentTools @Inject constructor(
         node.getBoundsInScreen(rect)
         val centerX = rect.centerX().toFloat()
         val startY = rect.centerY().toFloat()
-        // Swipe from the card center to well above the screen
-        val endY = -screenHeight * 0.2f
+        // Swipe from card center to near top of screen (must stay on-screen for gesture to work)
+        val endY = 10f
 
         Log.d(TAG, "Swiping up to dismiss: centerX=$centerX, startY=$startY, endY=$endY")
         val result = accessibilityService.performScrollGesture(
@@ -880,9 +892,10 @@ class ScreenAgentTools @Inject constructor(
             startY = startY,
             endX = centerX,
             endY = endY,
-            duration = 250
+            duration = 300
         )
-        delay(500) // Wait for dismiss animation
+        Log.d(TAG, "Swipe gesture result: $result")
+        delay(600) // Wait for dismiss animation
         return result
     }
 
