@@ -480,6 +480,15 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Step 8: Verify BOTH user messages are still visible after reconnection
                 Log.d(TAG, "🔍 Step 8: Verifying both user messages are still visible after reconnection...")
                 
+                // Scroll to make first message visible (may be off-screen due to long bot response)
+                try {
+                    composeTestRule.onNodeWithContentDescription("Chat messages list")
+                        .performScrollToNode(hasText("Tell me the history of the major name brand stacking brick", substring = true))
+                    composeTestRule.waitForIdle()
+                } catch (e: Exception) {
+                    Log.d(TAG, "⚠️ Could not scroll to first message node: ${e.message}")
+                }
+
                 // Check first message is still visible
                 val firstMessageStillVisible = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
