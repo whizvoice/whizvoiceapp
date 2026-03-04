@@ -2002,7 +2002,7 @@ class ChatViewModel @Inject constructor(
             }
 
             // Start queued TTS if user was speaking when assistant message arrived
-            startQueuedTTS()
+            startQueuedTTS(forceStart = true)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in sendUserInput", e)
             }
@@ -2390,8 +2390,24 @@ class ChatViewModel @Inject constructor(
      * Start queued TTS message after user finishes speaking.
      * Called when user's message is sent via sendUserInput().
      */
-    private fun startQueuedTTS() {
+    private fun startQueuedTTS(forceStart: Boolean = false) {
         pendingTTSMessage?.let { message ->
+            if (!forceStart) {
+                val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+                val recentSpeechMs = System.currentTimeMillis() - voiceManager.lastSpeechActivityTimestamp
+                val userRecentlySpeaking = voiceManager.lastSpeechActivityTimestamp > 0L
+                    && recentSpeechMs < RECENT_SPEECH_THRESHOLD_MS
+                if (hasPartialTranscription || userRecentlySpeaking) {
+                    Log.d(TAG, "startQueuedTTS: user still speaking (hasPartial=$hasPartialTranscription, recentSpeechMs=$recentSpeechMs), rescheduling")
+                    pendingTTSCheckJob?.cancel()
+                    pendingTTSCheckJob = viewModelScope.launch {
+                        val waitMs = (RECENT_SPEECH_THRESHOLD_MS - recentSpeechMs + 500L).coerceAtLeast(500L)
+                        delay(waitMs)
+                        startQueuedTTS()
+                    }
+                    return
+                }
+            }
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
             // Full-duplex: keep mic active when AEC/headphones available
             if (isListening.value && !voiceManager.isFullDuplexAvailable()) {

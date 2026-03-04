@@ -51,8 +51,8 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
     
     @Inject
-    lateinit var whizServerRepository: WhizServerRepository
-    
+    override lateinit var whizServerRepository: WhizServerRepository
+
     @Inject
     lateinit var testInterceptor: TestInterceptor
 

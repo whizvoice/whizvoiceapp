@@ -56,16 +56,16 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
     
     @Inject
-    lateinit var voiceManager: VoiceManager
-    
+    override lateinit var voiceManager: VoiceManager
+
     @Inject
-    lateinit var ttsManager: TTSManager
-    
+    override lateinit var ttsManager: TTSManager
+
     @Inject
     lateinit var permissionManager: PermissionManager
-    
+
     @Inject
-    lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
+    override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
     // Note: ChatViewModel will be obtained via ViewModelProvider instead of direct injection
     // to avoid Hilt compilation errors with @HiltViewModel classes

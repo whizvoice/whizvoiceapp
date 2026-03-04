@@ -59,16 +59,16 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
     
     @Inject
-    lateinit var voiceManager: VoiceManager
-    
+    override lateinit var voiceManager: VoiceManager
+
     @Inject
-    lateinit var ttsManager: TTSManager
-    
+    override lateinit var ttsManager: TTSManager
+
     @Inject
     lateinit var permissionManager: PermissionManager
-    
+
     @Inject
-    lateinit var speechRecognitionService: SpeechRecognitionService
+    override lateinit var speechRecognitionService: SpeechRecognitionService
     
     @Inject
     lateinit var toolExecutor: ToolExecutor

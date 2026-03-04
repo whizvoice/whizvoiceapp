@@ -19,7 +19,11 @@ import androidx.core.content.ContextCompat
 import com.example.whiz.MainActivity
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.auth.AuthRepository
+import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.services.SpeechRecognitionService
+import com.example.whiz.services.TTSManager
+import com.example.whiz.ui.viewmodels.VoiceManager
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
@@ -62,6 +66,18 @@ abstract class BaseIntegrationTest {
     
     @Inject
     lateinit var authRepository: AuthRepository
+
+    @Inject
+    open lateinit var voiceManager: VoiceManager
+
+    @Inject
+    open lateinit var whizServerRepository: WhizServerRepository
+
+    @Inject
+    open lateinit var ttsManager: TTSManager
+
+    @Inject
+    open lateinit var speechRecognitionService: SpeechRecognitionService
 
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
@@ -158,6 +174,27 @@ abstract class BaseIntegrationTest {
     open fun tearDownPermissions() {
         // Restore original permissions
         restoreOriginalPermissions()
+    }
+
+    @After
+    fun resetServicesAfterTest() {
+        try {
+            // Stop TTS playback (not shutdown — preserves the TTS engine)
+            ttsManager.stop()
+
+            // Stop speech recognition (not release — preserves the scope)
+            speechRecognitionService.stopListening()
+
+            // Disconnect WebSocket (can reconnect in next test)
+            whizServerRepository.disconnect()
+
+            // Force GC to reclaim any freed resources
+            System.gc()
+
+            Log.d("BaseIntegrationTest", "Services reset between tests")
+        } catch (e: Exception) {
+            Log.w("BaseIntegrationTest", "Service reset failed: ${e.message}")
+        }
     }
     
     /**

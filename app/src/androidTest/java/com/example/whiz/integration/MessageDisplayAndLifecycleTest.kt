@@ -58,8 +58,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     )
 
     @Inject
-    lateinit var speechRecognitionService: SpeechRecognitionService
-    
+    override lateinit var speechRecognitionService: SpeechRecognitionService
+
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
     
@@ -70,8 +70,8 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     lateinit var database: WhizDatabase
 
     @Inject
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
-    
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
     
@@ -135,17 +135,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 
                 // CRITICAL: Ensure app is in a clean state for subsequent tests
                 // The voice tests use compose test rules and need a clean UI state
-                
-                // 1. Stop any ongoing speech recognition
-                try {
-                    // Stop listening through VoiceManager instead of directly setting property
-                    voiceManager.updateContinuousListeningEnabled(false)
-                    Log.d(TAG, "✅ Disabled speech recognition")
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Could not disable speech recognition: ${e.message}")
-                }
-                
-                // 2. Reset app lifecycle service state
+                // Note: Speech recognition stop, WebSocket disconnect, and GC are handled by BaseIntegrationTest.resetServicesAfterTest()
+
+                // 1. Reset app lifecycle service state
                 try {
                     appLifecycleService.notifyAppForegrounded()
                     Log.d(TAG, "✅ Reset app lifecycle to foreground state")
@@ -153,7 +145,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     Log.w(TAG, "⚠️ Could not reset app lifecycle: ${e.message}")
                 }
                 
-                // 3. Navigate to a clean screen (home screen) to clear any UI state
+                // 2. Navigate to a clean screen (home screen) to clear any UI state
                 try {
                     val context = InstrumentationRegistry.getInstrumentation().targetContext
                     val intent = context.packageManager.getLaunchIntentForPackage("com.example.whiz.debug")
@@ -170,7 +162,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     Log.w(TAG, "⚠️ Could not navigate to clean screen: ${e.message}")
                 }
                 
-                // 4. Clear any compose-related state that might interfere with subsequent tests
+                // 3. Clear any compose-related state that might interfere with subsequent tests
                 try {
                     // Force finish any activities that might have compose content
                     val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -184,16 +176,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     Log.w(TAG, "⚠️ Could not clear compose state: ${e.message}")
                 }
                 
-                // 5. Force garbage collection to clean up any lingering objects
-                try {
-                    System.gc()
-                    Thread.sleep(100)
-                    Log.d(TAG, "✅ Forced garbage collection")
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Could not force garbage collection: ${e.message}")
-                }
-                
-                // 6. Clean up test chats to prevent accumulation
+                // 4. Clean up test chats to prevent accumulation
                 try {
                     // Direct database cleanup for this test's specific chats
                     if (testChatId > 0) {

@@ -45,7 +45,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var speechRecognitionService: SpeechRecognitionService
+    override lateinit var speechRecognitionService: SpeechRecognitionService
 
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager

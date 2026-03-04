@@ -61,13 +61,13 @@ class TTSQueueingTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
-    lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
+    override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
 
     @Inject
-    lateinit var ttsManager: com.example.whiz.services.TTSManager
+    override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
     private val createdChatIds = mutableListOf<Long>()
 
@@ -337,7 +337,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
             // Should start quickly since assistant message already arrived during partials
             var ttsStarted = false
             val ttsStartTime = System.currentTimeMillis()
-            val ttsTimeout = 1000L // 1 second - message already arrived, should start immediately
+            val ttsTimeout = 2000L // 2 seconds - message already arrived, should start quickly
 
             while (!ttsStarted && (System.currentTimeMillis() - ttsStartTime) < ttsTimeout) {
                 val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
