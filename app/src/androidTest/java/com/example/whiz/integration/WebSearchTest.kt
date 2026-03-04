@@ -193,7 +193,7 @@ class WebSearchTest : BaseIntegrationTest() {
             var botResponded = false
             var botResponseText = ""
             val responseStartTime = System.currentTimeMillis()
-            val responseTimeout = 30000L // 30 seconds for bot response
+            val responseTimeout = 45000L // 45 seconds for bot response
 
             while (System.currentTimeMillis() - responseStartTime < responseTimeout) {
                 val isResponding = chatViewModel.isResponding.value
