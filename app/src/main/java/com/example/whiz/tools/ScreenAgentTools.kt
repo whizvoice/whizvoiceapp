@@ -137,6 +137,12 @@ class ScreenAgentTools @Inject constructor(
         val error: String? = null
     )
 
+    data class CloseOtherAppResult(
+        val success: Boolean,
+        val appName: String,
+        val error: String? = null
+    )
+
     // ========== Phone Call Functions ==========
 
     /**
@@ -597,7 +603,309 @@ class ScreenAgentTools @Inject constructor(
             false
         }
     }
-    
+
+    // ========== Close Other App Functions ==========
+
+    /**
+     * Common app name mappings shared between launchApp and closeOtherApp.
+     */
+    private val commonAppMappings = mapOf(
+        "chrome" to "com.android.chrome",
+        "gmail" to "com.google.android.gm",
+        "youtube" to "com.google.android.youtube",
+        "youtube music" to "com.google.android.apps.youtube.music",
+        "maps" to "com.google.android.apps.maps",
+        "play store" to "com.android.vending",
+        "camera" to "com.android.camera2",
+        "photos" to "com.google.android.apps.photos",
+        "calendar" to "com.google.android.calendar",
+        "calculator" to "com.google.android.calculator2",
+        "clock" to "com.google.android.deskclock",
+        "messages" to "com.google.android.apps.messaging",
+        "whatsapp" to "com.whatsapp",
+        "instagram" to "com.instagram.android",
+        "facebook" to "com.facebook.katana",
+        "twitter" to "com.twitter.android",
+        "x" to "com.twitter.android",
+        "spotify" to "com.spotify.music",
+        "netflix" to "com.netflix.mediaclient",
+        "settings" to "com.android.settings",
+        "asana" to "com.asana.app",
+        "a sauna" to "com.asana.app"
+    )
+
+    /**
+     * Resolve a user-provided app name to a (packageName, appLabel) pair.
+     * Uses fuzzy matching against installed apps, then falls back to common mappings.
+     * Returns null if the app cannot be found.
+     */
+    fun resolvePackageName(appName: String): Pair<String, String>? {
+        val packageManager = context.packageManager
+        val normalizedAppName = appName.lowercase().trim()
+
+        // Try fuzzy matching against installed apps
+        val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+        var bestMatch: Triple<String, String, Float>? = null // (packageName, appLabel, score)
+
+        for (appInfo in installedApps) {
+            val launchIntent = packageManager.getLaunchIntentForPackage(appInfo.packageName) ?: continue
+            val appLabel = packageManager.getApplicationLabel(appInfo).toString()
+            val matchScore = calculateMatchScore(normalizedAppName, appLabel, appInfo.packageName)
+            if (matchScore > 0 && (bestMatch == null || matchScore > bestMatch.third)) {
+                bestMatch = Triple(appInfo.packageName, appLabel, matchScore)
+            }
+        }
+
+        if (bestMatch != null && bestMatch.third >= 0.5f) {
+            return Pair(bestMatch.first, bestMatch.second)
+        }
+
+        // Fall back to common mappings
+        val mappedPackage = commonAppMappings[normalizedAppName]
+        if (mappedPackage != null) {
+            val appLabel = try {
+                packageManager.getApplicationLabel(
+                    packageManager.getApplicationInfo(mappedPackage, 0)
+                ).toString()
+            } catch (e: Exception) {
+                appName
+            }
+            return Pair(mappedPackage, appLabel)
+        }
+
+        return null
+    }
+
+    /**
+     * Close another app by dismissing it from the Android recents screen.
+     * Opens recents, finds the app card by label, swipes it up to dismiss, then goes Home.
+     */
+    suspend fun closeOtherApp(appName: String): CloseOtherAppResult {
+        Log.i(TAG, "closeOtherApp called for: $appName")
+        trackAction("closeOtherApp: $appName")
+
+        try {
+            // Resolve app name
+            val resolved = resolvePackageName(appName)
+            if (resolved == null) {
+                Log.w(TAG, "Could not resolve app name: $appName")
+                logScreenAgentError(
+                    reason = "close_other_app_not_found",
+                    errorMessage = "Could not find an app matching '$appName'",
+                    packageName = null
+                )
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appName,
+                    error = "Could not find an app matching '$appName'"
+                )
+            }
+
+            val (packageName, appLabel) = resolved
+            Log.i(TAG, "Resolved app: $appLabel ($packageName)")
+
+            // Reject if target is Whiz itself
+            if (isWhizApp(packageName)) {
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "To close WhizVoice, use the agent_close_app tool instead."
+                )
+            }
+
+            // Get accessibility service
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                Log.e(TAG, "Accessibility service not available for closeOtherApp")
+                logScreenAgentError(
+                    reason = "close_other_app_no_accessibility",
+                    errorMessage = "Accessibility service not available for closing '$appLabel'",
+                    packageName = packageName
+                )
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Accessibility service not enabled. Please enable it in settings."
+                )
+            }
+
+            // Open recents screen
+            Log.i(TAG, "Opening recents screen")
+            val recentsOpened = accessibilityService.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_RECENTS
+            )
+            if (!recentsOpened) {
+                logScreenAgentError(
+                    reason = "close_other_app_recents_failed",
+                    errorMessage = "Failed to open recents screen",
+                    packageName = packageName
+                )
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Failed to open recent apps screen"
+                )
+            }
+
+            // Wait for recents to load
+            delay(800)
+
+            // Try to find and dismiss the app from recents
+            val dismissed = findAndDismissFromRecents(accessibilityService, appLabel)
+
+            // Always press Home to clean up
+            delay(300)
+            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_HOME)
+
+            if (dismissed) {
+                Log.i(TAG, "Successfully dismissed $appLabel from recents")
+                clearRecentActions()
+                return CloseOtherAppResult(
+                    success = true,
+                    appName = appLabel
+                )
+            } else {
+                Log.w(TAG, "Could not find $appLabel in recents")
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Could not find '$appLabel' in recent apps. It may not be running."
+                )
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing other app: $appName", e)
+            logScreenAgentError(
+                reason = "close_other_app_error",
+                errorMessage = "Error closing '$appName': ${e.message}",
+                packageName = null
+            )
+            // Try to press Home to recover
+            try {
+                WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                    AccessibilityService.GLOBAL_ACTION_HOME
+                )
+            } catch (_: Exception) {}
+            return CloseOtherAppResult(
+                success = false,
+                appName = appName,
+                error = "Error closing app: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * Search the recents screen for an app card matching the given label and swipe it up to dismiss.
+     * Scrolls through the recents carousel up to 7 times if the app isn't immediately visible.
+     */
+    private suspend fun findAndDismissFromRecents(
+        accessibilityService: WhizAccessibilityService,
+        appLabel: String
+    ): Boolean {
+        val normalizedLabel = appLabel.lowercase()
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels.toFloat()
+        val screenHeight = displayMetrics.heightPixels.toFloat()
+
+        for (scrollAttempt in 0..7) {
+            if (scrollAttempt > 0) {
+                // Scroll right in the recents carousel (swipe left)
+                Log.d(TAG, "Scrolling recents carousel, attempt $scrollAttempt")
+                accessibilityService.performScrollGesture(
+                    startX = screenWidth * 0.8f,
+                    startY = screenHeight * 0.5f,
+                    endX = screenWidth * 0.2f,
+                    endY = screenHeight * 0.5f,
+                    duration = 300
+                )
+                delay(500)
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode() ?: continue
+
+            try {
+                // Search by text matching
+                val textNodes = rootNode.findAccessibilityNodeInfosByText(appLabel)
+                for (node in textNodes) {
+                    val nodeText = node.text?.toString()?.lowercase() ?: ""
+                    val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+                    if (nodeText.contains(normalizedLabel) || nodeDesc.contains(normalizedLabel)) {
+                        Log.i(TAG, "Found app card for '$appLabel' via text match")
+                        val swipeResult = swipeUpToDismiss(accessibilityService, node, screenWidth, screenHeight)
+                        if (swipeResult) return true
+                    }
+                }
+
+                // Fallback: search content descriptions recursively
+                val descNode = findNodeByContentDescContaining(rootNode, normalizedLabel)
+                if (descNode != null) {
+                    Log.i(TAG, "Found app card for '$appLabel' via content description")
+                    val swipeResult = swipeUpToDismiss(accessibilityService, descNode, screenWidth, screenHeight)
+                    if (swipeResult) return true
+                }
+            } finally {
+                rootNode.recycle()
+            }
+        }
+
+        // If we exhausted all scroll attempts, dump the UI for debugging
+        val rootNode = accessibilityService.getCurrentRootNode()
+        if (rootNode != null) {
+            dumpUIHierarchy(rootNode, "recents_app_not_found", "Could not find '$appLabel' in recents after scrolling")
+            rootNode.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Swipe up on a node's bounding rect to dismiss it from recents.
+     */
+    private suspend fun swipeUpToDismiss(
+        accessibilityService: WhizAccessibilityService,
+        node: AccessibilityNodeInfo,
+        screenWidth: Float,
+        screenHeight: Float
+    ): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX().toFloat()
+        val startY = rect.centerY().toFloat()
+        // Swipe from the card center to well above the screen
+        val endY = -screenHeight * 0.2f
+
+        Log.d(TAG, "Swiping up to dismiss: centerX=$centerX, startY=$startY, endY=$endY")
+        val result = accessibilityService.performScrollGesture(
+            startX = centerX,
+            startY = startY,
+            endX = centerX,
+            endY = endY,
+            duration = 250
+        )
+        delay(500) // Wait for dismiss animation
+        return result
+    }
+
+    /**
+     * Recursively search for a node whose content description contains the target text.
+     */
+    private fun findNodeByContentDescContaining(
+        root: AccessibilityNodeInfo,
+        target: String,
+        depth: Int = 0
+    ): AccessibilityNodeInfo? {
+        if (depth > 20) return null
+        val desc = root.contentDescription?.toString()?.lowercase() ?: ""
+        if (desc.contains(target)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = findNodeByContentDescContaining(child, target, depth + 1)
+            if (found != null) return found
+            child.recycle()
+        }
+        return null
+    }
+
     private fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
         val normalizedLabel = appLabel.lowercase()
         val normalizedPackage = packageName.lowercase()

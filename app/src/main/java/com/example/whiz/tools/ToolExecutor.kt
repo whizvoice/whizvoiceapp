@@ -71,7 +71,8 @@ class ToolExecutor @Inject constructor(
         "agent_fullscreen_google_maps", "agent_select_location_from_list",
         "agent_press_call_button",
         "agent_save_calendar_event",
-        "agent_fitbit_add_quick_calories"
+        "agent_fitbit_add_quick_calories",
+        "agent_close_other_app"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -206,6 +207,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_close_app" -> {
                         executeCloseApp(requestId)
+                    }
+                    "agent_close_other_app" -> {
+                        executeCloseOtherApp(requestId, params)
                     }
                     "agent_dismiss_draft" -> {
                         executeDismissDraft(requestId)
@@ -1806,6 +1810,40 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_fitbit_add_quick_calories",
                     requestId = requestId,
                     error = "Failed to add quick calories: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeCloseOtherApp(requestId: String, params: JSONObject) {
+        try {
+            val appName = params.getString("app_name")
+            Log.i(TAG, "Closing other app: $appName")
+
+            val result = screenAgentTools.closeOtherApp(appName)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("app_name", result.appName)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_close_other_app result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_close_other_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing close other app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_close_other_app",
+                    requestId = requestId,
+                    error = "Failed to close app: ${e.message}"
                 )
             )
         }
