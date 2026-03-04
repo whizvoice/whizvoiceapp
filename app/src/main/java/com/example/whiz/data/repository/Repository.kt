@@ -372,6 +372,7 @@ class WhizRepository @Inject constructor(
                     lastMessageTime = System.currentTimeMillis()
                 )
                 chatDao.insertChat(placeholderChat)
+                triggerConversationsRefresh()
                 Log.d(TAG, "addUserMessageOptimistic: Created placeholder chat $actualChatId for optimistic UI")
             }
             
@@ -432,8 +433,9 @@ class WhizRepository @Inject constructor(
                                 lastMessageTime = System.currentTimeMillis()
                             )
                             chatDao.insertChat(placeholderChat)
+                            triggerConversationsRefresh()
                         }
-                        
+
                         // Try inserting with the migrated chat ID
                         val messageEntity = MessageEntity(
                             id = 0,
@@ -506,6 +508,7 @@ class WhizRepository @Inject constructor(
                     lastMessageTime = System.currentTimeMillis()
                 )
                 chatDao.insertChat(placeholderChat)
+                triggerConversationsRefresh()
                 Log.d(TAG, "addAssistantMessageOptimistic: Created placeholder chat $actualChatId for optimistic UI")
             }
             

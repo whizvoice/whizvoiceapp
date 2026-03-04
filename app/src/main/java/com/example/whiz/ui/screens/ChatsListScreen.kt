@@ -256,7 +256,7 @@ fun ChatItem(
                 onClick = onClick,
                 onLongClick = onLongPress
             )
-            .padding(16.dp),
+            .padding(horizontal = 12.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Chat icon or placeholder
@@ -281,7 +281,7 @@ fun ChatItem(
             )
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(8.dp))
 
         // Last message time
         Text(
