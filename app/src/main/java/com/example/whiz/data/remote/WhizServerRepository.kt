@@ -179,6 +179,7 @@ class WhizServerRepository @Inject constructor(
                 val cancelJson = org.json.JSONObject().apply {
                     put("type", "cancel")
                     put("cancel_request_id", cancelRequestId)
+                    put("timestamp", formatTimestamp(System.currentTimeMillis()))
                 }
                 val success = currentSocket.send(cancelJson.toString())
                 if (success) {
