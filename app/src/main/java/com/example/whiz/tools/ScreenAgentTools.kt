@@ -17,6 +17,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.BuildConfig
+import com.example.whiz.MainActivity
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
@@ -604,6 +605,31 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    /**
+     * Restore full-screen Whiz by launching MainActivity.
+     * MainActivity.onResume() auto-stops the bubble overlay.
+     * Fallback: explicitly stop bubble + press Home.
+     */
+    private fun restoreFullScreenWhiz() {
+        try {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "restoreFullScreenWhiz: launched MainActivity")
+        } catch (e: Exception) {
+            Log.e(TAG, "restoreFullScreenWhiz: failed to launch MainActivity, falling back", e)
+            try {
+                BubbleOverlayService.stop(context)
+            } catch (_: Exception) {}
+            try {
+                WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                    AccessibilityService.GLOBAL_ACTION_HOME
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     // ========== Close Other App Functions ==========
 
     /**
@@ -684,6 +710,9 @@ class ScreenAgentTools @Inject constructor(
         Log.i(TAG, "closeOtherApp called for: $appName")
         trackAction("closeOtherApp: $appName")
 
+        // Track whether we started a temporary bubble for this operation
+        var needToRestoreFullScreen = false
+
         try {
             // Resolve app name
             val resolved = resolvePackageName(appName)
@@ -729,6 +758,29 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Before opening recents, start bubble overlay if we're in full-screen mode.
+            // Opening recents will background full-screen Whiz, causing VoiceManager to stop
+            // listening. The bubble keeps the mic active so the user hears TTS confirmation.
+            val wasBubbleAlreadyActive = BubbleOverlayService.isActive
+            if (!wasBubbleAlreadyActive && hasOverlayPermission()) {
+                Log.i(TAG, "closeOtherApp: starting temporary bubble overlay for recents operation")
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                val bubbleStarted = startBubbleOverlay()
+                if (bubbleStarted) {
+                    needToRestoreFullScreen = true
+                    // Wait for bubble service to become active
+                    val bubbleReady = waitForCondition(maxWaitMs = 1000, initialDelayMs = 100) {
+                        BubbleOverlayService.isActive
+                    }
+                    if (!bubbleReady) {
+                        Log.w(TAG, "closeOtherApp: bubble started but not active in time, proceeding anyway")
+                    }
+                } else {
+                    Log.w(TAG, "closeOtherApp: bubble failed to start, proceeding without it")
+                    BubbleOverlayService.pendingStartTimestamp = 0L
+                }
+            }
+
             // Open recents screen
             Log.i(TAG, "Opening recents screen")
             val recentsOpened = accessibilityService.performGlobalActionSafely(
@@ -740,6 +792,10 @@ class ScreenAgentTools @Inject constructor(
                     errorMessage = "Failed to open recents screen",
                     packageName = packageName
                 )
+                // Clean up temporary bubble if we started one
+                if (needToRestoreFullScreen) {
+                    restoreFullScreenWhiz()
+                }
                 return CloseOtherAppResult(
                     success = false,
                     appName = appLabel,
@@ -747,15 +803,27 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for recents to load
-            delay(800)
+            // Wait for recents screen to take focus (root node package changes away from Whiz)
+            val whizPackage = context.packageName
+            val recentsReady = waitForCondition(maxWaitMs = 1500, initialDelayMs = 100) {
+                val currentPkg = WhizAccessibilityService.getCurrentPackageName()
+                currentPkg != null && currentPkg != whizPackage
+            }
+            if (!recentsReady) {
+                Log.w(TAG, "closeOtherApp: recents screen did not take focus in time, proceeding anyway")
+            }
 
             // Try to find and dismiss the app from recents
             val dismissed = findAndDismissFromRecents(accessibilityService, appLabel)
 
-            // Always press Home to clean up
+            // Navigate back: restore full-screen Whiz or press Home
             delay(300)
-            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_HOME)
+            if (needToRestoreFullScreen) {
+                Log.i(TAG, "closeOtherApp: restoring full-screen Whiz after recents operation")
+                restoreFullScreenWhiz()
+            } else {
+                accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_HOME)
+            }
 
             if (dismissed) {
                 Log.i(TAG, "Successfully dismissed $appLabel from recents")
@@ -780,11 +848,15 @@ class ScreenAgentTools @Inject constructor(
                 errorMessage = "Error closing '$appName': ${e.message}",
                 packageName = null
             )
-            // Try to press Home to recover
+            // Recover: restore full-screen if we started a temporary bubble, otherwise press Home
             try {
-                WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
-                    AccessibilityService.GLOBAL_ACTION_HOME
-                )
+                if (needToRestoreFullScreen || BubbleOverlayService.isActive) {
+                    restoreFullScreenWhiz()
+                } else {
+                    WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                        AccessibilityService.GLOBAL_ACTION_HOME
+                    )
+                }
             } catch (_: Exception) {}
             return CloseOtherAppResult(
                 success = false,
@@ -846,12 +918,23 @@ class ScreenAgentTools @Inject constructor(
                     val nodeText = node.text?.toString()?.lowercase() ?: ""
                     val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
                     if (nodeText.contains(normalizedLabel) || nodeDesc.contains(normalizedLabel)) {
-                        val textRect = android.graphics.Rect()
-                        node.getBoundsInScreen(textRect)
-                        if (textRect.right > 0 && textRect.left < screenWidth.toInt()) {
-                            Log.i(TAG, "Found app card for '$appLabel' via text match, bounds=$textRect")
-                            val swipeResult = swipeUpToDismiss(accessibilityService, node, screenWidth, screenHeight)
-                            if (swipeResult) return true
+                        // Walk up to find the card container — the text label is small and may
+                        // not be positioned over the actual card. The card parent will have
+                        // bounds that cover a large portion of the screen.
+                        val cardNode = findCardParent(node, screenWidth, screenHeight)
+                        if (cardNode != null) {
+                            val cardRect = android.graphics.Rect()
+                            cardNode.getBoundsInScreen(cardRect)
+                            if (cardRect.right > 0 && cardRect.left < screenWidth.toInt()) {
+                                Log.i(TAG, "Found app card for '$appLabel' via text match, card bounds=$cardRect")
+                                val swipeResult = swipeUpToDismiss(accessibilityService, cardNode, screenWidth, screenHeight)
+                                if (swipeResult) return true
+                            }
+                        } else {
+                            // No card parent found — log the text node position for debugging
+                            val textRect = android.graphics.Rect()
+                            node.getBoundsInScreen(textRect)
+                            Log.w(TAG, "Found text '$appLabel' at $textRect but no card parent — skipping swipe to avoid dismissing wrong app")
                         }
                     }
                 }
@@ -871,7 +954,54 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
+     * Walk up from a text label node to find the parent recents card container.
+     * The card container will have bounds that span a significant portion of the screen
+     * (at least 40% width and 30% height) but NOT the full screen (which would be the
+     * root container — swiping on that dismisses whichever card is in front, not the target).
+     */
+    private fun findCardParent(
+        node: AccessibilityNodeInfo,
+        screenWidth: Float,
+        screenHeight: Float
+    ): AccessibilityNodeInfo? {
+        var current = node.parent ?: return null
+        val minCardWidth = screenWidth * 0.4f
+        val minCardHeight = screenHeight * 0.3f
+        // Reject nodes that cover the full screen — those are root containers, not cards
+        val maxCardWidth = screenWidth * 0.95f
+        val maxCardHeight = screenHeight * 0.95f
+        var depth = 0
+
+        while (depth < 10) {
+            val rect = android.graphics.Rect()
+            current.getBoundsInScreen(rect)
+            val nodeWidth = rect.width().toFloat()
+            val nodeHeight = rect.height().toFloat()
+
+            if (nodeWidth >= minCardWidth && nodeHeight >= minCardHeight &&
+                nodeWidth <= maxCardWidth && nodeHeight <= maxCardHeight) {
+                Log.d(TAG, "findCardParent: found card at depth=$depth, bounds=$rect")
+                return current
+            }
+
+            if (nodeWidth > maxCardWidth && nodeHeight > maxCardHeight) {
+                Log.d(TAG, "findCardParent: hit full-screen container at depth=$depth, bounds=$rect — stopping")
+                break
+            }
+
+            val parent = current.parent ?: break
+            current = parent
+            depth++
+        }
+
+        Log.d(TAG, "findCardParent: no suitable card parent found")
+        return null
+    }
+
+    /**
      * Swipe up on a node's bounding rect to dismiss it from recents.
+     * After swiping, waits for the card to disappear from the accessibility tree
+     * rather than using a fixed delay.
      */
     private suspend fun swipeUpToDismiss(
         accessibilityService: WhizAccessibilityService,
@@ -886,6 +1016,11 @@ class ScreenAgentTools @Inject constructor(
         // Swipe from card center to near top of screen (must stay on-screen for gesture to work)
         val endY = 10f
 
+        // Capture identifying text before swiping so we can check for disappearance
+        val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val nodeText = node.text?.toString()?.lowercase() ?: ""
+        val searchLabel = nodeDesc.ifEmpty { nodeText }
+
         Log.d(TAG, "Swiping up to dismiss: centerX=$centerX, startY=$startY, endY=$endY")
         val result = accessibilityService.performScrollGesture(
             startX = centerX,
@@ -895,7 +1030,28 @@ class ScreenAgentTools @Inject constructor(
             duration = 300
         )
         Log.d(TAG, "Swipe gesture result: $result")
-        delay(600) // Wait for dismiss animation
+
+        if (result && searchLabel.isNotEmpty()) {
+            // Wait for the card to disappear from the accessibility tree
+            val disappeared = waitForCondition(maxWaitMs = 1000, initialDelayMs = 100) {
+                val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition true
+                try {
+                    // Check both content description and text-based search
+                    val descGone = findNodeByContentDescContaining(root, searchLabel) == null
+                    val textGone = root.findAccessibilityNodeInfosByText(searchLabel).isNullOrEmpty()
+                    descGone && textGone
+                } finally {
+                    root.recycle()
+                }
+            }
+            if (!disappeared) {
+                Log.w(TAG, "Dismiss card did not disappear within timeout, proceeding anyway")
+            }
+        } else {
+            // Fallback: fixed delay if we can't check for disappearance
+            delay(600)
+        }
+
         return result
     }
 
