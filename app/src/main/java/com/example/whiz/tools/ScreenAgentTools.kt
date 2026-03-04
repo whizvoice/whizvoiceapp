@@ -1251,6 +1251,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.whatsapp")
                 return WhatsAppResult(
                     success = false,
                     action = "send_message",
@@ -1265,13 +1266,14 @@ class ScreenAgentTools @Inject constructor(
             
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.whatsapp")
                 return WhatsAppResult(
                     success = false,
                     action = "send_message",
                     error = "Could not get root node"
                 )
             }
-            
+
             // Find the message input field (usually has hint text "Message" or "Type a message")
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
             findEditTextNodes(rootNode, inputNodes)
@@ -2255,6 +2257,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.messaging")
                 return SMSResult(
                     success = false,
                     action = "send_message",
@@ -2267,6 +2270,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.messaging")
                 return SMSResult(
                     success = false,
                     action = "send_message",
@@ -2859,6 +2863,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_app_not_ready", "YouTube Music did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("ytmusic_app_not_ready", "YouTube Music did not become ready in time", "com.google.android.apps.youtube.music")
+                }
                 return MusicActionResult(
                     success = false,
                     action = "play_song",
@@ -2974,6 +2985,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_app_not_ready", "YouTube Music did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("ytmusic_app_not_ready", "YouTube Music did not become ready in time", "com.google.android.apps.youtube.music")
+                }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -3001,6 +3019,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.youtube.music")
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -3198,6 +3217,13 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -4001,6 +4027,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4016,6 +4043,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4025,6 +4059,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4034,15 +4069,17 @@ class ScreenAgentTools @Inject constructor(
 
             // Find and click the Re-center button
             val recenterClicked = clickGoogleMapsRecenter(rootNode, accessibilityService)
-            rootNode.recycle()
 
             if (!recenterClicked) {
+                dumpUIHierarchy(rootNode, "gmaps_recenter_button_not_found", "Could not find Re-center button in Google Maps")
+                rootNode.recycle()
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
                     error = "Could not find Re-center button in Google Maps"
                 )
             }
+            rootNode.recycle()
 
             return MapsActionResult(
                 success = true,
@@ -4107,6 +4144,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4122,6 +4160,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4131,6 +4176,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4201,6 +4247,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4215,6 +4262,13 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4235,6 +4289,13 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
