@@ -79,6 +79,11 @@ class SpeechRecognitionService @Inject constructor(
     private var beginningOfSpeechTimestamp: Long = 0L
     private var hasLoggedFirstPartial = false
 
+    // --- Last speech activity timestamp (for TTS gating) ---
+    @Volatile
+    var lastSpeechActivityTimestamp: Long = 0L
+        private set
+
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -432,6 +437,7 @@ class SpeechRecognitionService @Inject constructor(
             override fun onBeginningOfSpeech() {
                 Log.d(TAG, "[DEBUG] onBeginningOfSpeech")
                 beginningOfSpeechTimestamp = System.currentTimeMillis()
+                lastSpeechActivityTimestamp = System.currentTimeMillis()
                 hasLoggedFirstPartial = false
                 // Reset late segment dedup so repeated utterances aren't suppressed
                 lastCallbackText = ""
@@ -769,6 +775,7 @@ class SpeechRecognitionService @Inject constructor(
                     }
                     _transcriptionState.value = partialText
                     lastPartialTimestamp = System.currentTimeMillis()
+                    lastSpeechActivityTimestamp = System.currentTimeMillis()
                     // Clear saved partial once we've successfully concatenated and got new speech
                     if (savedPartialForConcatenation.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] 🧹 Clearing savedPartialForConcatenation after successful concatenation")
@@ -823,6 +830,7 @@ class SpeechRecognitionService @Inject constructor(
                                 "(already $dupSource)")
                     } else {
                         _transcriptionState.value = segmentText
+                        lastSpeechActivityTimestamp = System.currentTimeMillis()
 
                         try {
                             BubbleOverlayService.updateUserTranscription(segmentText)

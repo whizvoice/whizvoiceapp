@@ -237,6 +237,8 @@ class ChatViewModel @Inject constructor(
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
     private var pendingTTSMessage: String? = null  // Queue TTS message if user is speaking
+    private var pendingTTSCheckJob: Job? = null  // Delayed job to play queued TTS after speech activity window expires
+    private val RECENT_SPEECH_THRESHOLD_MS = 2000L  // Don't start TTS if user spoke within this window
     
     // Track when app was last backgrounded to prevent TTS replay of old messages
     private var lastBackgroundedTime = 0L
@@ -337,6 +339,7 @@ class ChatViewModel @Inject constructor(
         voiceManager.onBargeIn = {
             Log.d(TAG, "Barge-in: clearing pendingTTSMessage")
             pendingTTSMessage = null
+            pendingTTSCheckJob?.cancel()
         }
 
         // Start observing messages immediately
@@ -1170,13 +1173,27 @@ class ChatViewModel @Inject constructor(
                                         "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
-                                    // Check if user has active partial transcription
+                                    // Check if user has active partial transcription OR was recently speaking
                                     val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+                                    val recentSpeechMs = System.currentTimeMillis() - voiceManager.lastSpeechActivityTimestamp
+                                    val userRecentlySpeaking = voiceManager.lastSpeechActivityTimestamp > 0L && recentSpeechMs < RECENT_SPEECH_THRESHOLD_MS
+                                    val shouldQueueTTS = hasPartialTranscription || userRecentlySpeaking
 
-                                    if (hasPartialTranscription) {
-                                        Log.d(TAG, "User is speaking - queueing TTS instead of starting immediately: '$messageContentForChat'")
+                                    Log.d(TAG, "TTS Queue Decision: hasPartial=$hasPartialTranscription, " +
+                                            "recentSpeechMs=$recentSpeechMs, userRecentlySpeaking=$userRecentlySpeaking, " +
+                                            "shouldQueue=$shouldQueueTTS")
+
+                                    if (shouldQueueTTS) {
+                                        Log.d(TAG, "User is speaking or was recently speaking - queueing TTS: '${messageContentForChat.take(50)}...'")
                                         // Always update to the latest message - replaces any existing queued message
                                         pendingTTSMessage = messageContentForChat
+                                        // Schedule delayed playback after the speech activity window expires
+                                        pendingTTSCheckJob?.cancel()
+                                        pendingTTSCheckJob = viewModelScope.launch {
+                                            val waitMs = (RECENT_SPEECH_THRESHOLD_MS - recentSpeechMs + 500L).coerceAtLeast(500L)
+                                            delay(waitMs)
+                                            startQueuedTTS()
+                                        }
                                         // Don't stop listening, let user finish
                                     } else {
                                         // No active speech - start TTS immediately

@@ -141,6 +141,8 @@ class VoiceManager @Inject constructor(
     val transcriptionState = speechRecognitionService.transcriptionState
     val isListening = speechRecognitionService.isListening
     val speechError = speechRecognitionService.errorState
+    val lastSpeechActivityTimestamp: Long
+        get() = speechRecognitionService.lastSpeechActivityTimestamp
 
     // TTS State
     private val _isTTSInitialized = MutableStateFlow(false)
