@@ -1075,6 +1075,7 @@ class ChatViewModel @Inject constructor(
                                                 chatId = targetChatId,
                                                 content = messageContentForChat
                                             )
+                                            updateRespondingStateForCurrentChat()
                                         }
                                     } catch (e: Exception) {
                                         _errorState.value = "Error saving response: ${e.message}"
@@ -1099,11 +1100,14 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
+                                            // Update responding state AFTER message is inserted so typing indicator
+                                            // doesn't disappear before the new message appears
+                                            updateRespondingStateForCurrentChat()
                                             _scrollTrigger.value += 1 // Scroll to show bot response
                                         }
                                     } catch (e: Exception) {
                                     }
-                                    
+
                                     // Only refresh conversations if a new one might have been created
                                     if (targetChatId <= 0) {
                                         try {
@@ -1116,11 +1120,10 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }
                             } else {
+                                updateRespondingStateForCurrentChat()
                             }
 
                             // TTS and UI updates (only for current chat)
-                            // 🔧 Update responding state FIRST, before trying to restart listening
-                            updateRespondingStateForCurrentChat()
                             
                             try {
                                 // Determine if this message is fresh enough to speak
