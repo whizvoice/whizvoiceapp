@@ -102,6 +102,10 @@ class SpeechRecognitionService @Inject constructor(
     // Callback fired when the user begins speaking (for TTS barge-in)
     var onBeginningOfSpeechCallback: (() -> Unit)? = null
 
+    // Callback fired on first non-empty partial result (for TTS barge-in)
+    // More reliable than onBeginningOfSpeech since it confirms actual speech, not just noise
+    var onFirstPartialResultCallback: (() -> Unit)? = null
+
     // --- Test Support ---
     // Allow tests to simulate partial transcriptions without real speech recognizer
     @Volatile
@@ -761,6 +765,7 @@ class SpeechRecognitionService @Inject constructor(
                         val elapsed = System.currentTimeMillis() - beginningOfSpeechTimestamp
                         Log.i(TAG, "First non-empty partial in ${elapsed}ms")
                         hasLoggedFirstPartial = true
+                        onFirstPartialResultCallback?.invoke()
                     }
                     _transcriptionState.value = partialText
                     lastPartialTimestamp = System.currentTimeMillis()
@@ -1224,6 +1229,36 @@ class SpeechRecognitionService @Inject constructor(
             isTestInjectedCallback = true
             try {
                 recognitionListener?.onBeginningOfSpeech()
+            } finally {
+                isTestInjectedCallback = false
+            }
+        }
+    }
+
+    /**
+     * Simulate barge-in by triggering onBeginningOfSpeech followed by a partial result.
+     * This mirrors what happens during real speech: energy detection fires first,
+     * then the recognizer produces a partial transcription confirming actual speech.
+     */
+    suspend fun testTriggerFirstPartialForBargeIn(text: String = "Actually") {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testTriggerFirstPartialForBargeIn called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Injecting onBeginningOfSpeech + partial result '$text' for barge-in")
+
+        withContext(Dispatchers.Main) {
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onBeginningOfSpeech()
+                val bundle = android.os.Bundle().apply {
+                    putStringArrayList(
+                        android.speech.SpeechRecognizer.RESULTS_RECOGNITION,
+                        arrayListOf(text)
+                    )
+                }
+                recognitionListener?.onPartialResults(bundle)
             } finally {
                 isTestInjectedCallback = false
             }

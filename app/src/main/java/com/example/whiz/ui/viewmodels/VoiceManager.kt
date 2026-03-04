@@ -225,10 +225,12 @@ class VoiceManager @Inject constructor(
         speechRecognitionService.continuousListeningCallback = { continuousListeningEnabled }
         speechRecognitionService.shouldRestartCallback = { shouldBeListening() }
 
-        // TTS barge-in: when user starts speaking during TTS, stop TTS immediately
-        speechRecognitionService.onBeginningOfSpeechCallback = {
+        // TTS barge-in: when confirmed speech is detected during TTS, stop TTS immediately
+        // Uses onFirstPartialResultCallback (actual transcribed speech) instead of
+        // onBeginningOfSpeechCallback (energy-based) to avoid false triggers from noise
+        speechRecognitionService.onFirstPartialResultCallback = {
             if (isSpeaking.value) {
-                Log.d(TAG, "Barge-in: user started speaking during TTS — stopping TTS")
+                Log.d(TAG, "Barge-in: confirmed speech detected during TTS — stopping TTS")
                 handleBargeIn()
             }
         }

@@ -487,9 +487,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 throw AssertionError("TTS should have started playing for the assistant's response")
             }
 
-            // Step 5: Trigger barge-in — simulate user starting to speak during TTS
-            Log.d(TAG, "🎤 Step 5: Triggering barge-in (simulating user starting to speak)...")
-            speechRecognitionService.testTriggerBeginningOfSpeech()
+            // Step 5: Trigger barge-in — simulate user speaking during TTS (confirmed speech via partial result)
+            Log.d(TAG, "🎤 Step 5: Triggering barge-in (simulating confirmed speech with partial result)...")
+            speechRecognitionService.testTriggerFirstPartialForBargeIn("Actually")
 
             // Step 6: Assert TTS stops within ~1s
             Log.d(TAG, "🔊 Step 6: Verifying TTS stops after barge-in...")
