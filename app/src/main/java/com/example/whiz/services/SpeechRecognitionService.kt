@@ -72,6 +72,13 @@ class SpeechRecognitionService @Inject constructor(
     private var useSegmentedSession = false  // True when API 33+ segmented session is active
     private var audioPipeRecorder: AudioPipeRecorder? = null  // API 33+: pipes our mic audio to recognizer
 
+    // --- Late segment result deduplication ---
+    private var lastCallbackText: String = ""
+
+    // --- First partial timing ---
+    private var beginningOfSpeechTimestamp: Long = 0L
+    private var hasLoggedFirstPartial = false
+
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -171,6 +178,7 @@ class SpeechRecognitionService @Inject constructor(
                         RecognizerIntent.EXTRA_SEGMENTED_SESSION,
                         RecognizerIntent.EXTRA_AUDIO_SOURCE
                     )
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     useSegmentedSession = true
                     Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
                 } catch (e: Exception) {
@@ -419,6 +427,11 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onBeginningOfSpeech() {
                 Log.d(TAG, "[DEBUG] onBeginningOfSpeech")
+                beginningOfSpeechTimestamp = System.currentTimeMillis()
+                hasLoggedFirstPartial = false
+                // Reset late segment dedup so repeated utterances aren't suppressed
+                lastCallbackText = ""
+                BubbleOverlayService.clearLastAutoSent()
                 onBeginningOfSpeechCallback?.invoke()
             }
 
@@ -744,6 +757,11 @@ class SpeechRecognitionService @Inject constructor(
                 // Ignore empty partial results to prevent clearing user's spoken text
                 // Empty partials can occur due to TTS interference, pauses, or recognition resets
                 if (partialText.isNotBlank()) {
+                    if (!hasLoggedFirstPartial && beginningOfSpeechTimestamp > 0) {
+                        val elapsed = System.currentTimeMillis() - beginningOfSpeechTimestamp
+                        Log.i(TAG, "First non-empty partial in ${elapsed}ms")
+                        hasLoggedFirstPartial = true
+                    }
                     _transcriptionState.value = partialText
                     lastPartialTimestamp = System.currentTimeMillis()
                     // Clear saved partial once we've successfully concatenated and got new speech
@@ -781,20 +799,41 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
 
                 if (segmentText.isNotBlank()) {
-                    _transcriptionState.value = segmentText
+                    // Guard against late segment results that duplicate already-sent text.
+                    // Dedup state is reset in onBeginningOfSpeech, so this only catches
+                    // duplicates within the same speech segment (not repeated utterances).
+                    val autoSentText = BubbleOverlayService.lastAutoSentText
+                    val isDupOfCallback = lastCallbackText.isNotBlank()
+                        && (segmentText.trim() == lastCallbackText.trim()
+                            || segmentText.trim().startsWith(lastCallbackText.trim())
+                            || lastCallbackText.trim().startsWith(segmentText.trim()))
+                    val isDupOfAutoSent = autoSentText.isNotBlank()
+                        && (segmentText.trim() == autoSentText.trim()
+                            || segmentText.trim().startsWith(autoSentText.trim())
+                            || autoSentText.trim().startsWith(segmentText.trim()))
+                    if (isDupOfCallback || isDupOfAutoSent) {
+                        val dupSource = if (isDupOfAutoSent) "auto-sent '$autoSentText'"
+                            else "callback '$lastCallbackText'"
+                        Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$segmentText' " +
+                                "(already $dupSource)")
+                    } else {
+                        _transcriptionState.value = segmentText
 
-                    try {
-                        BubbleOverlayService.updateUserTranscription(segmentText)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                        try {
+                            BubbleOverlayService.updateUserTranscription(segmentText)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                        }
+
+                        recognitionCallback?.invoke(segmentText)
+                        lastCallbackText = segmentText
                     }
-
-                    recognitionCallback?.invoke(segmentText)
                 }
 
                 // Reset partial tracking for next segment (mic stays open)
                 _transcriptionState.value = ""
                 peakPartialLength = 0
+                hasLoggedFirstPartial = false
                 savedPartialForConcatenation = ""
                 savedPartialIsAfterFinalResult = false
                 savedPartialTimeoutJob?.cancel()

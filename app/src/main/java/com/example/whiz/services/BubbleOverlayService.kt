@@ -96,6 +96,19 @@ class BubbleOverlayService : Service() {
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
         private const val BUBBLE_STUCK_PARTIAL_TIMEOUT_MS = 5000L
 
+        // Track last auto-sent stuck partial for dedup in SpeechRecognitionService
+        @Volatile
+        var lastAutoSentText: String = ""
+            private set
+        @Volatile
+        var lastAutoSentTimestamp: Long = 0L
+            private set
+
+        fun clearLastAutoSent() {
+            lastAutoSentText = ""
+            lastAutoSentTimestamp = 0L
+        }
+
         // Track if the bubble overlay is active
         @Volatile
         var isActive: Boolean = false
@@ -849,6 +862,8 @@ class BubbleOverlayService : Service() {
                     val textToSend = lastPartialText
                     lastPartialText = ""
                     isShowingPartial = false
+                    lastAutoSentText = textToSend
+                    lastAutoSentTimestamp = System.currentTimeMillis()
                     _userTranscriptionFlow.emit(textToSend)
                 }
             }
