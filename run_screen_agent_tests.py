@@ -141,7 +141,7 @@ def start_logcat():
     # Start logcat and capture output (filtered to WhizVoice app to avoid buffer overflow)
     logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
     _logcat_process = subprocess.Popen(
-        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
+        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*', 'SpeechRecognition:*', 'AudioPipeRecorder:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )

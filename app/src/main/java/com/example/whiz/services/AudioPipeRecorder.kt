@@ -65,7 +65,7 @@ class AudioPipeRecorder {
         val bufferSize = maxOf(minBufferSize * 2, 4096)
 
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
             SAMPLE_RATE,
             CHANNEL_CONFIG,
             AUDIO_FORMAT,
