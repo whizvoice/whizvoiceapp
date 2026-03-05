@@ -681,8 +681,8 @@ def test_whatsapp_draft_message(tester):
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
             "At the bottom of the screen, there is NO yellow overlay. "
-            "The most recent rescue mission is something with text similar to: "
-            "just trying to test WhizVoice. Though the message may not be exactly the same. "
+            "The most recent message is something with text similar to: "
+            "just trying to test WhizVoice. The exact wording does not matter. "
             "There is also a yellow notification bubble with the outline of a robot head "
             "and a microphone icon inside."
         )
