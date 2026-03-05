@@ -567,7 +567,12 @@ class MainActivity : ComponentActivity() {
                 // Add the assistant flags that would normally come from AssistantActivity
                 i.putExtra("FROM_ASSISTANT", true)
                 i.putExtra("ENABLE_VOICE_MODE", true)
-                i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+                // Only set CREATE_NEW_CHAT_ON_START for non-onCreate sources.
+                // During onCreate, FROM_ASSISTANT handles navigation via NavHost startDestination.
+                // Setting both causes a redundant loadChatWithVoiceMode call.
+                if (source != "onCreate") {
+                    i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+                }
                 // Update the activity's intent so the flags are accessible
                 setIntent(i)
                 // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
@@ -704,6 +709,23 @@ class MainActivity : ComponentActivity() {
                 }
                 initialTranscription?.let {
                     Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                }
+            }
+        } else if (enableVoiceMode && ::navController.isInitialized) {
+            // Voice launch via FROM_ASSISTANT (onCreate path) — NavHost already navigated
+            // to chat/-1 via startDestination. Just pass voice mode flag to ChatScreen.
+            Log.d(TAG, "🎤 Voice mode without CREATE_NEW_CHAT_ON_START - setting ENABLE_VOICE_MODE in savedStateHandle")
+
+            // Clear extras to prevent reprocessing from onResume / LaunchedEffect
+            getIntent().removeExtra("ENABLE_VOICE_MODE")
+            getIntent().removeExtra("FROM_ASSISTANT")
+            getIntent().removeExtra("tracing_intent_id")
+
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute?.startsWith("chat/") == true) {
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                initialTranscription?.let {
                     navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
                 }
             }
