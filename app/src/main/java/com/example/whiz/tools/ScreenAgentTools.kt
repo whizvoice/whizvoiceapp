@@ -5927,11 +5927,14 @@ class ScreenAgentTools @Inject constructor(
     /**
      * Check if a node looks like a filter chip row rather than a search result.
      * Filter chip rows have text like "Open now", "Top rated", "Filters" but no "Directions" button.
-     * Real search results have a "Directions" button inside them.
+     * In older Google Maps versions, real search results have a "Directions" button inside them.
+     * In newer Google Maps versions (Compose-based UI), the "Directions" button may not appear in
+     * the accessibility tree, so we rely on filter indicator text to detect filter chip rows.
      * IMPORTANT: This function does NOT recycle any nodes - caller is responsible for recycling.
      */
     private fun isFilterChipRow(node: AccessibilityNodeInfo): Boolean {
-        // A real search result should have a "Directions" button inside
+        // In older Google Maps versions, a real search result has a "Directions" button inside.
+        // Fast-path: if Directions button is found, definitely a real search result.
         val directionsNodes = mutableListOf<AccessibilityNodeInfo>()
         findNodesByContentDescription(node, "Directions", directionsNodes)
 
@@ -5962,11 +5965,11 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
-        // No Directions button means this is NOT a valid search result
-        // It could be an info card (e.g., "Christmas Eve hours"), an alert, or other non-result UI element
-        // Only nodes with a Directions button are valid search results
-        Log.d(TAG, "Node has no Directions button - skipping (not a valid search result)")
-        return true
+        // No filter indicators found. In newer Google Maps versions (Compose UI), search results
+        // no longer include a "Directions" button in the accessibility tree, so absence of
+        // "Directions" does NOT mean this is not a valid result. Treat as a valid search result.
+        Log.d(TAG, "Node has no Directions button but no filter indicators - treating as valid search result (new UI)")
+        return false
     }
 
     /**
