@@ -1619,6 +1619,7 @@ class ScreenAgentTools @Inject constructor(
                 findWhatsAppMessageInput(updatedRootNode, updatedInputNodes, 0)
 
                 if (updatedInputNodes.isEmpty()) {
+                    dumpUIHierarchy(updatedRootNode, "whatsapp_input_not_found_after_keyboard", "Could not find input field after keyboard opened")
                     inputNode.recycle()
                     rootNode.recycle()
                     updatedRootNode.recycle()
@@ -2422,6 +2423,7 @@ class ScreenAgentTools @Inject constructor(
             if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
                 Log.e(TAG, "Still in search screen - not in a conversation!")
                 searchBoxNodes.forEach { it.recycle() }
+                dumpUIHierarchy(rootNode, "sms_stuck_in_search_screen", "Cannot draft message: still in search screen. Please select a contact first to open a conversation.")
                 rootNode.recycle()
                 return DraftResult(
                     success = false,
@@ -2638,6 +2640,7 @@ class ScreenAgentTools @Inject constructor(
 
                     if (wideBottomViews.isEmpty()) {
                         allClickable.forEach { it.recycle() }
+                        dumpUIHierarchy(updatedRootNode, "sms_input_not_found_compose", "Could not find input field after keyboard opened (Compose UI)")
                         inputNode.recycle()
                         rootNode.recycle()
                         updatedRootNode.recycle()
@@ -3721,6 +3724,11 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -3994,6 +4002,11 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",
@@ -4093,6 +4106,7 @@ class ScreenAgentTools @Inject constructor(
                     var newState = detectGoogleMapsScreenState(rootNode)
                     Log.d(TAG, "After exiting navigation, screen state is: $newState")
                     if (newState == GoogleMapsScreenState.ACTIVE_NAVIGATION) {
+                        dumpUIHierarchy(rootNode, "gmaps_navigation_exit_failed", "Could not exit active navigation mode")
                         rootNode.recycle()
                         return MapsActionResult(
                             success = false,
@@ -4136,6 +4150,11 @@ class ScreenAgentTools @Inject constructor(
                             delay(1000)
                             val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                             if (!retryResult.success) {
+                                val dumpRoot = accessibilityService.getCurrentRootNode()
+                                if (dumpRoot != null) {
+                                    dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_result", "Could not find non-sponsored result in search list: ${retryResult.error}")
+                                    dumpRoot.recycle()
+                                }
                                 return MapsActionResult(
                                     success = false,
                                     action = "get_directions",
@@ -4144,6 +4163,11 @@ class ScreenAgentTools @Inject constructor(
                                 )
                             }
                         } else {
+                            val dumpRoot = accessibilityService.getCurrentRootNode()
+                            if (dumpRoot != null) {
+                                dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_result", "Could not find non-sponsored result in search list: ${selectResult.error}")
+                                dumpRoot.recycle()
+                            }
                             return MapsActionResult(
                                 success = false,
                                 action = "get_directions",
@@ -4269,6 +4293,11 @@ class ScreenAgentTools @Inject constructor(
                         delay(1000)
                         val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                         if (!retryResult.success) {
+                            val dumpRoot = accessibilityService.getCurrentRootNode()
+                            if (dumpRoot != null) {
+                                dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_after_handling", "Could not find non-sponsored result after handling: ${retryResult.error}")
+                                dumpRoot.recycle()
+                            }
                             return MapsActionResult(
                                 success = false,
                                 action = "get_directions",
@@ -4277,6 +4306,11 @@ class ScreenAgentTools @Inject constructor(
                             )
                         }
                     } else {
+                        val dumpRoot = accessibilityService.getCurrentRootNode()
+                        if (dumpRoot != null) {
+                            dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_after_handling", "Could not find non-sponsored result after handling: ${selectResult.error}")
+                            dumpRoot.recycle()
+                        }
                         return MapsActionResult(
                             success = false,
                             action = "get_directions",
@@ -4666,15 +4700,17 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (!locationClicked) {
-                dumpUIHierarchy(rootNode, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
-                rootNode.recycle()
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
                     error = "Could not find or click location: $selectionDesc" + if (skipSponsored) " (non-sponsored)" else ""
                 )
             }
-            rootNode.recycle()
 
             // Wait for location to load
             delay(1000)
@@ -9342,6 +9378,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!foodTileFound) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_food_tile_not_found", "Could not find Food tile on Fitbit Today screen")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Could not find Food tile on Fitbit Today screen"
@@ -9359,6 +9400,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!foodPageReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_food_detail_not_loaded", "Food detail page did not load after tapping Food tile")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Food detail page did not load after tapping Food tile"
@@ -9393,6 +9439,7 @@ class ScreenAgentTools @Inject constructor(
         // Find and tap "More options" by content description
         val moreOptionsNodes = findNodesByContentDescription(rootNode, "More options")
         if (moreOptionsNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_more_options_not_found", "Could not find 'More options' button on Food detail page")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -9413,6 +9460,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!clicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_more_options_tap_failed", "Failed to tap 'More options' button")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'More options' button"
@@ -9432,6 +9484,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!dropdownReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_dropdown_not_appeared", "More options dropdown did not appear")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "More options dropdown did not appear"
@@ -9455,6 +9512,7 @@ class ScreenAgentTools @Inject constructor(
 
         val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
         if (addQuickCalNodes == null || addQuickCalNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_add_quick_cal_not_found", "Could not find 'Add Quick Calories' in dropdown menu")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -9475,6 +9533,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!clicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_tap_failed", "Failed to tap 'Add Quick Calories'")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'Add Quick Calories'"
@@ -9492,6 +9555,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!screenReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_screen_not_loaded", "Add Quick Calories screen did not appear")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Add Quick Calories screen did not appear"
@@ -9518,6 +9586,7 @@ class ScreenAgentTools @Inject constructor(
             "com.fitbit.FitbitMobile:id/edit_calories"
         )
         if (editCaloriesNodes == null || editCaloriesNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_calories_input_not_found", "Could not find calories input field")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -9540,6 +9609,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!textSet) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_calories_entry_failed", "Failed to enter calorie amount")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to enter calorie amount"
@@ -9564,6 +9638,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (logButton == null) {
+            dumpUIHierarchy(logRootNode, "fitbit_log_button_not_found", "Could not find 'LOG THIS' button")
             logRootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -9583,6 +9658,11 @@ class ScreenAgentTools @Inject constructor(
         logRootNode.recycle()
 
         if (!logClicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_log_button_tap_failed", "Failed to tap 'LOG THIS' button")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'LOG THIS' button"
