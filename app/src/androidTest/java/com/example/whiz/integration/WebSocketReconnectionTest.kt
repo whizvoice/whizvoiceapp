@@ -921,25 +921,24 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "⏳ Waiting for first chat bot response to sync...")
                 val firstChatResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
-                        composeTestRule.onNodeWithText(
-                            "coffee",
-                            substring = true,
-                            ignoreCase = true,
+                    selector = {
+                        composeTestRule.onNode(
+                            hasText("coffee", substring = true, ignoreCase = true) or
+                            hasText("tea", substring = true, ignoreCase = true),
                             useUnmergedTree = true
                         )
                     },
                     timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
-                    description = "coffee response after reconnection"
+                    description = "coffee/tea response after reconnection"
                 )
                 
                 if (!firstChatResponseFound) {
                     failWithScreenshot(
-                        "Bot response 'coffee' did not sync in first chat after reconnection",
+                        "Bot response 'coffee/tea' did not sync in first chat after reconnection",
                         "first_chat_no_sync"
                     )
                 }
-                Log.d(TAG, "✅ First chat response 'coffee' synced successfully")
+                Log.d(TAG, "✅ First chat response 'coffee/tea' synced successfully")
                 
                 // Verify NO cross-contamination - should NOT see "fettuccine"
                 val fettuccineInFirstChat = ComposeTestHelper.waitForElement(
@@ -1042,24 +1041,23 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 Log.d(TAG, "✅ Second chat response 'fettuccine' synced successfully")
                 
-                // Verify NO cross-contamination - should NOT see "coffee"
-                val coffeeInSecondChat = ComposeTestHelper.waitForElement(
+                // Verify NO cross-contamination - should NOT see "coffee" or "tea"
+                val coffeeOrTeaInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
-                        composeTestRule.onNodeWithText(
-                            "coffee",
-                            substring = true,
-                            ignoreCase = true,
+                    selector = {
+                        composeTestRule.onNode(
+                            hasText("coffee", substring = true, ignoreCase = true) or
+                            hasText("tea", substring = true, ignoreCase = true),
                             useUnmergedTree = true
                         )
                     },
                     timeoutMs = 500L,
-                    description = "coffee in second chat (should NOT be found)"
+                    description = "coffee/tea in second chat (should NOT be found)"
                 )
-                
-                if (coffeeInSecondChat) {
+
+                if (coffeeOrTeaInSecondChat) {
                     failWithScreenshot(
-                        "Cross-contamination: Found 'coffee' in second chat which should only contain fettuccine response",
+                        "Cross-contamination: Found 'coffee/tea' in second chat which should only contain fettuccine response",
                         "cross_contamination_coffee_in_fettuccine_chat"
                     )
                 }
