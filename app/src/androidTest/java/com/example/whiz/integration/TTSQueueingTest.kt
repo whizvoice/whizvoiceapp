@@ -148,6 +148,13 @@ class TTSQueueingTest : BaseIntegrationTest() {
             // Wait for app to be ready
             Thread.sleep(1000)
 
+            // Enable test mode BEFORE navigation so that when ChatScreen auto-enables
+            // continuous listening on new chat detection, startListening() takes the
+            // test-mode early-return path instead of touching the real SpeechRecognizer
+            // (which can hit ERROR_RECOGNIZER_BUSY from previous test teardown)
+            Log.d(TAG, "🧪 Enabling test mode before navigation...")
+            speechRecognitionService.enableTestMode()
+
             // Navigate to new chat
             Log.d(TAG, "📱 Navigating to new chat...")
             if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
@@ -228,9 +235,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
             val isContinuousEnabled = voiceManager.isContinuousListeningEnabled.value
             Log.d(TAG, "📊 Listening state: isListening=$isListening, continuous=$isContinuousEnabled")
 
-            // Step 4: Enable test mode and start simulating partial transcriptions
+            // Step 4: Start simulating partial transcriptions
+            // (test mode was already enabled before navigation in Step 1)
             Log.d(TAG, "🎤 Step 4: Starting partial transcription simulation...")
-            speechRecognitionService.enableTestMode()
 
             // Use words from the third message for partial transcription
             val thirdMessage = messages[2]

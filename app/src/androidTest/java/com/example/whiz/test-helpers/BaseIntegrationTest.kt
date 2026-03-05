@@ -183,7 +183,10 @@ abstract class BaseIntegrationTest {
             ttsManager.stop()
 
             // Stop speech recognition (not release — preserves the scope)
-            speechRecognitionService.stopListening()
+            // SpeechRecognizer requires main thread access, so run on main thread
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                speechRecognitionService.stopListening()
+            }
 
             // Disconnect WebSocket (can reconnect in next test)
             whizServerRepository.disconnect()

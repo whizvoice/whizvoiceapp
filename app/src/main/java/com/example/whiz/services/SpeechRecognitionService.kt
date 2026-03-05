@@ -1146,6 +1146,16 @@ class SpeechRecognitionService @Inject constructor(
         }
         audioPipeRecorder?.cleanup()
         audioPipeRecorder = null
+
+        // Restore _isListening if continuous listening is active.
+        // An ERROR_RECOGNIZER_BUSY (or similar) from the real recognizer may have already
+        // set _isListening=false before test mode was enabled. Since test mode bypasses
+        // the real recognizer, we need to ensure listening state reflects the intent.
+        val continuousActive = continuousListeningCallback?.invoke() ?: false
+        if (continuousActive && !_isListening.value) {
+            Log.d(TAG, "[TEST] Restoring _isListening=true (continuous listening is active but isListening was false)")
+            _isListening.value = true
+        }
     }
 
     /**
