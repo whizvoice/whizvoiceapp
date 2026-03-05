@@ -61,7 +61,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager

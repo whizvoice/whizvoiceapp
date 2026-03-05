@@ -51,13 +51,13 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var voiceManager: VoiceManager
+    override lateinit var voiceManager: VoiceManager
 
     @Inject
     lateinit var permissionManager: PermissionManager
 
     @Inject
-    lateinit var speechRecognitionService: SpeechRecognitionService
+    override lateinit var speechRecognitionService: SpeechRecognitionService
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val createdChatIds = mutableListOf<Long>()

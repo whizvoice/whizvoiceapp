@@ -48,7 +48,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
     @Inject
-    lateinit var whizServerRepository: WhizServerRepository
+    override lateinit var whizServerRepository: WhizServerRepository
 
     companion object {
         private const val TAG = "ChatsListLoadErrorTest"

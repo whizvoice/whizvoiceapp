@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.pow
+import com.example.whiz.data.remote.WhizServerRepository
+import com.example.whiz.tools.ToolExecutor
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -55,6 +57,12 @@ class BubbleOverlayService : Service() {
 
     @Inject
     lateinit var voiceManager: VoiceManager
+
+    @Inject
+    lateinit var whizServerRepository: WhizServerRepository
+
+    @Inject
+    lateinit var toolExecutor: ToolExecutor
 
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
@@ -74,6 +82,7 @@ class BubbleOverlayService : Service() {
     private var lastMessageWasSystemMessage: Boolean = false
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var isDismissTargetVisible = false
+    private var dismissedByUser = false
 
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
     
@@ -86,6 +95,19 @@ class BubbleOverlayService : Service() {
         private const val DISMISS_TARGET_PROXIMITY = 400 // Distance in pixels to trigger dismiss target growth
         private const val DISMISS_TARGET_THRESHOLD = 400 // Distance in pixels to consider "over" the target - same as proximity
         private const val BUBBLE_STUCK_PARTIAL_TIMEOUT_MS = 5000L
+
+        // Track last auto-sent stuck partial for dedup in SpeechRecognitionService
+        @Volatile
+        var lastAutoSentText: String = ""
+            private set
+        @Volatile
+        var lastAutoSentTimestamp: Long = 0L
+            private set
+
+        fun clearLastAutoSent() {
+            lastAutoSentText = ""
+            lastAutoSentTimestamp = 0L
+        }
 
         // Track if the bubble overlay is active
         @Volatile
@@ -400,6 +422,7 @@ class BubbleOverlayService : Service() {
                     // Check if bubble is over dismiss target
                     if (isDragging && isOverDismissTarget(params)) {
                         hideDismissTarget()
+                        dismissedByUser = true
                         stopSelf()
                         return@setOnTouchListener true
                     }
@@ -839,6 +862,8 @@ class BubbleOverlayService : Service() {
                     val textToSend = lastPartialText
                     lastPartialText = ""
                     isShowingPartial = false
+                    lastAutoSentText = textToSend
+                    lastAutoSentTimestamp = System.currentTimeMillis()
                     _userTranscriptionFlow.emit(textToSend)
                 }
             }
@@ -874,6 +899,14 @@ class BubbleOverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
+
+        // Cancel active server requests and in-flight tools only when user drag-dismissed the bubble
+        if (dismissedByUser) {
+            Log.d(TAG, "Bubble dismissed by user - cancelling active requests and tools")
+            whizServerRepository.cancelAllActiveRequests()
+            toolExecutor.cancelAllInFlight()
+        }
+
         isActive = false
         serviceInstance = null
 

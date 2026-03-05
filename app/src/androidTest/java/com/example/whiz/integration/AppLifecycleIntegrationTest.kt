@@ -45,10 +45,10 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
 
     @Inject
-    lateinit var voiceManager: VoiceManager  // ← Clean, testable voice coordinator
-    
+    override lateinit var voiceManager: VoiceManager  // ← Clean, testable voice coordinator
+
     @Inject
-    lateinit var speechRecognitionService: SpeechRecognitionService  // ← Direct access to speech service
+    override lateinit var speechRecognitionService: SpeechRecognitionService  // ← Direct access to speech service
     
     @Inject
     lateinit var permissionManager: PermissionManager  // ← Permission coordinator

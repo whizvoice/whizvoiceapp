@@ -21,6 +21,7 @@ class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(co
         val intent = Intent(context, AssistantActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("IS_ASSISTANT_LAUNCH", true)
+            putExtra("FROM_VOICE_SERVICE", true)
         }
         Log.d(TAG, "Starting AssistantActivity from session's onCreate")
         startAssistantActivity(intent)
@@ -55,6 +56,7 @@ class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(co
         val intent = Intent(context, AssistantActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("IS_ASSISTANT_LAUNCH", true)
+            putExtra("FROM_VOICE_SERVICE", true)
             data?.let { bundle -> putExtra("assist_bundle", bundle) }
         }
         Log.d(TAG, "onHandleAssist: Starting AssistantActivity")

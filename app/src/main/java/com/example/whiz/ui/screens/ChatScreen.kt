@@ -592,24 +592,56 @@ fun ChatScreen(
 
     val scrollTrigger by viewModel.scrollTrigger.collectAsState()
 
-    // 🔧 AUTO-SCROLL: ViewModel-driven trigger. Uses snapshotFlow to wait for LazyColumn
-    // layout to reflect new items before scrolling, with a safety timeout.
+    // 🔧 AUTO-SCROLL: stickToBottom approach.
+    // Tracks user scroll intent independently of layout changes.
+    // isProgrammaticScroll guards against our own scrollToItem calls flipping stickToBottom off.
+    var stickToBottom by remember { mutableStateOf(true) }
+    var isProgrammaticScroll by remember { mutableStateOf(false) }
+
+    // Reset stickToBottom when switching chats
+    LaunchedEffect(viewModelChatId) {
+        stickToBottom = true
+    }
+
+    // Monitor user scroll to update stickToBottom.
+    // Check when scroll ends (not during) to avoid jitter. Only care about user gestures.
+    LaunchedEffect(listState) {
+        var wasScrolling = false
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (wasScrolling && !scrolling && !isProgrammaticScroll) {
+                    // Scroll just ended — check if user is at the bottom
+                    val layoutInfo = listState.layoutInfo
+                    val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
+                    val totalItems = layoutInfo.totalItemsCount
+                    if (lastVisibleItem != null && totalItems > 0) {
+                        // At bottom = the very last item in the list is visible on screen
+                        val atBottom = lastVisibleItem.index >= totalItems - 1
+                        val prev = stickToBottom
+                        stickToBottom = atBottom
+                        if (prev != atBottom) {
+                            android.util.Log.d("ChatScreen", "📜 STICK-TO-BOTTOM changed: $prev -> $atBottom (lastVisible=${lastVisibleItem.index}, totalItems=$totalItems)")
+                        }
+                    }
+                }
+                wasScrolling = scrolling
+            }
+    }
+
+    // Scroll to bottom when new content arrives and stickToBottom is true
     LaunchedEffect(scrollTrigger, messages.size) {
-        if (scrollTrigger > 0 && messages.isNotEmpty()) {
-            // Wait for LazyColumn to lay out all items (or timeout after 500ms)
+        if (scrollTrigger > 0 && messages.isNotEmpty() && stickToBottom) {
+            // Wait for LazyColumn to lay out all items including spacer (or timeout after 500ms)
             withTimeoutOrNull(500L) {
                 snapshotFlow { listState.layoutInfo.totalItemsCount }
-                    .first { it >= messages.size }
+                    .first { it >= messages.size + 1 }
             }
-            val lastIndex = messages.size - 1
-            val layoutInfo = listState.layoutInfo
-            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
-            val isNearBottom = lastVisibleItem == null ||
-                layoutInfo.totalItemsCount <= 0 ||
-                lastVisibleItem.index >= layoutInfo.totalItemsCount - 3
-            if (isNearBottom) {
-                listState.scrollToItem(lastIndex)
-                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to index $lastIndex (trigger=$scrollTrigger)")
+            val lastIndex = listState.layoutInfo.totalItemsCount - 1
+            if (lastIndex >= 0) {
+                isProgrammaticScroll = true
+                listState.animateScrollToItem(lastIndex)
+                isProgrammaticScroll = false
+                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to index $lastIndex (trigger=$scrollTrigger, stickToBottom=$stickToBottom)")
             }
         }
     }

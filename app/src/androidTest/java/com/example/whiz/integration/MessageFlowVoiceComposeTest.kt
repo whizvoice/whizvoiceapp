@@ -78,17 +78,17 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     @Inject
     lateinit var authApi: AuthApi
 
-    @Inject 
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
-    
+    @Inject
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
+
     @Inject
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
     @Inject
-    lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
+    override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()

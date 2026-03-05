@@ -34,10 +34,12 @@ class AssistantActivity : AppCompatActivity() {
     lateinit var appLifecycleService: AppLifecycleService
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Handle wake word lock screen flags before super.onCreate()
+        // Handle lock screen flags before super.onCreate()
         // Note: voiceManager is not yet injected here (Hilt injects during super.onCreate)
         val fromWakeWord = intent.getBooleanExtra("FROM_WAKE_WORD", false)
-        if (fromWakeWord) {
+        val fromVoiceService = intent.getBooleanExtra("FROM_VOICE_SERVICE", false)
+        val isLockScreenLaunch = fromWakeWord || fromVoiceService
+        if (isLockScreenLaunch) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         }
@@ -45,9 +47,9 @@ class AssistantActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Now Hilt has injected voiceManager, safe to use it
-        if (fromWakeWord) {
+        if (isLockScreenLaunch) {
             voiceManager.isWakeWordActiveSession = true
-            Log.d(TAG, "Wake word launch - set showWhenLocked, turnScreenOn, isWakeWordActiveSession=true")
+            Log.d(TAG, "Lock screen launch (wakeWord=$fromWakeWord, voiceService=$fromVoiceService) - set showWhenLocked, turnScreenOn, isWakeWordActiveSession=true")
         }
         Log.d(TAG, "onCreate - Intent: $intent")
 
@@ -93,7 +95,7 @@ class AssistantActivity : AppCompatActivity() {
                                     putExtra("FROM_ASSISTANT", true)
                                     putExtra("ENABLE_VOICE_MODE", true)
                                     putExtra("CREATE_NEW_CHAT_ON_START", true)
-                                    if (fromWakeWord) putExtra("FROM_WAKE_WORD", true)
+                                    if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
                                     transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                 }
                                 Log.d(TAG, "Starting MainActivity with SINGLE_TOP and CREATE_NEW_CHAT_ON_START")
@@ -110,7 +112,7 @@ class AssistantActivity : AppCompatActivity() {
                                         putExtra("FROM_ASSISTANT", true)
                                         putExtra("FORCE_NAVIGATION", true)
                                         putExtra("ENABLE_VOICE_MODE", true)
-                                        if (fromWakeWord) putExtra("FROM_WAKE_WORD", true)
+                                        if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
                                         transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                     }
                                     Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
@@ -122,7 +124,7 @@ class AssistantActivity : AppCompatActivity() {
                                         putExtra("FROM_ASSISTANT", true)
                                         putExtra("ENABLE_VOICE_MODE", true)
                                         putExtra("CREATE_NEW_CHAT_ON_START", true)
-                                        if (fromWakeWord) putExtra("FROM_WAKE_WORD", true)
+                                        if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
                                         transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                     }
                                     Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
@@ -137,7 +139,7 @@ class AssistantActivity : AppCompatActivity() {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                                 putExtra("FROM_ASSISTANT", true)
                                 putExtra("ENABLE_VOICE_MODE", true)
-                                if (fromWakeWord) putExtra("FROM_WAKE_WORD", true)
+                                if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
                                 // Add transcription if available - can be used after login
                                 transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                 // Don't set CREATE_NEW_CHAT_ON_START or NAVIGATE_TO_CHAT_ID
@@ -159,7 +161,7 @@ class AssistantActivity : AppCompatActivity() {
                             if (enableVoiceMode) {
                                 putExtra("ENABLE_VOICE_MODE", true)
                             }
-                            if (fromWakeWord) putExtra("FROM_WAKE_WORD", true)
+                            if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
                         }
                         Log.d(TAG, "Starting MainActivity for non-assistant launch")
                         startMainActivityAndFinish(intent)

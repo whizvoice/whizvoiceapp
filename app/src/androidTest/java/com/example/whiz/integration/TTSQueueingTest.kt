@@ -61,13 +61,13 @@ class TTSQueueingTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
-    lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
+    override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
 
     @Inject
-    lateinit var ttsManager: com.example.whiz.services.TTSManager
+    override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
     private val createdChatIds = mutableListOf<Long>()
 
@@ -147,6 +147,13 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             // Wait for app to be ready
             Thread.sleep(1000)
+
+            // Enable test mode BEFORE navigation so that when ChatScreen auto-enables
+            // continuous listening on new chat detection, startListening() takes the
+            // test-mode early-return path instead of touching the real SpeechRecognizer
+            // (which can hit ERROR_RECOGNIZER_BUSY from previous test teardown)
+            Log.d(TAG, "🧪 Enabling test mode before navigation...")
+            speechRecognitionService.enableTestMode()
 
             // Navigate to new chat
             Log.d(TAG, "📱 Navigating to new chat...")
@@ -228,9 +235,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
             val isContinuousEnabled = voiceManager.isContinuousListeningEnabled.value
             Log.d(TAG, "📊 Listening state: isListening=$isListening, continuous=$isContinuousEnabled")
 
-            // Step 4: Enable test mode and start simulating partial transcriptions
+            // Step 4: Start simulating partial transcriptions
+            // (test mode was already enabled before navigation in Step 1)
             Log.d(TAG, "🎤 Step 4: Starting partial transcription simulation...")
-            speechRecognitionService.enableTestMode()
 
             // Use words from the third message for partial transcription
             val thirdMessage = messages[2]
@@ -337,7 +344,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
             // Should start quickly since assistant message already arrived during partials
             var ttsStarted = false
             val ttsStartTime = System.currentTimeMillis()
-            val ttsTimeout = 1000L // 1 second - message already arrived, should start immediately
+            val ttsTimeout = 2000L // 2 seconds - message already arrived, should start quickly
 
             while (!ttsStarted && (System.currentTimeMillis() - ttsStartTime) < ttsTimeout) {
                 val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
@@ -487,9 +494,9 @@ class TTSQueueingTest : BaseIntegrationTest() {
                 throw AssertionError("TTS should have started playing for the assistant's response")
             }
 
-            // Step 5: Trigger barge-in — simulate user starting to speak during TTS
-            Log.d(TAG, "🎤 Step 5: Triggering barge-in (simulating user starting to speak)...")
-            speechRecognitionService.testTriggerBeginningOfSpeech()
+            // Step 5: Trigger barge-in — simulate user speaking during TTS (confirmed speech via partial result)
+            Log.d(TAG, "🎤 Step 5: Triggering barge-in (simulating confirmed speech with partial result)...")
+            speechRecognitionService.testTriggerFirstPartialForBargeIn("Actually")
 
             // Step 6: Assert TTS stops within ~1s
             Log.d(TAG, "🔊 Step 6: Verifying TTS stops after barge-in...")

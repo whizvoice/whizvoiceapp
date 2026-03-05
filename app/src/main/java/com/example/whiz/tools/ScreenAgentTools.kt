@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.util.Base64
 import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +17,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.BuildConfig
+import com.example.whiz.MainActivity
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
@@ -24,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -131,6 +135,12 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val action: String? = null,
         val calories: Int? = null,
+        val error: String? = null
+    )
+
+    data class CloseOtherAppResult(
+        val success: Boolean,
+        val appName: String,
         val error: String? = null
     )
 
@@ -594,7 +604,477 @@ class ScreenAgentTools @Inject constructor(
             false
         }
     }
-    
+
+    /**
+     * Restore full-screen Whiz by launching MainActivity.
+     * MainActivity.onResume() auto-stops the bubble overlay.
+     * Fallback: explicitly stop bubble + press Home.
+     */
+    private fun restoreFullScreenWhiz() {
+        try {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "restoreFullScreenWhiz: launched MainActivity")
+        } catch (e: Exception) {
+            Log.e(TAG, "restoreFullScreenWhiz: failed to launch MainActivity, falling back", e)
+            try {
+                BubbleOverlayService.stop(context)
+            } catch (_: Exception) {}
+            try {
+                WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                    AccessibilityService.GLOBAL_ACTION_HOME
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    // ========== Close Other App Functions ==========
+
+    /**
+     * Common app name mappings shared between launchApp and closeOtherApp.
+     */
+    private val commonAppMappings = mapOf(
+        "chrome" to "com.android.chrome",
+        "gmail" to "com.google.android.gm",
+        "youtube" to "com.google.android.youtube",
+        "youtube music" to "com.google.android.apps.youtube.music",
+        "maps" to "com.google.android.apps.maps",
+        "play store" to "com.android.vending",
+        "camera" to "com.android.camera2",
+        "photos" to "com.google.android.apps.photos",
+        "calendar" to "com.google.android.calendar",
+        "calculator" to "com.google.android.calculator2",
+        "clock" to "com.google.android.deskclock",
+        "messages" to "com.google.android.apps.messaging",
+        "whatsapp" to "com.whatsapp",
+        "instagram" to "com.instagram.android",
+        "facebook" to "com.facebook.katana",
+        "twitter" to "com.twitter.android",
+        "x" to "com.twitter.android",
+        "spotify" to "com.spotify.music",
+        "netflix" to "com.netflix.mediaclient",
+        "settings" to "com.android.settings",
+        "asana" to "com.asana.app",
+        "a sauna" to "com.asana.app"
+    )
+
+    /**
+     * Resolve a user-provided app name to a (packageName, appLabel) pair.
+     * Uses fuzzy matching against installed apps, then falls back to common mappings.
+     * Returns null if the app cannot be found.
+     */
+    fun resolvePackageName(appName: String): Pair<String, String>? {
+        val packageManager = context.packageManager
+        val normalizedAppName = appName.lowercase().trim()
+
+        // Try fuzzy matching against installed apps
+        val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+        var bestMatch: Triple<String, String, Float>? = null // (packageName, appLabel, score)
+
+        for (appInfo in installedApps) {
+            val launchIntent = packageManager.getLaunchIntentForPackage(appInfo.packageName) ?: continue
+            val appLabel = packageManager.getApplicationLabel(appInfo).toString()
+            val matchScore = calculateMatchScore(normalizedAppName, appLabel, appInfo.packageName)
+            if (matchScore > 0 && (bestMatch == null || matchScore > bestMatch.third)) {
+                bestMatch = Triple(appInfo.packageName, appLabel, matchScore)
+            }
+        }
+
+        if (bestMatch != null && bestMatch.third >= 0.5f) {
+            return Pair(bestMatch.first, bestMatch.second)
+        }
+
+        // Fall back to common mappings
+        val mappedPackage = commonAppMappings[normalizedAppName]
+        if (mappedPackage != null) {
+            val appLabel = try {
+                packageManager.getApplicationLabel(
+                    packageManager.getApplicationInfo(mappedPackage, 0)
+                ).toString()
+            } catch (e: Exception) {
+                appName
+            }
+            return Pair(mappedPackage, appLabel)
+        }
+
+        return null
+    }
+
+    /**
+     * Close another app by dismissing it from the Android recents screen.
+     * Opens recents, finds the app card by label, swipes it up to dismiss, then goes Home.
+     */
+    suspend fun closeOtherApp(appName: String): CloseOtherAppResult {
+        Log.i(TAG, "closeOtherApp called for: $appName")
+        trackAction("closeOtherApp: $appName")
+
+        // Track whether we started a temporary bubble for this operation
+        var needToRestoreFullScreen = false
+
+        try {
+            // Resolve app name
+            val resolved = resolvePackageName(appName)
+            if (resolved == null) {
+                Log.w(TAG, "Could not resolve app name: $appName")
+                logScreenAgentError(
+                    reason = "close_other_app_not_found",
+                    errorMessage = "Could not find an app matching '$appName'",
+                    packageName = null
+                )
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appName,
+                    error = "Could not find an app matching '$appName'"
+                )
+            }
+
+            val (packageName, appLabel) = resolved
+            Log.i(TAG, "Resolved app: $appLabel ($packageName)")
+
+            // Reject if target is Whiz itself
+            if (isWhizApp(packageName)) {
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "To close WhizVoice, use the agent_close_app tool instead."
+                )
+            }
+
+            // Get accessibility service
+            val accessibilityService = WhizAccessibilityService.getInstance()
+            if (accessibilityService == null) {
+                Log.e(TAG, "Accessibility service not available for closeOtherApp")
+                logScreenAgentError(
+                    reason = "close_other_app_no_accessibility",
+                    errorMessage = "Accessibility service not available for closing '$appLabel'",
+                    packageName = packageName
+                )
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Accessibility service not enabled. Please enable it in settings."
+                )
+            }
+
+            // Before opening recents, start bubble overlay if we're in full-screen mode.
+            // Opening recents will background full-screen Whiz, causing VoiceManager to stop
+            // listening. The bubble keeps the mic active so the user hears TTS confirmation.
+            val wasBubbleAlreadyActive = BubbleOverlayService.isActive
+            if (!wasBubbleAlreadyActive && hasOverlayPermission()) {
+                Log.i(TAG, "closeOtherApp: starting temporary bubble overlay for recents operation")
+                BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
+                val bubbleStarted = startBubbleOverlay()
+                if (bubbleStarted) {
+                    needToRestoreFullScreen = true
+                    // Wait for bubble service to become active
+                    val bubbleReady = waitForCondition(maxWaitMs = 1000, initialDelayMs = 100) {
+                        BubbleOverlayService.isActive
+                    }
+                    if (!bubbleReady) {
+                        Log.w(TAG, "closeOtherApp: bubble started but not active in time, proceeding anyway")
+                    }
+                } else {
+                    Log.w(TAG, "closeOtherApp: bubble failed to start, proceeding without it")
+                    BubbleOverlayService.pendingStartTimestamp = 0L
+                }
+            }
+
+            // Open recents screen
+            Log.i(TAG, "Opening recents screen")
+            val recentsOpened = accessibilityService.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_RECENTS
+            )
+            if (!recentsOpened) {
+                logScreenAgentError(
+                    reason = "close_other_app_recents_failed",
+                    errorMessage = "Failed to open recents screen",
+                    packageName = packageName
+                )
+                // Clean up temporary bubble if we started one
+                if (needToRestoreFullScreen) {
+                    restoreFullScreenWhiz()
+                }
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Failed to open recent apps screen"
+                )
+            }
+
+            // Wait for recents screen to take focus (root node package changes away from Whiz)
+            val whizPackage = context.packageName
+            val recentsReady = waitForCondition(maxWaitMs = 1500, initialDelayMs = 100) {
+                val currentPkg = WhizAccessibilityService.getCurrentPackageName()
+                currentPkg != null && currentPkg != whizPackage
+            }
+            if (!recentsReady) {
+                Log.w(TAG, "closeOtherApp: recents screen did not take focus in time, proceeding anyway")
+            }
+
+            // Try to find and dismiss the app from recents
+            val dismissed = findAndDismissFromRecents(accessibilityService, appLabel)
+
+            // Navigate back: restore full-screen Whiz or press Home
+            delay(300)
+            if (needToRestoreFullScreen) {
+                Log.i(TAG, "closeOtherApp: restoring full-screen Whiz after recents operation")
+                restoreFullScreenWhiz()
+            } else {
+                accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_HOME)
+            }
+
+            if (dismissed) {
+                Log.i(TAG, "Successfully dismissed $appLabel from recents")
+                clearRecentActions()
+                return CloseOtherAppResult(
+                    success = true,
+                    appName = appLabel
+                )
+            } else {
+                Log.w(TAG, "Could not find $appLabel in recents")
+                return CloseOtherAppResult(
+                    success = false,
+                    appName = appLabel,
+                    error = "Could not find '$appLabel' in recent apps. It may not be running."
+                )
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing other app: $appName", e)
+            logScreenAgentError(
+                reason = "close_other_app_error",
+                errorMessage = "Error closing '$appName': ${e.message}",
+                packageName = null
+            )
+            // Recover: restore full-screen if we started a temporary bubble, otherwise press Home
+            try {
+                if (needToRestoreFullScreen || BubbleOverlayService.isActive) {
+                    restoreFullScreenWhiz()
+                } else {
+                    WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                        AccessibilityService.GLOBAL_ACTION_HOME
+                    )
+                }
+            } catch (_: Exception) {}
+            return CloseOtherAppResult(
+                success = false,
+                appName = appName,
+                error = "Error closing app: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * Search the recents screen for an app card matching the given label and swipe it up to dismiss.
+     * Scrolls through the recents carousel up to 7 times if the app isn't immediately visible.
+     */
+    private suspend fun findAndDismissFromRecents(
+        accessibilityService: WhizAccessibilityService,
+        appLabel: String
+    ): Boolean {
+        val normalizedLabel = appLabel.lowercase()
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels.toFloat()
+        val screenHeight = displayMetrics.heightPixels.toFloat()
+
+        for (scrollAttempt in 0..7) {
+            if (scrollAttempt > 0) {
+                // Scroll left in the recents carousel (swipe right) to see older apps
+                Log.d(TAG, "Scrolling recents carousel, attempt $scrollAttempt")
+                accessibilityService.performScrollGesture(
+                    startX = screenWidth * 0.2f,
+                    startY = screenHeight * 0.5f,
+                    endX = screenWidth * 0.8f,
+                    endY = screenHeight * 0.5f,
+                    duration = 300
+                )
+                delay(500)
+            }
+
+            val rootNode = accessibilityService.getCurrentRootNode() ?: continue
+
+            try {
+                // Recents cards use content descriptions on snapshot children, not text.
+                // Search content descriptions recursively for the app label.
+                val descNode = findNodeByContentDescContaining(rootNode, normalizedLabel)
+                if (descNode != null) {
+                    // Only dismiss if the card is actually on-screen (positive X bounds)
+                    val rect = android.graphics.Rect()
+                    descNode.getBoundsInScreen(rect)
+                    if (rect.right > 0 && rect.left < screenWidth.toInt()) {
+                        Log.i(TAG, "Found app card for '$appLabel' via content description, bounds=$rect")
+                        val swipeResult = swipeUpToDismiss(accessibilityService, descNode, screenWidth, screenHeight)
+                        if (swipeResult) return true
+                    } else {
+                        Log.d(TAG, "Found '$appLabel' but off-screen (bounds=$rect), scrolling more")
+                    }
+                }
+
+                // Also try text-based search as fallback
+                val textNodes = rootNode.findAccessibilityNodeInfosByText(appLabel)
+                for (node in textNodes) {
+                    val nodeText = node.text?.toString()?.lowercase() ?: ""
+                    val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+                    if (nodeText.contains(normalizedLabel) || nodeDesc.contains(normalizedLabel)) {
+                        // Walk up to find the card container — the text label is small and may
+                        // not be positioned over the actual card. The card parent will have
+                        // bounds that cover a large portion of the screen.
+                        val cardNode = findCardParent(node, screenWidth, screenHeight)
+                        if (cardNode != null) {
+                            val cardRect = android.graphics.Rect()
+                            cardNode.getBoundsInScreen(cardRect)
+                            if (cardRect.right > 0 && cardRect.left < screenWidth.toInt()) {
+                                Log.i(TAG, "Found app card for '$appLabel' via text match, card bounds=$cardRect")
+                                val swipeResult = swipeUpToDismiss(accessibilityService, cardNode, screenWidth, screenHeight)
+                                if (swipeResult) return true
+                            }
+                        } else {
+                            // No card parent found — log the text node position for debugging
+                            val textRect = android.graphics.Rect()
+                            node.getBoundsInScreen(textRect)
+                            Log.w(TAG, "Found text '$appLabel' at $textRect but no card parent — skipping swipe to avoid dismissing wrong app")
+                        }
+                    }
+                }
+            } finally {
+                rootNode.recycle()
+            }
+        }
+
+        // If we exhausted all scroll attempts, dump the UI for debugging
+        val rootNode = accessibilityService.getCurrentRootNode()
+        if (rootNode != null) {
+            dumpUIHierarchy(rootNode, "recents_app_not_found", "Could not find '$appLabel' in recents after scrolling")
+            rootNode.recycle()
+        }
+
+        return false
+    }
+
+    /**
+     * Walk up from a text label node to find the parent recents card container.
+     * The card container will have bounds that span a significant portion of the screen
+     * (at least 40% width and 30% height) but NOT the full screen (which would be the
+     * root container — swiping on that dismisses whichever card is in front, not the target).
+     */
+    private fun findCardParent(
+        node: AccessibilityNodeInfo,
+        screenWidth: Float,
+        screenHeight: Float
+    ): AccessibilityNodeInfo? {
+        var current = node.parent ?: return null
+        val minCardWidth = screenWidth * 0.4f
+        val minCardHeight = screenHeight * 0.3f
+        // Reject nodes that cover the full screen — those are root containers, not cards
+        val maxCardWidth = screenWidth * 0.95f
+        val maxCardHeight = screenHeight * 0.95f
+        var depth = 0
+
+        while (depth < 10) {
+            val rect = android.graphics.Rect()
+            current.getBoundsInScreen(rect)
+            val nodeWidth = rect.width().toFloat()
+            val nodeHeight = rect.height().toFloat()
+
+            if (nodeWidth >= minCardWidth && nodeHeight >= minCardHeight &&
+                nodeWidth <= maxCardWidth && nodeHeight <= maxCardHeight) {
+                Log.d(TAG, "findCardParent: found card at depth=$depth, bounds=$rect")
+                return current
+            }
+
+            if (nodeWidth > maxCardWidth && nodeHeight > maxCardHeight) {
+                Log.d(TAG, "findCardParent: hit full-screen container at depth=$depth, bounds=$rect — stopping")
+                break
+            }
+
+            val parent = current.parent ?: break
+            current = parent
+            depth++
+        }
+
+        Log.d(TAG, "findCardParent: no suitable card parent found")
+        return null
+    }
+
+    /**
+     * Swipe up on a node's bounding rect to dismiss it from recents.
+     * After swiping, waits for the card to disappear from the accessibility tree
+     * rather than using a fixed delay.
+     */
+    private suspend fun swipeUpToDismiss(
+        accessibilityService: WhizAccessibilityService,
+        node: AccessibilityNodeInfo,
+        screenWidth: Float,
+        screenHeight: Float
+    ): Boolean {
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        val centerX = rect.centerX().toFloat()
+        val startY = rect.centerY().toFloat()
+        // Swipe from card center to near top of screen (must stay on-screen for gesture to work)
+        val endY = 10f
+
+        // Capture identifying text before swiping so we can check for disappearance
+        val nodeDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val nodeText = node.text?.toString()?.lowercase() ?: ""
+        val searchLabel = nodeDesc.ifEmpty { nodeText }
+
+        Log.d(TAG, "Swiping up to dismiss: centerX=$centerX, startY=$startY, endY=$endY")
+        val result = accessibilityService.performScrollGesture(
+            startX = centerX,
+            startY = startY,
+            endX = centerX,
+            endY = endY,
+            duration = 300
+        )
+        Log.d(TAG, "Swipe gesture result: $result")
+
+        if (result && searchLabel.isNotEmpty()) {
+            // Wait for the card to disappear from the accessibility tree
+            val disappeared = waitForCondition(maxWaitMs = 1000, initialDelayMs = 100) {
+                val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition true
+                try {
+                    // Check both content description and text-based search
+                    val descGone = findNodeByContentDescContaining(root, searchLabel) == null
+                    val textGone = root.findAccessibilityNodeInfosByText(searchLabel).isNullOrEmpty()
+                    descGone && textGone
+                } finally {
+                    root.recycle()
+                }
+            }
+            if (!disappeared) {
+                Log.w(TAG, "Dismiss card did not disappear within timeout, proceeding anyway")
+            }
+        } else {
+            // Fallback: fixed delay if we can't check for disappearance
+            delay(600)
+        }
+
+        return result
+    }
+
+    /**
+     * Recursively search for a node whose content description contains the target text.
+     */
+    private fun findNodeByContentDescContaining(
+        root: AccessibilityNodeInfo,
+        target: String,
+        depth: Int = 0
+    ): AccessibilityNodeInfo? {
+        if (depth > 20) return null
+        val desc = root.contentDescription?.toString()?.lowercase() ?: ""
+        if (desc.contains(target)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = findNodeByContentDescContaining(child, target, depth + 1)
+            if (found != null) return found
+            child.recycle()
+        }
+        return null
+    }
+
     private fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
         val normalizedLabel = appLabel.lowercase()
         val normalizedPackage = packageName.lowercase()
@@ -1139,6 +1619,7 @@ class ScreenAgentTools @Inject constructor(
                 findWhatsAppMessageInput(updatedRootNode, updatedInputNodes, 0)
 
                 if (updatedInputNodes.isEmpty()) {
+                    dumpUIHierarchy(updatedRootNode, "whatsapp_input_not_found_after_keyboard", "Could not find input field after keyboard opened")
                     inputNode.recycle()
                     rootNode.recycle()
                     updatedRootNode.recycle()
@@ -1248,6 +1729,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.whatsapp")
                 return WhatsAppResult(
                     success = false,
                     action = "send_message",
@@ -1262,13 +1744,14 @@ class ScreenAgentTools @Inject constructor(
             
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.whatsapp")
                 return WhatsAppResult(
                     success = false,
                     action = "send_message",
                     error = "Could not get root node"
                 )
             }
-            
+
             // Find the message input field (usually has hint text "Message" or "Type a message")
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
             findEditTextNodes(rootNode, inputNodes)
@@ -1940,6 +2423,7 @@ class ScreenAgentTools @Inject constructor(
             if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
                 Log.e(TAG, "Still in search screen - not in a conversation!")
                 searchBoxNodes.forEach { it.recycle() }
+                dumpUIHierarchy(rootNode, "sms_stuck_in_search_screen", "Cannot draft message: still in search screen. Please select a contact first to open a conversation.")
                 rootNode.recycle()
                 return DraftResult(
                     success = false,
@@ -2156,6 +2640,7 @@ class ScreenAgentTools @Inject constructor(
 
                     if (wideBottomViews.isEmpty()) {
                         allClickable.forEach { it.recycle() }
+                        dumpUIHierarchy(updatedRootNode, "sms_input_not_found_compose", "Could not find input field after keyboard opened (Compose UI)")
                         inputNode.recycle()
                         rootNode.recycle()
                         updatedRootNode.recycle()
@@ -2252,6 +2737,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.messaging")
                 return SMSResult(
                     success = false,
                     action = "send_message",
@@ -2264,6 +2750,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.messaging")
                 return SMSResult(
                     success = false,
                     action = "send_message",
@@ -2856,6 +3343,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_app_not_ready", "YouTube Music did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("ytmusic_app_not_ready", "YouTube Music did not become ready in time", "com.google.android.apps.youtube.music")
+                }
                 return MusicActionResult(
                     success = false,
                     action = "play_song",
@@ -2971,6 +3465,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "ytmusic_app_not_ready", "YouTube Music did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("ytmusic_app_not_ready", "YouTube Music did not become ready in time", "com.google.android.apps.youtube.music")
+                }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -2998,6 +3499,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.youtube.music")
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
@@ -3195,6 +3697,13 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -3215,6 +3724,11 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_location",
@@ -3488,6 +4002,11 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",
@@ -3587,6 +4106,7 @@ class ScreenAgentTools @Inject constructor(
                     var newState = detectGoogleMapsScreenState(rootNode)
                     Log.d(TAG, "After exiting navigation, screen state is: $newState")
                     if (newState == GoogleMapsScreenState.ACTIVE_NAVIGATION) {
+                        dumpUIHierarchy(rootNode, "gmaps_navigation_exit_failed", "Could not exit active navigation mode")
                         rootNode.recycle()
                         return MapsActionResult(
                             success = false,
@@ -3630,6 +4150,11 @@ class ScreenAgentTools @Inject constructor(
                             delay(1000)
                             val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                             if (!retryResult.success) {
+                                val dumpRoot = accessibilityService.getCurrentRootNode()
+                                if (dumpRoot != null) {
+                                    dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_result", "Could not find non-sponsored result in search list: ${retryResult.error}")
+                                    dumpRoot.recycle()
+                                }
                                 return MapsActionResult(
                                     success = false,
                                     action = "get_directions",
@@ -3638,6 +4163,11 @@ class ScreenAgentTools @Inject constructor(
                                 )
                             }
                         } else {
+                            val dumpRoot = accessibilityService.getCurrentRootNode()
+                            if (dumpRoot != null) {
+                                dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_result", "Could not find non-sponsored result in search list: ${selectResult.error}")
+                                dumpRoot.recycle()
+                            }
                             return MapsActionResult(
                                 success = false,
                                 action = "get_directions",
@@ -3763,6 +4293,11 @@ class ScreenAgentTools @Inject constructor(
                         delay(1000)
                         val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                         if (!retryResult.success) {
+                            val dumpRoot = accessibilityService.getCurrentRootNode()
+                            if (dumpRoot != null) {
+                                dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_after_handling", "Could not find non-sponsored result after handling: ${retryResult.error}")
+                                dumpRoot.recycle()
+                            }
                             return MapsActionResult(
                                 success = false,
                                 action = "get_directions",
@@ -3771,6 +4306,11 @@ class ScreenAgentTools @Inject constructor(
                             )
                         }
                     } else {
+                        val dumpRoot = accessibilityService.getCurrentRootNode()
+                        if (dumpRoot != null) {
+                            dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsor_after_handling", "Could not find non-sponsored result after handling: ${selectResult.error}")
+                            dumpRoot.recycle()
+                        }
                         return MapsActionResult(
                             success = false,
                             action = "get_directions",
@@ -3998,6 +4538,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4013,6 +4554,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4022,6 +4570,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
@@ -4031,15 +4580,17 @@ class ScreenAgentTools @Inject constructor(
 
             // Find and click the Re-center button
             val recenterClicked = clickGoogleMapsRecenter(rootNode, accessibilityService)
-            rootNode.recycle()
 
             if (!recenterClicked) {
+                dumpUIHierarchy(rootNode, "gmaps_recenter_button_not_found", "Could not find Re-center button in Google Maps")
+                rootNode.recycle()
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
                     error = "Could not find Re-center button in Google Maps"
                 )
             }
+            rootNode.recycle()
 
             return MapsActionResult(
                 success = true,
@@ -4104,6 +4655,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4119,6 +4671,13 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4128,6 +4687,7 @@ class ScreenAgentTools @Inject constructor(
 
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
+                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
@@ -4140,15 +4700,17 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (!locationClicked) {
-                dumpUIHierarchy(rootNode, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
-                rootNode.recycle()
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
                     error = "Could not find or click location: $selectionDesc" + if (skipSponsored) " (non-sponsored)" else ""
                 )
             }
-            rootNode.recycle()
 
             // Wait for location to load
             delay(1000)
@@ -4198,6 +4760,7 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
+                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4212,6 +4775,13 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_app_not_ready", "Google Maps did not become ready in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_app_not_ready", "Google Maps did not become ready in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4232,6 +4802,13 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
+                    dumpRoot.recycle()
+                } else {
+                    logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps")
+                }
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
@@ -4596,10 +5173,10 @@ class ScreenAgentTools @Inject constructor(
         val screenHeight = displayMetrics.heightPixels
 
         // Calculate swipe coordinates (swipe UP from bottom to top to scroll DOWN and reveal more results)
-        // Use a smaller scroll distance (20% of screen) to avoid over-scrolling due to Material Design momentum
+        // Use 50% of screen height to scroll enough to reveal results further down the list
         val centerX = screenWidth / 2f
-        val startY = screenHeight * 0.6f  // Start at 60% down the screen
-        val endY = screenHeight * 0.4f    // End at 40% down the screen (swipe upward to scroll down)
+        val startY = screenHeight * 0.75f  // Start at 75% down the screen
+        val endY = screenHeight * 0.25f    // End at 25% down the screen (swipe upward to scroll down)
 
         Log.d(TAG, "Performing scroll gesture on Maps results list (swipe from $startY to $endY)")
         val scrolled = accessibilityService.performScrollGesture(
@@ -7790,13 +8367,36 @@ class ScreenAgentTools @Inject constructor(
             file.writeText(uiHierarchy)
             Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
 
-            // Upload to server asynchronously (fire-and-forget)
-            uploadUiDumpToServer(
-                dumpReason = reason,
-                errorMessage = errorMessage,
-                uiHierarchy = uiHierarchy,
-                packageName = packageName
-            )
+            // Take screenshot, then upload with it (or without if screenshot fails)
+            WhizAccessibilityService.takeScreenshotAsync { bitmap ->
+                val screenshotBase64 = bitmap?.let {
+                    try {
+                        val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
+                        val stream = ByteArrayOutputStream()
+                        softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                        softwareBitmap.recycle()
+                        it.recycle()
+                        Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to encode screenshot for UI dump", e)
+                        null
+                    }
+                }
+
+                val screenAgentContext = if (screenshotBase64 != null) {
+                    mapOf("screenshot_base64" to screenshotBase64)
+                } else {
+                    null
+                }
+
+                uploadUiDumpToServer(
+                    dumpReason = reason,
+                    errorMessage = errorMessage,
+                    uiHierarchy = uiHierarchy,
+                    packageName = packageName,
+                    screenAgentContext = screenAgentContext
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to dump UI hierarchy", e)
         }
@@ -7809,7 +8409,8 @@ class ScreenAgentTools @Inject constructor(
         dumpReason: String,
         errorMessage: String?,
         uiHierarchy: String?,
-        packageName: String?
+        packageName: String?,
+        screenAgentContext: Map<String, Any>? = null
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -7831,7 +8432,7 @@ class ScreenAgentTools @Inject constructor(
                     appVersion = BuildConfig.VERSION_NAME,
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
-                    screenAgentContext = null // Could add more context here
+                    screenAgentContext = screenAgentContext
                 )
 
                 val response = apiService.uploadUiDump(request)
@@ -8777,6 +9378,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!foodTileFound) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_food_tile_not_found", "Could not find Food tile on Fitbit Today screen")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Could not find Food tile on Fitbit Today screen"
@@ -8794,6 +9400,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!foodPageReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_food_detail_not_loaded", "Food detail page did not load after tapping Food tile")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Food detail page did not load after tapping Food tile"
@@ -8828,6 +9439,7 @@ class ScreenAgentTools @Inject constructor(
         // Find and tap "More options" by content description
         val moreOptionsNodes = findNodesByContentDescription(rootNode, "More options")
         if (moreOptionsNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_more_options_not_found", "Could not find 'More options' button on Food detail page")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -8848,6 +9460,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!clicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_more_options_tap_failed", "Failed to tap 'More options' button")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'More options' button"
@@ -8867,6 +9484,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!dropdownReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_dropdown_not_appeared", "More options dropdown did not appear")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "More options dropdown did not appear"
@@ -8890,6 +9512,7 @@ class ScreenAgentTools @Inject constructor(
 
         val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
         if (addQuickCalNodes == null || addQuickCalNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_add_quick_cal_not_found", "Could not find 'Add Quick Calories' in dropdown menu")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -8910,6 +9533,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!clicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_tap_failed", "Failed to tap 'Add Quick Calories'")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'Add Quick Calories'"
@@ -8927,6 +9555,11 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!screenReady) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_screen_not_loaded", "Add Quick Calories screen did not appear")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Add Quick Calories screen did not appear"
@@ -8953,6 +9586,7 @@ class ScreenAgentTools @Inject constructor(
             "com.fitbit.FitbitMobile:id/edit_calories"
         )
         if (editCaloriesNodes == null || editCaloriesNodes.isEmpty()) {
+            dumpUIHierarchy(rootNode, "fitbit_calories_input_not_found", "Could not find calories input field")
             rootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -8975,6 +9609,11 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
 
         if (!textSet) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_calories_entry_failed", "Failed to enter calorie amount")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to enter calorie amount"
@@ -8999,6 +9638,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (logButton == null) {
+            dumpUIHierarchy(logRootNode, "fitbit_log_button_not_found", "Could not find 'LOG THIS' button")
             logRootNode.recycle()
             return FitbitResult(
                 success = false,
@@ -9018,6 +9658,11 @@ class ScreenAgentTools @Inject constructor(
         logRootNode.recycle()
 
         if (!logClicked) {
+            val dumpRoot = accessibilityService.getCurrentRootNode()
+            if (dumpRoot != null) {
+                dumpUIHierarchy(dumpRoot, "fitbit_log_button_tap_failed", "Failed to tap 'LOG THIS' button")
+                dumpRoot.recycle()
+            }
             return FitbitResult(
                 success = false,
                 error = "Failed to tap 'LOG THIS' button"

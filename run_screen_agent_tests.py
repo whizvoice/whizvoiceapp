@@ -141,7 +141,7 @@ def start_logcat():
     # Start logcat and capture output (filtered to WhizVoice app to avoid buffer overflow)
     logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
     _logcat_process = subprocess.Popen(
-        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
+        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*', 'SpeechRecognition:*', 'AudioPipeRecorder:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
@@ -681,8 +681,8 @@ def test_whatsapp_draft_message(tester):
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
             "At the bottom of the screen, there is NO yellow overlay. "
-            "The most recent rescue mission is something with text similar to: "
-            "just trying to test WhizVoice. Though the message may not be exactly the same. "
+            "The most recent message is something with text similar to: "
+            "just trying to test WhizVoice. The exact wording does not matter. "
             "There is also a yellow notification bubble with the outline of a robot head "
             "and a microphone icon inside."
         )
@@ -1071,7 +1071,7 @@ def test_google_maps_directions(tester):
         # San Francisco config
         store_name = "Trader Joe's"
         search_query = "what are the trader joes near me ?"
-        location_selector = "Can you give me directions to the one on Fulton Street"
+        location_selector = "Can you give me directions to the one on Laguna Street"
         secondary_address = "1680 Mission Street"
         secondary_address_short = "1680 Mission St"
         city_name = "San Francisco"
@@ -1144,7 +1144,7 @@ def test_google_maps_directions(tester):
             save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_see_locations")
         assert validation_result, f"Failed to show {store_name} location list"
 
-        # Send a voice transcription to select the one on Fulton Street
+        # Send a voice transcription to select the one on Laguna Street
         subprocess.run([
             'adb', 'shell',
             'am', 'broadcast',

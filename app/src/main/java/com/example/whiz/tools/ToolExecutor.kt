@@ -15,6 +15,7 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -57,7 +58,8 @@ class ToolExecutor @Inject constructor(
     private val authRepository: com.example.whiz.data.auth.AuthRepository
 ) {
     private val TAG = "ToolExecutor"
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val supervisorJob = SupervisorJob()
+    private val scope = CoroutineScope(supervisorJob + Dispatchers.Main)
 
     private val toolsRequiringUnlock = setOf(
         "agent_launch_app",
@@ -69,7 +71,8 @@ class ToolExecutor @Inject constructor(
         "agent_fullscreen_google_maps", "agent_select_location_from_list",
         "agent_press_call_button",
         "agent_save_calendar_event",
-        "agent_fitbit_add_quick_calories"
+        "agent_fitbit_add_quick_calories",
+        "agent_close_other_app"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -77,7 +80,19 @@ class ToolExecutor @Inject constructor(
 
     // Dedup guard: prevents the same requestId from being executed concurrently
     private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    
+
+    /**
+     * Cancel all in-flight tool executions. Called when user dismisses the bubble.
+     * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
+     */
+    fun cancelAllInFlight() {
+        val count = inFlightRequestIds.size
+        Log.d(TAG, "Cancelling all in-flight tool executions (count: $count)")
+        supervisorJob.cancelChildren()
+        inFlightRequestIds.clear()
+        Log.d(TAG, "Cancelled $count in-flight tool execution(s)")
+    }
+
     fun executeToolFromJson(
         toolRequest: JSONObject,
         voiceManager: com.example.whiz.ui.viewmodels.VoiceManager? = null,
@@ -192,6 +207,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_close_app" -> {
                         executeCloseApp(requestId)
+                    }
+                    "agent_close_other_app" -> {
+                        executeCloseOtherApp(requestId, params)
                     }
                     "agent_dismiss_draft" -> {
                         executeDismissDraft(requestId)
@@ -1792,6 +1810,40 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_fitbit_add_quick_calories",
                     requestId = requestId,
                     error = "Failed to add quick calories: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeCloseOtherApp(requestId: String, params: JSONObject) {
+        try {
+            val appName = params.getString("app_name")
+            Log.i(TAG, "Closing other app: $appName")
+
+            val result = screenAgentTools.closeOtherApp(appName)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("app_name", result.appName)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_close_other_app result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_close_other_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing close other app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_close_other_app",
+                    requestId = requestId,
+                    error = "Failed to close app: ${e.message}"
                 )
             )
         }

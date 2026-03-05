@@ -237,6 +237,8 @@ class ChatViewModel @Inject constructor(
     // Track if the user *intended* to be listening before TTS started
     private var wasListeningBeforeTTS = false
     private var pendingTTSMessage: String? = null  // Queue TTS message if user is speaking
+    private var pendingTTSCheckJob: Job? = null  // Delayed job to play queued TTS after speech activity window expires
+    private val RECENT_SPEECH_THRESHOLD_MS = 2000L  // Don't start TTS if user spoke within this window
     
     // Track when app was last backgrounded to prevent TTS replay of old messages
     private var lastBackgroundedTime = 0L
@@ -337,6 +339,7 @@ class ChatViewModel @Inject constructor(
         voiceManager.onBargeIn = {
             Log.d(TAG, "Barge-in: clearing pendingTTSMessage")
             pendingTTSMessage = null
+            pendingTTSCheckJob?.cancel()
         }
 
         // Start observing messages immediately
@@ -665,6 +668,7 @@ class ChatViewModel @Inject constructor(
                         // Remove the cancelled request from pending requests
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
+                        whizServerRepository.untrackRequest(event.cancelledRequestId)
                         Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
                         // 🔧 DON'T update responding state here - animation should continue until
                         // a real (non-cancelled) response arrives. This prevents the typing indicator
@@ -680,6 +684,7 @@ class ChatViewModel @Inject constructor(
                         if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
                             Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
                             pendingRequests.remove(event.requestId)
+                            whizServerRepository.untrackRequest(event.requestId)
                             updateRespondingStateForCurrentChat()
                         }
 
@@ -832,6 +837,7 @@ class ChatViewModel @Inject constructor(
                                         Log.d(TAG, "🐛 VOICE_DEBUG: Found requestId in pendingRequests, originalChatId = $originalChatId")
                                         // Remove completed request from pending requests
                                         pendingRequests.remove(event.requestId) // Remove completed request
+                                        whizServerRepository.untrackRequest(event.requestId)
                                         
                         // 🔧 NEW: Handle new chat creation with server-assigned conversation_id
                         if (originalChatId == -1L && effectiveConversationId != null) {
@@ -1072,6 +1078,7 @@ class ChatViewModel @Inject constructor(
                                                 chatId = targetChatId,
                                                 content = messageContentForChat
                                             )
+                                            updateRespondingStateForCurrentChat()
                                         }
                                     } catch (e: Exception) {
                                         _errorState.value = "Error saving response: ${e.message}"
@@ -1096,11 +1103,14 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
+                                            // Update responding state AFTER message is inserted so typing indicator
+                                            // doesn't disappear before the new message appears
+                                            updateRespondingStateForCurrentChat()
                                             _scrollTrigger.value += 1 // Scroll to show bot response
                                         }
                                     } catch (e: Exception) {
                                     }
-                                    
+
                                     // Only refresh conversations if a new one might have been created
                                     if (targetChatId <= 0) {
                                         try {
@@ -1113,11 +1123,10 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }
                             } else {
+                                updateRespondingStateForCurrentChat()
                             }
 
                             // TTS and UI updates (only for current chat)
-                            // 🔧 Update responding state FIRST, before trying to restart listening
-                            updateRespondingStateForCurrentChat()
                             
                             try {
                                 // Determine if this message is fresh enough to speak
@@ -1164,13 +1173,27 @@ class ChatViewModel @Inject constructor(
                                         "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
-                                    // Check if user has active partial transcription
+                                    // Check if user has active partial transcription OR was recently speaking
                                     val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+                                    val recentSpeechMs = System.currentTimeMillis() - voiceManager.lastSpeechActivityTimestamp
+                                    val userRecentlySpeaking = voiceManager.lastSpeechActivityTimestamp > 0L && recentSpeechMs < RECENT_SPEECH_THRESHOLD_MS
+                                    val shouldQueueTTS = hasPartialTranscription || userRecentlySpeaking
 
-                                    if (hasPartialTranscription) {
-                                        Log.d(TAG, "User is speaking - queueing TTS instead of starting immediately: '$messageContentForChat'")
+                                    Log.d(TAG, "TTS Queue Decision: hasPartial=$hasPartialTranscription, " +
+                                            "recentSpeechMs=$recentSpeechMs, userRecentlySpeaking=$userRecentlySpeaking, " +
+                                            "shouldQueue=$shouldQueueTTS")
+
+                                    if (shouldQueueTTS) {
+                                        Log.d(TAG, "User is speaking or was recently speaking - queueing TTS: '${messageContentForChat.take(50)}...'")
                                         // Always update to the latest message - replaces any existing queued message
                                         pendingTTSMessage = messageContentForChat
+                                        // Schedule delayed playback after the speech activity window expires
+                                        pendingTTSCheckJob?.cancel()
+                                        pendingTTSCheckJob = viewModelScope.launch {
+                                            val waitMs = (RECENT_SPEECH_THRESHOLD_MS - recentSpeechMs + 500L).coerceAtLeast(500L)
+                                            delay(waitMs)
+                                            startQueuedTTS()
+                                        }
                                         // Don't stop listening, let user finish
                                     } else {
                                         // No active speech - start TTS immediately
@@ -1934,7 +1957,8 @@ class ChatViewModel @Inject constructor(
                 // 🔧 FIX: Ensure requestId is non-null for WebSocket operations
                 val nonNullRequestId = requestId ?: java.util.UUID.randomUUID().toString()
                 pendingRequests[nonNullRequestId] = chatIdForWebSocket
-                
+                whizServerRepository.trackRequest(nonNullRequestId)
+
                 // 🔧 CRITICAL: Update responding state immediately after adding to pending requests
                 updateRespondingStateForCurrentChat()
                 
@@ -1978,7 +2002,7 @@ class ChatViewModel @Inject constructor(
             }
 
             // Start queued TTS if user was speaking when assistant message arrived
-            startQueuedTTS()
+            startQueuedTTS(forceStart = true)
             } catch (e: Exception) {
                 Log.e(TAG, "Error in sendUserInput", e)
             }
@@ -2366,8 +2390,24 @@ class ChatViewModel @Inject constructor(
      * Start queued TTS message after user finishes speaking.
      * Called when user's message is sent via sendUserInput().
      */
-    private fun startQueuedTTS() {
+    private fun startQueuedTTS(forceStart: Boolean = false) {
         pendingTTSMessage?.let { message ->
+            if (!forceStart) {
+                val hasPartialTranscription = voiceManager.transcriptionState.value.isNotBlank()
+                val recentSpeechMs = System.currentTimeMillis() - voiceManager.lastSpeechActivityTimestamp
+                val userRecentlySpeaking = voiceManager.lastSpeechActivityTimestamp > 0L
+                    && recentSpeechMs < RECENT_SPEECH_THRESHOLD_MS
+                if (hasPartialTranscription || userRecentlySpeaking) {
+                    Log.d(TAG, "startQueuedTTS: user still speaking (hasPartial=$hasPartialTranscription, recentSpeechMs=$recentSpeechMs), rescheduling")
+                    pendingTTSCheckJob?.cancel()
+                    pendingTTSCheckJob = viewModelScope.launch {
+                        val waitMs = (RECENT_SPEECH_THRESHOLD_MS - recentSpeechMs + 500L).coerceAtLeast(500L)
+                        delay(waitMs)
+                        startQueuedTTS()
+                    }
+                    return
+                }
+            }
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
             // Full-duplex: keep mic active when AEC/headphones available
             if (isListening.value && !voiceManager.isFullDuplexAvailable()) {

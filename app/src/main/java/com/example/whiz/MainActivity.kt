@@ -6,14 +6,20 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.app.KeyguardManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -35,8 +41,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.services.RageShakeDetector
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
 import com.example.whiz.ui.theme.WhizTheme
@@ -47,6 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import java.io.ByteArrayOutputStream
 import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
@@ -108,6 +117,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var apiService: ApiService
+
+    @Inject
+    lateinit var rageShakeDetector: RageShakeDetector
+
+    // Rage shake bug report state
+    private val showRageShakeDialog = mutableStateOf(false)
+    private val isSubmittingRageShake = mutableStateOf(false)
 
     // ViewModel for creating new chats on assistant relaunch
     private val chatsListViewModel: ChatsListViewModel by viewModels()
@@ -203,6 +219,34 @@ class MainActivity : ComponentActivity() {
 
         // Upload any pending crash report from previous session
         uploadPendingCrashReport()
+
+        // Start rage shake detection tied to activity lifecycle
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                rageShakeDetector.startListening()
+                try {
+                    rageShakeDetector.shakeDetected.collect {
+                        Log.i(TAG, "Rage shake detected - showing bug report dialog")
+                        // Haptic feedback
+                        try {
+                            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                                vm.defaultVibrator
+                            } else {
+                                @Suppress("DEPRECATION")
+                                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                            }
+                            vibrator.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Haptic feedback failed", e)
+                        }
+                        showRageShakeDialog.value = true
+                    }
+                } finally {
+                    rageShakeDetector.stopListening()
+                }
+            }
+        }
 
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
         setupCloseAppReceiver()
@@ -410,6 +454,20 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    // Rage shake bug report dialog
+                    if (showRageShakeDialog.value) {
+                        com.example.whiz.ui.components.RageShakeReportDialog(
+                            isSubmitting = isSubmittingRageShake.value,
+                            onDismiss = {
+                                showRageShakeDialog.value = false
+                                isSubmittingRageShake.value = false
+                            },
+                            onSubmit = { description ->
+                                submitRageShakeReport(description)
+                            }
+                        )
+                    }
+
                     // Handle navigation after navController is initialized
                     LaunchedEffect(navController) {
                         handleIntentNavigation(intent)
@@ -509,7 +567,12 @@ class MainActivity : ComponentActivity() {
                 // Add the assistant flags that would normally come from AssistantActivity
                 i.putExtra("FROM_ASSISTANT", true)
                 i.putExtra("ENABLE_VOICE_MODE", true)
-                i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+                // Only set CREATE_NEW_CHAT_ON_START for non-onCreate sources.
+                // During onCreate, FROM_ASSISTANT handles navigation via NavHost startDestination.
+                // Setting both causes a redundant loadChatWithVoiceMode call.
+                if (source != "onCreate") {
+                    i.putExtra("CREATE_NEW_CHAT_ON_START", true)
+                }
                 // Update the activity's intent so the flags are accessible
                 setIntent(i)
                 // Set transitioning flag to prevent old ChatViewModel from disabling continuous listening
@@ -646,6 +709,23 @@ class MainActivity : ComponentActivity() {
                 }
                 initialTranscription?.let {
                     Log.d(TAG, "Setting INITIAL_TRANSCRIPTION in savedStateHandle: $it")
+                    navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
+                }
+            }
+        } else if (enableVoiceMode && ::navController.isInitialized) {
+            // Voice launch via FROM_ASSISTANT (onCreate path) — NavHost already navigated
+            // to chat/-1 via startDestination. Just pass voice mode flag to ChatScreen.
+            Log.d(TAG, "🎤 Voice mode without CREATE_NEW_CHAT_ON_START - setting ENABLE_VOICE_MODE in savedStateHandle")
+
+            // Clear extras to prevent reprocessing from onResume / LaunchedEffect
+            getIntent().removeExtra("ENABLE_VOICE_MODE")
+            getIntent().removeExtra("FROM_ASSISTANT")
+            getIntent().removeExtra("tracing_intent_id")
+
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute?.startsWith("chat/") == true) {
+                navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
+                initialTranscription?.let {
                     navController.currentBackStackEntry?.savedStateHandle?.set("INITIAL_TRANSCRIPTION", it)
                 }
             }
@@ -1035,6 +1115,77 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing test transcription", e)
+        }
+    }
+
+    /**
+     * Submit a rage shake bug report with screenshot, UI hierarchy, and device info.
+     */
+    private fun submitRageShakeReport(description: String) {
+        isSubmittingRageShake.value = true
+        Log.i(TAG, "Submitting rage shake report")
+
+        // Capture UI hierarchy and package name synchronously from accessibility service
+        val uiHierarchy = WhizAccessibilityService.getCurrentUiHierarchy()
+        val currentPackage = WhizAccessibilityService.getCurrentPackageName()
+
+        // Take screenshot asynchronously, then upload
+        WhizAccessibilityService.takeScreenshotAsync { bitmap ->
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    // Encode screenshot as base64 JPEG
+                    val screenshotBase64 = bitmap?.let {
+                        try {
+                            val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
+                            val stream = ByteArrayOutputStream()
+                            softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
+                            softwareBitmap.recycle()
+                            it.recycle()
+                            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to encode screenshot", e)
+                            null
+                        }
+                    }
+
+                    val displayMetrics = resources.displayMetrics
+                    val request = ApiService.UiDumpCreate(
+                        dumpReason = "rage_shake",
+                        errorMessage = description.ifBlank { null },
+                        uiHierarchy = uiHierarchy,
+                        packageName = currentPackage,
+                        deviceModel = Build.MODEL,
+                        deviceManufacturer = Build.MANUFACTURER,
+                        androidVersion = Build.VERSION.RELEASE,
+                        screenWidth = displayMetrics.widthPixels,
+                        screenHeight = displayMetrics.heightPixels,
+                        appVersion = BuildConfig.VERSION_NAME,
+                        conversationId = null,
+                        recentActions = null,
+                        screenAgentContext = buildMap {
+                            put("report_type", "rage_shake")
+                            if (screenshotBase64 != null) {
+                                put("screenshot_base64", screenshotBase64)
+                            }
+                        }
+                    )
+
+                    apiService.uploadUiDump(request)
+                    Log.i(TAG, "Rage shake report uploaded successfully")
+
+                    launch(Dispatchers.Main) {
+                        isSubmittingRageShake.value = false
+                        showRageShakeDialog.value = false
+                        Toast.makeText(this@MainActivity, "Bug report submitted. Thank you!", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to upload rage shake report", e)
+                    launch(Dispatchers.Main) {
+                        isSubmittingRageShake.value = false
+                        Toast.makeText(this@MainActivity, "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
     }
 

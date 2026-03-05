@@ -72,6 +72,18 @@ class SpeechRecognitionService @Inject constructor(
     private var useSegmentedSession = false  // True when API 33+ segmented session is active
     private var audioPipeRecorder: AudioPipeRecorder? = null  // API 33+: pipes our mic audio to recognizer
 
+    // --- Late segment result deduplication ---
+    private var lastCallbackText: String = ""
+
+    // --- First partial timing ---
+    private var beginningOfSpeechTimestamp: Long = 0L
+    private var hasLoggedFirstPartial = false
+
+    // --- Last speech activity timestamp (for TTS gating) ---
+    @Volatile
+    var lastSpeechActivityTimestamp: Long = 0L
+        private set
+
     val isInitialized: Boolean
         get() = _isInitialized
 
@@ -94,6 +106,10 @@ class SpeechRecognitionService @Inject constructor(
 
     // Callback fired when the user begins speaking (for TTS barge-in)
     var onBeginningOfSpeechCallback: (() -> Unit)? = null
+
+    // Callback fired on first non-empty partial result (for TTS barge-in)
+    // More reliable than onBeginningOfSpeech since it confirms actual speech, not just noise
+    var onFirstPartialResultCallback: (() -> Unit)? = null
 
     // --- Test Support ---
     // Allow tests to simulate partial transcriptions without real speech recognizer
@@ -171,6 +187,7 @@ class SpeechRecognitionService @Inject constructor(
                         RecognizerIntent.EXTRA_SEGMENTED_SESSION,
                         RecognizerIntent.EXTRA_AUDIO_SOURCE
                     )
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     useSegmentedSession = true
                     Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
                 } catch (e: Exception) {
@@ -419,6 +436,12 @@ class SpeechRecognitionService @Inject constructor(
 
             override fun onBeginningOfSpeech() {
                 Log.d(TAG, "[DEBUG] onBeginningOfSpeech")
+                beginningOfSpeechTimestamp = System.currentTimeMillis()
+                lastSpeechActivityTimestamp = System.currentTimeMillis()
+                hasLoggedFirstPartial = false
+                // Reset late segment dedup so repeated utterances aren't suppressed
+                lastCallbackText = ""
+                BubbleOverlayService.clearLastAutoSent()
                 onBeginningOfSpeechCallback?.invoke()
             }
 
@@ -744,8 +767,15 @@ class SpeechRecognitionService @Inject constructor(
                 // Ignore empty partial results to prevent clearing user's spoken text
                 // Empty partials can occur due to TTS interference, pauses, or recognition resets
                 if (partialText.isNotBlank()) {
+                    if (!hasLoggedFirstPartial && beginningOfSpeechTimestamp > 0) {
+                        val elapsed = System.currentTimeMillis() - beginningOfSpeechTimestamp
+                        Log.i(TAG, "First non-empty partial in ${elapsed}ms")
+                        hasLoggedFirstPartial = true
+                        onFirstPartialResultCallback?.invoke()
+                    }
                     _transcriptionState.value = partialText
                     lastPartialTimestamp = System.currentTimeMillis()
+                    lastSpeechActivityTimestamp = System.currentTimeMillis()
                     // Clear saved partial once we've successfully concatenated and got new speech
                     if (savedPartialForConcatenation.isNotBlank()) {
                         Log.d(TAG, "[DEBUG] 🧹 Clearing savedPartialForConcatenation after successful concatenation")
@@ -781,20 +811,42 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
 
                 if (segmentText.isNotBlank()) {
-                    _transcriptionState.value = segmentText
+                    // Guard against late segment results that duplicate already-sent text.
+                    // Dedup state is reset in onBeginningOfSpeech, so this only catches
+                    // duplicates within the same speech segment (not repeated utterances).
+                    val autoSentText = BubbleOverlayService.lastAutoSentText
+                    val isDupOfCallback = lastCallbackText.isNotBlank()
+                        && (segmentText.trim() == lastCallbackText.trim()
+                            || segmentText.trim().startsWith(lastCallbackText.trim())
+                            || lastCallbackText.trim().startsWith(segmentText.trim()))
+                    val isDupOfAutoSent = autoSentText.isNotBlank()
+                        && (segmentText.trim() == autoSentText.trim()
+                            || segmentText.trim().startsWith(autoSentText.trim())
+                            || autoSentText.trim().startsWith(segmentText.trim()))
+                    if (isDupOfCallback || isDupOfAutoSent) {
+                        val dupSource = if (isDupOfAutoSent) "auto-sent '$autoSentText'"
+                            else "callback '$lastCallbackText'"
+                        Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$segmentText' " +
+                                "(already $dupSource)")
+                    } else {
+                        _transcriptionState.value = segmentText
+                        lastSpeechActivityTimestamp = System.currentTimeMillis()
 
-                    try {
-                        BubbleOverlayService.updateUserTranscription(segmentText)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                        try {
+                            BubbleOverlayService.updateUserTranscription(segmentText)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not update bubble overlay: ${e.message}")
+                        }
+
+                        recognitionCallback?.invoke(segmentText)
+                        lastCallbackText = segmentText
                     }
-
-                    recognitionCallback?.invoke(segmentText)
                 }
 
                 // Reset partial tracking for next segment (mic stays open)
                 _transcriptionState.value = ""
                 peakPartialLength = 0
+                hasLoggedFirstPartial = false
                 savedPartialForConcatenation = ""
                 savedPartialIsAfterFinalResult = false
                 savedPartialTimeoutJob?.cancel()
@@ -1094,6 +1146,16 @@ class SpeechRecognitionService @Inject constructor(
         }
         audioPipeRecorder?.cleanup()
         audioPipeRecorder = null
+
+        // Restore _isListening if continuous listening is active.
+        // An ERROR_RECOGNIZER_BUSY (or similar) from the real recognizer may have already
+        // set _isListening=false before test mode was enabled. Since test mode bypasses
+        // the real recognizer, we need to ensure listening state reflects the intent.
+        val continuousActive = continuousListeningCallback?.invoke() ?: false
+        if (continuousActive && !_isListening.value) {
+            Log.d(TAG, "[TEST] Restoring _isListening=true (continuous listening is active but isListening was false)")
+            _isListening.value = true
+        }
     }
 
     /**
@@ -1185,6 +1247,36 @@ class SpeechRecognitionService @Inject constructor(
             isTestInjectedCallback = true
             try {
                 recognitionListener?.onBeginningOfSpeech()
+            } finally {
+                isTestInjectedCallback = false
+            }
+        }
+    }
+
+    /**
+     * Simulate barge-in by triggering onBeginningOfSpeech followed by a partial result.
+     * This mirrors what happens during real speech: energy detection fires first,
+     * then the recognizer produces a partial transcription confirming actual speech.
+     */
+    suspend fun testTriggerFirstPartialForBargeIn(text: String = "Actually") {
+        if (!testModeEnabled) {
+            Log.w(TAG, "[TEST] testTriggerFirstPartialForBargeIn called but test mode not enabled!")
+            return
+        }
+
+        Log.d(TAG, "[TEST] Injecting onBeginningOfSpeech + partial result '$text' for barge-in")
+
+        withContext(Dispatchers.Main) {
+            isTestInjectedCallback = true
+            try {
+                recognitionListener?.onBeginningOfSpeech()
+                val bundle = android.os.Bundle().apply {
+                    putStringArrayList(
+                        android.speech.SpeechRecognizer.RESULTS_RECOGNITION,
+                        arrayListOf(text)
+                    )
+                }
+                recognitionListener?.onPartialResults(bundle)
             } finally {
                 isTestInjectedCallback = false
             }

@@ -44,10 +44,10 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
     @Inject
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
-    lateinit var ttsManager: com.example.whiz.services.TTSManager
+    override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
     private val createdChatIds = mutableListOf<Long>()
 

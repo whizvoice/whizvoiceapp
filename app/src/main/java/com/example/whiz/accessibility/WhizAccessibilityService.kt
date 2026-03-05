@@ -8,9 +8,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.os.Build
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 
 class WhizAccessibilityService : AccessibilityService() {
@@ -46,6 +49,79 @@ class WhizAccessibilityService : AccessibilityService() {
 
         // New method to check if service is fully connected
         fun isServiceConnected(): Boolean = _serviceState.value == ServiceState.CONNECTED
+
+        /**
+         * Take a screenshot via the accessibility service.
+         * Requires android:canTakeScreenshot="true" in accessibility_service_config.xml (API 30+).
+         */
+        fun takeScreenshotAsync(callback: (Bitmap?) -> Unit) {
+            val service = instance
+            if (service == null) {
+                Log.w("WhizAccessibilityService", "takeScreenshotAsync: service not available")
+                callback(null)
+                return
+            }
+            try {
+                val executor = Executor { it.run() }
+                service.takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    executor,
+                    object : AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: ScreenshotResult) {
+                            try {
+                                val bitmap = Bitmap.wrapHardwareBuffer(
+                                    screenshot.hardwareBuffer,
+                                    screenshot.colorSpace
+                                )
+                                screenshot.hardwareBuffer.close()
+                                callback(bitmap)
+                            } catch (e: Exception) {
+                                Log.e("WhizAccessibilityService", "Error converting screenshot", e)
+                                callback(null)
+                            }
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            Log.w("WhizAccessibilityService", "Screenshot failed with error code: $errorCode")
+                            callback(null)
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e("WhizAccessibilityService", "takeScreenshotAsync error", e)
+                callback(null)
+            }
+        }
+
+        /**
+         * Dump the current UI hierarchy as a string via AccessibilityDumpUtil.
+         */
+        fun getCurrentUiHierarchy(): String? {
+            val service = instance ?: return null
+            return try {
+                val rootNode = service.rootInActiveWindow ?: return null
+                val sb = StringBuilder()
+                AccessibilityDumpUtil.dumpNodeRecursive(rootNode, sb, 0)
+                rootNode.recycle()
+                sb.toString()
+            } catch (e: Exception) {
+                Log.e("WhizAccessibilityService", "Error getting UI hierarchy", e)
+                null
+            }
+        }
+
+        /**
+         * Get the package name of the currently active window.
+         */
+        fun getCurrentPackageName(): String? {
+            val service = instance ?: return null
+            return try {
+                service.rootInActiveWindow?.packageName?.toString()
+            } catch (e: Exception) {
+                Log.e("WhizAccessibilityService", "Error getting package name", e)
+                null
+            }
+        }
     }
 
     enum class ServiceState {

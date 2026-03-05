@@ -82,8 +82,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     @Inject
     lateinit var authApi: AuthApi
 
-    @Inject 
-    lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
+    @Inject
+    override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
     
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
