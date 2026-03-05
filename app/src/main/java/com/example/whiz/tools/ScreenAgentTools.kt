@@ -5137,10 +5137,10 @@ class ScreenAgentTools @Inject constructor(
         val screenHeight = displayMetrics.heightPixels
 
         // Calculate swipe coordinates (swipe UP from bottom to top to scroll DOWN and reveal more results)
-        // Use a smaller scroll distance (20% of screen) to avoid over-scrolling due to Material Design momentum
+        // Use 50% of screen height to scroll enough to reveal results further down the list
         val centerX = screenWidth / 2f
-        val startY = screenHeight * 0.6f  // Start at 60% down the screen
-        val endY = screenHeight * 0.4f    // End at 40% down the screen (swipe upward to scroll down)
+        val startY = screenHeight * 0.75f  // Start at 75% down the screen
+        val endY = screenHeight * 0.25f    // End at 25% down the screen (swipe upward to scroll down)
 
         Log.d(TAG, "Performing scroll gesture on Maps results list (swipe from $startY to $endY)")
         val scrolled = accessibilityService.performScrollGesture(

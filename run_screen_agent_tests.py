@@ -1071,7 +1071,7 @@ def test_google_maps_directions(tester):
         # San Francisco config
         store_name = "Trader Joe's"
         search_query = "what are the trader joes near me ?"
-        location_selector = "Can you give me directions to the one on Fulton Street"
+        location_selector = "Can you give me directions to the one on Laguna Street"
         secondary_address = "1680 Mission Street"
         secondary_address_short = "1680 Mission St"
         city_name = "San Francisco"
@@ -1144,7 +1144,7 @@ def test_google_maps_directions(tester):
             save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_see_locations")
         assert validation_result, f"Failed to show {store_name} location list"
 
-        # Send a voice transcription to select the one on Fulton Street
+        # Send a voice transcription to select the one on Laguna Street
         subprocess.run([
             'adb', 'shell',
             'am', 'broadcast',
