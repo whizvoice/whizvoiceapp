@@ -1527,6 +1527,63 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // If we're on a contact profile page (has message_btn), click it to open the chat
+            val messageBtnNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
+            if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
+                Log.d(TAG, "On contact profile page, clicking message button to open chat")
+                messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                messageBtnNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                delay(1500) // Wait for chat to open
+                val chatRootNode = accessibilityService.getCurrentRootNode()
+                if (chatRootNode == null) {
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not get root node after navigating from contact profile"
+                    )
+                }
+                val inputNodesFromProfile = mutableListOf<AccessibilityNodeInfo>()
+                findWhatsAppMessageInput(chatRootNode, inputNodesFromProfile, 0)
+                if (inputNodesFromProfile.isEmpty()) {
+                    dumpUIHierarchy(chatRootNode, "whatsapp_input_not_found", "Could not find message input field in WhatsApp after contact profile click")
+                    chatRootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not find message input field after navigating from contact profile"
+                    )
+                }
+                // Re-enter function logic with the new root; simplest approach: replace rootNode and inputNodes
+                val screenHeight2 = context.resources.displayMetrics.heightPixels
+                val inputNode2 = if (inputNodesFromProfile.size > 1) {
+                    inputNodesFromProfile.minByOrNull { node ->
+                        val r = android.graphics.Rect()
+                        node.getBoundsInScreen(r)
+                        Math.abs(r.centerY() - screenHeight2 * 0.85)
+                    } ?: inputNodesFromProfile[0]
+                } else {
+                    inputNodesFromProfile[0]
+                }
+                inputNode2.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                delay(500)
+                val appBounds2 = android.graphics.Rect()
+                chatRootNode.getBoundsInScreen(appBounds2)
+                val rect2 = android.graphics.Rect()
+                inputNode2.getBoundsInScreen(rect2)
+                val overlayBounds2 = android.graphics.Rect(appBounds2.left, rect2.top, appBounds2.right, rect2.bottom)
+                val overlayStarted2 = MessageDraftOverlayService.show(context, overlayBounds2, message, previousText)
+                inputNodesFromProfile.forEach { it.recycle() }
+                chatRootNode.recycle()
+                return DraftResult(
+                    success = overlayStarted2,
+                    message = message,
+                    overlayShown = overlayStarted2,
+                    error = if (!overlayStarted2) "Failed to show draft overlay" else null
+                )
+            }
+            messageBtnNodes?.forEach { it.recycle() }
+
             // Find the WhatsApp message input field specifically
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
             findWhatsAppMessageInput(rootNode, inputNodes, 0)
