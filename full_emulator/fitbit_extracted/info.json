@@ -1,0 +1,39 @@
+{
+    "apkm_version": 5,
+    "apk_title": "Fitbit 4.52.1.fitbit-mobile-1103807206-810598927 (arm64-v8a + arm-v7a) (320-480dpi) (Android 11+)",
+    "app_name": "Fitbit",
+    "release_version": "4.52.1.fitbit-mobile-1103807206-810598927",
+    "variant": "(arm64-v8a + arm-v7a) (320-480dpi) (Android 11+)",
+    "release_title": "Fitbit 4.52.1.fitbit-mobile-1103807206-810598927 (arm64-v8a + arm-v7a) (320-480dpi) (Android 11+)",
+    "versioncode": "1103807206",
+    "pname": "com.fitbit.FitbitMobile",
+    "post_date": "2025-10-03 09:53:29",
+    "capabilities": [],
+    "languages": [
+        "de",
+        "es",
+        "fr",
+        "in",
+        "it",
+        "ja",
+        "ko",
+        "nl",
+        "pl",
+        "pt",
+        "ru",
+        "sv",
+        "zh"
+    ],
+    "arches": [
+        "arm64-v8a",
+        "armeabi-v7a"
+    ],
+    "dpis": [
+        "320",
+        "480"
+    ],
+    "min_api": "30",
+    "accent_color": "00b0b8",
+    "apk_id": 10961528,
+    "release_id": 10961530
+}

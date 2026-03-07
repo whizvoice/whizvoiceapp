@@ -18,6 +18,8 @@ PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
 os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
 os.environ['ANDROID_HOME'] = ANDROID_HOME
 
+SCREEN_AGENT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
+
 def get_physical_device_serial():
     """Find the serial of a physical (non-emulator) Android device.
 
@@ -157,56 +159,6 @@ def stop_logcat():
         _logcat_process = None
 
 
-def save_failed_screenshot(screenshot_path, test_name, step_name):
-    """Save a screenshot and UI dump to the test output directory when validation fails."""
-    import shutil
-
-    output_dir = os.path.join(os.path.dirname(__file__), 'screen_agent_test_output')
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Create a descriptive filename
-    timestamp = subprocess.run(
-        ['date', '+%Y%m%d_%H%M%S'],
-        capture_output=True,
-        text=True,
-        check=True
-    ).stdout.strip()
-
-    # Save screenshot
-    screenshot_filename = f"{test_name}_{step_name}_{timestamp}.png"
-    screenshot_dest = os.path.join(output_dir, screenshot_filename)
-    shutil.copy(screenshot_path, screenshot_dest)
-    print(f"📸 Saved failed screenshot to: {screenshot_dest}")
-
-    # Save UI dump
-    ui_dump_filename = f"{test_name}_{step_name}_{timestamp}_uidump.xml"
-    ui_dump_dest = os.path.join(output_dir, ui_dump_filename)
-
-    # Dump UI hierarchy to device first, then pull it
-    device_dump_path = '/sdcard/window_dump.xml'
-    dump_result = subprocess.run(
-        ['adb', 'shell', 'uiautomator', 'dump', device_dump_path],
-        capture_output=True,
-        text=True
-    )
-
-    if dump_result.returncode == 0:
-        # Pull the file from device
-        pull_result = subprocess.run(
-            ['adb', 'pull', device_dump_path, ui_dump_dest],
-            capture_output=True,
-            text=True
-        )
-
-        if pull_result.returncode == 0:
-            print(f"🔍 Saved UI dump to: {ui_dump_dest}")
-            # Clean up the file from device
-            subprocess.run(['adb', 'shell', 'rm', device_dump_path], check=False)
-        else:
-            print(f"⚠️  Failed to pull UI dump: {pull_result.stderr}")
-    else:
-        print(f"⚠️  Failed to dump UI: {dump_result.stderr}")
-
 
 def check_on_new_chat_screen(tester):
     """Check if we're on the New Chat screen using UI hierarchy.
@@ -214,7 +166,7 @@ def check_on_new_chat_screen(tester):
     Returns:
         bool: True if on New Chat screen, False otherwise
     """
-    return check_element_exists_in_ui(tester, text="New Chat", wait_after_dump=2.0)
+    return tester.check_element_exists(text="New Chat", wait_after_dump=2.0)
 
 
 def navigate_to_my_chats(tester, test_name="unknown"):
@@ -236,8 +188,8 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     for attempt in range(max_attempts):
         # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
         # (not just viewing a chat where "My Chats" might appear as a navigation element)
-        has_my_chats_title = check_element_exists_in_ui(tester, content_desc="My Chats Title", wait_after_dump=2.0)
-        has_new_chat_button = check_element_exists_in_ui(tester, content_desc="New Chat", wait_after_dump=0.5)
+        has_my_chats_title = tester.check_element_exists(content_desc="My Chats Title", wait_after_dump=2.0)
+        has_new_chat_button = tester.check_element_exists(content_desc="New Chat", wait_after_dump=0.5)
 
         if has_my_chats_title and has_new_chat_button:
             print(f"✅ Found My Chats screen on attempt {attempt + 1}")
@@ -246,17 +198,13 @@ def navigate_to_my_chats(tester, test_name="unknown"):
         print(f"🔙 My Chats not found, pressing back (attempt {attempt + 1}/{max_attempts})")
 
         # Save screenshot and UI dump on each failed attempt for debugging
-        screenshot_path = "/tmp/whiz_screen.png"
-        tester.screenshot(screenshot_path)
-        save_failed_screenshot(screenshot_path, test_name, f"navigate_to_my_chats_attempt_{attempt + 1}")
+        tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, test_name, f"navigate_to_my_chats_attempt_{attempt + 1}")
 
         tester.press_back()
         time.sleep(1)
 
     # Failed to reach My Chats after all attempts
-    screenshot_path = "/tmp/whiz_screen.png"
-    tester.screenshot(screenshot_path)
-    save_failed_screenshot(screenshot_path, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
+    tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
     error_msg = f"Failed to reach My Chats page after {max_attempts} attempts. Screenshot saved to screen_agent_test_output directory."
     return (False, error_msg)
 
@@ -272,63 +220,12 @@ def get_device_model():
     return result.stdout.strip()
 
 
-def check_element_exists_in_ui(tester, content_desc=None, text=None, wait_after_dump=0.5):
-    """Check if an element exists in the UI hierarchy without using API.
-
-    Args:
-        tester: AndroidAccessibilityTester instance
-        content_desc: Content description to search for (optional)
-        text: Text content to search for (optional)
-        wait_after_dump: Seconds to wait after UI dump to let accessibility service reconnect (default 0.5)
-
-    Returns:
-        bool: True if element found, False otherwise
-    """
-    import xml.etree.ElementTree as ET
-    import time
-
-    try:
-        # Get UI hierarchy XML
-        device_path = "/sdcard/ui_hierarchy_check.xml"
-        tester.shell(f"uiautomator dump {device_path}")
-
-        # Wait a bit for accessibility service to reconnect after uiautomator
-        # (uiautomator temporarily disconnects accessibility services)
-        if wait_after_dump > 0:
-            time.sleep(wait_after_dump)
-            # Take a second dump after accessibility service reconnects
-            tester.shell(f"uiautomator dump {device_path}")
-
-        # Pull to local
-        local_path = "/tmp/ui_hierarchy_check.xml"
-        subprocess.run(['adb', 'pull', device_path, local_path],
-                      capture_output=True, check=True)
-
-        # Parse XML
-        with open(local_path, 'r') as f:
-            xml_content = f.read()
-        root = ET.fromstring(xml_content)
-
-        # Search for element
-        for node in root.iter():
-            if content_desc and node.get('content-desc') == content_desc:
-                return True
-            if text and node.get('text') == text:
-                return True
-
-        return False
-    except Exception as e:
-        print(f"⚠️  Error checking UI hierarchy: {e}")
-        return False
-
-
 def enable_accessibility_service_if_needed(tester):
     """Enable accessibility service if the dialog is showing."""
     import time
 
     # Check if accessibility dialog is showing by looking for the title element
-    dialog_showing = check_element_exists_in_ui(
-        tester,
+    dialog_showing = tester.check_element_exists(
         content_desc="Enable accessibility service title"
     )
 
@@ -398,8 +295,7 @@ def login_if_needed(tester):
     print("========================================")
 
     # Check if we're on the login screen by looking for "Sign in with Google" button
-    is_login_screen = check_element_exists_in_ui(
-        tester,
+    is_login_screen = tester.check_element_exists(
         text="Sign in with Google",
         wait_after_dump=2.0
     )
@@ -416,22 +312,18 @@ def login_if_needed(tester):
         time.sleep(3)
 
         # Verify login succeeded by checking for either My Chats page or accessibility dialog
-        reached_my_chats = check_element_exists_in_ui(
-            tester,
+        reached_my_chats = tester.check_element_exists(
             text="My Chats",
             wait_after_dump=2.0
         )
 
-        on_accessibility_dialog = check_element_exists_in_ui(
-            tester,
+        on_accessibility_dialog = tester.check_element_exists(
             text="Enable Accessibility Service",
             wait_after_dump=2.0
         )
 
         if not reached_my_chats and not on_accessibility_dialog:
-            screenshot_path = "/tmp/whiz_screen.png"
-            tester.screenshot(screenshot_path)
-            save_failed_screenshot(screenshot_path, "login_if_needed", "failed_after_login")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "login_if_needed", "failed_after_login")
             assert False, "Failed to log in - expected My Chats page or accessibility dialog. Screenshot saved to screen_agent_test_output directory."
 
         if reached_my_chats:
@@ -550,9 +442,7 @@ def test_whatsapp_draft_message(tester):
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
             print("❌ New Chat screen validation failed!")
-            screenshot_path_temp = "/tmp/whiz_screen.png"
-            tester.screenshot(screenshot_path_temp)
-            save_failed_screenshot(screenshot_path_temp, "whatsapp_draft_message", "new_chat_screen")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
         assert validation_result, "Failed to reach New Chat screen"
@@ -590,8 +480,7 @@ def test_whatsapp_draft_message(tester):
             print("✅ Draft overlay detected!")
         else:
             print("❌ Draft overlay not detected!")
-            tester.screenshot(screenshot_path)
-            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_overlay_not_detected")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_overlay_not_detected")
         assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
 
         print("\n========================================")
@@ -610,7 +499,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ WhatsApp draft message validation failed!")
-            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_message_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_message_validation")
         else:
             print("✅ WhatsApp draft message validated successfully!")
         assert validation_result, "Failed to draft WhatsApp message correctly"
@@ -649,7 +538,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
-            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "draft_updated_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_updated_validation")
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
         assert validation_result, "Failed to draft WhatsApp message correctly"
@@ -688,7 +577,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
-            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_sent_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_sent_validation")
         else:
             print("✅ WhatsApp message successfully sent!")
         assert validation_result, "Failed to send WhatsApp message correctly"
@@ -727,7 +616,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
-            save_failed_screenshot(screenshot_path, "whatsapp_draft_message", "message_deleted_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_deleted_validation")
         else:
             print("✅ WhatsApp message successfully deleted!")
         assert validation_result, "Failed to delete the sent message"
@@ -788,9 +677,7 @@ def test_youtube_music_integration(tester):
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
             print("❌ New Chat screen validation failed!")
-            screenshot_path_temp = "/tmp/whiz_screen.png"
-            tester.screenshot(screenshot_path_temp)
-            save_failed_screenshot(screenshot_path_temp, "youtube_music", "new_chat_screen")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
         assert validation_result, "Failed to reach New Chat screen"
@@ -836,7 +723,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for song to load... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not play_succeeded:
-            save_failed_screenshot(screenshot_path, "youtube_music", "song_playing_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "song_playing_validation")
         assert play_succeeded, "Failed to load Golden on YouTube Music - song never appeared as current track"
         print("✅ YouTube Music has 'Golden' loaded successfully!")
 
@@ -885,7 +772,7 @@ def test_youtube_music_integration(tester):
         )
         if not validation_result:
             print("❌ Queue validation failed!")
-            save_failed_screenshot(screenshot_path, "youtube_music", "queue_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "queue_validation")
         else:
             print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
         assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
@@ -929,7 +816,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not music_changed:
-            save_failed_screenshot(screenshot_path, "youtube_music", "nineties_music_change_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_music_change_validation")
         assert music_changed, "Failed to change music from Golden"
         print("✅ Music changed successfully!")
 
@@ -954,7 +841,7 @@ def test_youtube_music_integration(tester):
         )
         if not playlist_validation:
             print("❌ 90s pop playlist validation failed!")
-            save_failed_screenshot(screenshot_path, "youtube_music", "nineties_playlist_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_playlist_validation")
         else:
             print("✅ 90s pop playlist validated successfully!")
         assert playlist_validation, "Failed to validate 90s pop playlist"
@@ -1000,7 +887,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not podcast_succeeded:
-            save_failed_screenshot(screenshot_path, "youtube_music", "podcast_playing_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "podcast_playing_validation")
         assert podcast_succeeded, "Failed to play 99% Invisible podcast"
         print("✅ 99% Invisible podcast playing successfully!")
 
@@ -1045,7 +932,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not pause_succeeded:
-            save_failed_screenshot(screenshot_path, "youtube_music", "pause_music_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "pause_music_validation")
         assert pause_succeeded, "Failed to pause music - play button never appeared"
         print("✅ Music paused successfully!")
 
@@ -1112,9 +999,7 @@ def test_google_maps_directions(tester):
         tester.screenshot(screenshot_path)
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
-            screenshot_path_temp = "/tmp/whiz_screen.png"
-            tester.screenshot(screenshot_path_temp)
-            save_failed_screenshot(screenshot_path_temp, "google_maps_directions", "new_chat_screen")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "new_chat_screen")
         assert validation_result, "Failed to reach New Chat screen"
 
         # Send a voice transcription to ask for directions to Trader Joe's
@@ -1141,7 +1026,7 @@ def test_google_maps_directions(tester):
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
-            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_see_locations")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_see_locations")
         assert validation_result, f"Failed to show {store_name} location list"
 
         # Send a voice transcription to select the one on Laguna Street
@@ -1169,7 +1054,7 @@ def test_google_maps_directions(tester):
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
-            save_failed_screenshot(screenshot_path, "google_maps_directions", f"{store_name_slug}_directions")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions")
         assert validation_result, f"Failed to show {store_name} directions"
 
         # Send a voice transcription to change destination to secondary address
@@ -1195,7 +1080,7 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_search")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_search")
         assert validation_result, f"Failed to show {secondary_address} search results"
 
         # Send a voice transcription to request driving directions specifically
@@ -1220,7 +1105,7 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "secondary_address_driving_directions")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_driving_directions")
         assert validation_result, f"Failed to show driving directions to {secondary_address}"
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
@@ -1238,7 +1123,7 @@ def test_google_maps_directions(tester):
             f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}"
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "google_maps_directions", "whizvoice_address_confirmation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "whizvoice_address_confirmation")
         assert validation_result, f"Assistant did not mention the {secondary_address} address in the chat"
 
     finally:
@@ -1300,7 +1185,7 @@ def test_sms_draft_message(tester):
             "The screen shows a 'New Chat' page where users can start a new conversation"
         )
         if not validation_result:
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "new_chat_screen")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "new_chat_screen")
         assert validation_result, "Failed to reach New Chat screen"
         print("✅ Successfully validated New Chat screen")
 
@@ -1334,8 +1219,7 @@ def test_sms_draft_message(tester):
         # If overlay detection failed, capture diagnostics before asserting
         if not result['matched']:
             print("❌ Draft overlay not detected!")
-            tester.screenshot(screenshot_path)
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_overlay_not_detected")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_overlay_not_detected")
         else:
             print("✅ Draft overlay detected!")
 
@@ -1356,7 +1240,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft message validation failed!")
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_message_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_message_validation")
         else:
             print("✅ SMS draft message validated successfully!")
         assert validation_result, "Failed to draft SMS message correctly"
@@ -1394,7 +1278,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "draft_updated_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_updated_validation")
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
         assert validation_result, "Failed to update SMS draft message correctly"
@@ -1435,7 +1319,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "message_sent_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_sent_validation")
         else:
             print("✅ SMS message successfully sent!")
         assert validation_result, "Failed to send SMS message correctly"
@@ -1473,7 +1357,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
-            save_failed_screenshot(screenshot_path, "sms_draft_message", "message_deleted_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_deleted_validation")
         else:
             print("✅ SMS message successfully deleted!")
         assert validation_result, "Failed to delete the sent SMS message"
