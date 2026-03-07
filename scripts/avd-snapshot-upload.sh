@@ -188,7 +188,9 @@ echo "==> Creating GitHub Release: $RELEASE_TAG"
 # Delete existing release if it exists (to allow re-upload)
 if gh release view "$RELEASE_TAG" --repo "$REPO" &>/dev/null; then
     echo "    Deleting existing release $RELEASE_TAG..."
-    gh release delete "$RELEASE_TAG" --repo "$REPO" --yes --cleanup-tag
+    gh release delete "$RELEASE_TAG" --repo "$REPO" --yes
+    # Clean up the tag if it exists (may not exist if previous upload failed mid-way)
+    git push --delete origin "$RELEASE_TAG" 2>/dev/null || true
 fi
 
 # Build asset list
