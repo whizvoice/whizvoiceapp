@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 #!/usr/bin/env python3
 """Shared fixtures for autofix verification tests.
 
@@ -11,7 +10,7 @@ import os
 
 # Add this directory to path so helpers.py can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, '/Users/ruthgracewong/android_accessibility_tester')
+sys.path.insert(0, os.path.expanduser('~/android_accessibility_tester'))
 
 import android_accessibility_tester
 import subprocess
@@ -161,123 +160,3 @@ def tester(app_installed):
     enable_accessibility_service()
 
     yield tester
-=======
-"""Pytest configuration for autofix verification tests (emulator-based)."""
-
-import os
-import subprocess
-import sys
-import time
-
-import pytest
-
-# Add the accessibility tester to the path
-sys.path.insert(0, os.path.expanduser("~/android_accessibility_tester"))
-import android_accessibility_tester
-
-EMULATOR_SERIAL = os.environ.get("ANDROID_SERIAL", "emulator-5556")
-ANDROID_HOME = os.environ.get(
-    "ANDROID_HOME", "/opt/homebrew/share/android-commandlinetools"
-)
-PLATFORM_TOOLS = os.path.join(ANDROID_HOME, "platform-tools")
-
-# Ensure adb is on PATH
-os.environ["PATH"] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
-os.environ["ANDROID_HOME"] = ANDROID_HOME
-os.environ["ANDROID_SERIAL"] = EMULATOR_SERIAL
-
-
-def _load_anthropic_api_key():
-    """Load ANTHROPIC_API_KEY from export_anthropic_key.sh."""
-    key_file = os.path.join(
-        os.path.dirname(__file__), "..", "export_anthropic_key.sh"
-    )
-    if os.path.exists(key_file):
-        with open(key_file) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("export ANTHROPIC_API_KEY="):
-                    api_key = line.split("=", 1)[1].strip("\"'")
-                    os.environ["ANTHROPIC_API_KEY"] = api_key
-                    return
-
-
-_load_anthropic_api_key()
-
-
-@pytest.fixture(scope="session")
-def emulator_ready():
-    """Ensure the emulator is running and the screen is on."""
-    # Wake device and keep screen on
-    subprocess.run(
-        ["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"], check=False
-    )
-    subprocess.run(
-        ["adb", "shell", "input", "keyevent", "KEYCODE_MENU"], check=False
-    )
-    time.sleep(1)
-    subprocess.run(
-        ["adb", "shell", "settings", "put", "system", "screen_off_timeout", "2147483647"],
-        check=False,
-    )
-    subprocess.run(
-        ["adb", "shell", "svc", "power", "stayon", "true"], check=False
-    )
-
-    # Install the debug app
-    install_script = os.path.join(os.path.dirname(__file__), "..", "install.sh")
-    if os.path.exists(install_script):
-        subprocess.run([install_script], check=True, env=os.environ)
-        # Grant overlay permission
-        pkg = "com.example.whiz.debug"
-        subprocess.run(
-            ["adb", "shell", "appops", "set", pkg, "SYSTEM_ALERT_WINDOW", "allow"],
-            check=False,
-        )
-
-    yield
-
-    # Restore screen timeout
-    subprocess.run(
-        ["adb", "shell", "settings", "put", "system", "screen_off_timeout", "30000"],
-        check=False,
-    )
-    subprocess.run(
-        ["adb", "shell", "svc", "power", "stayon", "false"], check=False
-    )
-
-
-@pytest.fixture(scope="function")
-def tester(emulator_ready):
-    """Create a fresh tester instance with the Whiz app open."""
-    # Force stop the app to ensure a clean start
-    subprocess.run(
-        ["adb", "shell", "am", "force-stop", "com.example.whiz.debug"],
-        check=False,
-    )
-    time.sleep(0.5)
-
-    # Press home for a clean starting state
-    subprocess.run(
-        ["adb", "shell", "input", "keyevent", "KEYCODE_HOME"], check=False
-    )
-    time.sleep(0.5)
-
-    t = android_accessibility_tester.AndroidAccessibilityTester(
-        device_id=EMULATOR_SERIAL
-    )
-    t.open_app("com.example.whiz.debug")
-    time.sleep(3)
-
-    # Import helpers here to avoid circular imports
-    from helpers import (
-        check_element_exists_in_ui,
-        enable_accessibility_service_if_needed,
-        login_if_needed,
-    )
-
-    login_if_needed(t)
-    enable_accessibility_service_if_needed(t)
-
-    yield t
->>>>>>> Stashed changes
