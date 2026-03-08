@@ -72,9 +72,18 @@ def app_installed():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Install the debug app
-    install_script = os.path.join(os.path.dirname(__file__), '..', 'install.sh')
-    subprocess.run([install_script, '--force'], check=True, env=os.environ)
+    # Build and install the debug app directly to the emulator
+    # (install.sh overrides ANDROID_SERIAL to prefer physical device, which may not work)
+    project_dir = os.path.join(os.path.dirname(__file__), '..')
+    apk_path = os.path.join(project_dir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
+    subprocess.run(
+        [os.path.join(project_dir, 'gradlew'), 'assembleDebug', '--console=plain', '--quiet'],
+        check=True, cwd=project_dir
+    )
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'install', '-r', apk_path],
+        check=True
+    )
 
     # Grant overlay permission
     subprocess.run(
