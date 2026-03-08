@@ -29,8 +29,11 @@ def test_gmaps_no_nonsponsored_result(tester):
     tester.screenshot("/tmp/whiz_gmaps_result.png")
     result = tester.validate_screenshot(
         "/tmp/whiz_gmaps_result.png",
-        "Google Maps is showing a specific location or search results for City Hall. "
-        "It should NOT be stuck on a filter row or showing an error."
+        "Google Maps is showing a specific location detail page for a place "
+        "(with details like address, ratings, Directions/Call/Save buttons, etc). "
+        "The place does NOT need to be named exactly 'City Hall' - any government "
+        "building, city office, or civic location is acceptable. "
+        "It should NOT be stuck on a filter row, search results list, or showing an error."
     )
     if not result:
         save_failed_screenshot(tester, "gmaps_no_nonsponsored_result", "validation_failed")
