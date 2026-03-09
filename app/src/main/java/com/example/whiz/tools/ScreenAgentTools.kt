@@ -7970,6 +7970,16 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Check for Community page - it has conversations_row_contact_name like the
+            // main chat list, but it's a different screen. Detect it early and return
+            // UNKNOWN so back-navigation will press back to the real chat list.
+            val communityName = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/community_navigation_communityName")
+            if (communityName != null && communityName.isNotEmpty()) {
+                communityName.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp Community page - not the main chat list")
+                return WhatsAppScreen.UNKNOWN
+            }
+
             // Check if we're inside a chat first (most specific screen)
             // A chat screen has the message input field and/or conversation elements
             val messageInputField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
@@ -7987,12 +7997,15 @@ class ScreenAgentTools @Inject constructor(
                 return WhatsAppScreen.INSIDE_CHAT
             }
 
-            // Check for chat list elements
-            val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
-            if (chatList != null && chatList.isNotEmpty()) {
-                chatList.forEach { it.recycle() }
-                Log.d(TAG, "On WhatsApp chat list")
-                return WhatsAppScreen.CHAT_LIST
+            // Check for chat list elements - only if we have main screen indicators,
+            // since conversations_row_contact_name also appears on Community pages
+            if (isMainChatList) {
+                val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+                if (chatList != null && chatList.isNotEmpty()) {
+                    chatList.forEach { it.recycle() }
+                    Log.d(TAG, "On WhatsApp chat list")
+                    return WhatsAppScreen.CHAT_LIST
+                }
             }
 
             // Check for the tab layout which indicates we're on the main screen with tabs
