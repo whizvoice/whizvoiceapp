@@ -1,0 +1,310 @@
+name: Create x86_64 Emulator Snapshot
+
+# Manual trigger only — this is a one-off workflow
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Snapshot version tag (e.g. v1)"
+        required: true
+        default: "v1"
+      install_whatsapp:
+        description: "Install WhatsApp APK from release assets"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  create-snapshot:
+    name: Create x86_64 AVD Snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          df -h
+
+      - name: Install tools
+        run: sudo apt-get install -y zstd
+
+      - name: Install system image
+        run: |
+          yes | sdkmanager "system-images;android-31;default;x86_64" || true
+          yes | sdkmanager "platform-tools" "emulator" || true
+
+      - name: Create AVD
+        run: |
+          echo "no" | avdmanager create avd \
+            --name whiz-test-device \
+            --package "system-images;android-31;default;x86_64" \
+            --device "pixel_4" \
+            --force
+
+      - name: Download app APKs for pre-installation
+        if: ${{ inputs.install_whatsapp }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/app-apks
+          # Download WhatsApp and other APKs from a dedicated release
+          # You need to upload these APKs first:
+          #   gh release create app-apks-for-snapshot --repo whizvoice/whizvoiceapp WhatsApp.apk GoogleMaps.apk ...
+          gh release download app-apks-for-snapshot \
+            --repo whizvoice/whizvoiceapp \
+            --dir /tmp/app-apks \
+            --pattern "*.apk" || echo "WARNING: No app-apks-for-snapshot release found. Skipping pre-installed apps."
+          ls -la /tmp/app-apks/ || true
+
+      - name: Boot emulator, install apps, and save snapshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: default
+          arch: x86_64
+          avd-name: whiz-test-device
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096
+          disable-animations: true
+          script: |
+            echo "==> Waiting for full boot..."
+            adb wait-for-device
+            # Wait for boot_completed
+            for i in $(seq 1 60); do
+              BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$BOOT" = "1" ]; then
+                echo "Boot completed after ~${i}s"
+                break
+              fi
+              sleep 2
+            done
+            sleep 10
+
+            echo "==> Device info:"
+            adb shell getprop ro.product.model
+            adb shell getprop ro.build.version.sdk
+            adb shell getprop ro.product.cpu.abi
+
+            # Install any pre-downloaded APKs
+            if ls /tmp/app-apks/*.apk 1>/dev/null 2>&1; then
+              echo "==> Installing pre-downloaded APKs..."
+              for apk in /tmp/app-apks/*.apk; do
+                echo "    Installing $(basename $apk)..."
+                adb install -r "$apk" || echo "    WARNING: Failed to install $(basename $apk)"
+              done
+            else
+              echo "==> No APKs to pre-install"
+            fi
+
+            # Set up common emulator settings
+            echo "==> Configuring emulator settings..."
+            adb shell settings put system screen_off_timeout 2147483647
+            adb shell settings put global window_animation_scale 0
+            adb shell settings put global transition_animation_scale 0
+            adb shell settings put global animator_duration_scale 0
+
+            # Let everything settle
+            sleep 5
+
+            echo "==> Saving snapshot 'baseline_clean'..."
+            # The emulator-runner doesn't expose snapshot save directly,
+            # so we use the emulator console
+            EMULATOR_PORT=$(adb devices | grep emulator | head -1 | sed 's/emulator-\([0-9]*\).*/\1/')
+            if [ -n "$EMULATOR_PORT" ]; then
+              # Get auth token
+              AUTH_TOKEN=$(cat ~/.emulator_console_auth_token 2>/dev/null || echo "")
+              {
+                if [ -n "$AUTH_TOKEN" ]; then
+                  echo "auth $AUTH_TOKEN"
+                fi
+                sleep 1
+                echo "avd snapshot save baseline_clean"
+                sleep 5
+                echo "quit"
+              } | telnet localhost $EMULATOR_PORT || echo "Telnet snapshot save attempted"
+            fi
+
+            # Verify snapshot was saved
+            AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+            if [ -d "$AVD_DIR/snapshots/baseline_clean" ]; then
+              echo "==> Snapshot saved successfully!"
+              ls -la "$AVD_DIR/snapshots/baseline_clean/"
+            else
+              echo "==> Checking for snapshots..."
+              ls -la "$AVD_DIR/snapshots/" 2>/dev/null || echo "No snapshots directory"
+              # Try alternative: the default snapshot might work
+              if [ -d "$AVD_DIR/snapshots/default_boot" ]; then
+                echo "==> Copying default_boot as baseline_clean"
+                cp -r "$AVD_DIR/snapshots/default_boot" "$AVD_DIR/snapshots/baseline_clean"
+              fi
+            fi
+
+      - name: Package and upload snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ inputs.version }}"
+          RELEASE_TAG="emulator-snapshot-x86_64-${VERSION}"
+          REPO="${{ github.repository }}"
+          AVD_NAME="whiz-test-device"
+          AVD_DIR="$HOME/.android/avd/${AVD_NAME}.avd"
+          SNAPSHOT_NAME="baseline_clean"
+          ARCHIVE_PATH="/tmp/avd-snapshot.tar.zst"
+          SPLIT_PREFIX="/tmp/whiz-avd-snapshot.tar.zst.part-"
+
+          # Verify snapshot exists
+          if [ ! -d "$AVD_DIR/snapshots/$SNAPSHOT_NAME" ]; then
+            echo "ERROR: Snapshot directory not found at $AVD_DIR/snapshots/$SNAPSHOT_NAME"
+            echo "Available snapshots:"
+            ls -la "$AVD_DIR/snapshots/" 2>/dev/null || echo "No snapshots directory"
+            exit 1
+          fi
+
+          echo "==> Staging files..."
+          STAGING_DIR=$(mktemp -d /tmp/avd-snapshot-staging.XXXXXX)
+
+          # Config files
+          for f in config.ini AVD.conf emulator-user.ini version_num.cache hardware-qemu.ini; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              cp "$AVD_DIR/$f" "$STAGING_DIR/$f"
+            fi
+          done
+
+          # Disk images
+          for f in userdata-qemu.img.qcow2 userdata-qemu.img \
+                   encryptionkey.img.qcow2 encryptionkey.img \
+                   cache.img.qcow2 cache.img; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              echo "    Copying $f ($(du -sh "$AVD_DIR/$f" | cut -f1))"
+              cp "$AVD_DIR/$f" "$STAGING_DIR/$f"
+            fi
+          done
+
+          # Snapshot directory
+          echo "    Copying snapshots/$SNAPSHOT_NAME/"
+          mkdir -p "$STAGING_DIR/snapshots/$SNAPSHOT_NAME"
+          cp -r "$AVD_DIR/snapshots/$SNAPSHOT_NAME/"* "$STAGING_DIR/snapshots/$SNAPSHOT_NAME/"
+
+          # Modem simulator
+          if [ -d "$AVD_DIR/modem_simulator" ]; then
+            cp -r "$AVD_DIR/modem_simulator" "$STAGING_DIR/modem_simulator"
+          fi
+
+          # Sanitize absolute paths
+          echo "==> Sanitizing absolute paths..."
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          for ini_file in "$STAGING_DIR/hardware-qemu.ini" \
+                          "$STAGING_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
+            if [ -f "$ini_file" ]; then
+              echo "    Sanitizing $(basename "$ini_file")"
+              sed -i "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
+              sed -i "s|${HOME}|__HOME__|g" "$ini_file"
+            fi
+          done
+
+          # Compress
+          echo "==> Compressing with zstd..."
+          tar -cf - -C "$STAGING_DIR" . | zstd -T0 -19 -o "$ARCHIVE_PATH"
+          ARCHIVE_SIZE=$(du -sh "$ARCHIVE_PATH" | cut -f1)
+          echo "    Archive size: $ARCHIVE_SIZE"
+
+          # Checksum
+          SHA256=$(sha256sum "$ARCHIVE_PATH" | cut -d' ' -f1)
+          echo "    SHA-256: $SHA256"
+
+          # Split into chunks (<2GB for GitHub Releases)
+          echo "==> Splitting into 1900MB chunks..."
+          split -b 1900m "$ARCHIVE_PATH" "$SPLIT_PREFIX"
+
+          PARTS=()
+          for part in ${SPLIT_PREFIX}*; do
+            echo "    $(basename "$part") ($(du -sh "$part" | cut -f1))"
+            PARTS+=("$part")
+          done
+
+          # Write manifest
+          MANIFEST_PATH="/tmp/avd-snapshot-manifest.json"
+          PART_FILES_JSON="["
+          first=true
+          for part in "${PARTS[@]}"; do
+            if $first; then first=false; else PART_FILES_JSON+=","; fi
+            PART_FILES_JSON+="\"$(basename "$part")\""
+          done
+          PART_FILES_JSON+="]"
+
+          cat > "$MANIFEST_PATH" <<EOF
+          {
+            "version": "${VERSION}",
+            "arch": "x86_64",
+            "api_level": 31,
+            "system_image": "system-images;android-31;default;x86_64",
+            "avd_name": "${AVD_NAME}",
+            "snapshot_name": "${SNAPSHOT_NAME}",
+            "parts": ${PART_FILES_JSON},
+            "sha256": "${SHA256}",
+            "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          echo "==> Manifest:"
+          cat "$MANIFEST_PATH"
+
+          # Upload to GitHub Releases
+          echo "==> Creating GitHub Release: $RELEASE_TAG"
+
+          if gh release view "$RELEASE_TAG" --repo "$REPO" &>/dev/null; then
+            echo "    Deleting existing release $RELEASE_TAG..."
+            gh release delete "$RELEASE_TAG" --repo "$REPO" --yes
+          fi
+
+          ASSETS=("$MANIFEST_PATH")
+          for part in "${PARTS[@]}"; do
+            ASSETS+=("$part")
+          done
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$REPO" \
+            --title "Emulator AVD Snapshot x86_64 ${VERSION}" \
+            --notes "x86_64 AVD snapshot for CI runners.
+
+          **Arch:** x86_64
+          **API Level:** 31
+          **System Image:** system-images;android-31;default;x86_64
+          **SHA-256:** \`${SHA256}\`
+          **Parts:** ${#PARTS[@]}
+
+          Download and restore with:
+          \`\`\`
+          ./scripts/avd-snapshot-download.sh --release-tag $RELEASE_TAG --system-image 'system-images;android-31;default;x86_64' --target-api 31
+          \`\`\`" \
+            "${ASSETS[@]}"
+
+          echo ""
+          echo "==> Upload complete!"
+          echo "    Release: $RELEASE_TAG"
+          echo "    Parts: ${#PARTS[@]}"
