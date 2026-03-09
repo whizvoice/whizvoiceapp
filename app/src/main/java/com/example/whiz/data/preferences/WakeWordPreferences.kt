@@ -44,8 +44,9 @@ class WakeWordPreferences @Inject constructor(
      * @param phrase normalized key: "hey_whiz" or "ok_whiz"
      * @param confidence the Vosk confidence score
      * @param accepted whether it met the threshold
+     * @param classifierScore ONNX classifier score (-1.0 if not available)
      */
-    fun recordDetection(phrase: String, confidence: Double, accepted: Boolean, rawJson: String) {
+    fun recordDetection(phrase: String, confidence: Double, accepted: Boolean, rawJson: String, classifierScore: Double = -1.0) {
         val editor = prefs.edit()
 
         // Update count
@@ -89,6 +90,7 @@ class WakeWordPreferences @Inject constructor(
             put("accepted", accepted)
             put("timestamp", now)
             put("raw_json", rawJson)
+            put("classifier_score", classifierScore)
         }
         recentArray.put(entry)
         while (recentArray.length() > 10) {
@@ -98,7 +100,7 @@ class WakeWordPreferences @Inject constructor(
 
         editor.apply()
         writeStatsFile()
-        writeDetectionJsonl(phrase, confidence, accepted, now, rawJson)
+        writeDetectionJsonl(phrase, confidence, accepted, now, rawJson, classifierScore)
     }
 
     /**
@@ -128,7 +130,8 @@ class WakeWordPreferences @Inject constructor(
                     sb.appendLine("  recent (last ${recent.size}):")
                     for (r in recent) {
                         val status = if (r.accepted) "ACCEPTED" else "REJECTED"
-                        sb.appendLine("    ${"%.2f".format(r.confidence)} $status at ${df.format(Date(r.timestamp))}")
+                        val classifierStr = if (r.classifierScore >= 0) " classifier=${"%.3f".format(r.classifierScore)}" else ""
+                        sb.appendLine("    ${"%.2f".format(r.confidence)} $status$classifierStr at ${df.format(Date(r.timestamp))}")
                         if (r.rawJson.isNotEmpty()) {
                             sb.appendLine("      vosk: ${r.rawJson}")
                         }
@@ -150,7 +153,8 @@ class WakeWordPreferences @Inject constructor(
         confidence: Double,
         accepted: Boolean,
         timestamp: Long,
-        rawJson: String
+        rawJson: String,
+        classifierScore: Double = -1.0
     ) {
         try {
             val dir = context.getExternalFilesDir(null) ?: return
@@ -161,6 +165,7 @@ class WakeWordPreferences @Inject constructor(
                 put("confidence", confidence)
                 put("accepted", accepted)
                 put("timestamp", timestamp)
+                put("classifier_score", classifierScore)
                 // Parse rawJson so it's a proper nested object, not a double-escaped string
                 try {
                     put("raw_json", JSONObject(rawJson))
@@ -207,7 +212,8 @@ class WakeWordPreferences @Inject constructor(
         val confidence: Double,
         val accepted: Boolean,
         val timestamp: Long,
-        val rawJson: String
+        val rawJson: String,
+        val classifierScore: Double = -1.0
     )
 
     fun getRecentDetections(phrase: String): List<RecentDetection> {
@@ -221,7 +227,8 @@ class WakeWordPreferences @Inject constructor(
                 confidence = obj.getDouble("confidence"),
                 accepted = obj.getBoolean("accepted"),
                 timestamp = obj.getLong("timestamp"),
-                rawJson = obj.optString("raw_json", "")
+                rawJson = obj.optString("raw_json", ""),
+                classifierScore = obj.optDouble("classifier_score", -1.0)
             )
         }
     }

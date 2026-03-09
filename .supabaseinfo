@@ -103,6 +103,7 @@ detection_timestamp | int8 | NOT NULL | epoch millis when detection fired
 raw_vosk_json | text | full Vosk JSON result
 storage_path | text | NOT NULL | path in Supabase Storage bucket 'wake-word-audio'
 file_size_bytes | integer | WAV file size
+classifier_score | double precision | default -1.0 | ONNX classifier probability score (-1.0 if classifier not available)
 
 This table stores metadata for wake word detection audio clips. The actual WAV files are stored in the Supabase Storage bucket 'wake-word-audio'. Both accepted and rejected detections are captured for training data.
 

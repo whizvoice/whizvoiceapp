@@ -78,7 +78,7 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
     androidResources {
-        noCompress += listOf("pb", "scorer", "conf", "json")
+        noCompress += listOf("pb", "scorer", "conf", "json", "onnx")
     }
     packaging {
         jniLibs {
@@ -181,6 +181,9 @@ dependencies {
 
     // Wake word detection (Vosk offline speech recognition)
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // ONNX Runtime for wake word classifier
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

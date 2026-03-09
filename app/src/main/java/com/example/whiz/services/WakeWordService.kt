@@ -51,7 +51,8 @@ class WakeWordService : Service() {
         const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
-        private const val WAKE_WORD_CONFIDENCE_THRESHOLD_HEY = 95.0
+        // Classifier threshold: probability above which a Vosk candidate is accepted
+        private const val CLASSIFIER_THRESHOLD = 0.7f
 
         // Ring buffer: 10 seconds of 16kHz mono 16-bit PCM = 320000 bytes
         private const val RING_BUFFER_SECONDS = 10
@@ -156,6 +157,7 @@ class WakeWordService : Service() {
     private var audioRecord: AudioRecord? = null
     private var voskModel: Model? = null
     private var recognizer: Recognizer? = null
+    private var wakeWordClassifier: WakeWordClassifier? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
     private var isAudioOnly = false
@@ -265,6 +267,16 @@ class WakeWordService : Service() {
                     return@launch
                 }
                 voskModel = model
+
+                // Initialize ONNX classifier
+                if (wakeWordClassifier == null) {
+                    try {
+                        wakeWordClassifier = WakeWordClassifier(this@WakeWordService)
+                        Log.d(TAG, "Wake word ONNX classifier loaded")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load ONNX classifier, falling back to Vosk-only", e)
+                    }
+                }
 
                 val grammar = "[\"hey whiz\", \"[unk]\"]"
                 recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), grammar).apply {
@@ -439,28 +451,45 @@ class WakeWordService : Service() {
 
             val best = alternatives.getJSONObject(0)
             val text = best.optString("text", "").lowercase()
-            val confidence = best.optDouble("confidence", 0.0)
+            val voskConfidence = best.optDouble("confidence", 0.0)
 
-            val (threshold, phraseKey) = when {
-                text.contains("hey whiz") -> WAKE_WORD_CONFIDENCE_THRESHOLD_HEY to "hey_whiz"
+            val phraseKey = when {
+                text.contains("hey whiz") -> "hey_whiz"
                 else -> return
             }
 
-            val accepted = confidence >= threshold
-            wakeWordPreferences.recordDetection(phraseKey, confidence, accepted, jsonResult)
+            // Run ONNX classifier on ring buffer audio if available
+            val classifier = wakeWordClassifier
+            val pcmClip = audioRingBuffer?.snapshot()
+            val classifierScore: Float
+            val accepted: Boolean
+
+            if (classifier != null && pcmClip != null && pcmClip.isNotEmpty()) {
+                // Two-stage detection: Vosk detected candidate, classifier decides
+                classifierScore = classifier.classify(pcmClip)
+                accepted = classifierScore >= CLASSIFIER_THRESHOLD
+                Log.d(TAG, "Classifier score=$classifierScore (threshold=$CLASSIFIER_THRESHOLD), vosk_confidence=$voskConfidence, accepted=$accepted")
+            } else {
+                // Fallback: no classifier available, use Vosk confidence at a lower threshold
+                classifierScore = -1.0f
+                accepted = voskConfidence >= 90.0
+                Log.d(TAG, "No classifier available, using vosk confidence=$voskConfidence, accepted=$accepted")
+            }
+
+            wakeWordPreferences.recordDetection(phraseKey, voskConfidence, accepted, jsonResult, classifierScore.toDouble())
             val stats = wakeWordPreferences.getStats(phraseKey)
             Log.d(TAG, "Stats[$phraseKey]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.1f".format(stats.mean)}, stdDev=${"%.1f".format(stats.stdDev)}, last=${"%.1f".format(stats.lastConfidence)}")
 
-            // Capture audio clip for this detection
-            captureDetectionAudio(phraseKey, confidence, accepted, jsonResult)
+            // Capture audio clip for this detection (both accepted and rejected, for training)
+            captureDetectionAudio(phraseKey, voskConfidence, accepted, jsonResult, classifierScore.toDouble())
 
             if (accepted) {
-                Log.d(TAG, "Wake word detected: '$text' (confidence=$confidence, threshold=$threshold)")
+                Log.d(TAG, "Wake word detected: '$text' (classifier=$classifierScore, vosk=$voskConfidence)")
                 lastDetectionTime = System.currentTimeMillis()
                 recognizer?.reset()
                 onWakeWordDetected()
             } else {
-                Log.d(TAG, "Wake word rejected (low confidence): '$text' (confidence=$confidence, threshold=$threshold)")
+                Log.d(TAG, "Wake word rejected: '$text' (classifier=$classifierScore, vosk=$voskConfidence)")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error parsing recognizer result", e)
@@ -552,6 +581,12 @@ class WakeWordService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Error closing model", e)
         }
+        try {
+            wakeWordClassifier?.close()
+            wakeWordClassifier = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing ONNX classifier", e)
+        }
         // Release wake lock
         try {
             wakeLock?.let {
@@ -621,7 +656,8 @@ class WakeWordService : Service() {
         phrase: String,
         confidence: Double,
         accepted: Boolean,
-        rawVoskJson: String
+        rawVoskJson: String,
+        classifierScore: Double = -1.0
     ) {
         // Trim to last 3 seconds for wake word clips (not the full 10s buffer)
         val pcmSnapshot = audioRingBuffer?.snapshot(WAKE_WORD_CLIP_SIZE)
@@ -635,7 +671,7 @@ class WakeWordService : Service() {
             val wavFile = File(audioDir, "detection_${timestamp}_${confStr}.wav")
             saveWavFile(pcmSnapshot, wavFile)
             Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM)")
-            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson)
+            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson, classifierScore)
             enforceAudioStorageCap(audioDir)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save detection audio", e)
@@ -653,7 +689,8 @@ class WakeWordService : Service() {
         phrase: String,
         confidence: Double,
         accepted: Boolean,
-        rawVoskJson: String
+        rawVoskJson: String,
+        classifierScore: Double = -1.0
     ) {
         serviceScope.launch {
             try {
@@ -670,7 +707,8 @@ class WakeWordService : Service() {
                     confidence = confidence.toString().toRequestBody(textType),
                     accepted = accepted.toString().toRequestBody(textType),
                     timestamp = System.currentTimeMillis().toString().toRequestBody(textType),
-                    rawVoskJson = rawVoskJson.toRequestBody(textType)
+                    rawVoskJson = rawVoskJson.toRequestBody(textType),
+                    classifierScore = classifierScore.toString().toRequestBody(textType)
                 )
                 wavFile.delete()
                 Log.d(TAG, "Uploaded and deleted wake word audio: ${wavFile.name}")

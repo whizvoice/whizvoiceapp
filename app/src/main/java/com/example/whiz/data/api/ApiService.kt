@@ -223,6 +223,7 @@ interface ApiService {
         @Part("confidence") confidence: RequestBody,
         @Part("accepted") accepted: RequestBody,
         @Part("timestamp") timestamp: RequestBody,
-        @Part("raw_vosk_json") rawVoskJson: RequestBody
+        @Part("raw_vosk_json") rawVoskJson: RequestBody,
+        @Part("classifier_score") classifierScore: RequestBody
     ): WakeWordAudioResponse
 } 
