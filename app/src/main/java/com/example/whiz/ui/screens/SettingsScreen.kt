@@ -317,6 +317,19 @@ fun SettingsScreen(
                 )
             }
 
+            // Developer Mode Section (email-gated)
+            if (viewModel.isDeveloperModeVisible) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    "Developer",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.semantics { contentDescription = "Developer section header" }
+                )
+                HorizontalDivider(thickness = Dp.Hairline)
+
+                DeveloperModeSection(viewModel = viewModel)
+            }
+
             // Logout Section
             Spacer(modifier = Modifier.height(16.dp))
             Button(
@@ -944,6 +957,40 @@ fun WakeWordSection(viewModel: SettingsViewModel) {
             },
             modifier = Modifier.semantics {
                 contentDescription = "Always-on Wake Word switch"
+            }
+        )
+    }
+}
+
+@Composable
+fun DeveloperModeSection(viewModel: SettingsViewModel) {
+    val isDeveloperMode by viewModel.isDeveloperMode.collectAsState()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Developer Mode content" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Developer Mode",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = "Shows bug report button on all screens",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = isDeveloperMode,
+            onCheckedChange = { enabled ->
+                viewModel.setDeveloperMode(enabled)
+            },
+            modifier = Modifier.semantics {
+                contentDescription = "Developer Mode switch"
             }
         )
     }

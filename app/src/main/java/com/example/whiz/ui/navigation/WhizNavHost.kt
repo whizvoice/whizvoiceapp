@@ -42,6 +42,8 @@ fun WhizNavHost(
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
     isVoiceLaunch: Boolean = false,
+    isDeveloperMode: Boolean = false,
+    onBugReportClick: () -> Unit = {},
     onChatViewModelReady: ((com.example.whiz.ui.viewmodels.ChatViewModel) -> Unit)? = null // Test hook
 ) {
     // Get authentication state
@@ -181,7 +183,9 @@ fun WhizNavHost(
                     navController.navigate(Screen.Settings.route)
                 },
                 hasPermission = hasPermission,
-                onRequestPermission = onRequestPermission
+                onRequestPermission = onRequestPermission,
+                isDeveloperMode = isDeveloperMode,
+                onBugReportClick = onBugReportClick
             )
         }
 
@@ -267,6 +271,8 @@ fun WhizNavHost(
                 voiceManager = voiceManager,
                 hasPermission = hasPermission,
                 onRequestPermission = onRequestPermission,
+                isDeveloperMode = isDeveloperMode,
+                onBugReportClick = onBugReportClick,
                 navController = navController,
                 onViewModelReady = { viewModel ->
                     // Call the test callback if provided

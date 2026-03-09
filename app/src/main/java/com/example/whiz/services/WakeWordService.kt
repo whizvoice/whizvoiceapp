@@ -48,13 +48,17 @@ class WakeWordService : Service() {
         private const val CHANNEL_ID = "wake_word_channel"
         private const val NOTIFICATION_ID = 2001
         private const val ACTION_TOGGLE = "com.example.whiz.ACTION_TOGGLE_WAKE_WORD"
+        const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
         private const val WAKE_WORD_CONFIDENCE_THRESHOLD_HEY = 95.0
 
-        // Ring buffer: 3 seconds of 16kHz mono 16-bit PCM = 96000 bytes
-        private const val RING_BUFFER_SECONDS = 3
+        // Ring buffer: 10 seconds of 16kHz mono 16-bit PCM = 320000 bytes
+        private const val RING_BUFFER_SECONDS = 10
         private const val RING_BUFFER_SIZE = RING_BUFFER_SECONDS * SAMPLE_RATE * 2
+        // Wake word detection clips are trimmed to 3 seconds
+        private const val WAKE_WORD_CLIP_SECONDS = 3
+        private const val WAKE_WORD_CLIP_SIZE = WAKE_WORD_CLIP_SECONDS * SAMPLE_RATE * 2
         private const val MAX_AUDIO_FILES = 500
         private const val MAX_AUDIO_DIR_BYTES = 50L * 1024 * 1024 // 50MB
 
@@ -66,8 +70,17 @@ class WakeWordService : Service() {
         var isRunning = false
             private set
 
+        @Volatile
+        private var instance: WakeWordService? = null
+
         fun start(context: Context) {
             val intent = Intent(context, WakeWordService::class.java)
+            context.startForegroundService(intent)
+        }
+
+        fun startAudioOnly(context: Context) {
+            val intent = Intent(context, WakeWordService::class.java)
+            intent.putExtra(EXTRA_AUDIO_ONLY, true)
             context.startForegroundService(intent)
         }
 
@@ -75,6 +88,57 @@ class WakeWordService : Service() {
             val intent = Intent(context, WakeWordService::class.java)
             context.stopService(intent)
         }
+
+        /**
+         * Get a snapshot of the audio ring buffer (up to 10 seconds of PCM data).
+         * Returns null if service isn't running or no audio captured.
+         */
+        fun getAudioSnapshot(): ByteArray? {
+            val snapshot = instance?.audioRingBuffer?.snapshot()
+            return if (snapshot != null && snapshot.isNotEmpty()) snapshot else null
+        }
+
+        /**
+         * Convert raw PCM data to WAV format bytes.
+         */
+        fun pcmToWavBytes(pcmData: ByteArray): ByteArray {
+            val totalDataLen = pcmData.size + 36
+            val channels = 1
+            val bitsPerSample = 16
+            val byteRate = SAMPLE_RATE * channels * bitsPerSample / 8
+
+            val header = ByteArray(44)
+            // RIFF header
+            "RIFF".toByteArray().copyInto(header, 0)
+            intToByteArrayLE(totalDataLen).copyInto(header, 4)
+            "WAVE".toByteArray().copyInto(header, 8)
+            // fmt sub-chunk
+            "fmt ".toByteArray().copyInto(header, 12)
+            intToByteArrayLE(16).copyInto(header, 16)
+            shortToByteArrayLE(1).copyInto(header, 20) // PCM format
+            shortToByteArrayLE(channels.toShort()).copyInto(header, 22)
+            intToByteArrayLE(SAMPLE_RATE).copyInto(header, 24)
+            intToByteArrayLE(byteRate).copyInto(header, 28)
+            shortToByteArrayLE((channels * bitsPerSample / 8).toShort()).copyInto(header, 32)
+            shortToByteArrayLE(bitsPerSample.toShort()).copyInto(header, 34)
+            // data sub-chunk
+            "data".toByteArray().copyInto(header, 36)
+            intToByteArrayLE(pcmData.size).copyInto(header, 40)
+
+            return header + pcmData
+        }
+
+        private fun intToByteArrayLE(value: Int): ByteArray = byteArrayOf(
+            (value and 0xFF).toByte(),
+            (value shr 8 and 0xFF).toByte(),
+            (value shr 16 and 0xFF).toByte(),
+            (value shr 24 and 0xFF).toByte()
+        )
+
+        private fun shortToByteArrayLE(value: Short): ByteArray = byteArrayOf(
+            (value.toInt() and 0xFF).toByte(),
+            (value.toInt() shr 8 and 0xFF).toByte()
+        )
     }
 
     @Inject
@@ -93,6 +157,8 @@ class WakeWordService : Service() {
     private var voskModel: Model? = null
     private var recognizer: Recognizer? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile
+    private var isAudioOnly = false
     @Volatile
     private var isPaused = false
     @Volatile
@@ -133,6 +199,7 @@ class WakeWordService : Service() {
         Log.d(TAG, "onCreate")
         createNotificationChannel()
         isRunning = true
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -143,19 +210,27 @@ class WakeWordService : Service() {
             if (isPaused) {
                 stopDetection()
             } else {
-                startDetection()
+                if (isAudioOnly) startAudioOnlyCapture() else startDetection()
             }
             return START_STICKY
         }
 
+        isAudioOnly = intent?.getBooleanExtra(EXTRA_AUDIO_ONLY, false) ?: false
+        Log.d(TAG, "onStartCommand: isAudioOnly=$isAudioOnly")
+
         startForeground(NOTIFICATION_ID, buildNotification())
-        startDetection()
+        if (isAudioOnly) {
+            startAudioOnlyCapture()
+        } else {
+            startDetection()
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
         isRunning = false
+        instance = null
         stopDetection()
         releaseResources()
         serviceScope.cancel()
@@ -288,6 +363,70 @@ class WakeWordService : Service() {
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Detection loop error", e)
+            }
+        }
+    }
+
+    /**
+     * Audio-only mode: record audio into ring buffer without Vosk recognition.
+     * Used for bug report audio capture when wake word detection is off.
+     */
+    private fun startAudioOnlyCapture() {
+        if (detectionJob?.isActive == true) return
+
+        // Acquire partial wake lock to keep CPU alive
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "whiz:wake_word_detection")
+        }
+        wakeLock?.let {
+            if (!it.isHeld) {
+                it.acquire()
+                Log.d(TAG, "Wake lock acquired (audio-only)")
+            }
+        }
+
+        detectionJob = serviceScope.launch {
+            try {
+                val bufferSize = maxOf(
+                    AudioRecord.getMinBufferSize(
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    ),
+                    4096
+                )
+
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize
+                )
+
+                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "AudioRecord failed to initialize (audio-only)")
+                    return@launch
+                }
+
+                audioRecord?.startRecording()
+                Log.d(TAG, "Audio-only capture started")
+
+                audioRingBuffer = AudioRingBuffer(RING_BUFFER_SIZE)
+
+                val buffer = ByteArray(bufferSize)
+                while (true) {
+                    val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
+                    if (bytesRead <= 0) {
+                        delay(10)
+                        continue
+                    }
+                    audioRingBuffer?.write(buffer, 0, bytesRead)
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.e(TAG, "Audio-only capture error", e)
             }
         }
     }
@@ -438,6 +577,7 @@ class WakeWordService : Service() {
         private var writePos = 0
         private var totalWritten = 0L
 
+        @Synchronized
         fun write(data: ByteArray, offset: Int, length: Int) {
             var remaining = length
             var srcOffset = offset
@@ -452,6 +592,7 @@ class WakeWordService : Service() {
         }
 
         /** Returns buffer contents in chronological order. */
+        @Synchronized
         fun snapshot(): ByteArray {
             val available = minOf(totalWritten, capacity.toLong()).toInt()
             if (available == 0) return ByteArray(0)
@@ -466,6 +607,14 @@ class WakeWordService : Service() {
             }
             return result
         }
+
+        /** Returns the last N bytes from the buffer (trimmed snapshot). */
+        @Synchronized
+        fun snapshot(maxBytes: Int): ByteArray {
+            val full = snapshot()
+            return if (full.size <= maxBytes) full
+            else full.copyOfRange(full.size - maxBytes, full.size)
+        }
     }
 
     private fun captureDetectionAudio(
@@ -474,7 +623,8 @@ class WakeWordService : Service() {
         accepted: Boolean,
         rawVoskJson: String
     ) {
-        val pcmSnapshot = audioRingBuffer?.snapshot()
+        // Trim to last 3 seconds for wake word clips (not the full 10s buffer)
+        val pcmSnapshot = audioRingBuffer?.snapshot(WAKE_WORD_CLIP_SIZE)
         if (pcmSnapshot == null || pcmSnapshot.isEmpty()) return
 
         try {
@@ -493,41 +643,10 @@ class WakeWordService : Service() {
     }
 
     private fun saveWavFile(pcmData: ByteArray, file: File) {
-        val totalDataLen = pcmData.size + 36
-        val sampleRate = SAMPLE_RATE
-        val channels = 1
-        val bitsPerSample = 16
-        val byteRate = sampleRate * channels * bitsPerSample / 8
-
         FileOutputStream(file).use { fos ->
-            fos.write("RIFF".toByteArray())
-            fos.write(intToByteArrayLE(totalDataLen))
-            fos.write("WAVE".toByteArray())
-            fos.write("fmt ".toByteArray())
-            fos.write(intToByteArrayLE(16)) // Sub-chunk size
-            fos.write(shortToByteArrayLE(1)) // PCM format
-            fos.write(shortToByteArrayLE(channels.toShort()))
-            fos.write(intToByteArrayLE(sampleRate))
-            fos.write(intToByteArrayLE(byteRate))
-            fos.write(shortToByteArrayLE((channels * bitsPerSample / 8).toShort()))
-            fos.write(shortToByteArrayLE(bitsPerSample.toShort()))
-            fos.write("data".toByteArray())
-            fos.write(intToByteArrayLE(pcmData.size))
-            fos.write(pcmData)
+            fos.write(pcmToWavBytes(pcmData))
         }
     }
-
-    private fun intToByteArrayLE(value: Int): ByteArray = byteArrayOf(
-        (value and 0xFF).toByte(),
-        (value shr 8 and 0xFF).toByte(),
-        (value shr 16 and 0xFF).toByte(),
-        (value shr 24 and 0xFF).toByte()
-    )
-
-    private fun shortToByteArrayLE(value: Short): ByteArray = byteArrayOf(
-        (value.toInt() and 0xFF).toByte(),
-        (value.toInt() shr 8 and 0xFF).toByte()
-    )
 
     private fun uploadWakeWordAudio(
         wavFile: File,
@@ -667,7 +786,11 @@ class WakeWordService : Service() {
         )
 
         val actionText = if (isPaused) "Resume" else "Pause"
-        val contentText = if (isPaused) "Wake word detection paused" else "Listening for \"Hey Whiz\"..."
+        val contentText = when {
+            isPaused -> "Wake word detection paused"
+            isAudioOnly -> "Audio capture active (developer mode)"
+            else -> "Listening for \"Hey Whiz\"..."
+        }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Whiz Voice")

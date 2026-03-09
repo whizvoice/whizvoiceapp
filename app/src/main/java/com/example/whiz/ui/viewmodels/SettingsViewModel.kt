@@ -21,6 +21,7 @@ import com.example.whiz.data.auth.AuthenticationRequiredException
 import com.example.whiz.services.TTSManager
 import com.example.whiz.services.WakeWordService
 import com.example.whiz.data.local.SubscriptionStatus
+import com.example.whiz.data.preferences.DevPreferences
 import com.example.whiz.data.preferences.WakeWordPreferences
 
 @HiltViewModel
@@ -30,6 +31,7 @@ class SettingsViewModel @Inject constructor(
     private val userPreferences: UserPreferences,
     private val ttsManager: TTSManager,
     private val wakeWordPreferences: WakeWordPreferences,
+    private val devPreferences: DevPreferences,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
     private val TAG = "SettingsViewModel"
@@ -75,6 +77,22 @@ class SettingsViewModel @Inject constructor(
     val isProcessingSubscription: StateFlow<Boolean> = _isProcessingSubscription.asStateFlow()
 
     val isWakeWordEnabled: StateFlow<Boolean> = wakeWordPreferences.isEnabled
+
+    val isDeveloperMode: StateFlow<Boolean> = devPreferences.isDeveloperMode
+
+    val isDeveloperModeVisible: Boolean
+        get() {
+            val email = authRepository.userProfile.value?.email
+            return email in DEVELOPER_EMAILS
+        }
+
+    fun setDeveloperMode(enabled: Boolean) {
+        devPreferences.setDeveloperMode(enabled)
+    }
+
+    companion object {
+        private val DEVELOPER_EMAILS = setOf("ruthgracewong@gmail.com")
+    }
 
     fun setWakeWordEnabled(enabled: Boolean) {
         viewModelScope.launch {

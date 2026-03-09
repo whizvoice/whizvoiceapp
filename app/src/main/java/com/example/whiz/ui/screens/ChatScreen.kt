@@ -500,6 +500,8 @@ fun ChatScreen(
     voiceManager: VoiceManager,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
+    isDeveloperMode: Boolean = false,
+    onBugReportClick: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(
         viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
     ),
@@ -924,9 +926,20 @@ fun ChatScreen(
                 }
             },
             actions = {
+                if (isDeveloperMode) {
+                    IconButton(
+                        onClick = onBugReportClick,
+                        modifier = Modifier.semantics { contentDescription = "Bug Report" }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BugReport,
+                            contentDescription = null,
+                        )
+                    }
+                }
                 IconButton(
                     onClick = viewModel::toggleVoiceResponse,
-                    modifier = Modifier.semantics { 
+                    modifier = Modifier.semantics {
                         contentDescription = if (isVoiceResponseEnabled) "Disable Voice Response" else "Enable Voice Response"
                     }
                 ) {

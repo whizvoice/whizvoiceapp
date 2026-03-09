@@ -121,6 +121,12 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var rageShakeDetector: RageShakeDetector
 
+    @Inject
+    lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
+
+    @Inject
+    lateinit var wakeWordPreferences: com.example.whiz.data.preferences.WakeWordPreferences
+
     // Rage shake bug report state
     private val showRageShakeDialog = mutableStateOf(false)
     private val isSubmittingRageShake = mutableStateOf(false)
@@ -248,6 +254,29 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Manage audio-only WakeWordService when dev mode is on but wake word is off
+        lifecycleScope.launch {
+            // Combine dev mode and wake word state
+            kotlinx.coroutines.flow.combine(
+                devPreferences.isDeveloperMode,
+                wakeWordPreferences.isEnabled
+            ) { devMode, wakeWordEnabled -> devMode to wakeWordEnabled }
+                .collect { (devMode, wakeWordEnabled) ->
+                    if (devMode && !wakeWordEnabled) {
+                        // Start audio-only mode for bug report audio capture
+                        Log.d(TAG, "Dev mode ON, wake word OFF -> starting audio-only WakeWordService")
+                        com.example.whiz.services.WakeWordService.startAudioOnly(this@MainActivity)
+                    } else if (!devMode && !wakeWordEnabled) {
+                        // Stop audio-only service if dev mode disabled and wake word not running
+                        if (com.example.whiz.services.WakeWordService.isRunning) {
+                            Log.d(TAG, "Dev mode OFF, wake word OFF -> stopping audio-only WakeWordService")
+                            com.example.whiz.services.WakeWordService.stop(this@MainActivity)
+                        }
+                    }
+                    // If wake word is enabled, normal mode is already running — no change needed
+                }
+        }
+
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
         setupCloseAppReceiver()
 
@@ -354,6 +383,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     
+                    val isDeveloperMode by devPreferences.isDeveloperMode.collectAsState()
+
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
@@ -362,6 +393,8 @@ class MainActivity : ComponentActivity() {
                         hasPermission = stablePermissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() },
                         isVoiceLaunch = isVoiceLaunch,
+                        isDeveloperMode = isDeveloperMode,
+                        onBugReportClick = { showRageShakeDialog.value = true },
                         onChatViewModelReady = { vm ->
                             // Allow tests to capture the ViewModel
                             testViewModelCallback?.invoke(vm)
@@ -1119,7 +1152,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Submit a rage shake bug report with screenshot, UI hierarchy, and device info.
+     * Capture logcat output for our app process.
+     */
+    private fun captureLogcat(): String? {
+        return try {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-d", "--pid", "${android.os.Process.myPid()}")
+            )
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            if (output.isBlank()) return null
+            // Keep last 200KB to avoid 413 errors (logcat can be very large)
+            val maxSize = 200_000
+            if (output.length > maxSize) output.takeLast(maxSize) else output
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to capture logcat", e)
+            null
+        }
+    }
+
+    /**
+     * Submit a rage shake bug report with screenshot, UI hierarchy, logcat, audio, and device info.
      */
     private fun submitRageShakeReport(description: String) {
         isSubmittingRageShake.value = true
@@ -1148,6 +1201,20 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Capture logcat
+                    val logcat = captureLogcat()
+
+                    // Capture audio snapshot from WakeWordService ring buffer
+                    val audioBase64 = try {
+                        com.example.whiz.services.WakeWordService.getAudioSnapshot()?.let { pcmData ->
+                            val wavBytes = com.example.whiz.services.WakeWordService.pcmToWavBytes(pcmData)
+                            Base64.encodeToString(wavBytes, Base64.NO_WRAP)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to capture audio snapshot", e)
+                        null
+                    }
+
                     val displayMetrics = resources.displayMetrics
                     val request = ApiService.UiDumpCreate(
                         dumpReason = "rage_shake",
@@ -1166,6 +1233,12 @@ class MainActivity : ComponentActivity() {
                             put("report_type", "rage_shake")
                             if (screenshotBase64 != null) {
                                 put("screenshot_base64", screenshotBase64)
+                            }
+                            if (logcat != null) {
+                                put("logcat", logcat)
+                            }
+                            if (audioBase64 != null) {
+                                put("audio_base64", audioBase64)
                             }
                         }
                     )
