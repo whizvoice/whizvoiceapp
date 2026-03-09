@@ -127,9 +127,10 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var wakeWordPreferences: com.example.whiz.data.preferences.WakeWordPreferences
 
-    // Rage shake bug report state
+    // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
     private val isSubmittingRageShake = mutableStateOf(false)
+    private var bugReportSource = "rage_shake" // "rage_shake" or "bug_button"
 
     // ViewModel for creating new chats on assistant relaunch
     private val chatsListViewModel: ChatsListViewModel by viewModels()
@@ -246,6 +247,7 @@ class MainActivity : ComponentActivity() {
                         } catch (e: Exception) {
                             Log.w(TAG, "Haptic feedback failed", e)
                         }
+                        bugReportSource = "rage_shake"
                         showRageShakeDialog.value = true
                     }
                 } finally {
@@ -394,7 +396,7 @@ class MainActivity : ComponentActivity() {
                         onRequestPermission = { requestMicrophonePermission() },
                         isVoiceLaunch = isVoiceLaunch,
                         isDeveloperMode = isDeveloperMode,
-                        onBugReportClick = { showRageShakeDialog.value = true },
+                        onBugReportClick = { bugReportSource = "bug_button"; showRageShakeDialog.value = true },
                         onChatViewModelReady = { vm ->
                             // Allow tests to capture the ViewModel
                             testViewModelCallback?.invoke(vm)
@@ -1217,7 +1219,7 @@ class MainActivity : ComponentActivity() {
 
                     val displayMetrics = resources.displayMetrics
                     val request = ApiService.UiDumpCreate(
-                        dumpReason = "rage_shake",
+                        dumpReason = bugReportSource,
                         errorMessage = description.ifBlank { null },
                         uiHierarchy = uiHierarchy,
                         packageName = currentPackage,
@@ -1230,7 +1232,7 @@ class MainActivity : ComponentActivity() {
                         conversationId = null,
                         recentActions = null,
                         screenAgentContext = buildMap {
-                            put("report_type", "rage_shake")
+                            put("report_type", bugReportSource)
                             if (screenshotBase64 != null) {
                                 put("screenshot_base64", screenshotBase64)
                             }
