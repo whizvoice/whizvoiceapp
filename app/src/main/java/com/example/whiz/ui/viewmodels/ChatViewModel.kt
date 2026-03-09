@@ -2213,23 +2213,21 @@ class ChatViewModel @Inject constructor(
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
 
-        // Cancel any pending queued TTS to prevent it from firing after backgrounding
-        pendingTTSCheckJob?.cancel()
-        pendingTTSMessage = null
-
-        // Stop TTS audio if currently speaking
-        if (ttsManager.isSpeaking.value) {
-            Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
-            ttsManager.stop()
-        }
-
-        // Disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
-        // Exception: If bubble overlay is active or pending, preserve TTS state so the bubble can speak
         if (!BubbleOverlayService.isActive && !BubbleOverlayService.isPendingStart) {
-            Log.d(TAG, "[LOG] Disabling TTS to prevent auto-speech on foreground (bubble can restore if needed)")
+            // No bubble — full teardown to prevent background audio
+            Log.d(TAG, "[LOG] No bubble - full TTS teardown")
+
+            pendingTTSCheckJob?.cancel()
+            pendingTTSMessage = null
+
+            if (ttsManager.isSpeaking.value) {
+                Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
+                ttsManager.stop()
+            }
+
             voiceManager.setVoiceResponseEnabled(false)
         } else {
-            Log.d(TAG, "[LOG] Bubble overlay active/pending - preserving TTS state for bubble")
+            Log.d(TAG, "[LOG] Bubble overlay active/pending - preserving TTS state, active audio, and queued TTS for bubble continuity")
         }
 
         // VoiceManager handles stopping continuous listening on background
@@ -2413,8 +2411,10 @@ class ChatViewModel @Inject constructor(
                 }
             }
             // Guard against race condition: TTS can fire after app is backgrounded
-            if (!isVoiceResponseEnabled.value || !appLifecycleService.isInForeground()) {
-                Log.d(TAG, "startQueuedTTS: skipping - voiceResponse=${isVoiceResponseEnabled.value}, foreground=${appLifecycleService.isInForeground()}")
+            // Bypass guard when bubble is active — bubble keeps TTS alive after Activity backgrounds
+            val bubbleTTSActive = BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart
+            if (!bubbleTTSActive && (!isVoiceResponseEnabled.value || !appLifecycleService.isInForeground())) {
+                Log.d(TAG, "startQueuedTTS: skipping - voiceResponse=${isVoiceResponseEnabled.value}, foreground=${appLifecycleService.isInForeground()}, bubbleTTS=$bubbleTTSActive")
                 pendingTTSMessage = null
                 return
             }
