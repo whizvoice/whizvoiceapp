@@ -2213,6 +2213,10 @@ class ChatViewModel @Inject constructor(
         lastBackgroundedTime = System.currentTimeMillis()
         Log.d(TAG, "[LOG] Set lastBackgroundedTime to $lastBackgroundedTime")
 
+        // Cancel any pending queued TTS to prevent it from firing after backgrounding
+        pendingTTSCheckJob?.cancel()
+        pendingTTSMessage = null
+
         // Stop TTS audio if currently speaking
         if (ttsManager.isSpeaking.value) {
             Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
@@ -2407,6 +2411,12 @@ class ChatViewModel @Inject constructor(
                     }
                     return
                 }
+            }
+            // Guard against race condition: TTS can fire after app is backgrounded
+            if (!isVoiceResponseEnabled.value || !appLifecycleService.isInForeground()) {
+                Log.d(TAG, "startQueuedTTS: skipping - voiceResponse=${isVoiceResponseEnabled.value}, foreground=${appLifecycleService.isInForeground()}")
+                pendingTTSMessage = null
+                return
             }
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
             // Full-duplex: keep mic active when AEC/headphones available
