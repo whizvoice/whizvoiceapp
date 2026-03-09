@@ -53,14 +53,14 @@ jobs:
 
       - name: Install system image
         run: |
-          yes | sdkmanager "system-images;android-31;default;x86_64" || true
+          yes | sdkmanager "system-images;android-33;google_apis;x86_64" || true
           yes | sdkmanager "platform-tools" "emulator" || true
 
       - name: Create AVD
         run: |
           echo "no" | avdmanager create avd \
             --name whiz-test-device \
-            --package "system-images;android-31;default;x86_64" \
+            --package "system-images;android-33;google_apis;x86_64" \
             --device "pixel_4" \
             --force
 
@@ -70,20 +70,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p /tmp/app-apks
-          # Download WhatsApp and other APKs from a dedicated release
-          # You need to upload these APKs first:
-          #   gh release create app-apks-for-snapshot --repo whizvoice/whizvoiceapp WhatsApp.apk GoogleMaps.apk ...
+          # Download APKs and APKM bundles from a dedicated release
+          # Upload them first:
+          #   gh release create app-apks-for-snapshot --repo whizvoice/whizvoiceapp WhatsApp.apk Fitbit.apkm ...
           gh release download app-apks-for-snapshot \
             --repo whizvoice/whizvoiceapp \
-            --dir /tmp/app-apks \
-            --pattern "*.apk" || echo "WARNING: No app-apks-for-snapshot release found. Skipping pre-installed apps."
+            --dir /tmp/app-apks || echo "WARNING: No app-apks-for-snapshot release found. Skipping pre-installed apps."
           ls -la /tmp/app-apks/ || true
+
+          # Extract any APKM bundles (these are zip files containing split APKs)
+          for apkm in /tmp/app-apks/*.apkm; do
+            if [ -f "$apkm" ]; then
+              BUNDLE_DIR="/tmp/app-apks/$(basename "$apkm" .apkm)_bundle"
+              mkdir -p "$BUNDLE_DIR"
+              unzip -o "$apkm" -d "$BUNDLE_DIR"
+              echo "Extracted bundle: $(basename "$apkm") -> $BUNDLE_DIR"
+              ls -la "$BUNDLE_DIR"
+            fi
+          done
 
       - name: Boot emulator, install apps, and save snapshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 31
-          target: default
+          api-level: 33
+          target: google_apis
           arch: x86_64
           avd-name: whiz-test-device
           force-avd-creation: false
@@ -108,16 +118,29 @@ jobs:
             adb shell getprop ro.build.version.sdk
             adb shell getprop ro.product.cpu.abi
 
-            # Install any pre-downloaded APKs
+            # Install single APKs
             if ls /tmp/app-apks/*.apk 1>/dev/null 2>&1; then
-              echo "==> Installing pre-downloaded APKs..."
+              echo "==> Installing single APKs..."
               for apk in /tmp/app-apks/*.apk; do
                 echo "    Installing $(basename $apk)..."
                 adb install -r "$apk" || echo "    WARNING: Failed to install $(basename $apk)"
               done
-            else
-              echo "==> No APKs to pre-install"
             fi
+
+            # Install extracted APKM bundles (split APKs)
+            for bundle_dir in /tmp/app-apks/*_bundle; do
+              if [ -d "$bundle_dir" ]; then
+                echo "==> Installing bundle: $(basename $bundle_dir)..."
+                SPLIT_APKS=$(find "$bundle_dir" -name "*.apk" | tr '\n' ' ')
+                if [ -n "$SPLIT_APKS" ]; then
+                  adb install-multiple -r $SPLIT_APKS || echo "    WARNING: Failed to install bundle $(basename $bundle_dir)"
+                fi
+              fi
+            done
+
+            # Verify installed packages
+            echo "==> Installed packages:"
+            adb shell pm list packages | grep -E "(whatsapp|fitbit)" || echo "    No WhatsApp/Fitbit found"
 
             # Set up common emulator settings
             echo "==> Configuring emulator settings..."
@@ -261,8 +284,8 @@ jobs:
           {
             "version": "${VERSION}",
             "arch": "x86_64",
-            "api_level": 31,
-            "system_image": "system-images;android-31;default;x86_64",
+            "api_level": 33,
+            "system_image": "system-images;android-33;google_apis;x86_64",
             "avd_name": "${AVD_NAME}",
             "snapshot_name": "${SNAPSHOT_NAME}",
             "parts": ${PART_FILES_JSON},
@@ -293,14 +316,14 @@ jobs:
             --notes "x86_64 AVD snapshot for CI runners.
 
           **Arch:** x86_64
-          **API Level:** 31
-          **System Image:** system-images;android-31;default;x86_64
+          **API Level:** 33
+          **System Image:** system-images;android-33;google_apis;x86_64
           **SHA-256:** \`${SHA256}\`
           **Parts:** ${#PARTS[@]}
 
           Download and restore with:
           \`\`\`
-          ./scripts/avd-snapshot-download.sh --release-tag $RELEASE_TAG --system-image 'system-images;android-31;default;x86_64' --target-api 31
+          ./scripts/avd-snapshot-download.sh --release-tag $RELEASE_TAG --system-image 'system-images;android-33;google_apis;x86_64' --target-api 33
           \`\`\`" \
             "${ASSETS[@]}"
 
