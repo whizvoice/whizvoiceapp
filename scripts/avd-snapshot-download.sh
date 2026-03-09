@@ -2,7 +2,7 @@
 #
 # Download and restore the whiz-test-device AVD snapshot from GitHub Releases.
 #
-# Usage: ./scripts/avd-snapshot-download.sh [--force]
+# Usage: ./scripts/avd-snapshot-download.sh [--force] [--release-tag TAG] [--system-image IMAGE] [--target-api LEVEL]
 #
 set -euo pipefail
 
@@ -23,6 +23,9 @@ FORCE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=true; shift ;;
+        --release-tag) RELEASE_TAG="$2"; shift 2 ;;
+        --system-image) SYSTEM_IMAGE="$2"; shift 2 ;;
+        --target-api) TARGET_API="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -170,12 +173,17 @@ zstd -d "$ARCHIVE_PATH" --stdout | tar -xf - -C "$AVD_DIR"
 # ---------------------------------------------------------------------------
 echo "==> Rewriting absolute paths..."
 
+SED_INPLACE=(sed -i)
+if [[ "$(uname)" == "Darwin" ]]; then
+    SED_INPLACE=(sed -i '')
+fi
+
 for ini_file in "$AVD_DIR/hardware-qemu.ini" \
                 "$AVD_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Rewriting $(basename "$ini_file")"
-        sed -i '' "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
-        sed -i '' "s|__HOME__|${HOME}|g" "$ini_file"
+        "${SED_INPLACE[@]}" "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
+        "${SED_INPLACE[@]}" "s|__HOME__|${HOME}|g" "$ini_file"
     fi
 done
 
@@ -184,11 +192,15 @@ done
 # ---------------------------------------------------------------------------
 echo "==> Writing $AVD_INI"
 mkdir -p "$(dirname "$AVD_INI")"
+# Use TARGET_API if set, otherwise extract from SYSTEM_IMAGE (e.g. "system-images;android-35;..." -> 35)
+if [[ -z "${TARGET_API:-}" ]]; then
+    TARGET_API=$(echo "$SYSTEM_IMAGE" | sed 's/.*android-\([0-9]*\).*/\1/')
+fi
 cat > "$AVD_INI" <<EOF
 avd.ini.encoding=UTF-8
 path=${AVD_DIR}
 path.rel=avd/${AVD_NAME}.avd
-target=android-35
+target=android-${TARGET_API}
 EOF
 
 # ---------------------------------------------------------------------------

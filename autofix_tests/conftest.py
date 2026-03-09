@@ -10,7 +10,12 @@ import os
 
 # Add this directory to path so helpers.py can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.expanduser('~/android_accessibility_tester'))
+# Support CI via ANDROID_ACCESSIBILITY_TESTER_PATH env var, fallback to ~/android_accessibility_tester
+_aat_path = os.environ.get(
+    'ANDROID_ACCESSIBILITY_TESTER_PATH',
+    os.path.expanduser('~/android_accessibility_tester')
+)
+sys.path.insert(0, _aat_path)
 
 import android_accessibility_tester
 import subprocess
@@ -33,7 +38,11 @@ print(f"Targeting emulator: {EMULATOR_SERIAL}")
 
 
 def load_anthropic_api_key():
-    """Load ANTHROPIC_API_KEY from export_anthropic_key.sh file."""
+    """Load ANTHROPIC_API_KEY from environment or export_anthropic_key.sh file."""
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        print("ANTHROPIC_API_KEY already set in environment")
+        return
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     key_file = os.path.join(script_dir, '..', 'export_anthropic_key.sh')
 
