@@ -9119,7 +9119,16 @@ class ScreenAgentTools @Inject constructor(
                 val todayTitleNode = findNodeByText(rootNode, "Today")
                 if (todayTitleNode != null) {
                     todayTitleNode.recycle()
-                    return FitbitScreen.TODAY_HOME
+                    // Make sure we're actually on the Today home screen, not a sub-detail page
+                    // (e.g. the Weight detail screen also shows "Today" as a date label for a
+                    // weight entry but has a "Go back" back-navigation button).
+                    val goBackNodes = findNodesByContentDescription(rootNode, "Go back")
+                    val isSubDetailPage = goBackNodes.isNotEmpty()
+                    goBackNodes.forEach { it.recycle() }
+                    if (!isSubDetailPage) {
+                        return FitbitScreen.TODAY_HOME
+                    }
+                    // Sub-detail page — fall through to UNKNOWN so the BACK-pressing logic kicks in
                 }
                 // Not on Today home — fall through to UNKNOWN so the BACK-pressing logic kicks in
             }
