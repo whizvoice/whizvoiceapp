@@ -611,7 +611,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Step 2: Send first message and disconnect immediately
-                val message1 = "ID ${System.currentTimeMillis()}: Please tell me the history of the world's most popular caffeinated drink?"
+                val message1 = "ID ${System.currentTimeMillis()}: Answer without tools. Please tell me the history of the world's most popular caffeinated drink?"
                 val sent1 = ComposeTestHelper.sendMessage(composeTestRule, message1)
                 if (!sent1) {
                     failWithScreenshot("Failed to send first message", "first_message_send_failed")
@@ -718,7 +718,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Step 4: Send second message and disconnect immediately
-                val message2 = "ID ${System.currentTimeMillis()}: Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
+                val message2 = "ID ${System.currentTimeMillis()}: Answer without tools. Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
                 val sent2 = ComposeTestHelper.sendMessage(composeTestRule, message2)
                 if (!sent2) {
                     failWithScreenshot("Failed to send second message", "second_message_send_failed")
