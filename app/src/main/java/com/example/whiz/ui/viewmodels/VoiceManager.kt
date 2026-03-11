@@ -245,23 +245,6 @@ class VoiceManager @Inject constructor(
     }
 
     private fun setupAudioFocusCallbacks() {
-        // Note: We no longer use audio focus for mic recording.
-        // Audio focus is for coordinating playback, not recording.
-        // These callbacks are kept but do nothing for mic - they may be useful
-        // in the future if we need to respond to other apps' audio (e.g., pause
-        // mic when a phone call comes in, which would be detected differently).
-        audioFocusManager.onFocusGained = {
-            Log.d(TAG, "Audio focus regained (ignored - not used for mic recording)")
-        }
-
-        audioFocusManager.onFocusLostTransient = {
-            Log.d(TAG, "Audio focus lost transiently (ignored - not used for mic recording)")
-        }
-
-        audioFocusManager.onFocusLostPermanent = {
-            Log.d(TAG, "Audio focus lost permanently (ignored - not used for mic recording)")
-        }
-
         // Policy callback for ducking re-request: only re-request if we're still
         // actively in a voice session (continuous listening on, app visible, screen unlocked or wake word session)
         audioFocusManager.shouldReRequestDucking = {
@@ -869,7 +852,6 @@ class VoiceManager @Inject constructor(
             Log.w(TAG, "Error unregistering screen state receiver", e)
         }
         audioFocusManager.abandonDuckingFocus()
-        audioFocusManager.abandonFocus()
         coroutineScope.cancel()
         ttsManager.shutdown()
         speechRecognitionService.release()
