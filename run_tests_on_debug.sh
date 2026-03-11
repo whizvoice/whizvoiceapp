@@ -127,11 +127,15 @@ if [[ "$USE_EMULATOR" == "true" ]]; then
     export ANDROID_SERIAL="$EMULATOR_SERIAL"
     echo "🤖 Targeting emulator: $EMULATOR_SERIAL"
 else
-    # Prefer physical device over emulator when both are connected
-    DEVICE_SERIAL=$(adb devices | grep -v "^emulator-" | grep "device$" | head -1 | cut -f1)
-    if [[ -n "$DEVICE_SERIAL" ]]; then
-        export ANDROID_SERIAL="$DEVICE_SERIAL"
-        echo "📱 Targeting physical device: $DEVICE_SERIAL"
+    # Respect existing ANDROID_SERIAL if set; otherwise prefer physical device over emulator
+    if [[ -n "$ANDROID_SERIAL" ]]; then
+        echo "📱 Targeting physical device: $ANDROID_SERIAL"
+    else
+        DEVICE_SERIAL=$(adb devices | grep -v "^emulator-" | grep "device$" | head -1 | cut -f1)
+        if [[ -n "$DEVICE_SERIAL" ]]; then
+            export ANDROID_SERIAL="$DEVICE_SERIAL"
+            echo "📱 Targeting physical device: $DEVICE_SERIAL"
+        fi
     fi
 fi
 
