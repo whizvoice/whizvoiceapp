@@ -2,37 +2,59 @@
 
 ## Goal
 
-Create an Android emulator snapshot (x86_64, API 33) with WhatsApp and Fitbit pre-installed and logged in, then upload it to GitHub Releases so CI can use it for autofix verification tests.
+Create an Android emulator snapshot (x86_64, API 36) with WhatsApp and Fitbit pre-installed and logged in, then upload it to GitHub Releases so CI can use it for autofix verification tests.
+
+## CRITICAL: Emulator Version Must Match CI
+
+The snapshot format is **not compatible across different emulator versions**. CI currently uses **emulator version 36.4.9.0**. You MUST use the same version when creating the snapshot, otherwise CI will fail with "Snapshot file cannot be used, incompatible version."
+
+**Before creating the snapshot, verify your emulator version:**
+```bash
+emulator -version
+```
+
+If it doesn't show **36.4.9.0** (or very close), update the emulator:
+```bash
+sdkmanager --install emulator --channel=0
+emulator -version  # verify it's 36.4.9.0 or close
+```
+
+If `sdkmanager` installs a different version than CI uses, you may need to download the specific emulator build. The CI runner gets whatever `sdkmanager --channel=0` provides at the time. The safest approach is to update to the latest emulator right before creating the snapshot.
 
 ## Prerequisites
 
-- x86_64 Linux or Windows machine with KVM support (check: `ls /dev/kvm`)
+- x86_64 macOS or Linux machine (check: `uname -m` should say `x86_64`)
 - At least 4GB RAM free
 - At least 20GB disk free
 - A phone number for WhatsApp verification (it will send an SMS code)
 - A Google/Fitbit account for Fitbit login
 - `gh` CLI authenticated with access to `whizvoice/whizvoiceapp` repo
-- `zstd` installed (`sudo apt install zstd` or equivalent)
+- `zstd` installed (`brew install zstd` on macOS or `sudo apt install zstd` on Linux)
 
 ## Step-by-Step Instructions
 
 ### 1. Install Android SDK and tools
 
-If Android SDK is not installed:
+If Android SDK is not installed, install Android Studio or the command-line tools from https://developer.android.com/studio
 
+Set up environment (adjust paths for your system):
 ```bash
-# Download command-line tools from https://developer.android.com/studio#command-line-tools-only
-# Or install via package manager if available
+# macOS typical paths:
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+# or Linux:
+# export ANDROID_HOME="$HOME/Android/Sdk"
 
-# Set ANDROID_HOME
-export ANDROID_HOME="$HOME/Android/Sdk"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
 Install required SDK components:
-
 ```bash
-yes | sdkmanager "system-images;android-33;google_apis;x86_64" "platform-tools" "emulator"
+yes | sdkmanager "system-images;android-36;google_apis_playstore;x86_64" "platform-tools" "emulator"
+```
+
+**Verify emulator version matches CI (currently 36.4.9.0):**
+```bash
+emulator -version
 ```
 
 ### 2. Create the AVD
@@ -40,7 +62,7 @@ yes | sdkmanager "system-images;android-33;google_apis;x86_64" "platform-tools" 
 ```bash
 echo "no" | avdmanager create avd \
   --name whiz-test-device \
-  --package "system-images;android-33;google_apis;x86_64" \
+  --package "system-images;android-36;google_apis_playstore;x86_64" \
   --device "pixel_4" \
   --force
 ```
@@ -61,12 +83,12 @@ This should download a WhatsApp `.apk` and a Fitbit `.apkm` file.
 
 You need a display so the user can manually log into apps.
 
-If you have a graphical desktop:
+If you have a graphical desktop (e.g. macOS with a monitor):
 ```bash
 emulator -avd whiz-test-device -gpu swiftshader_indirect -memory 4096
 ```
 
-If headless (SSH), set up VNC or X11 forwarding first, then run the emulator. Alternatively:
+If headless (SSH), set up VNC or X11 forwarding first, then run the emulator. Alternatively on Linux:
 ```bash
 # Install a VNC server and virtual framebuffer
 sudo apt install tigervnc-standalone-server x11vnc xvfb
@@ -152,8 +174,8 @@ chmod +x scripts/avd-snapshot-upload.sh
 
 Before running, edit `scripts/avd-snapshot-upload.sh` and change the manifest section near line 168-169 to use the correct arch/API:
 - Change `"arch": "arm64-v8a"` to `"arch": "x86_64"`
-- Change `"api_level": 35` to `"api_level": 33`
-- Change `"system_image": "system-images;android-35;google_apis_playstore;arm64-v8a"` to `"system_image": "system-images;android-33;google_apis;x86_64"`
+- Change `"api_level": 35` to `"api_level": 36`
+- Change `"system_image": "system-images;android-35;google_apis_playstore;arm64-v8a"` to `"system_image": "system-images;android-36;google_apis_playstore;x86_64"`
 
 Then run:
 ```bash
@@ -175,6 +197,7 @@ gh release view emulator-snapshot-x86_64-v1 --repo whizvoice/whizvoiceapp
 
 ## Important Notes
 
+- **Emulator version compatibility is the #1 cause of snapshot failures.** If CI fails with "Snapshot file cannot be used, incompatible version", the emulator on the build machine and CI are different versions. Update the emulator and rebuild the snapshot.
 - The `sed -i` commands in `avd-snapshot-upload.sh` use macOS syntax (`sed -i ''`). On Linux, you may need to change them to `sed -i` (without the empty string). The download script already handles this, but the upload script does not yet. Fix lines 114-115 if you get sed errors.
 - Kill the emulator before running the upload script (it checks for this).
 - The snapshot includes the userdata disk image which contains the installed apps and their login state.
