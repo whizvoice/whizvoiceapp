@@ -665,7 +665,6 @@ fun ChatScreen(
     // Enable TTS immediately for voice launches (without delay that can be interrupted)
     LaunchedEffect(shouldEnableTTS) {
         if (shouldEnableTTS && !isVoiceResponseEnabled) {
-            Log.d("ChatScreen", "[LOG] Enabling TTS immediately for voice launch (computed state approach)")
             viewModel.toggleVoiceResponse()
             voiceManager.setVoiceResponseEnabled(true)
         }
@@ -686,15 +685,12 @@ fun ChatScreen(
     // If mic is clicked without permission, show permission dialog
     fun handleMicClick() {
         if (BubbleOverlayService.isActive) {
-            Log.d("ChatScreen", "[LOG] Mic click ignored - bubble overlay is active")
             return
         }
         if (!effectiveHasPermission) {
-            Log.d("ChatScreen", "[LOG] Mic clicked without permission, showing dialog")
             showPermissionDialog = true
         } else {
             // Use VoiceManager for clean voice coordination
-            Log.d("ChatScreen", "[LOG] Mic clicked, toggling continuous listening via VoiceManager")
             voiceManager.toggleContinuousListening()
         }
     }
@@ -739,7 +735,6 @@ fun ChatScreen(
         Log.d("ChatScreen", "🔥 UI_DEBUG: Initial load - navigation chatId=$chatId")
         // Use TTS-mode-aware loading if TTS mode is enabled
         if (enableTTSMode) {
-            Log.d("ChatScreen", "[LOG] Loading chat with TTS mode awareness, chatId=$chatId")
             viewModel.loadChatWithVoiceMode(chatId, true)
         } else {
             viewModel.loadChat(chatId)
@@ -845,27 +840,21 @@ fun ChatScreen(
     // Don't override user's preference if they've manually toggled it
     // IMPORTANT: Don't re-initialize during chat migration (when chatId changes from -1 to optimistic ID)
     LaunchedEffect(enableTTSMode, effectiveHasPermission) {
-        Log.d("ChatScreen", "[LOG] LaunchedEffect triggered: chatId=$viewModelChatId, enableTTSMode=$enableTTSMode, effectiveHasPermission=$effectiveHasPermission, isContinuousListeningEnabled=$isContinuousListeningEnabled, voiceInitialized=${voiceInitialized.value}")
-
         // Only initialize voice settings ONCE per screen instance
         // Skip if already initialized (prevents override during chat migration)
         if (voiceInitialized.value) {
-            Log.d("ChatScreen", "[LOG] Voice already initialized - skipping to preserve user settings (migration or settings change)")
             return@LaunchedEffect
         }
 
         // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
         // For existing chats, respect the user's current continuous listening state
         if (effectiveHasPermission && viewModelChatId < 0) {
-            Log.d("ChatScreen", "[LOG] New chat detected - enabling continuous listening")
             voiceManager.updateContinuousListeningEnabled(true)
             viewModel.ensureContinuousListeningEnabled()
-            Log.d("ChatScreen", "[LOG] Continuous listening enabled for new chat")
             voiceInitialized.value = true
         } else if (!effectiveHasPermission) {
-            Log.d("ChatScreen", "[LOG] No microphone permission - voice setup skipped (will retry when permission granted)")
+            // No microphone permission - voice setup skipped
         } else {
-            Log.d("ChatScreen", "[LOG] Existing chat (ID=$viewModelChatId) - preserving user's continuous listening preference (currently: $isContinuousListeningEnabled)")
             voiceInitialized.value = true // Mark as initialized so we don't override later
         }
 
@@ -897,11 +886,10 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         voiceManager.transcriptionFlow.distinctUntilChanged().collect { transcription ->
             if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
-                Log.d("ChatScreen", "[LOG] Voice transcription received from flow: '$transcription'")
                 viewModel.updateInputText(transcription, fromVoice = true)
                 viewModel.sendUserInput(transcription)
             } else if (transcription.isNotBlank()) {
-                Log.d("ChatScreen", "[LOG] Ignoring transcription - bubble is active: '$transcription'")
+                // Ignoring transcription - bubble is active
             }
         }
     }
