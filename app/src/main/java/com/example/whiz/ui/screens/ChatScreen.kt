@@ -46,6 +46,7 @@ import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.BubbleOverlayService
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -896,7 +897,7 @@ fun ChatScreen(
     // Collect transcriptions from VoiceManager flow
     // Only process when bubble is NOT active (bubble has its own transcription handling)
     LaunchedEffect(Unit) {
-        voiceManager.transcriptionFlow.collect { transcription ->
+        voiceManager.transcriptionFlow.distinctUntilChanged().collect { transcription ->
             if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
                 Log.d("ChatScreen", "[LOG] Voice transcription received from flow: '$transcription'")
                 viewModel.updateInputText(transcription, fromVoice = true)
