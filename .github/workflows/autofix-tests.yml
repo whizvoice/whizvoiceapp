@@ -61,8 +61,8 @@ jobs:
           ./scripts/avd-snapshot-download.sh \
             --force \
             --release-tag emulator-snapshot-x86_64-v1 \
-            --system-image "system-images;android-33;google_apis;x86_64" \
-            --target-api 33
+            --system-image "system-images;android-36;google_apis_playstore;x86_64" \
+            --target-api 36
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -100,8 +100,8 @@ jobs:
           ANDROID_ACCESSIBILITY_TESTER_PATH: ${{ github.workspace }}/android_accessibility_tester
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 33
-          target: google_apis
+          api-level: 36
+          target: google_apis_playstore
           arch: x86_64
           force-avd-creation: false
           avd-name: whiz-test-device
