@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.os.Build
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -19,13 +18,6 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class AudioFocusState {
-    NOT_REQUESTED,         // Haven't requested focus
-    FOCUS_GRANTED,         // We have audio focus
-    FOCUS_LOST_TRANSIENT,  // Temporarily lost (e.g., Google Maps speaking)
-    FOCUS_LOST_PERMANENT   // Permanently lost (e.g., music app took over)
-}
-
 @Singleton
 class AudioFocusManager @Inject constructor(
     @ApplicationContext private val context: Context
@@ -35,21 +27,10 @@ class AudioFocusManager @Inject constructor(
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-    private val _focusState = MutableStateFlow(AudioFocusState.NOT_REQUESTED)
-    val focusState: StateFlow<AudioFocusState> = _focusState.asStateFlow()
-
-    private var audioFocusRequest: AudioFocusRequest? = null
-
-    // Ducking focus: separate from the main focus request, used to duck other apps'
-    // audio during continuous listening sessions
+    // Ducking focus: used to duck other apps' audio during continuous listening sessions
     private var duckingFocusRequest: AudioFocusRequest? = null
     private val _isDuckingActive = MutableStateFlow(false)
     val isDuckingActive: StateFlow<Boolean> = _isDuckingActive.asStateFlow()
-
-    // Callbacks for focus changes - VoiceManager will set these
-    var onFocusGained: (() -> Unit)? = null
-    var onFocusLostTransient: (() -> Unit)? = null
-    var onFocusLostPermanent: (() -> Unit)? = null
 
     // Ducking re-request support: when another app steals focus, we re-request
     // ducking so the other app ducks its volume while Whiz is active.
@@ -67,85 +48,9 @@ class AudioFocusManager @Inject constructor(
     var shouldReRequestDucking: (() -> Boolean)? = null
 
     /**
-     * Request audio focus for voice recording.
-     * Uses AUDIOFOCUS_GAIN for continuous listening.
-     * @return true if focus was granted immediately
-     */
-    fun requestFocus(): Boolean {
-        if (_focusState.value == AudioFocusState.FOCUS_GRANTED) {
-            Log.d(TAG, "Already have audio focus")
-            return true
-        }
-
-        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(audioAttributes)
-                .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener(this)
-                .build()
-
-            audioManager.requestAudioFocus(audioFocusRequest!!)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                this,
-                AudioManager.STREAM_VOICE_CALL,
-                AudioManager.AUDIOFOCUS_GAIN
-            )
-        }
-
-        return when (result) {
-            AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> {
-                Log.d(TAG, "Audio focus granted")
-                _focusState.value = AudioFocusState.FOCUS_GRANTED
-                true
-            }
-            AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> {
-                Log.d(TAG, "Audio focus request delayed")
-                false
-            }
-            else -> {
-                Log.w(TAG, "Audio focus request failed: $result")
-                false
-            }
-        }
-    }
-
-    /**
-     * Abandon audio focus when done listening.
-     */
-    fun abandonFocus() {
-        if (_focusState.value == AudioFocusState.NOT_REQUESTED) {
-            return
-        }
-
-        Log.d(TAG, "Abandoning audio focus")
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(this)
-        }
-
-        _focusState.value = AudioFocusState.NOT_REQUESTED
-        audioFocusRequest = null
-    }
-
-    fun isHoldingFocus(): Boolean {
-        return _focusState.value == AudioFocusState.FOCUS_GRANTED
-    }
-
-    /**
      * Request ducking focus to lower other apps' audio volume.
      * Uses AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK so the system automatically ducks
      * other apps' audio by ~14dB while we hold focus.
-     * This is separate from the main focus request (requestFocus/abandonFocus).
      * @return true if ducking focus was granted
      */
     fun requestDuckingFocus(): Boolean {
@@ -153,6 +58,16 @@ class AudioFocusManager @Inject constructor(
         // Always ask the system rather than trusting our own state —
         // guards against silent focus revocation on some OEM devices.
         // requestAudioFocus() is idempotent: returns GRANTED if already held.
+
+        // Bug fix: reset the flag so that a previous intentional abandon
+        // doesn't prevent re-requests after an external focus steal
+        intentionalDuckingAbandon = false
+
+        // Clean up any stale request before creating a new one
+        duckingFocusRequest?.let {
+            Log.d(TAG, "Abandoning stale ducking request before creating new one")
+            audioManager.abandonAudioFocusRequest(it)
+        }
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANT)
@@ -198,28 +113,19 @@ class AudioFocusManager @Inject constructor(
 
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
-                Log.d(TAG, "Audio focus gained")
-                _focusState.value = AudioFocusState.FOCUS_GRANTED
-                // If this GAIN is for our ducking request being re-granted, update state
-                if (duckingFocusRequest != null) {
-                    _isDuckingActive.value = true
-                    duckingRetryCount = 0
-                    Log.d(TAG, "Ducking focus re-request granted!")
-                }
-                onFocusGained?.invoke()
+                Log.d(TAG, "Ducking focus gained")
+                _isDuckingActive.value = true
+                duckingRetryCount = 0
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                Log.d(TAG, "Audio focus lost transiently")
-                _focusState.value = AudioFocusState.FOCUS_LOST_TRANSIENT
-                onFocusLostTransient?.invoke()
+                Log.d(TAG, "Audio focus lost transiently (ignored for ducking)")
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
-                Log.d(TAG, "Audio focus lost permanently")
+                Log.d(TAG, "Ducking focus lost")
                 val wasDuckingActive = _isDuckingActive.value
                 _isDuckingActive.value = false
-                _focusState.value = AudioFocusState.FOCUS_LOST_PERMANENT
-                onFocusLostPermanent?.invoke()
+                duckingFocusRequest = null
 
                 // If ducking was active and we didn't intentionally abandon it,
                 // another app stole focus — try to re-request ducking

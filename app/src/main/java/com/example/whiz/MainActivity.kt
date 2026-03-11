@@ -1002,7 +1002,6 @@ class MainActivity : ComponentActivity() {
 
         // Release any held audio focus as a safety net
         audioFocusManager.abandonDuckingFocus()
-        audioFocusManager.abandonFocus()
 
         // Clear the static callbacks
         finishAndRemoveTaskCallback = null
