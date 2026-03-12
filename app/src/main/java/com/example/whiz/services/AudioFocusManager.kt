@@ -149,7 +149,10 @@ class AudioFocusManager @Inject constructor(
      * @return true if ducking focus was granted
      */
     fun requestDuckingFocus(): Boolean {
-        if (_isDuckingActive.value) return true
+        intentionalDuckingAbandon = false
+        // Always ask the system rather than trusting our own state —
+        // guards against silent focus revocation on some OEM devices.
+        // requestAudioFocus() is idempotent: returns GRANTED if already held.
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANT)
