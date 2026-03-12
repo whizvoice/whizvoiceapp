@@ -115,7 +115,7 @@ jobs:
           arch: x86_64
           force-avd-creation: false
           avd-name: whiz-test-device
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048 -snapshot baseline_clean
           disable-animations: true
           script: |
             echo "Waiting for emulator boot..."
