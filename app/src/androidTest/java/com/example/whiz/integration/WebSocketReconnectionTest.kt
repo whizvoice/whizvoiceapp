@@ -447,7 +447,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L, // Give more time for sync after reconnection
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "bot response about LEGO history after reconnection"
                 )
                 
@@ -928,7 +928,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "coffee/tea response after reconnection"
                 )
                 
@@ -1029,7 +1029,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "fettuccine response after reconnection"
                 )
                 
@@ -1382,7 +1382,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 15000L,
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "Paris response in first chat"
                 )
                 
@@ -1569,7 +1569,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "Rome response in second chat"
                 )
                 
