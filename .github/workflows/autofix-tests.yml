@@ -145,6 +145,7 @@ jobs:
             mkdir -p autofix_test_output
             export PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH"
             export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+            export ANDROID_SERIAL=emulator-5554
             venv/bin/pytest autofix_tests/ -v --tb=short >autofix_test_output/pytest_output.log 2>&1; PYTEST_EXIT=$?
             cat autofix_test_output/pytest_output.log
             exit $PYTEST_EXIT
