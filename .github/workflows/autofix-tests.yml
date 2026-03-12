@@ -143,10 +143,9 @@ jobs:
 
             # Run autofix tests
             mkdir -p autofix_test_output
-            . venv/bin/activate
             export PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH"
             export ANDROID_HOME="${ANDROID_SDK_ROOT}"
-            pytest autofix_tests/ -v --tb=short 2>&1 | tee autofix_test_output/pytest_output.log || PYTEST_EXIT=$?
+            venv/bin/pytest autofix_tests/ -v --tb=short 2>&1 | tee autofix_test_output/pytest_output.log || PYTEST_EXIT=$?
 
             exit ${PYTEST_EXIT:-0}
 
