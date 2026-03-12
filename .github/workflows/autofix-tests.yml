@@ -145,9 +145,9 @@ jobs:
             mkdir -p autofix_test_output
             export PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH"
             export ANDROID_HOME="${ANDROID_SDK_ROOT}"
-            venv/bin/pytest autofix_tests/ -v --tb=short 2>&1 | tee autofix_test_output/pytest_output.log || PYTEST_EXIT=$?
-
-            exit ${PYTEST_EXIT:-0}
+            venv/bin/pytest autofix_tests/ -v --tb=short >autofix_test_output/pytest_output.log 2>&1; PYTEST_EXIT=$?
+            cat autofix_test_output/pytest_output.log
+            exit $PYTEST_EXIT
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
