@@ -97,6 +97,9 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --console=plain --quiet
+
       - name: Setup test credentials
         run: |
           echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
@@ -121,8 +124,7 @@ jobs:
             adb shell getprop sys.boot_completed
             sleep 5
 
-            # Build and install debug APK
-            ./gradlew assembleDebug --console=plain --quiet
+            # Install pre-built debug APK
             adb install -r app/build/outputs/apk/debug/app-debug.apk
 
             # Push test credentials
