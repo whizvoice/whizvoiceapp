@@ -13,6 +13,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.log10
 import kotlin.math.max
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -137,32 +138,26 @@ class WakeWordClassifier(context: Context) {
         // Compute number of frames
         val nFrames = 1 + (padded.size - nFft) / hopLength
 
-        // STFT -> power spectrogram
+        // STFT -> power spectrogram (using Cooley-Tukey FFT)
         val powerSpec = FloatArray(nFftBins * nFrames)
-        val fftReal = FloatArray(nFft)
-        val fftImag = FloatArray(nFft)
+        val fftReal = DoubleArray(nFft)
+        val fftImag = DoubleArray(nFft)
 
         for (frame in 0 until nFrames) {
             val start = frame * hopLength
 
             // Apply window and prepare for FFT
             for (i in 0 until nFft) {
-                fftReal[i] = if (start + i < padded.size) padded[start + i] * hannWindow[i] else 0f
-                fftImag[i] = 0f
+                fftReal[i] = if (start + i < padded.size) (padded[start + i] * hannWindow[i]).toDouble() else 0.0
+                fftImag[i] = 0.0
             }
 
-            // Simple DFT for the bins we need (nFft/2+1)
+            // In-place Cooley-Tukey FFT (nFft must be power of 2)
+            fftInPlace(fftReal, fftImag)
+
+            // Extract power for first nFft/2+1 bins
             for (k in 0 until nFftBins) {
-                var realSum = 0.0
-                var imagSum = 0.0
-                val freq = -2.0 * PI * k / nFft
-                for (n in 0 until nFft) {
-                    val angle = freq * n
-                    realSum += fftReal[n] * cos(angle)
-                    imagSum += fftReal[n] * kotlin.math.sin(angle)
-                }
-                // Power = real^2 + imag^2
-                powerSpec[k * nFrames + frame] = (realSum * realSum + imagSum * imagSum).toFloat()
+                powerSpec[k * nFrames + frame] = (fftReal[k] * fftReal[k] + fftImag[k] * fftImag[k]).toFloat()
             }
         }
 
@@ -226,6 +221,53 @@ class WakeWordClassifier(context: Context) {
 
         Log.d(TAG, "Classifier score: $output")
         return output
+    }
+
+    /**
+     * In-place Cooley-Tukey radix-2 FFT. Arrays must be power-of-2 length.
+     */
+    private fun fftInPlace(real: DoubleArray, imag: DoubleArray) {
+        val n = real.size
+        // Bit-reversal permutation
+        var j = 0
+        for (i in 1 until n) {
+            var bit = n shr 1
+            while (j and bit != 0) {
+                j = j xor bit
+                bit = bit shr 1
+            }
+            j = j xor bit
+            if (i < j) {
+                var tmp = real[i]; real[i] = real[j]; real[j] = tmp
+                tmp = imag[i]; imag[i] = imag[j]; imag[j] = tmp
+            }
+        }
+        // Butterfly stages
+        var len = 2
+        while (len <= n) {
+            val halfLen = len / 2
+            val angle = -2.0 * PI / len
+            val wReal = cos(angle)
+            val wImag = sin(angle)
+            var i = 0
+            while (i < n) {
+                var curReal = 1.0
+                var curImag = 0.0
+                for (k in 0 until halfLen) {
+                    val tReal = curReal * real[i + k + halfLen] - curImag * imag[i + k + halfLen]
+                    val tImag = curReal * imag[i + k + halfLen] + curImag * real[i + k + halfLen]
+                    real[i + k + halfLen] = real[i + k] - tReal
+                    imag[i + k + halfLen] = imag[i + k] - tImag
+                    real[i + k] += tReal
+                    imag[i + k] += tImag
+                    val newReal = curReal * wReal - curImag * wImag
+                    curImag = curReal * wImag + curImag * wReal
+                    curReal = newReal
+                }
+                i += len
+            }
+            len = len shl 1
+        }
     }
 
     fun close() {
