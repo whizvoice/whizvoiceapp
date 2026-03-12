@@ -64,6 +64,13 @@ jobs:
             --system-image "system-images;android-36;google_apis_playstore;x86_64" \
             --target-api 36
 
+      - name: Setup ADB keys
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.ADB_PRIVATE_KEY }}' > ~/.android/adbkey
+          chmod 600 ~/.android/adbkey
+          ssh-keygen -y -f ~/.android/adbkey > ~/.android/adbkey.pub 2>/dev/null || adb keygen ~/.android/adbkey.pub || true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
