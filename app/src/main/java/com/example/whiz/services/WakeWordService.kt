@@ -52,7 +52,7 @@ class WakeWordService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
         // Classifier threshold: probability above which a Vosk candidate is accepted
-        private const val CLASSIFIER_THRESHOLD = 0.7f
+        private const val CLASSIFIER_THRESHOLD = 0.8f
 
         // Ring buffer: 10 seconds of 16kHz mono 16-bit PCM = 320000 bytes
         private const val RING_BUFFER_SECONDS = 10

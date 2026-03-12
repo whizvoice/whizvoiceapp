@@ -1,0 +1,8 @@
+{
+  "sample_rate": 16000,
+  "n_fft": 1024,
+  "hop_length": 512,
+  "n_mels": 80,
+  "n_samples": 48000,
+  "n_time_frames": 94
+}
