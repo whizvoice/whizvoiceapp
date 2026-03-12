@@ -81,14 +81,16 @@ def app_installed():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Build and install the debug app directly to the emulator
-    # (install.sh overrides ANDROID_SERIAL to prefer physical device, which may not work)
+    # Install the pre-built debug APK to the emulator
+    # (APK is built in a prior CI step or locally before running tests)
     project_dir = os.path.join(os.path.dirname(__file__), '..')
     apk_path = os.path.join(project_dir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
-    subprocess.run(
-        [os.path.join(project_dir, 'gradlew'), 'assembleDebug', '--console=plain', '--quiet'],
-        check=True, cwd=project_dir
-    )
+    if not os.path.exists(apk_path):
+        print(f"APK not found at {apk_path}, building...")
+        subprocess.run(
+            [os.path.join(project_dir, 'gradlew'), 'assembleDebug', '--console=plain', '--quiet'],
+            check=True, cwd=project_dir
+        )
     subprocess.run(
         ['adb', '-s', EMULATOR_SERIAL, 'install', '-r', apk_path],
         check=True

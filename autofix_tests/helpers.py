@@ -149,14 +149,28 @@ def login_if_needed(tester):
         tester.tap(540, 1450)
         time.sleep(2)
         tester.tap(540, 1300)
-        time.sleep(3)
 
-        reached_my_chats = check_element_exists_in_ui(
-            tester, text="My Chats", wait_after_dump=2.0
-        )
-        on_accessibility_dialog = check_element_exists_in_ui(
-            tester, text="Enable Accessibility Service", wait_after_dump=2.0
-        )
+        # Poll for login to complete (up to 30s for slow CI emulators)
+        login_timeout = 30
+        poll_interval = 3
+        elapsed = 0
+        reached_my_chats = False
+        on_accessibility_dialog = False
+        while elapsed < login_timeout:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            reached_my_chats = check_element_exists_in_ui(
+                tester, text="My Chats", wait_after_dump=1.0
+            )
+            if reached_my_chats:
+                break
+            on_accessibility_dialog = check_element_exists_in_ui(
+                tester, text="Enable Accessibility Service", wait_after_dump=1.0
+            )
+            if on_accessibility_dialog:
+                break
+            print(f"Waiting for login to complete... ({elapsed}s/{login_timeout}s)")
+
         if not reached_my_chats and not on_accessibility_dialog:
             save_failed_screenshot(tester, "login_if_needed", "failed_after_login")
             assert False, "Failed to log in - expected My Chats page or accessibility dialog"
