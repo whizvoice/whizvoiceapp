@@ -146,6 +146,10 @@ def login_if_needed(tester):
 
     if is_login_screen:
         print("Login screen detected, proceeding with login...")
+        # Wake screen in case it went dark before we could tap
+        subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+        subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'svc', 'power', 'stayon', 'true'], check=False)
+        time.sleep(1)
         tester.tap(540, 1450)
         time.sleep(2)
         tester.tap(540, 1300)
