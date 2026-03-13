@@ -142,13 +142,7 @@ jobs:
             adb shell svc power stayon true
 
             # Run autofix tests
-            mkdir -p autofix_test_output
-            export PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH"
-            export ANDROID_HOME="${ANDROID_SDK_ROOT}"
-            export ANDROID_SERIAL=emulator-5554
-            venv/bin/pytest autofix_tests/ -v --tb=short >autofix_test_output/pytest_output.log 2>&1; PYTEST_EXIT=$?
-            cat autofix_test_output/pytest_output.log
-            exit $PYTEST_EXIT
+            mkdir -p autofix_test_output && PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH" ANDROID_HOME="${ANDROID_SDK_ROOT}" ANDROID_SERIAL=emulator-5554 venv/bin/pytest autofix_tests/ -v --tb=short
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
