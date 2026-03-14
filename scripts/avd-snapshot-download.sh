@@ -128,8 +128,18 @@ m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
 print(' '.join(m['parts']))
 ")
 
+EMULATOR_BUILD=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('emulator_build', ''))
+")
+
 echo "    Expected SHA-256: $EXPECTED_SHA256"
 echo "    Parts: $PARTS"
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    echo "    Emulator build: $EMULATOR_BUILD"
+    echo "    NOTE: Pin emulator-build: $EMULATOR_BUILD in your CI workflow to match this snapshot."
+fi
 
 # ---------------------------------------------------------------------------
 # Reassemble parts
