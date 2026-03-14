@@ -2,7 +2,7 @@
 #
 # Package and upload the whiz-test-device AVD snapshot to GitHub Releases.
 #
-# Usage: ./scripts/avd-snapshot-upload.sh [--version v1]
+# Usage: ./scripts/avd-snapshot-upload.sh [--version v1] [--emulator-build BUILD_NUMBER]
 #
 set -euo pipefail
 
@@ -10,6 +10,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 VERSION="v1"
+EMULATOR_BUILD=""
 REPO="whizvoice/whizvoiceapp"
 AVD_NAME="whiz-test-device"
 AVD_DIR="$HOME/.android/avd/${AVD_NAME}.avd"
@@ -24,11 +25,32 @@ ARCHIVE_PATH="/tmp/avd-snapshot.tar.zst"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
+        --emulator-build) EMULATOR_BUILD="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 RELEASE_TAG="emulator-snapshot-${VERSION}"
+
+# Auto-detect emulator build number if not provided
+if [[ -z "$EMULATOR_BUILD" ]]; then
+    EMULATOR_BIN=""
+    for candidate in "${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}/emulator/emulator" \
+                     "/opt/homebrew/share/android-commandlinetools/emulator/emulator"; do
+        if [[ -x "$candidate" ]]; then
+            EMULATOR_BIN="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$EMULATOR_BIN" ]]; then
+        EMULATOR_BUILD=$("$EMULATOR_BIN" -version 2>/dev/null | grep -o 'build_id [0-9]*' | awk '{print $2}' || true)
+    fi
+    if [[ -z "$EMULATOR_BUILD" ]]; then
+        echo "Warning: Could not auto-detect emulator build number. Use --emulator-build to set it."
+    else
+        echo "==> Auto-detected emulator build: $EMULATOR_BUILD"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Validate prerequisites
@@ -162,12 +184,18 @@ for part in "${PARTS[@]}"; do
 done
 PART_FILES_JSON+="]"
 
+EMULATOR_BUILD_JSON=""
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    EMULATOR_BUILD_JSON="\"emulator_build\": \"${EMULATOR_BUILD}\","
+fi
+
 cat > "$MANIFEST_PATH" <<EOF
 {
   "version": "${VERSION}",
   "arch": "arm64-v8a",
   "api_level": 35,
   "system_image": "system-images;android-35;google_apis_playstore;arm64-v8a",
+  ${EMULATOR_BUILD_JSON}
   "avd_name": "${AVD_NAME}",
   "snapshot_name": "${SNAPSHOT_NAME}",
   "parts": ${PART_FILES_JSON},

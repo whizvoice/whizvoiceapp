@@ -113,36 +113,12 @@ jobs:
           api-level: 36
           target: google_apis_playstore
           arch: x86_64
+          emulator-build: 14788078
           force-avd-creation: false
           avd-name: whiz-test-device
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean
           disable-animations: true
-          script: |
-            echo "Waiting for emulator boot..."
-            adb wait-for-device
-            sleep 15
-            adb shell getprop sys.boot_completed
-            sleep 5
-
-            # Install pre-built debug APK
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-            # Push test credentials
-            adb push test_credentials.json /data/local/tmp/test_credentials.json
-
-            # Grant permissions
-            adb shell appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow || true
-            adb shell settings put secure enabled_accessibility_services com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService || true
-            adb shell settings put secure accessibility_enabled 1 || true
-            adb shell pm grant com.example.whiz.debug android.permission.RECORD_AUDIO || true
-            adb shell pm grant com.example.whiz.debug android.permission.POST_NOTIFICATIONS || true
-
-            # Keep screen on
-            adb shell settings put system screen_off_timeout 2147483647
-            adb shell svc power stayon true
-
-            # Run autofix tests
-            mkdir -p autofix_test_output && PYTHONPATH="${{ github.workspace }}/android_accessibility_tester:$PYTHONPATH" ANDROID_HOME="${ANDROID_SDK_ROOT}" ANDROID_SERIAL=emulator-5554 venv/bin/pytest autofix_tests/ -v --tb=short
+          script: bash scripts/run-autofix-tests.sh
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
