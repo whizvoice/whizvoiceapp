@@ -198,6 +198,8 @@ cat > "$MANIFEST_PATH" <<EOF
   ${EMULATOR_BUILD_JSON}
   "avd_name": "${AVD_NAME}",
   "snapshot_name": "${SNAPSHOT_NAME}",
+  "snapshot_sdk_root": "${SDK_ROOT}",
+  "snapshot_home": "${HOME}",
   "parts": ${PART_FILES_JSON},
   "sha256": "${SHA256}",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -134,6 +134,18 @@ m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
 print(m.get('emulator_build', ''))
 ")
 
+SNAPSHOT_SDK_ROOT=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('snapshot_sdk_root', ''))
+")
+
+SNAPSHOT_HOME=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('snapshot_home', ''))
+")
+
 echo "    Expected SHA-256: $EXPECTED_SHA256"
 echo "    Parts: $PARTS"
 if [[ -n "$EMULATOR_BUILD" ]]; then
@@ -196,6 +208,39 @@ for ini_file in "$AVD_DIR/hardware-qemu.ini" \
         "${SED_INPLACE[@]}" "s|__HOME__|${HOME}|g" "$ini_file"
     fi
 done
+
+# Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
+SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SNAPSHOT_PB" ]]; then
+    # Build replacement args: try manifest paths first, fall back to scanning the .pb
+    PB_ARGS=()
+    if [[ -n "$SNAPSHOT_SDK_ROOT" ]] && [[ "$SNAPSHOT_SDK_ROOT" != "$SDK_ROOT" ]]; then
+        PB_ARGS+=("$SNAPSHOT_SDK_ROOT" "$SDK_ROOT")
+    fi
+    if [[ -n "$SNAPSHOT_HOME" ]] && [[ "$SNAPSHOT_HOME" != "$HOME" ]]; then
+        PB_ARGS+=("$SNAPSHOT_HOME" "$HOME")
+    fi
+
+    # If manifest didn't have the paths, auto-detect from the .pb itself
+    if [[ ${#PB_ARGS[@]} -eq 0 ]]; then
+        DETECTED_HOME=$(strings "$SNAPSHOT_PB" | grep -oE '/[^ ]+/\.android/avd' | head -1 | sed 's|/.android/avd||')
+        DETECTED_SDK=$(strings "$SNAPSHOT_PB" | grep -oE '/[^ ]+/system-images/' | head -1 | sed 's|/system-images/||')
+        if [[ -n "$DETECTED_SDK" ]] && [[ "$DETECTED_SDK" != "$SDK_ROOT" ]]; then
+            PB_ARGS+=("$DETECTED_SDK" "$SDK_ROOT")
+        fi
+        if [[ -n "$DETECTED_HOME" ]] && [[ "$DETECTED_HOME" != "$HOME" ]]; then
+            PB_ARGS+=("$DETECTED_HOME" "$HOME")
+        fi
+    fi
+
+    if [[ ${#PB_ARGS[@]} -gt 0 ]]; then
+        echo "    Rewriting snapshot.pb paths..."
+        python3 "$SCRIPT_DIR/rewrite_snapshot_paths.py" "$SNAPSHOT_PB" "${PB_ARGS[@]}"
+    else
+        echo "    snapshot.pb paths already match local environment."
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Generate top-level AVD .ini
