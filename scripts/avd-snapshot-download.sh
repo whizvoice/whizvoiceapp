@@ -6,6 +6,9 @@
 #
 set -euo pipefail
 
+# Resolve script directory early (before any cd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ---------------------------------------------------------------------------
 # Constants — update these when uploading a new snapshot
 # ---------------------------------------------------------------------------
@@ -211,7 +214,6 @@ done
 
 # Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
 SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SNAPSHOT_PB" ]]; then
     # Build replacement args: try manifest paths first, fall back to scanning the .pb
     PB_ARGS=()
