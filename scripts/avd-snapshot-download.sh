@@ -194,6 +194,19 @@ mkdir -p "$AVD_DIR"
 zstd -d "$ARCHIVE_PATH" --stdout | tar -xf - -C "$AVD_DIR"
 
 # ---------------------------------------------------------------------------
+# Verify QCOW2 internal snapshots after extraction
+# ---------------------------------------------------------------------------
+echo "==> Verifying QCOW2 internal snapshots after extraction..."
+for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+    if [[ -f "$qcow2" ]]; then
+        echo "    $(basename "$qcow2"):"
+        qemu-img snapshot -l "$qcow2" 2>&1 | grep -E "(ID|baseline)" || echo "      NO SNAPSHOTS FOUND"
+    fi
+done
+echo "==> AVD directory timestamps after extraction:"
+ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Rewrite absolute paths
 # ---------------------------------------------------------------------------
 echo "==> Rewriting absolute paths..."

@@ -46,6 +46,20 @@ echo "==> Pushing test credentials..."
 adb push test_credentials.json /data/local/tmp/test_credentials.json
 
 # ---------------------------------------------------------------------------
+# Verify QCOW2 snapshots before test (detect if emulator-runner wiped them)
+# ---------------------------------------------------------------------------
+echo "==> Verifying QCOW2 snapshots before test..."
+AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+    if [[ -f "$qcow2" ]]; then
+        echo "    $(basename "$qcow2"):"
+        qemu-img snapshot -l "$qcow2" 2>&1 | grep -E "(ID|baseline)" || echo "      NO SNAPSHOTS / FILE REPLACED"
+    fi
+done
+echo "==> AVD directory timestamps before test:"
+ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Run pytest (conftest.py handles APK install, permissions, screen wake)
 # ---------------------------------------------------------------------------
 echo "==> Running autofix tests..."
