@@ -54,6 +54,7 @@ jobs:
         run: sudo apt-get install -y zstd
 
       - name: Download x86_64 emulator snapshot
+        id: download-snapshot
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -63,6 +64,13 @@ jobs:
             --release-tag emulator-snapshot-x86_64-v1 \
             --system-image "system-images;android-36;google_apis_playstore;x86_64" \
             --target-api 36
+          # Read emulator build saved by download script
+          BUILD_FILE="$HOME/.android/avd/whiz-test-device.avd/snapshot_emulator_build.txt"
+          if [[ -f "$BUILD_FILE" ]]; then
+            EMULATOR_BUILD=$(cat "$BUILD_FILE")
+            echo "emulator_build=${EMULATOR_BUILD}" >> "$GITHUB_OUTPUT"
+            echo "==> Using emulator build from snapshot: ${EMULATOR_BUILD}"
+          fi
 
       - name: Setup ADB keys
         run: |
@@ -113,7 +121,7 @@ jobs:
           api-level: 36
           target: google_apis_playstore
           arch: x86_64
-          emulator-build: 14788078
+          emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
           force-avd-creation: false
           avd-name: whiz-test-device
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean
