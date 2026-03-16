@@ -55,7 +55,7 @@ fi
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-for cmd in zstd gh tar split shasum; do
+for cmd in zstd gh tar split sha256sum; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: '$cmd' is required but not found in PATH"
         exit 1
@@ -63,9 +63,11 @@ for cmd in zstd gh tar split shasum; do
 done
 
 # Ensure emulator is not running (snapshot files can be corrupted if in use)
-if pgrep -f "qemu-system.*${AVD_NAME}" &>/dev/null; then
-    echo "Error: Emulator appears to be running. Shut it down first."
-    exit 1
+if command -v pgrep &>/dev/null; then
+    if pgrep -f "qemu-system.*${AVD_NAME}" &>/dev/null; then
+        echo "Error: Emulator appears to be running. Shut it down first."
+        exit 1
+    fi
 fi
 
 if [[ ! -d "$AVD_DIR" ]]; then
@@ -125,7 +127,7 @@ echo "==> Sanitizing absolute paths"
 SDK_ROOT=$(grep '^android.sdk.root' "$STAGING_DIR/hardware-qemu.ini" | cut -d'=' -f2 | tr -d ' ')
 if [[ -z "$SDK_ROOT" ]]; then
     echo "Warning: Could not detect SDK root from hardware-qemu.ini"
-    SDK_ROOT="$HOME/Library/Android/sdk"
+    SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 fi
 
 for ini_file in "$STAGING_DIR/hardware-qemu.ini" \
@@ -133,9 +135,9 @@ for ini_file in "$STAGING_DIR/hardware-qemu.ini" \
     if [[ -f "$ini_file" ]]; then
         echo "    Sanitizing $(basename "$ini_file")"
         # Replace SDK root first (longer path, to avoid partial replacement)
-        sed -i '' "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
+        sed -i "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
         # Replace home directory
-        sed -i '' "s|${HOME}|__HOME__|g" "$ini_file"
+        sed -i "s|${HOME}|__HOME__|g" "$ini_file"
     fi
 done
 
@@ -151,7 +153,7 @@ echo "    Archive size: $ARCHIVE_SIZE"
 # ---------------------------------------------------------------------------
 # Checksum
 # ---------------------------------------------------------------------------
-SHA256=$(shasum -a 256 "$ARCHIVE_PATH" | cut -d' ' -f1)
+SHA256=$(sha256sum "$ARCHIVE_PATH" | cut -d' ' -f1)
 echo "    SHA-256: $SHA256"
 
 # ---------------------------------------------------------------------------
@@ -192,9 +194,9 @@ fi
 cat > "$MANIFEST_PATH" <<EOF
 {
   "version": "${VERSION}",
-  "arch": "arm64-v8a",
-  "api_level": 35,
-  "system_image": "system-images;android-35;google_apis_playstore;arm64-v8a",
+  "arch": "x86_64",
+  "api_level": 36,
+  "system_image": "system-images;android-36;google_apis_playstore;x86_64",
   ${EMULATOR_BUILD_JSON}
   "avd_name": "${AVD_NAME}",
   "snapshot_name": "${SNAPSHOT_NAME}",
@@ -234,9 +236,9 @@ gh release create "$RELEASE_TAG" \
     --title "Emulator AVD Snapshot ${VERSION}" \
     --notes "AVD snapshot for \`${AVD_NAME}\` with \`${SNAPSHOT_NAME}\` snapshot.
 
-**Arch:** arm64-v8a (Apple Silicon)
-**API Level:** 35
-**System Image:** google_apis_playstore;arm64-v8a
+**Arch:** x86_64
+**API Level:** 36
+**System Image:** google_apis_playstore;x86_64
 **SHA-256:** \`${SHA256}\`
 **Parts:** ${#PARTS[@]}
 
