@@ -227,7 +227,8 @@ if [[ "$(uname)" == "Darwin" ]]; then
     SED_INPLACE=(sed -i '')
 fi
 
-for ini_file in "$AVD_DIR/hardware-qemu.ini" \
+for ini_file in "$AVD_DIR/config.ini" \
+                "$AVD_DIR/hardware-qemu.ini" \
                 "$AVD_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Rewriting $(basename "$ini_file")"
