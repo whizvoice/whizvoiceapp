@@ -43,7 +43,7 @@ if [[ -z "$EMULATOR_BUILD" ]]; then
         fi
     done
     if [[ -n "$EMULATOR_BIN" ]]; then
-        EMULATOR_BUILD=$("$EMULATOR_BIN" -version 2>/dev/null | grep -o 'build_id [0-9]*' | awk '{print $2}' || true)
+        EMULATOR_BUILD=$("$EMULATOR_BIN" -version 2>/dev/null | grep -o 'build_id [0-9]*' | head -1 | awk '{print $2}' || true)
     fi
     if [[ -z "$EMULATOR_BUILD" ]]; then
         echo "Warning: Could not auto-detect emulator build number. Use --emulator-build to set it."
