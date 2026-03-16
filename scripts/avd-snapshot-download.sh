@@ -231,6 +231,8 @@ for ini_file in "$AVD_DIR/hardware-qemu.ini" \
                 "$AVD_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Rewriting $(basename "$ini_file")"
+        # Convert Windows backslashes to forward slashes (snapshot may have been created on Windows)
+        "${SED_INPLACE[@]}" 's|\\|/|g' "$ini_file"
         "${SED_INPLACE[@]}" "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
         "${SED_INPLACE[@]}" "s|__HOME__|${HOME}|g" "$ini_file"
     fi
@@ -239,6 +241,14 @@ done
 # Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
 SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"
 if [[ -f "$SNAPSHOT_PB" ]]; then
+    # Convert Windows backslashes to forward slashes first (snapshot may have been created on Windows)
+    echo "    Converting backslashes in snapshot.pb..."
+    python3 "$SCRIPT_DIR/rewrite_snapshot_paths.py" "$SNAPSHOT_PB" "\\" "/"
+
+    # Normalize backslashes in manifest paths so they match the now-forward-slash .pb content
+    SNAPSHOT_SDK_ROOT=$(echo "$SNAPSHOT_SDK_ROOT" | tr '\\' '/')
+    SNAPSHOT_HOME=$(echo "$SNAPSHOT_HOME" | tr '\\' '/')
+
     # Build replacement args: try manifest paths first, fall back to scanning the .pb
     PB_ARGS=()
     if [[ -n "$SNAPSHOT_SDK_ROOT" ]] && [[ "$SNAPSHOT_SDK_ROOT" != "$SDK_ROOT" ]]; then
@@ -283,6 +293,13 @@ path=${AVD_DIR}
 path.rel=avd/${AVD_NAME}.avd
 target=android-${TARGET_API}
 EOF
+
+# ---------------------------------------------------------------------------
+# Save emulator build number for CI to read
+# ---------------------------------------------------------------------------
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    echo "$EMULATOR_BUILD" > "$AVD_DIR/snapshot_emulator_build.txt"
+fi
 
 # ---------------------------------------------------------------------------
 # Create runtime directories (emulator expects these)
