@@ -130,14 +130,24 @@ if [[ -z "$SDK_ROOT" ]]; then
     SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 fi
 
+_sed_inplace() {
+    if sed --version &>/dev/null; then
+        # GNU sed (Linux)
+        sed -i "$@"
+    else
+        # BSD sed (macOS)
+        sed -i '' "$@"
+    fi
+}
+
 for ini_file in "$STAGING_DIR/hardware-qemu.ini" \
                 "$STAGING_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Sanitizing $(basename "$ini_file")"
         # Replace SDK root first (longer path, to avoid partial replacement)
-        sed -i "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
+        _sed_inplace "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
         # Replace home directory
-        sed -i "s|${HOME}|__HOME__|g" "$ini_file"
+        _sed_inplace "s|${HOME}|__HOME__|g" "$ini_file"
     fi
 done
 
