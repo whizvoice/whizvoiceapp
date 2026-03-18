@@ -25,6 +25,7 @@ import time
 from helpers import (
     EMULATOR_SERIAL, DEBUG_PACKAGE,
     enable_accessibility_service, login_if_needed,
+    verify_required_apps,
 )
 
 ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
@@ -80,6 +81,9 @@ def app_installed():
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
+
+    # Verify snapshot loaded with required apps (e.g., WhatsApp)
+    verify_required_apps()
 
     # Install the pre-built debug APK to the emulator
     # (APK is built in a prior CI step or locally before running tests)

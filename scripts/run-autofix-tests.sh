@@ -60,6 +60,22 @@ echo "==> AVD directory timestamps before test:"
 ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Verify required apps are installed (catch cold boot / broken snapshot)
+# ---------------------------------------------------------------------------
+echo "==> Verifying required apps..."
+if adb shell pm list packages 2>/dev/null | grep -q "com.whatsapp"; then
+    echo "    [OK] WhatsApp is installed"
+else
+    echo "    [FAIL] WhatsApp is NOT installed"
+    echo "ERROR: Snapshot appears to have not loaded correctly (cold boot fallback)."
+    echo "Required apps are missing. Check snapshot configuration."
+    exit 1
+fi
+
+echo "==> Current foreground activity:"
+adb shell dumpsys activity activities 2>/dev/null | grep "mResumedActivity" | head -1 || echo "    unknown"
+
+# ---------------------------------------------------------------------------
 # Run pytest (conftest.py handles APK install, permissions, screen wake)
 # ---------------------------------------------------------------------------
 echo "==> Running autofix tests..."
