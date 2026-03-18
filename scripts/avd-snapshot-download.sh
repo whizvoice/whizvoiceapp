@@ -218,7 +218,7 @@ echo "==> AVD directory timestamps after extraction:"
 ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Rewrite absolute paths
+# Rewrite absolute paths and system image references
 # ---------------------------------------------------------------------------
 echo "==> Rewriting absolute paths..."
 
@@ -226,6 +226,9 @@ SED_INPLACE=(sed -i)
 if [[ "$(uname)" == "Darwin" ]]; then
     SED_INPLACE=(sed -i '')
 fi
+
+# Compute the target system image subpath (e.g. "system-images/android-33/google_apis/x86_64/")
+TARGET_SYSDIR="$(echo "$SYSTEM_IMAGE" | tr ';' '/')/"
 
 for ini_file in "$AVD_DIR/config.ini" \
                 "$AVD_DIR/hardware-qemu.ini" \
@@ -236,6 +239,14 @@ for ini_file in "$AVD_DIR/config.ini" \
         "${SED_INPLACE[@]}" 's|\\|/|g' "$ini_file"
         "${SED_INPLACE[@]}" "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
         "${SED_INPLACE[@]}" "s|__HOME__|${HOME}|g" "$ini_file"
+
+        # Rewrite system image path if it differs from target
+        # Matches patterns like "system-images/android-NN/target_type/arch/"
+        OLD_SYSDIR=$(grep -oE 'system-images/android-[0-9]+/[^/]+/[^/]+/' "$ini_file" | head -1 || true)
+        if [[ -n "$OLD_SYSDIR" ]] && [[ "$OLD_SYSDIR" != "$TARGET_SYSDIR" ]]; then
+            echo "    Rewriting system image path: $OLD_SYSDIR -> $TARGET_SYSDIR"
+            "${SED_INPLACE[@]}" "s|${OLD_SYSDIR}|${TARGET_SYSDIR}|g" "$ini_file"
+        fi
     fi
 done
 
@@ -269,6 +280,13 @@ if [[ -f "$SNAPSHOT_PB" ]]; then
         if [[ -n "$DETECTED_HOME" ]] && [[ "$DETECTED_HOME" != "$HOME" ]]; then
             PB_ARGS+=("$DETECTED_HOME" "$HOME")
         fi
+    fi
+
+    # Also rewrite the system image subpath if it differs
+    OLD_PB_SYSDIR=$(strings "$SNAPSHOT_PB" | grep -oE 'system-images/android-[0-9]+/[^/]+/[^/]+/' | head -1 || true)
+    if [[ -n "$OLD_PB_SYSDIR" ]] && [[ "$OLD_PB_SYSDIR" != "$TARGET_SYSDIR" ]]; then
+        echo "    Rewriting snapshot.pb system image path: $OLD_PB_SYSDIR -> $TARGET_SYSDIR"
+        PB_ARGS+=("$OLD_PB_SYSDIR" "$TARGET_SYSDIR")
     fi
 
     if [[ ${#PB_ARGS[@]} -gt 0 ]]; then
