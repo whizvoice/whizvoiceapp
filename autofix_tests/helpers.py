@@ -227,6 +227,16 @@ def login_if_needed(tester):
             )
             if on_accessibility_dialog:
                 break
+            # Dismiss "System UI isn't responding" ANR dialog if it appears
+            has_anr = check_element_exists_in_ui(
+                tester, text="System UI isn't responding", wait_after_dump=0.5
+            )
+            if has_anr:
+                print("ANR dialog detected, tapping Wait to dismiss...")
+                # "Wait" button bounds [70,1332][1010,1458], center = (540, 1395)
+                tester.tap(540, 1395)
+                time.sleep(2)
+                continue
             print(f"Waiting for login to complete... ({elapsed}s/{login_timeout}s)")
 
         if not reached_my_chats and not on_accessibility_dialog:
