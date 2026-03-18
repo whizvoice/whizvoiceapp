@@ -185,23 +185,32 @@ def login_if_needed(tester):
         subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'svc', 'power', 'stayon', 'true'], check=False)
         time.sleep(1)
         tester.tap(540, 1450)
-        time.sleep(2)
 
-        # Handle "Choose an account" dialog if it appears
-        has_account_chooser = check_element_exists_in_ui(
-            tester, text="Choose an account", wait_after_dump=2.0
-        )
-        if has_account_chooser:
-            print("Account chooser dialog detected, selecting test account...")
-            # "Whiz Voice Test" account row center from UI dump bounds [70,1183][1010,1360]
-            tester.tap(540, 1271)
-            time.sleep(2)
-        else:
-            print("No account chooser dialog, login may have proceeded directly")
-
-        # Poll for login to complete (up to 30s for slow CI emulators)
-        login_timeout = 30
+        # Phase 1: Poll for account chooser dialog (up to 15s on slow CI emulators)
+        chooser_timeout = 15
         poll_interval = 3
+        elapsed = 0
+        account_selected = False
+        while elapsed < chooser_timeout:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            has_account_chooser = check_element_exists_in_ui(
+                tester, text="Choose an account", wait_after_dump=1.0
+            )
+            if has_account_chooser:
+                print("Account chooser dialog detected, selecting test account...")
+                # "Whiz Voice Test" account row center from UI dump bounds [70,1183][1010,1360]
+                tester.tap(540, 1271)
+                time.sleep(2)
+                account_selected = True
+                break
+            print(f"Waiting for account chooser... ({elapsed}s/{chooser_timeout}s)")
+
+        if not account_selected:
+            print("No account chooser dialog appeared, login may have proceeded directly")
+
+        # Phase 2: Poll for login to complete (up to 30s)
+        login_timeout = 30
         elapsed = 0
         reached_my_chats = False
         on_accessibility_dialog = False
