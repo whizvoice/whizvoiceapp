@@ -112,18 +112,42 @@ jobs:
         run: |
           echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
 
-      - name: Back up QCOW2 overlay files
+      - name: Create QCOW2 restore script
         run: |
           AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
           BACKUP_DIR="/tmp/qcow2-backup"
+
+          # Back up QCOW2 files now (before emulator-runner modifies config.ini)
           mkdir -p "$BACKUP_DIR"
-          echo "==> Backing up QCOW2 overlay files before emulator-runner modifies config.ini..."
+          echo "==> Backing up QCOW2 overlay files..."
           for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
             if [ -f "$AVD_DIR/$f" ]; then
               cp "$AVD_DIR/$f" "$BACKUP_DIR/$f"
               echo "    Backed up $f ($(du -sh "$AVD_DIR/$f" | cut -f1))"
             fi
           done
+
+          # Write restore script (emulator-runner executes pre-launch script
+          # line-by-line in separate shells, so we need a single script file)
+          cat > /tmp/restore-qcow2.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+          BACKUP_DIR="/tmp/qcow2-backup"
+          echo "==> Restoring QCOW2 overlay files after config.ini modification..."
+          for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            if [ -f "$BACKUP_DIR/$f" ]; then
+              cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"
+              echo "    Restored $f"
+            else
+              echo "    WARNING: $BACKUP_DIR/$f not found!"
+            fi
+          done
+          echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."
+          echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"
+          echo "==> Restore complete."
+          SCRIPT
+          chmod +x /tmp/restore-qcow2.sh
 
       - name: Run autofix verification tests
         env:
@@ -139,18 +163,7 @@ jobs:
           avd-name: whiz-test-device
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean
           disable-animations: true
-          pre-emulator-launch-script: |
-            echo "==> Restoring QCOW2 overlay files after config.ini modification..."
-            AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
-            BACKUP_DIR="/tmp/qcow2-backup"
-            for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
-              if [ -f "$BACKUP_DIR/$f" ]; then
-                cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"
-                echo "    Restored $f"
-              fi
-            done
-            echo "==> Also adding hw.cpu.ncore=2 to snapshot config so it won't be seen as a change..."
-            echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"
+          pre-emulator-launch-script: /tmp/restore-qcow2.sh
           script: bash scripts/run-autofix-tests.sh
 
       - name: Upload test artifacts
