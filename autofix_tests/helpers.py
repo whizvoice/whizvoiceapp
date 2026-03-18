@@ -186,7 +186,18 @@ def login_if_needed(tester):
         time.sleep(1)
         tester.tap(540, 1450)
         time.sleep(2)
-        tester.tap(540, 1300)
+
+        # Handle "Choose an account" dialog if it appears
+        has_account_chooser = check_element_exists_in_ui(
+            tester, text="Choose an account", wait_after_dump=2.0
+        )
+        if has_account_chooser:
+            print("Account chooser dialog detected, selecting test account...")
+            # "Whiz Voice Test" account row center from UI dump bounds [70,1183][1010,1360]
+            tester.tap(540, 1271)
+            time.sleep(2)
+        else:
+            print("No account chooser dialog, login may have proceeded directly")
 
         # Poll for login to complete (up to 30s for slow CI emulators)
         login_timeout = 30
