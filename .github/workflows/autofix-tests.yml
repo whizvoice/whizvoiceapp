@@ -112,6 +112,19 @@ jobs:
         run: |
           echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
 
+      - name: Back up QCOW2 overlay files
+        run: |
+          AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+          BACKUP_DIR="/tmp/qcow2-backup"
+          mkdir -p "$BACKUP_DIR"
+          echo "==> Backing up QCOW2 overlay files before emulator-runner modifies config.ini..."
+          for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              cp "$AVD_DIR/$f" "$BACKUP_DIR/$f"
+              echo "    Backed up $f ($(du -sh "$AVD_DIR/$f" | cut -f1))"
+            fi
+          done
+
       - name: Run autofix verification tests
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -124,8 +137,20 @@ jobs:
           emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
           force-avd-creation: false
           avd-name: whiz-test-device
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -no-snapshot-load -no-snapshot-save
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean
           disable-animations: true
+          pre-emulator-launch-script: |
+            echo "==> Restoring QCOW2 overlay files after config.ini modification..."
+            AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+            BACKUP_DIR="/tmp/qcow2-backup"
+            for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+              if [ -f "$BACKUP_DIR/$f" ]; then
+                cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"
+                echo "    Restored $f"
+              fi
+            done
+            echo "==> Also adding hw.cpu.ncore=2 to snapshot config so it won't be seen as a change..."
+            echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"
           script: bash scripts/run-autofix-tests.sh
 
       - name: Upload test artifacts
