@@ -129,24 +129,23 @@ jobs:
 
           # Write restore script (emulator-runner executes pre-launch script
           # line-by-line in separate shells, so we need a single script file)
-          cat > /tmp/restore-qcow2.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
-BACKUP_DIR="/tmp/qcow2-backup"
-echo "==> Restoring QCOW2 overlay files after config.ini modification..."
-for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
-  if [ -f "$BACKUP_DIR/$f" ]; then
-    cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"
-    echo "    Restored $f"
-  else
-    echo "    WARNING: $BACKUP_DIR/$f not found!"
-  fi
-done
-echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."
-echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"
-echo "==> Restore complete."
-EOF
+          printf '%s\n' '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"' \
+            'BACKUP_DIR="/tmp/qcow2-backup"' \
+            'echo "==> Restoring QCOW2 overlay files after config.ini modification..."' \
+            'for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            '  if [ -f "$BACKUP_DIR/$f" ]; then' \
+            '    cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"' \
+            '    echo "    Restored $f"' \
+            '  else' \
+            '    echo "    WARNING: $BACKUP_DIR/$f not found!"' \
+            '  fi' \
+            'done' \
+            'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
+            'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
+            'echo "==> Restore complete."' \
+            > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh
 
       - name: Run autofix verification tests
