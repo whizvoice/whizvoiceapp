@@ -72,11 +72,65 @@ is_emulator_running() {
     "$ADB_BIN" -s "$EMULATOR_SERIAL" get-state 2>/dev/null | grep -q "device"
 }
 
+verify_snapshot_environment() {
+    # Verify the snapshot loaded correctly by checking expected apps/state
+    log "Verifying snapshot environment..."
+    local failed=false
+
+    # Check WhatsApp is installed
+    if "$ADB_BIN" -s "$EMULATOR_SERIAL" shell pm list packages 2>/dev/null | grep -q "com.whatsapp"; then
+        log "  [OK] WhatsApp is installed"
+    else
+        log "  [FAIL] WhatsApp is NOT installed - snapshot may not have loaded correctly"
+        failed=true
+    fi
+
+    # Check WhizVoice debug app is installed
+    if "$ADB_BIN" -s "$EMULATOR_SERIAL" shell pm list packages 2>/dev/null | grep -q "com.example.whiz.debug"; then
+        log "  [OK] WhizVoice debug app is installed"
+    else
+        log "  [WARN] WhizVoice debug app not installed (will be installed by test fixture)"
+    fi
+
+    # Log all installed packages for debugging
+    log "  Installed packages:"
+    "$ADB_BIN" -s "$EMULATOR_SERIAL" shell pm list packages 2>/dev/null | sort | while read -r pkg; do
+        log "    $pkg"
+    done
+
+    # Check current foreground activity
+    local current_activity
+    current_activity=$("$ADB_BIN" -s "$EMULATOR_SERIAL" shell dumpsys activity activities 2>/dev/null | grep "mResumedActivity" | head -1 || echo "unknown")
+    log "  Current activity: $current_activity"
+
+    if [[ "$failed" == true ]]; then
+        log "ERROR: Snapshot environment verification failed."
+        log "The '$SNAPSHOT_NAME' snapshot appears to be missing required apps."
+        log "Please recreate the snapshot with WhatsApp installed and configured."
+        exit 1
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Emulator boot
 # ---------------------------------------------------------------------------
 
 if [[ "$SKIP_BOOT" == false ]]; then
+    # Verify snapshot exists before attempting to boot
+    AVD_DIR="$HOME/.android/avd/${AVD_NAME}.avd"
+    SNAPSHOT_DIR="$AVD_DIR/snapshots/$SNAPSHOT_NAME"
+    if [[ ! -d "$SNAPSHOT_DIR" ]]; then
+        log "ERROR: Snapshot '$SNAPSHOT_NAME' not found at $SNAPSHOT_DIR"
+        log "Available snapshots:"
+        ls "$AVD_DIR/snapshots/" 2>/dev/null || log "  (no snapshots directory found)"
+        log ""
+        log "To create the snapshot, boot the emulator manually, set up the test"
+        log "environment (install WhatsApp, sign in, etc.), then save a snapshot."
+        exit 1
+    fi
+    log "Snapshot '$SNAPSHOT_NAME' found at $SNAPSHOT_DIR"
+    ls -lh "$SNAPSHOT_DIR/" | while read -r line; do log "  $line"; done
+
     log "Booting emulator '$AVD_NAME' from snapshot '$SNAPSHOT_NAME'..."
 
     # Kill any existing emulator on this port
@@ -86,8 +140,12 @@ if [[ "$SKIP_BOOT" == false ]]; then
         sleep 3
     fi
 
-    # Boot emulator from snapshot
-    "$EMULATOR_BIN" -avd "$AVD_NAME" -snapshot "$SNAPSHOT_NAME" -port 5556 -no-audio -gpu swiftshader_indirect &
+    # Boot emulator from snapshot (use -no-snapshot-save to avoid overwriting
+    # the baseline snapshot on exit)
+    "$EMULATOR_BIN" -avd "$AVD_NAME" \
+        -snapshot "$SNAPSHOT_NAME" \
+        -no-snapshot-save \
+        -port 5556 -no-audio -gpu swiftshader_indirect &
     EMULATOR_PID=$!
     log "Emulator PID: $EMULATOR_PID"
 
@@ -96,12 +154,18 @@ if [[ "$SKIP_BOOT" == false ]]; then
 
     # Give the system a moment to settle after boot
     sleep 5
+
+    # Verify the snapshot actually loaded with the right environment
+    verify_snapshot_environment
 else
     if ! is_emulator_running; then
         log "ERROR: --skip-boot specified but emulator is not running on $EMULATOR_SERIAL"
         exit 1
     fi
     log "Using already-running emulator on $EMULATOR_SERIAL"
+
+    # Still verify environment even when reusing a running emulator
+    verify_snapshot_environment
 fi
 
 # ---------------------------------------------------------------------------

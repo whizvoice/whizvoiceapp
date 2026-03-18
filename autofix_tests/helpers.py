@@ -19,10 +19,44 @@ ACCESSIBILITY_SERVICE = f"{DEBUG_PACKAGE}/com.example.whiz.accessibility.WhizAcc
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
 
 
+REQUIRED_PACKAGES = [
+    ("com.whatsapp", "WhatsApp"),
+]
+
+
 def is_emulator(serial=None):
     """Check if the target device is an emulator."""
     serial = serial or EMULATOR_SERIAL
     return serial.startswith('emulator-')
+
+
+def verify_required_apps():
+    """Verify that required apps are installed on the device.
+
+    This catches the case where an emulator snapshot failed to load
+    (cold boot fallback) and the device is missing apps that should
+    have been in the snapshot.
+    """
+    result = subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'list', 'packages'],
+        capture_output=True, text=True
+    )
+    installed = result.stdout
+
+    missing = []
+    for package, name in REQUIRED_PACKAGES:
+        if package in installed:
+            print(f"  [OK] {name} ({package}) is installed")
+        else:
+            print(f"  [FAIL] {name} ({package}) is NOT installed")
+            missing.append(name)
+
+    if missing:
+        raise RuntimeError(
+            f"Required apps not installed: {', '.join(missing)}. "
+            f"The emulator snapshot may not have loaded correctly (cold boot fallback). "
+            f"Recreate the snapshot with all required apps installed and configured."
+        )
 
 
 def get_device_model():
