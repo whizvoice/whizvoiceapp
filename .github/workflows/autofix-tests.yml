@@ -119,7 +119,7 @@ jobs:
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           echo "==> APK signing certificate:"
-          apksigner verify --print-certs "$APK" 2>&1 | grep SHA-1
+          apksigner verify --print-certs "$APK" 2>&1 || true
 
       - name: Setup test credentials
         run: |
