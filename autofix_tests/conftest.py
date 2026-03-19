@@ -131,7 +131,9 @@ def app_installed():
     _logcat_process = subprocess.Popen(
         ['adb', '-s', EMULATOR_SERIAL, 'logcat', '-s',
          'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*',
-         'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
+         'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*',
+         'AuthRepository:*', 'AuthViewModel:*', 'GoogleSignIn:*',
+         'Credentials:*', 'GmsClient:*', 'SignInClient:*', 'Auth:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
