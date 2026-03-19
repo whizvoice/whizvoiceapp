@@ -161,6 +161,12 @@ while [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "
 done
 echo "    Emulator is booted!"
 
+# Start logcat capture in background
+echo "==> Starting logcat capture to /tmp/emulator-logcat.log..."
+adb logcat > /tmp/emulator-logcat.log 2>&1 &
+LOGCAT_PID=$!
+echo "    Logcat PID: $LOGCAT_PID"
+
 echo ""
 echo "============================================================"
 echo "  Emulator is ready!"
@@ -168,6 +174,10 @@ echo ""
 echo "  1. Open http://${PUBLIC_IP}:${NOVNC_PORT}/vnc.html"
 echo "  2. Do your interactive setup (install app, log in, etc.)"
 echo "  3. Come back here and press Enter to save the snapshot."
+echo ""
+echo "  Logcat: /tmp/emulator-logcat.log"
+echo "  If emulator crashes, check:"
+echo "    grep -i 'FATAL\|crash\|oom\|lowmemory\|kill' /tmp/emulator-logcat.log | tail -30"
 echo "============================================================"
 echo ""
 read -r -p "Press Enter when you're done with interactive setup..."
@@ -230,7 +240,8 @@ echo ""
 # ---------------------------------------------------------------------------
 # Cleanup VNC (optional — droplet will be destroyed anyway)
 # ---------------------------------------------------------------------------
-echo "==> Stopping VNC/noVNC..."
+echo "==> Stopping logcat, VNC/noVNC..."
+kill "$LOGCAT_PID" 2>/dev/null || true
 kill "$WEBSOCKIFY_PID" 2>/dev/null || true
 pkill -f x11vnc 2>/dev/null || true
 kill "$XVFB_PID" 2>/dev/null || true
