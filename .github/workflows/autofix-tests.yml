@@ -159,6 +159,9 @@ jobs:
             '    echo "    WARNING: $BACKUP_DIR/$f not found!"' \
             '  fi' \
             'done' \
+            'echo "==> Enabling QCOW2 overlay in config.ini..."' \
+            'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
+            'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
             'echo "==> Restore complete."' \
