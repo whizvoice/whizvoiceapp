@@ -180,7 +180,7 @@ jobs:
           emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
           force-avd-creation: false
           avd-name: whiz-test-device
-          emulator-options: -no-window -gpu swangle -noaudio -no-boot-anim -memory 4096 -no-snapshot-load -no-snapshot-save
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -no-snapshot-load -no-snapshot-save
           disable-animations: true
           pre-emulator-launch-script: /tmp/restore-qcow2.sh
           script: bash scripts/run-autofix-tests.sh
