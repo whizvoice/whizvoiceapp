@@ -226,10 +226,10 @@ if [[ -n "$QEMU_IMG" ]]; then
                 # Absolute path from a different machine — create symlink so emulator can find it
                 BASE_NAME=$(basename "$BACKING")
                 BACKING_DIR=$(dirname "$BACKING")
-                if [[ ! -d "$BACKING_DIR" ]]; then
+                if [[ ! -f "$BACKING" ]]; then
                     echo "    $(basename "$qcow2"): creating symlink $BACKING -> $AVD_DIR/$BASE_NAME"
-                    mkdir -p "$BACKING_DIR"
-                    ln -sf "$AVD_DIR/$BASE_NAME" "$BACKING"
+                    sudo mkdir -p "$BACKING_DIR"
+                    sudo ln -sf "$AVD_DIR/$BASE_NAME" "$BACKING"
                 fi
             else
                 echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
