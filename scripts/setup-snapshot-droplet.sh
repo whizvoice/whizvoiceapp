@@ -4,7 +4,7 @@
 # dedicated-CPU droplet with KVM. Designed to be scp'd to the droplet and run.
 #
 # Prerequisites:
-#   - DigitalOcean dedicated-CPU droplet (e.g. c-4, 4 vCPU / 8 GB, Ubuntu 24.04)
+#   - DigitalOcean dedicated-CPU droplet (e.g. c-4, 4 vCPU / 16 GB, Ubuntu 24.04)
 #   - /dev/kvm must be available (dedicated CPU, not shared)
 #
 # Usage:
@@ -142,14 +142,20 @@ echo "============================================================"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 6: Boot the emulator
+# Step 6: Boot the emulator (swangle for interactive setup — WhatsApp crashes swiftshader)
 # ---------------------------------------------------------------------------
-echo "==> Booting emulator..."
+pkill -f qemu-system 2>/dev/null || true
+sleep 2
+
+echo "==> Booting emulator with swangle GPU (for interactive app setup)..."
 DISPLAY=":${DISPLAY_NUM}" emulator -avd "$AVD_NAME" \
-    -gpu swiftshader_indirect \
+    -gpu swangle \
     -no-audio \
     -no-boot-anim \
+    -memory 8192 \
+    -cores 4 \
     -skin 1080x2400 \
+    -no-snapshot-save \
     &
 EMU_PID=$!
 
@@ -169,11 +175,12 @@ echo "    Logcat PID: $LOGCAT_PID"
 
 echo ""
 echo "============================================================"
-echo "  Emulator is ready!"
+echo "  Emulator is ready (swangle GPU for interactive setup)!"
 echo ""
 echo "  1. Open http://${PUBLIC_IP}:${NOVNC_PORT}/vnc.html"
-echo "  2. Do your interactive setup (install app, log in, etc.)"
-echo "  3. Come back here and press Enter to save the snapshot."
+echo "  2. Do your interactive setup (install apps, log in, etc.)"
+echo "  3. Come back here and press Enter to restart with CI settings"
+echo "     and save the snapshot."
 echo ""
 echo "  Logcat: /tmp/emulator-logcat.log"
 echo "  If emulator crashes, check:"
@@ -183,8 +190,42 @@ echo ""
 read -r -p "Press Enter when you're done with interactive setup..."
 
 # ---------------------------------------------------------------------------
-# Step 7: Save snapshot
+# Step 7: Restart emulator with CI-matching settings and save snapshot
 # ---------------------------------------------------------------------------
+# CI uses: swiftshader_indirect, 2 cores, 4096MB RAM
+# The snapshot must be saved with these exact settings for -snapshot loading to work.
+echo "==> Killing interactive emulator..."
+kill "$LOGCAT_PID" 2>/dev/null || true
+adb emu kill 2>/dev/null || true
+sleep 5
+kill "$EMU_PID" 2>/dev/null || true
+sleep 3
+
+echo "==> Restarting emulator with CI-matching settings..."
+echo "    GPU: swiftshader_indirect, cores: 2, memory: 4096MB"
+DISPLAY=":${DISPLAY_NUM}" emulator -avd "$AVD_NAME" \
+    -gpu swiftshader_indirect \
+    -no-audio \
+    -no-boot-anim \
+    -memory 4096 \
+    -cores 2 \
+    -skin 1080x2400 \
+    &
+EMU_PID=$!
+
+echo "    Waiting for emulator to boot..."
+adb wait-for-device
+while [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]]; do
+    sleep 2
+done
+echo "    Emulator booted with CI settings!"
+
+# Disable animations
+adb shell settings put global window_animation_scale 0
+adb shell settings put global transition_animation_scale 0
+adb shell settings put global animator_duration_scale 0
+adb shell settings put system screen_off_timeout 2147483647
+
 echo "==> Saving snapshot: $SNAPSHOT_NAME"
 adb emu avd snapshot save "$SNAPSHOT_NAME"
 sleep 3
@@ -209,15 +250,20 @@ else
     exit 1
 fi
 
-# Check qcow2 internal snapshots
+# Check qcow2 info (backing file, size, snapshots)
 echo ""
-echo "==> QCOW2 snapshot tags:"
+echo "==> QCOW2 info:"
 for qcow2 in "$AVD_DIR"/*.qcow2; do
     if [[ -f "$qcow2" ]]; then
-        echo "    $(basename "$qcow2"):"
-        qemu-img snapshot -l "$qcow2" 2>/dev/null || echo "      (no snapshots)"
+        echo "    $(basename "$qcow2") ($(du -h "$qcow2" | cut -f1)):"
+        qemu-img info "$qcow2" 2>/dev/null | grep -E "backing|format|virtual|disk" | sed 's/^/      /'
+        qemu-img snapshot -l "$qcow2" 2>/dev/null | grep -E "ID|baseline" | sed 's/^/      /' || echo "      (no snapshots)"
     fi
 done
+echo ""
+echo "==> IMPORTANT: The QCOW2 overlay must be a thin overlay (1-3GB)."
+echo "    If userdata-qemu.img.qcow2 is larger than 4GB, something went wrong."
+echo "    Delete all .qcow2 files and start fresh."
 
 # ---------------------------------------------------------------------------
 # Step 9: Upload
@@ -233,7 +279,7 @@ echo "  2. Clone the repo:"
 echo "       git clone https://github.com/whizvoice/whizvoiceapp.git"
 echo "       cd whizvoiceapp"
 echo "  3. Run the upload script:"
-echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v1"
+echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v2"
 echo "============================================================"
 echo ""
 
