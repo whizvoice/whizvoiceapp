@@ -214,29 +214,30 @@ else
         fi
     done
 fi
-echo "==> Rewriting QCOW2 backing file paths..."
+echo "==> Fixing QCOW2 backing file paths..."
+# QCOW2 overlays have absolute backing file paths from the build machine.
+# Instead of rebasing (which strips internal snapshot tags), create symlinks
+# so the emulator can resolve the absolute paths.
 if [[ -n "$QEMU_IMG" ]]; then
     for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
         if [[ -f "$qcow2" ]]; then
             BACKING=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file:" | head -1 | sed 's/backing file: //' | sed 's/ (actual.*//')
-            if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
+            if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$AVD_DIR/"* ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
+                # Absolute path from a different machine — create symlink so emulator can find it
                 BASE_NAME=$(basename "$BACKING")
-                # Detect backing file format from the QCOW2 header, or from the backing file itself
-                BACK_FMT=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file format:" | awk '{print $NF}' || true)
-                if [[ -z "$BACK_FMT" ]]; then
-                    BACK_FMT=$("$QEMU_IMG" info "$AVD_DIR/$BASE_NAME" 2>/dev/null | grep "file format:" | awk '{print $NF}' || true)
+                BACKING_DIR=$(dirname "$BACKING")
+                if [[ ! -d "$BACKING_DIR" ]]; then
+                    echo "    $(basename "$qcow2"): creating symlink $BACKING -> $AVD_DIR/$BASE_NAME"
+                    mkdir -p "$BACKING_DIR"
+                    ln -sf "$AVD_DIR/$BASE_NAME" "$BACKING"
                 fi
-                # Default to qcow2 (userdata-qemu.img is qcow2 despite .img extension)
-                BACK_FMT=${BACK_FMT:-qcow2}
-                echo "    $(basename "$qcow2"): rewriting backing $BACKING -> $BASE_NAME (format: $BACK_FMT)"
-                "$QEMU_IMG" rebase -u -b "$BASE_NAME" -F "$BACK_FMT" "$qcow2"
             else
                 echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
             fi
         fi
     done
 else
-    echo "    Warning: qemu-img not found, skipping QCOW2 backing path rewrite."
+    echo "    Warning: qemu-img not found, skipping QCOW2 backing path fix."
 fi
 
 echo "==> AVD directory timestamps after extraction:"
