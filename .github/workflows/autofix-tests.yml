@@ -196,9 +196,9 @@ jobs:
             'echo "==> DIAGNOSTIC: disk.cachePartition BEFORE changes:"' \
             'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
             'grep -i "cachePartition\|cache" "$AVD_DIR/hardware-qemu.ini" 2>/dev/null || echo "    (none in hardware-qemu.ini)"' \
-            'sed -i "s/^disk.cachePartition *=.*/disk.cachePartition = no/" "$AVD_DIR/config.ini"' \
-            'grep -q "^disk.cachePartition" "$AVD_DIR/config.ini" || echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
-            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "s/^disk.cachePartition *=.*/disk.cachePartition = no/" "$AVD_DIR/hardware-qemu.ini"; grep -q "^disk.cachePartition" "$AVD_DIR/hardware-qemu.ini" || echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
+            'sed -i "/^disk.cachePartition/d" "$AVD_DIR/config.ini"' \
+            'echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
+            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "/^disk.cachePartition/d" "$AVD_DIR/hardware-qemu.ini"; echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
             'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
             'echo "==> DIAGNOSTIC: disk.cachePartition AFTER changes:"' \
             'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
