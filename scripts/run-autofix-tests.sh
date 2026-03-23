@@ -50,10 +50,14 @@ adb push test_credentials.json /data/local/tmp/test_credentials.json
 # ---------------------------------------------------------------------------
 echo "==> Verifying QCOW2 snapshots before test..."
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"
 for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
     if [[ -f "$qcow2" ]]; then
-        echo "    $(basename "$qcow2"):"
-        qemu-img snapshot -l "$qcow2" 2>&1 | grep -E "(ID|baseline)" || echo "      NO SNAPSHOTS / FILE REPLACED"
+        echo "    $(basename "$qcow2") ($(du -h "$qcow2" | cut -f1)):"
+        echo "      full info:"
+        "$QEMU_IMG_EMU" info "$qcow2" 2>&1 | head -8 | sed 's/^/        /'
+        echo "      snapshots:"
+        "$QEMU_IMG_EMU" snapshot -l "$qcow2" 2>&1 | sed 's/^/        /' || echo "        FAILED to read snapshots"
     fi
 done
 echo "==> AVD directory timestamps before test:"

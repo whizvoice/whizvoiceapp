@@ -134,12 +134,24 @@ jobs:
           AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
           BACKUP_DIR="/tmp/qcow2-backup"
 
-          # Log QCOW2 state BEFORE backup
+          # Log which qemu-img we're using
+          QEMU_IMG_SYS=$(which qemu-img 2>/dev/null || echo "NOT FOUND")
+          QEMU_IMG_EMU="$ANDROID_SDK_ROOT/emulator/qemu-img"
+          echo "==> qemu-img versions:"
+          echo "    System: $QEMU_IMG_SYS"
+          $QEMU_IMG_SYS --version 2>&1 | head -1 || true
+          echo "    Emulator: $QEMU_IMG_EMU"
+          $QEMU_IMG_EMU --version 2>&1 | head -1 || true
+
+          # Log QCOW2 state BEFORE backup (using BOTH qemu-img versions)
           echo "==> QCOW2 state BEFORE backup:"
           for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
             if [ -f "$AVD_DIR/$f" ]; then
               echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '{print $5, $6, $7, $8}')"
-              qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "      NO baseline_clean tag"
+              echo "      system qemu-img:"
+              qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "        NO baseline_clean tag (system)"
+              echo "      emulator qemu-img:"
+              $QEMU_IMG_EMU snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "        NO baseline_clean tag (emulator)"
             else
               echo "    $f: DOES NOT EXIST"
             fi
