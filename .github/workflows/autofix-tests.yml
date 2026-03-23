@@ -192,22 +192,17 @@ jobs:
             'echo "==> Enabling QCOW2 overlay in config.ini..."' \
             'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
-            'echo "==> Disabling cache partition to prevent snapshot load failure..."' \
-            'echo "==> DIAGNOSTIC: disk.cachePartition BEFORE changes:"' \
-            'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
-            'grep -i "cachePartition\|cache" "$AVD_DIR/hardware-qemu.ini" 2>/dev/null || echo "    (none in hardware-qemu.ini)"' \
-            'sed -i "/^disk.cachePartition/d" "$AVD_DIR/config.ini"' \
-            'echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
-            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "/^disk.cachePartition/d" "$AVD_DIR/hardware-qemu.ini"; echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
-            'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
-            'echo "==> DIAGNOSTIC: disk.cachePartition AFTER changes:"' \
-            'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
-            'grep -i "cachePartition\|cache" "$AVD_DIR/hardware-qemu.ini" 2>/dev/null || echo "    (none in hardware-qemu.ini)"' \
-            'echo "    Removed cache.img and cache.img.qcow2, set disk.cachePartition=no in both ini files"' \
+            'echo "==> Creating fresh cache.img.qcow2 with snapshot tag..."' \
+            'QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"' \
+            'rm -f "$AVD_DIR/cache.img.qcow2"' \
+            '"$QEMU_IMG_EMU" create -f qcow2 -b "$AVD_DIR/cache.img" -F raw "$AVD_DIR/cache.img.qcow2"' \
+            '"$QEMU_IMG_EMU" snapshot -c baseline_clean "$AVD_DIR/cache.img.qcow2"' \
+            'echo "    Created cache.img.qcow2 with baseline_clean tag:"' \
+            '"$QEMU_IMG_EMU" snapshot -l "$AVD_DIR/cache.img.qcow2" 2>&1 | head -5' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
             'echo "==> DIAGNOSTIC: cache.img.qcow2 status BEFORE emulator start:"' \
-            'if [ -f "$AVD_DIR/cache.img.qcow2" ]; then md5sum "$AVD_DIR/cache.img.qcow2" 2>&1; ls -la "$AVD_DIR/cache.img.qcow2" 2>&1; else echo "    cache.img.qcow2 does not exist (expected with disk.cachePartition=no)"; fi' \
+            'ls -la "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2" 2>&1' \
             'echo "==> Restore complete. Emulator should load snapshot next."' \
             > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh

@@ -43,13 +43,10 @@ sleep 5
 # DIAGNOSTIC: cache.img.qcow2 checksum after emulator boot
 # ---------------------------------------------------------------------------
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
-echo "==> DIAGNOSTIC: cache.img.qcow2 checksum AFTER emulator boot:"
-if [[ -f "$AVD_DIR/cache.img.qcow2" ]]; then
-    md5sum "$AVD_DIR/cache.img.qcow2" 2>&1
-    ls -la "$AVD_DIR/cache.img.qcow2" 2>&1
-else
-    echo "    cache.img.qcow2 does not exist (expected with disk.cachePartition=no)"
-fi
+echo "==> DIAGNOSTIC: cache.img.qcow2 status AFTER emulator boot:"
+ls -la "$AVD_DIR/cache.img.qcow2" 2>&1 || echo "    cache.img.qcow2 does not exist"
+QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"
+"$QEMU_IMG_EMU" snapshot -l "$AVD_DIR/cache.img.qcow2" 2>&1 | head -5 || true
 
 # ---------------------------------------------------------------------------
 # Push test credentials (conftest.py doesn't handle this)
