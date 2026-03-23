@@ -145,7 +145,7 @@ jobs:
 
           # Log QCOW2 state BEFORE backup (using BOTH qemu-img versions)
           echo "==> QCOW2 state BEFORE backup:"
-          for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+          for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
             if [ -f "$AVD_DIR/$f" ]; then
               echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '{print $5, $6, $7, $8}')"
               echo "      system qemu-img:"
@@ -160,7 +160,7 @@ jobs:
           # Back up QCOW2 files now (before emulator-runner modifies config.ini)
           mkdir -p "$BACKUP_DIR"
           echo "==> Backing up QCOW2 overlay files..."
-          for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+          for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
             if [ -f "$AVD_DIR/$f" ]; then
               cp "$AVD_DIR/$f" "$BACKUP_DIR/$f"
               echo "    Backed up $f ($(du -sh "$AVD_DIR/$f" | cut -f1))"
@@ -174,7 +174,7 @@ jobs:
             'AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"' \
             'BACKUP_DIR="/tmp/qcow2-backup"' \
             'echo "==> Restoring QCOW2 overlay files after config.ini modification..."' \
-            'for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            'for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
             '  if [ -f "$BACKUP_DIR/$f" ]; then' \
             '    cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"' \
             '    echo "    Restored $f"' \
@@ -183,7 +183,7 @@ jobs:
             '  fi' \
             'done' \
             'echo "==> QCOW2 state AFTER restore:"' \
-            'for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            'for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
             '  if [ -f "$AVD_DIR/$f" ]; then' \
             '    echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '"'"'{print $5, $6, $7, $8}'"'"')"' \
             '    qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "      NO baseline_clean tag"' \
@@ -192,11 +192,14 @@ jobs:
             'echo "==> Enabling QCOW2 overlay in config.ini..."' \
             'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
+            'echo "==> Disabling cache partition to prevent snapshot load failure..."' \
+            'echo "disk.cachePartition=no" >> "$AVD_DIR/config.ini"' \
+            'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
+            'echo "    Removed cache.img and cache.img.qcow2, set disk.cachePartition=no"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
-            'echo "==> DIAGNOSTIC: cache.img.qcow2 checksum BEFORE emulator start:"' \
-            'md5sum "$AVD_DIR/cache.img.qcow2" 2>&1' \
-            'ls -la "$AVD_DIR/cache.img.qcow2" 2>&1' \
+            'echo "==> DIAGNOSTIC: cache.img.qcow2 status BEFORE emulator start:"' \
+            'if [ -f "$AVD_DIR/cache.img.qcow2" ]; then md5sum "$AVD_DIR/cache.img.qcow2" 2>&1; ls -la "$AVD_DIR/cache.img.qcow2" 2>&1; else echo "    cache.img.qcow2 does not exist (expected with disk.cachePartition=no)"; fi' \
             'echo "==> Restore complete. Emulator should load snapshot next."' \
             > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh
@@ -213,7 +216,7 @@ jobs:
           emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
           force-avd-creation: false
           avd-name: whiz-test-device
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean -no-snapshot-save -no-cache
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 4096 -snapshot baseline_clean -no-snapshot-save
           disable-animations: true
           pre-emulator-launch-script: /tmp/restore-qcow2.sh
           script: bash scripts/run-autofix-tests.sh
