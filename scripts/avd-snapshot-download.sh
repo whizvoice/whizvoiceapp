@@ -221,15 +221,14 @@ if [[ -n "$QEMU_IMG" ]]; then
             BACKING=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file:" | head -1 | sed 's/backing file: //' | sed 's/ (actual.*//')
             if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
                 BASE_NAME=$(basename "$BACKING")
-                echo "    $(basename "$qcow2"): rewriting backing $BACKING -> $BASE_NAME"
-                # Detect backing file format (userdata-qemu.img is qcow2 despite .img extension)
-                BACK_FMT=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file format:" | awk '{print $NF}')
+                # Detect backing file format from the QCOW2 header, or from the backing file itself
+                BACK_FMT=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file format:" | awk '{print $NF}' || true)
                 if [[ -z "$BACK_FMT" ]]; then
-                    # Auto-detect from the backing file itself
-                    BACK_FMT=$("$QEMU_IMG" info "$AVD_DIR/$BASE_NAME" 2>/dev/null | grep "file format:" | awk '{print $NF}')
+                    BACK_FMT=$("$QEMU_IMG" info "$AVD_DIR/$BASE_NAME" 2>/dev/null | grep "file format:" | awk '{print $NF}' || true)
                 fi
+                # Default to qcow2 (userdata-qemu.img is qcow2 despite .img extension)
                 BACK_FMT=${BACK_FMT:-qcow2}
-                echo "      backing format: $BACK_FMT"
+                echo "    $(basename "$qcow2"): rewriting backing $BACKING -> $BASE_NAME (format: $BACK_FMT)"
                 "$QEMU_IMG" rebase -u -b "$BASE_NAME" -F "$BACK_FMT" "$qcow2"
             else
                 echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
