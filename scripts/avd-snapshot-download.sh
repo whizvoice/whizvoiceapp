@@ -214,30 +214,20 @@ else
         fi
     done
 fi
-echo "==> Fixing QCOW2 backing file paths..."
-# QCOW2 overlays have absolute backing file paths from the build machine.
-# Instead of rebasing (which strips internal snapshot tags), create symlinks
-# so the emulator can resolve the absolute paths.
+echo "==> Checking QCOW2 backing file paths..."
 if [[ -n "$QEMU_IMG" ]]; then
     for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
         if [[ -f "$qcow2" ]]; then
             BACKING=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file:" | head -1 | sed 's/backing file: //' | sed 's/ (actual.*//')
-            if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$AVD_DIR/"* ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
-                # Absolute path from a different machine — create symlink so emulator can find it
-                BASE_NAME=$(basename "$BACKING")
-                BACKING_DIR=$(dirname "$BACKING")
-                if [[ ! -f "$BACKING" ]]; then
-                    echo "    $(basename "$qcow2"): creating symlink $BACKING -> $AVD_DIR/$BASE_NAME"
-                    sudo mkdir -p "$BACKING_DIR"
-                    sudo ln -sf "$AVD_DIR/$BASE_NAME" "$BACKING"
+            if [[ -n "$BACKING" ]]; then
+                echo "    $(basename "$qcow2"): backing file = $BACKING"
+                if [[ "$BACKING" != "$(basename "$BACKING")" ]] && [[ "$BACKING" != "$AVD_DIR/"* ]]; then
+                    echo "      WARNING: absolute path from different machine. Snapshot loading may fail."
+                    echo "      Recreate the AVD and snapshot from scratch to get relative backing paths."
                 fi
-            else
-                echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
             fi
         fi
     done
-else
-    echo "    Warning: qemu-img not found, skipping QCOW2 backing path fix."
 fi
 
 echo "==> AVD directory timestamps after extraction:"
@@ -275,16 +265,6 @@ for ini_file in "$AVD_DIR/config.ini" \
         fi
     fi
 done
-
-# Ensure QCOW2 overlay is enabled (emulator-runner may reset this)
-if [[ -f "$AVD_DIR/config.ini" ]]; then
-    if grep -q "userdata.useQcow2" "$AVD_DIR/config.ini"; then
-        "${SED_INPLACE[@]}" "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"
-    else
-        echo "userdata.useQcow2 = yes" >> "$AVD_DIR/config.ini"
-    fi
-    echo "    Set userdata.useQcow2 = yes in config.ini"
-fi
 
 # Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
 SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"

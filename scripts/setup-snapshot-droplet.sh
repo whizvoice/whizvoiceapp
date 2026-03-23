@@ -85,15 +85,17 @@ sdkmanager --install \
 # Step 4: Create AVD
 # ---------------------------------------------------------------------------
 echo "==> Creating AVD: $AVD_NAME"
+# Always create fresh to ensure clean QCOW2 files with relative backing paths
 if [[ -d "$HOME/.android/avd/${AVD_NAME}.avd" ]]; then
-    echo "    AVD already exists, skipping creation."
-else
-    echo "no" | avdmanager create avd \
-        --name "$AVD_NAME" \
-        --package "$SYSTEM_IMAGE" \
-        --device "pixel_6" \
-        --force
+    echo "    Deleting existing AVD for clean start..."
+    rm -rf "$HOME/.android/avd/${AVD_NAME}.avd"
+    rm -f "$HOME/.android/avd/${AVD_NAME}.ini"
 fi
+echo "no" | avdmanager create avd \
+    --name "$AVD_NAME" \
+    --package "$SYSTEM_IMAGE" \
+    --device "pixel_6" \
+    --force
 
 # ---------------------------------------------------------------------------
 # Step 4b: Generate adb keys (prevents "unauthorized" on first boot)
