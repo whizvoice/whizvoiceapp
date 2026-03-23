@@ -134,6 +134,17 @@ jobs:
           AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
           BACKUP_DIR="/tmp/qcow2-backup"
 
+          # Log QCOW2 state BEFORE backup
+          echo "==> QCOW2 state BEFORE backup:"
+          for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '{print $5, $6, $7, $8}')"
+              qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "      NO baseline_clean tag"
+            else
+              echo "    $f: DOES NOT EXIST"
+            fi
+          done
+
           # Back up QCOW2 files now (before emulator-runner modifies config.ini)
           mkdir -p "$BACKUP_DIR"
           echo "==> Backing up QCOW2 overlay files..."
@@ -159,12 +170,19 @@ jobs:
             '    echo "    WARNING: $BACKUP_DIR/$f not found!"' \
             '  fi' \
             'done' \
+            'echo "==> QCOW2 state AFTER restore:"' \
+            'for f in cache.img.qcow2 userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            '  if [ -f "$AVD_DIR/$f" ]; then' \
+            '    echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '"'"'{print $5, $6, $7, $8}'"'"')"' \
+            '    qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "      NO baseline_clean tag"' \
+            '  fi' \
+            'done' \
             'echo "==> Enabling QCOW2 overlay in config.ini..."' \
             'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
-            'echo "==> Restore complete."' \
+            'echo "==> Restore complete. Emulator should load snapshot next."' \
             > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh
 
