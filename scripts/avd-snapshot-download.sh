@@ -214,6 +214,24 @@ else
         fi
     done
 fi
+echo "==> Rewriting QCOW2 backing file paths..."
+if [[ -n "$QEMU_IMG" ]]; then
+    for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+        if [[ -f "$qcow2" ]]; then
+            BACKING=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file:" | head -1 | sed 's/backing file: //' | sed 's/ (actual.*//')
+            if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
+                BASE_NAME=$(basename "$BACKING")
+                echo "    $(basename "$qcow2"): rewriting backing $BACKING -> $BASE_NAME"
+                "$QEMU_IMG" rebase -u -b "$BASE_NAME" -F raw "$qcow2"
+            else
+                echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
+            fi
+        fi
+    done
+else
+    echo "    Warning: qemu-img not found, skipping QCOW2 backing path rewrite."
+fi
+
 echo "==> AVD directory timestamps after extraction:"
 ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
 
