@@ -194,6 +194,9 @@ jobs:
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
+            'echo "==> DIAGNOSTIC: cache.img.qcow2 checksum BEFORE emulator start:"' \
+            'md5sum "$AVD_DIR/cache.img.qcow2" 2>&1' \
+            'ls -la "$AVD_DIR/cache.img.qcow2" 2>&1' \
             'echo "==> Restore complete. Emulator should load snapshot next."' \
             > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh

@@ -40,6 +40,14 @@ done
 sleep 5
 
 # ---------------------------------------------------------------------------
+# DIAGNOSTIC: cache.img.qcow2 checksum after emulator boot
+# ---------------------------------------------------------------------------
+AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+echo "==> DIAGNOSTIC: cache.img.qcow2 checksum AFTER emulator boot:"
+md5sum "$AVD_DIR/cache.img.qcow2" 2>&1
+ls -la "$AVD_DIR/cache.img.qcow2" 2>&1
+
+# ---------------------------------------------------------------------------
 # Push test credentials (conftest.py doesn't handle this)
 # ---------------------------------------------------------------------------
 echo "==> Pushing test credentials..."
