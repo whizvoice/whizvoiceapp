@@ -98,6 +98,10 @@ The download script (`avd-snapshot-download.sh`) handles path differences betwee
 
 The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` is QCOW2 despite its `.img` extension.
 
+### `-no-cache` flag
+
+The `-no-cache` emulator flag is required for snapshot loading on CI. Without it, the emulator recreates `cache.img.qcow2` as a fresh empty overlay during init — before `loadvm` runs. Since the fresh file has no snapshot tag, QEMU fails with "Device 'cache' does not have the requested snapshot". With `-no-cache`, no cache block device is created, so QEMU doesn't look for a cache snapshot tag. This is safe because the cache partition on API 36 is unused (legacy OTA/Dalvik cache).
+
 ### GPU rendering modes
 
 | Mode | Headless CI | WhatsApp | Use for |
@@ -117,7 +121,7 @@ The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` 
 1. **Download**: `avd-snapshot-download.sh` extracts snapshot, rewrites paths in `.ini` files, `snapshot.pb`, and QCOW2 backing references
 2. **Backup**: Workflow backs up QCOW2 files before the `emulator-runner` action modifies `config.ini`
 3. **Restore**: `pre-emulator-launch-script` restores QCOW2 files and patches `config.ini` right before emulator launch
-4. **Boot**: Emulator boots. With `-no-snapshot-load` (cold boot) or `-snapshot baseline_clean` (full snapshot load)
+4. **Boot**: Emulator boots with `-snapshot baseline_clean` (full snapshot load) and `-no-cache` (prevents cache device from being created, which would otherwise destroy the snapshot tag)
 
 ### Droplet
 
@@ -128,13 +132,11 @@ The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` 
 
 ## Open Issues (March 2026)
 
-### Cold boot QCOW2 replacement (blocking)
+### Cold boot QCOW2 replacement (resolved)
 
-When the emulator cold boots (`-no-snapshot-load`), it replaces the snapshot's QCOW2 overlay with a fresh one, losing all installed apps. This happens despite correct backing file paths, correct backing format, `userdata.useQcow2 = yes`, and backup/restore of files.
+**Diagnosed:** The emulator treats `cache.img` as ephemeral and recreates `cache.img.qcow2` as a fresh empty overlay during its own init, *before* attempting `loadvm baseline_clean`. The freshly created file has no snapshot tag, so QEMU's `loadvm` fails with "Device 'cache' does not have the requested snapshot 'baseline_clean'".
 
-The v1 snapshot (thin 1.4GB overlay, created on first boot of a fresh AVD) survived cold boot. Subsequent snapshots (6GB+ overlay, created after multiple emulator sessions) get replaced. The exact cause is unknown — may be related to overlay size or QCOW2 internal metadata.
-
-**Next step to try**: Full snapshot loading (`-snapshot baseline_clean`) instead of cold boot. This loads entire emulator state (RAM + disk) and avoids QCOW2 replacement. Requires matching emulator build, CPU cores (2), and RAM (4096MB) between droplet and CI. The current snapshot on the droplet includes `ram.bin` and `textures.bin` needed for this, but recent uploads excluded them to save space — they need to be re-included.
+**Fix:** Add `-no-cache` to the emulator launch options. This prevents the emulator from creating a cache block device at all. QEMU's `loadvm` only checks devices that are inserted and writable — with no cache device, it won't look for a cache snapshot tag. The other devices (userdata, encryptionkey) load normally. The cache partition on modern Android (API 36) is mostly unused (legacy OTA/Dalvik cache).
 
 ### WhatsApp crashes emulator with swiftshader_indirect
 
