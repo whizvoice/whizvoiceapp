@@ -1,204 +1,141 @@
 # Create x86_64 Emulator Snapshot for CI
 
+## Status (March 2026)
+
+**Not fully working yet.** The snapshot creation works and CI downloads it successfully, but the emulator replaces the QCOW2 overlay on cold boot, losing installed apps. See "Open issues" at the bottom. The Google OAuth sign-in issue has been fixed (was caused by outdated GMS version).
+
 ## Goal
 
-Create an Android emulator snapshot (x86_64, API 36) with WhatsApp and Fitbit pre-installed and logged in, then upload it to GitHub Releases so CI can use it for autofix verification tests.
-
-## CRITICAL: Emulator Version Must Match CI
-
-The snapshot format is **not compatible across different emulator versions**. CI currently uses **emulator version 36.4.9.0**. You MUST use the same version when creating the snapshot, otherwise CI will fail with "Snapshot file cannot be used, incompatible version."
-
-**Before creating the snapshot, verify your emulator version:**
-```bash
-emulator -version
-```
-
-If it doesn't show **36.4.9.0** (or very close), update the emulator:
-```bash
-sdkmanager --install emulator --channel=0
-emulator -version  # verify it's 36.4.9.0 or close
-```
-
-If `sdkmanager` installs a different version than CI uses, you may need to download the specific emulator build. The CI runner gets whatever `sdkmanager --channel=0` provides at the time. The safest approach is to update to the latest emulator right before creating the snapshot.
+Create an Android emulator snapshot (x86_64, API 36) with WhatsApp, Fitbit, and Google Maps pre-installed and logged in, then upload it to GitHub Releases so CI can use it for autofix verification tests.
 
 ## Prerequisites
 
-- x86_64 macOS or Linux machine (check: `uname -m` should say `x86_64`)
-- At least 4GB RAM free
-- At least 20GB disk free
-- A phone number for WhatsApp verification (it will send an SMS code)
-- A Google/Fitbit account for Fitbit login
+- x86_64 Linux machine with KVM (we use a DigitalOcean dedicated-CPU droplet)
+- At least 16GB RAM, 48GB disk
+- A phone number for WhatsApp verification (SMS code)
+- Google account: `REDACTED_TEST_EMAIL`
 - `gh` CLI authenticated with access to `whizvoice/whizvoiceapp` repo
-- `zstd` installed (`brew install zstd` on macOS or `sudo apt install zstd` on Linux)
 
-## Step-by-Step Instructions
+## Creating the Snapshot
 
-### 1. Install Android SDK and tools
+### Automated setup (recommended)
 
-If Android SDK is not installed, install Android Studio or the command-line tools from https://developer.android.com/studio
+Use the droplet setup script which handles SDK installation, display setup, and emulator boot:
 
-Set up environment (adjust paths for your system):
 ```bash
-# macOS typical paths:
-export ANDROID_HOME="$HOME/Library/Android/sdk"
-# or Linux:
-# export ANDROID_HOME="$HOME/Android/Sdk"
-
-export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
+scp scripts/setup-snapshot-droplet.sh root@<droplet-ip>:~/
+ssh root@<droplet-ip>
+bash setup-snapshot-droplet.sh
 ```
 
-Install required SDK components:
+This starts a noVNC server at `http://<droplet-ip>:6080/vnc.html` for interactive app setup.
+
+### Manual steps required
+
+After the emulator boots, you must interactively:
+
+1. Add the Google account (Settings > Accounts > Google > `REDACTED_TEST_EMAIL`)
+2. Install and log into WhatsApp (SMS verification required)
+3. Install and log into Fitbit
+4. Verify Google Maps is available
+
+Install apps via adb (in a separate SSH session):
 ```bash
-yes | sdkmanager "system-images;android-36;google_apis_playstore;x86_64" "platform-tools" "emulator"
-```
+export PATH="/opt/android-sdk/platform-tools:/opt/android-sdk/emulator:$PATH"
 
-**Verify emulator version matches CI (currently 36.4.9.0):**
-```bash
-emulator -version
-```
-
-### 2. Create the AVD
-
-```bash
-echo "no" | avdmanager create avd \
-  --name whiz-test-device \
-  --package "system-images;android-36;google_apis_playstore;x86_64" \
-  --device "pixel_4" \
-  --force
-```
-
-### 3. Download app APKs from GitHub release
-
-```bash
+# Download APKs
 mkdir -p /tmp/app-apks
-gh release download app-apks-for-snapshot \
-  --repo whizvoice/whizvoiceapp \
-  --dir /tmp/app-apks
-ls -la /tmp/app-apks/
-```
+gh release download app-apks-for-snapshot --repo whizvoice/whizvoiceapp --dir /tmp/app-apks
 
-This should download a WhatsApp `.apk` and a Fitbit `.apkm` file.
-
-### 4. Boot the emulator WITH a display
-
-You need a display so the user can manually log into apps.
-
-If you have a graphical desktop (e.g. macOS with a monitor):
-```bash
-emulator -avd whiz-test-device -gpu swiftshader_indirect -memory 4096
-```
-
-If headless (SSH), set up VNC or X11 forwarding first, then run the emulator. Alternatively on Linux:
-```bash
-# Install a VNC server and virtual framebuffer
-sudo apt install tigervnc-standalone-server x11vnc xvfb
-export DISPLAY=:1
-Xvfb :1 -screen 0 1080x1920x24 &
-x11vnc -display :1 -forever -nopw &
-emulator -avd whiz-test-device -gpu swiftshader_indirect -memory 4096
-```
-Then VNC into the machine on port 5900 to see the emulator window.
-
-### 5. Wait for boot and install apps
-
-Wait for the emulator to fully boot:
-```bash
-adb wait-for-device
-adb shell getprop sys.boot_completed  # should return "1"
-```
-
-Install WhatsApp (single APK):
-```bash
+# Install WhatsApp
 adb install -r /tmp/app-apks/*.apk
-```
 
-Install Fitbit (APKM bundle — it's a zip of split APKs):
-```bash
+# Install Fitbit
 mkdir -p /tmp/fitbit_bundle
-unzip /tmp/app-apks/*.apkm -d /tmp/fitbit_bundle
+unzip /tmp/app-apks/*.apkm -d /tmp/fitbit_bundle -x "META-INF/*" "*.url" "info.json" "icon.png"
 adb install-multiple -r /tmp/fitbit_bundle/*.apk
 ```
 
-Verify both installed:
-```bash
-adb shell pm list packages | grep -E "(whatsapp|fitbit)"
-```
+### Save and upload
 
-Expected output:
-```
-package:com.whatsapp
-package:com.fitbit.FitbitMobile
-```
-
-### 6. USER MANUAL STEP: Log into both apps
-
-**This requires the user to interact with the emulator GUI.**
-
-1. Open WhatsApp on the emulator, go through phone number verification (SMS code required)
-2. Open Fitbit on the emulator, sign in with Google/Fitbit account
-3. Make sure both apps reach their main/home screen after login
-
-Disable animations while you're at it:
-```bash
-adb shell settings put global window_animation_scale 0
-adb shell settings put global transition_animation_scale 0
-adb shell settings put global animator_duration_scale 0
-adb shell settings put system screen_off_timeout 2147483647
-```
-
-### 7. Save the snapshot
+After interactive setup, press Enter in the setup script's terminal to save the snapshot. Then upload:
 
 ```bash
-adb emu avd snapshot save baseline_clean
-```
-
-Verify it was saved:
-```bash
-ls -la ~/.android/avd/whiz-test-device.avd/snapshots/baseline_clean/
-```
-
-You should see files like `ram.bin`, `textures.bin`, `hardware.ini`, `snapshot.pb`, etc.
-
-### 8. Clone the repo and upload
-
-```bash
+gh auth login
 git clone https://github.com/whizvoice/whizvoiceapp.git
 cd whizvoiceapp
+./scripts/avd-snapshot-upload.sh --version x86_64-v2
 ```
 
-The upload script needs a small modification for x86_64. Run it with version `x86_64-v1`:
+The upload script packages the AVD files, sanitizes absolute paths, compresses with zstd, and uploads to GitHub Releases.
 
-```bash
-chmod +x scripts/avd-snapshot-upload.sh
-```
+**Disk space note**: The upload script copies files to a staging directory before compressing. If disk is tight, you can use symlinks instead of copies — see the staging code in `avd-snapshot-upload.sh`.
 
-Before running, edit `scripts/avd-snapshot-upload.sh` and change the manifest section near line 168-169 to use the correct arch/API:
-- Change `"arch": "arm64-v8a"` to `"arch": "x86_64"`
-- Change `"api_level": 35` to `"api_level": 36`
-- Change `"system_image": "system-images;android-35;google_apis_playstore;arm64-v8a"` to `"system_image": "system-images;android-36;google_apis_playstore;x86_64"`
+## Technical Details
 
-Then run:
-```bash
-./scripts/avd-snapshot-upload.sh --version x86_64-v1
-```
+### QCOW2 overlay system
 
-This will:
-- Package the AVD snapshot (config, disk images, snapshot data)
-- Sanitize absolute paths (replace SDK/home paths with placeholders)
-- Compress with zstd (level 19)
-- Split into <2GB chunks for GitHub Releases
-- Create release `emulator-snapshot-x86_64-v1` on `whizvoice/whizvoiceapp`
+The emulator stores app data in a QCOW2 overlay chain:
+- `userdata-qemu.img` — base image (~6MB). **Despite the `.img` extension, this is QCOW2 format, not raw.**
+- `userdata-qemu.img.qcow2` — overlay with all changes (installed apps, accounts, settings)
+- The overlay has a **backing file reference** pointing to the base. The emulator needs this to read data.
 
-### 9. Verify the upload
+### NEVER use qemu-img on snapshot QCOW2 files
 
-```bash
-gh release view emulator-snapshot-x86_64-v1 --repo whizvoice/whizvoiceapp
-```
+These operations will break the QCOW2 files beyond repair:
+- `qemu-img convert` — removes the backing file reference
+- `qemu-img convert -O qcow2` (compaction) — same problem
+- `qemu-img rebase` — re-adds a reference but the emulator treats the result differently
 
-## Important Notes
+**Always use QCOW2 files exactly as the emulator created them.**
 
-- **Emulator version compatibility is the #1 cause of snapshot failures.** If CI fails with "Snapshot file cannot be used, incompatible version", the emulator on the build machine and CI are different versions. Update the emulator and rebuild the snapshot.
-- The `sed -i` commands in `avd-snapshot-upload.sh` use macOS syntax (`sed -i ''`). On Linux, you may need to change them to `sed -i` (without the empty string). The download script already handles this, but the upload script does not yet. Fix lines 114-115 if you get sed errors.
-- Kill the emulator before running the upload script (it checks for this).
-- The snapshot includes the userdata disk image which contains the installed apps and their login state.
-- Total upload size is typically 1-3GB depending on how much app data is stored.
+### Path rewriting on CI
+
+The download script (`avd-snapshot-download.sh`) handles path differences between the build machine and CI:
+- Rewrites `.ini` file paths (`__SDK_ROOT__` / `__HOME__` placeholders)
+- Rewrites `snapshot.pb` paths
+- Rewrites QCOW2 backing file paths to relative using `qemu-img rebase -u -F qcow2`
+
+The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` is QCOW2 despite its `.img` extension.
+
+### GPU rendering modes
+
+| Mode | Headless CI | WhatsApp | Use for |
+|------|------------|----------|---------|
+| `swiftshader_indirect` | Works | Crashes emulator | CI (doesn't open WhatsApp) |
+| `swangle` | Fails to boot | Works | Droplet interactive setup |
+| `gpu auto` | May segfault | Varies | Not recommended |
+
+### Google OAuth
+
+- Google Cloud Console needs an Android OAuth client for `com.example.whiz.debug` with the CI debug keystore's SHA-1
+- Test account must be in the OAuth consent screen's test users list (if in "Testing" mode)
+- GMS ships at `26.09.31` with the system image. Can be updated from APKMirror (x86+x86_64 variant, Android 15+). **Always install ALL split APKs** — partial installs break GMS entirely.
+
+### CI snapshot pipeline
+
+1. **Download**: `avd-snapshot-download.sh` extracts snapshot, rewrites paths in `.ini` files, `snapshot.pb`, and QCOW2 backing references
+2. **Backup**: Workflow backs up QCOW2 files before the `emulator-runner` action modifies `config.ini`
+3. **Restore**: `pre-emulator-launch-script` restores QCOW2 files and patches `config.ini` right before emulator launch
+4. **Boot**: Emulator boots. With `-no-snapshot-load` (cold boot) or `-snapshot baseline_clean` (full snapshot load)
+
+### Droplet
+
+- **Setup script**: `scripts/setup-snapshot-droplet.sh`
+- **SDK path**: `/opt/android-sdk`
+- **AVD path**: `/root/.android/avd/whiz-test-device.avd`
+- Emulator version: `36.4.10.0` (build `15004761`)
+
+## Open Issues (March 2026)
+
+### Cold boot QCOW2 replacement (blocking)
+
+When the emulator cold boots (`-no-snapshot-load`), it replaces the snapshot's QCOW2 overlay with a fresh one, losing all installed apps. This happens despite correct backing file paths, correct backing format, `userdata.useQcow2 = yes`, and backup/restore of files.
+
+The v1 snapshot (thin 1.4GB overlay, created on first boot of a fresh AVD) survived cold boot. Subsequent snapshots (6GB+ overlay, created after multiple emulator sessions) get replaced. The exact cause is unknown — may be related to overlay size or QCOW2 internal metadata.
+
+**Next step to try**: Full snapshot loading (`-snapshot baseline_clean`) instead of cold boot. This loads entire emulator state (RAM + disk) and avoids QCOW2 replacement. Requires matching emulator build, CPU cores (2), and RAM (4096MB) between droplet and CI. The current snapshot on the droplet includes `ram.bin` and `textures.bin` needed for this, but recent uploads excluded them to save space — they need to be re-included.
+
+### WhatsApp crashes emulator with swiftshader_indirect
+
+Opening WhatsApp causes a segfault in the swiftshader GPU renderer on the droplet. `swangle` handles it but doesn't work on headless CI. Not currently blocking (CI doesn't open WhatsApp), but will need a solution for future WhatsApp integration tests.
