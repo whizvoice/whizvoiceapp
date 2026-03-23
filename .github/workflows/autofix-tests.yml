@@ -193,9 +193,17 @@ jobs:
             'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
             'echo "==> Disabling cache partition to prevent snapshot load failure..."' \
-            'echo "disk.cachePartition=no" >> "$AVD_DIR/config.ini"' \
+            'echo "==> DIAGNOSTIC: disk.cachePartition BEFORE changes:"' \
+            'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
+            'grep -i "cachePartition\|cache" "$AVD_DIR/hardware-qemu.ini" 2>/dev/null || echo "    (none in hardware-qemu.ini)"' \
+            'sed -i "s/^disk.cachePartition *=.*/disk.cachePartition = no/" "$AVD_DIR/config.ini"' \
+            'grep -q "^disk.cachePartition" "$AVD_DIR/config.ini" || echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
+            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "s/^disk.cachePartition *=.*/disk.cachePartition = no/" "$AVD_DIR/hardware-qemu.ini"; grep -q "^disk.cachePartition" "$AVD_DIR/hardware-qemu.ini" || echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
             'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
-            'echo "    Removed cache.img and cache.img.qcow2, set disk.cachePartition=no"' \
+            'echo "==> DIAGNOSTIC: disk.cachePartition AFTER changes:"' \
+            'grep -i "cachePartition\|cache" "$AVD_DIR/config.ini" || echo "    (none in config.ini)"' \
+            'grep -i "cachePartition\|cache" "$AVD_DIR/hardware-qemu.ini" 2>/dev/null || echo "    (none in hardware-qemu.ini)"' \
+            'echo "    Removed cache.img and cache.img.qcow2, set disk.cachePartition=no in both ini files"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
             'echo "==> DIAGNOSTIC: cache.img.qcow2 status BEFORE emulator start:"' \
