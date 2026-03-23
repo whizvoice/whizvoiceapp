@@ -222,7 +222,15 @@ if [[ -n "$QEMU_IMG" ]]; then
             if [[ -n "$BACKING" ]] && [[ "$BACKING" != "$(basename "$BACKING")" ]]; then
                 BASE_NAME=$(basename "$BACKING")
                 echo "    $(basename "$qcow2"): rewriting backing $BACKING -> $BASE_NAME"
-                "$QEMU_IMG" rebase -u -b "$BASE_NAME" -F raw "$qcow2"
+                # Detect backing file format (userdata-qemu.img is qcow2 despite .img extension)
+                BACK_FMT=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file format:" | awk '{print $NF}')
+                if [[ -z "$BACK_FMT" ]]; then
+                    # Auto-detect from the backing file itself
+                    BACK_FMT=$("$QEMU_IMG" info "$AVD_DIR/$BASE_NAME" 2>/dev/null | grep "file format:" | awk '{print $NF}')
+                fi
+                BACK_FMT=${BACK_FMT:-qcow2}
+                echo "      backing format: $BACK_FMT"
+                "$QEMU_IMG" rebase -u -b "$BASE_NAME" -F "$BACK_FMT" "$qcow2"
             else
                 echo "    $(basename "$qcow2"): backing path OK ($BACKING)"
             fi
