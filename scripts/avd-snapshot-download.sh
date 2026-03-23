@@ -268,6 +268,16 @@ for ini_file in "$AVD_DIR/config.ini" \
     fi
 done
 
+# Ensure QCOW2 overlay is enabled (emulator-runner may reset this)
+if [[ -f "$AVD_DIR/config.ini" ]]; then
+    if grep -q "userdata.useQcow2" "$AVD_DIR/config.ini"; then
+        "${SED_INPLACE[@]}" "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"
+    else
+        echo "userdata.useQcow2 = yes" >> "$AVD_DIR/config.ini"
+    fi
+    echo "    Set userdata.useQcow2 = yes in config.ini"
+fi
+
 # Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
 SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"
 if [[ -f "$SNAPSHOT_PB" ]]; then
