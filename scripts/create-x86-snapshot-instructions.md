@@ -98,9 +98,13 @@ The download script (`avd-snapshot-download.sh`) handles path differences betwee
 
 The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` is QCOW2 despite its `.img` extension.
 
-### `-no-cache` flag
+### Cache partition disabled via `disk.cachePartition=no`
 
-The `-no-cache` emulator flag is required for snapshot loading on CI. Without it, the emulator recreates `cache.img.qcow2` as a fresh empty overlay during init — before `loadvm` runs. Since the fresh file has no snapshot tag, QEMU fails with "Device 'cache' does not have the requested snapshot". With `-no-cache`, no cache block device is created, so QEMU doesn't look for a cache snapshot tag. This is safe because the cache partition on API 36 is unused (legacy OTA/Dalvik cache).
+The emulator's cache partition causes snapshot loading failures on CI. The emulator creates an internal QCOW2 overlay on top of `cache.img.qcow2` for writes, and QEMU's `loadvm` checks the overlay (which has no snapshot tag) rather than the base file. This causes "Device 'cache' does not have the requested snapshot 'baseline_clean'".
+
+**Previous attempt:** The `-no-cache` flag does NOT fix this — it controls the HTTP proxy cache, not the cache partition block device.
+
+**Fix:** Set `disk.cachePartition=no` in `config.ini` and delete `cache.img`/`cache.img.qcow2` before emulator start. This prevents the emulator from creating a cache block device at all. QEMU's `loadvm` only checks block devices that exist. The cache partition on API 36 is unused (legacy OTA/Dalvik cache; ART replaces Dalvik, and A/B updates don't use it).
 
 ### GPU rendering modes
 
@@ -121,7 +125,7 @@ The `-no-cache` emulator flag is required for snapshot loading on CI. Without it
 1. **Download**: `avd-snapshot-download.sh` extracts snapshot, rewrites paths in `.ini` files, `snapshot.pb`, and QCOW2 backing references
 2. **Backup**: Workflow backs up QCOW2 files before the `emulator-runner` action modifies `config.ini`
 3. **Restore**: `pre-emulator-launch-script` restores QCOW2 files and patches `config.ini` right before emulator launch
-4. **Boot**: Emulator boots with `-snapshot baseline_clean` (full snapshot load) and `-no-cache` (prevents cache device from being created, which would otherwise destroy the snapshot tag)
+4. **Boot**: Emulator boots with `-snapshot baseline_clean` (full snapshot load). Cache partition is disabled via `disk.cachePartition=no` in config.ini (prevents cache device from being created, which would otherwise fail snapshot loading)
 
 ### Droplet
 
@@ -134,9 +138,11 @@ The `-no-cache` emulator flag is required for snapshot loading on CI. Without it
 
 ### Cold boot QCOW2 replacement (resolved)
 
-**Diagnosed:** The emulator treats `cache.img` as ephemeral and recreates `cache.img.qcow2` as a fresh empty overlay during its own init, *before* attempting `loadvm baseline_clean`. The freshly created file has no snapshot tag, so QEMU's `loadvm` fails with "Device 'cache' does not have the requested snapshot 'baseline_clean'".
+**Diagnosed:** The emulator creates an internal QCOW2 overlay on top of `cache.img.qcow2` for writes. QEMU's `loadvm` checks the overlay (which has no snapshot tag) rather than the base file, causing "Device 'cache' does not have the requested snapshot 'baseline_clean'".
 
-**Fix:** Add `-no-cache` to the emulator launch options. This prevents the emulator from creating a cache block device at all. QEMU's `loadvm` only checks devices that are inserted and writable — with no cache device, it won't look for a cache snapshot tag. The other devices (userdata, encryptionkey) load normally. The cache partition on modern Android (API 36) is mostly unused (legacy OTA/Dalvik cache).
+**Previous attempt:** `-no-cache` flag did NOT work — it controls the HTTP proxy cache, not the cache partition block device. The cache.img.qcow2 file still had the tag (verified by qemu-img after boot), but the emulator's internal overlay didn't.
+
+**Fix:** Set `disk.cachePartition=no` in `config.ini` and delete `cache.img`/`cache.img.qcow2` before emulator start. This prevents the cache block device from being created at all. QEMU's `loadvm` only checks block devices that exist. The cache partition on API 36 is unused (legacy OTA/Dalvik cache).
 
 ### WhatsApp crashes emulator with swiftshader_indirect
 

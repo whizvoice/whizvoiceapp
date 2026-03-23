@@ -44,8 +44,12 @@ sleep 5
 # ---------------------------------------------------------------------------
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
 echo "==> DIAGNOSTIC: cache.img.qcow2 checksum AFTER emulator boot:"
-md5sum "$AVD_DIR/cache.img.qcow2" 2>&1
-ls -la "$AVD_DIR/cache.img.qcow2" 2>&1
+if [[ -f "$AVD_DIR/cache.img.qcow2" ]]; then
+    md5sum "$AVD_DIR/cache.img.qcow2" 2>&1
+    ls -la "$AVD_DIR/cache.img.qcow2" 2>&1
+else
+    echo "    cache.img.qcow2 does not exist (expected with disk.cachePartition=no)"
+fi
 
 # ---------------------------------------------------------------------------
 # Push test credentials (conftest.py doesn't handle this)
@@ -59,7 +63,8 @@ adb push test_credentials.json /data/local/tmp/test_credentials.json
 echo "==> Verifying QCOW2 snapshots before test..."
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
 QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"
-for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+set +e  # Don't exit on qemu-img lock errors (emulator holds locks)
+for qcow2 in "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
     if [[ -f "$qcow2" ]]; then
         echo "    $(basename "$qcow2") ($(du -h "$qcow2" | cut -f1)):"
         echo "      full info:"
@@ -68,6 +73,7 @@ for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD
         "$QEMU_IMG_EMU" snapshot -l "$qcow2" 2>&1 | sed 's/^/        /' || echo "        FAILED to read snapshots"
     fi
 done
+set -e
 echo "==> AVD directory timestamps before test:"
 ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
 
