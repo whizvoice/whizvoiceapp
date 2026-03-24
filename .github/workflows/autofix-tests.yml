@@ -239,10 +239,32 @@ jobs:
           pre-emulator-launch-script: /tmp/restore-qcow2.sh
           script: bash scripts/run-autofix-tests.sh
 
+      - name: Diagnose test artifacts
+        if: always()
+        run: |
+          echo "==> Checking primary artifact location (autofix_test_output/):"
+          ls -la autofix_test_output/ 2>/dev/null || echo "    Directory does not exist or is empty"
+          echo ""
+          echo "==> Checking backup artifact location (/tmp/autofix-artifacts-backup/):"
+          ls -la /tmp/autofix-artifacts-backup/ 2>/dev/null || echo "    Directory does not exist or is empty"
+          echo ""
+          # If primary is empty but backup has files, copy them back
+          if [ ! -d autofix_test_output ] || [ -z "$(ls -A autofix_test_output 2>/dev/null)" ]; then
+            if [ -d /tmp/autofix-artifacts-backup ] && [ -n "$(ls -A /tmp/autofix-artifacts-backup 2>/dev/null)" ]; then
+              echo "==> Primary empty, restoring from backup..."
+              mkdir -p autofix_test_output
+              cp -r /tmp/autofix-artifacts-backup/* autofix_test_output/
+              echo "==> Restored artifacts:"
+              ls -la autofix_test_output/
+            fi
+          fi
+
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: autofix-test-output
-          path: autofix_test_output/
+          path: |
+            autofix_test_output/
+            /tmp/autofix-artifacts-backup/
           retention-days: 30

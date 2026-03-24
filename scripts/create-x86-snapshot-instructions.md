@@ -1,8 +1,8 @@
 # Create x86_64 Emulator Snapshot for CI
 
-## Status (March 2026)
+## Status (March 24, 2026)
 
-**Not fully working yet.** The snapshot creation works and CI downloads it successfully, but the emulator replaces the QCOW2 overlay on cold boot, losing installed apps. See "Open issues" at the bottom. The Google OAuth sign-in issue has been fixed (was caused by outdated GMS version).
+**Not fully working yet.** The snapshot needs to be recreated with `disk.cachePartition = no` set before first boot. OAuth signing is now fixed (explicit `signingConfigs` in `build.gradle.kts` + keystore setup moved before Gradle cache in CI). The emulator boots and adb works, but QEMU2 hangs/crashes during test execution — may be instability under load on CI runners.
 
 ## Goal
 
@@ -138,9 +138,9 @@ The Android emulator's modified QEMU requires ALL block devices to have the snap
 - **AVD path**: `/root/.android/avd/whiz-test-device.avd`
 - Emulator version: `36.4.10.0` (build `15004761`)
 
-## Open Issues (March 2026)
+## Open Issues (March 24, 2026)
 
-### Cold boot QCOW2 replacement (resolved — requires snapshot recreation)
+### Snapshot needs recreation with cache partition disabled
 
 **Root cause:** The Android emulator's modified QEMU requires ALL block devices to have the snapshot tag during `loadvm`. The emulator always creates a fresh in-memory overlay on the cache device. This overlay has no snapshot tag, so `loadvm` fails with "Device 'cache' does not have the requested snapshot 'baseline_clean'".
 
@@ -148,6 +148,21 @@ The Android emulator's modified QEMU requires ALL block devices to have the snap
 
 **Fix:** Set `disk.cachePartition = no` BEFORE first emulator boot during snapshot creation. The `setup-snapshot-droplet.sh` script now does this after `avdmanager create avd`. The snapshot is saved without a cache device, so `loadvm` won't look for a cache snapshot tag on CI.
 
+**Next step:** SSH to droplet, run updated `setup-snapshot-droplet.sh`, install apps, log in interactively, upload with `avd-snapshot-upload.sh --version x86_64-v4`.
+
+### QEMU2 hangs/crashes during test execution
+
+On CI run 23507806579 (March 24, 2026), the emulator booted successfully (WhatsApp detected, adb working), but QEMU2 hung during the actual test:
+- `detected a hanging thread 'QEMU2 main loop'. No response for 17600 ms`
+- `detected a hanging thread 'QEMU2 CPU0 thread'. No response for 23996 ms`
+- `ptrace: No such process`
+
+This may be related to the snapshot issue (emulator running without snapshot restore) or CI runner resource constraints. Needs investigation after snapshot is recreated.
+
 ### WhatsApp crashes emulator with swiftshader_indirect
 
 Opening WhatsApp causes a segfault in the swiftshader GPU renderer on the droplet. `swangle` handles it but doesn't work on headless CI. Not currently blocking (CI doesn't open WhatsApp), but will need a solution for future WhatsApp integration tests.
+
+### No test artifacts uploaded on failure
+
+The "Upload test artifacts" step didn't run when the emulator crashed. The `if: always()` condition should trigger it, but the job may have been killed before reaching that step. May need to investigate whether the emulator-runner action's failure mode prevents subsequent steps.

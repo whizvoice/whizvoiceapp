@@ -7,6 +7,30 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Crash-safe artifact collection
+# ---------------------------------------------------------------------------
+# Copy test output to a backup location on ANY exit (success, failure, or crash).
+# This ensures artifacts survive even if the emulator-runner action dies.
+ARTIFACT_BACKUP="/tmp/autofix-artifacts-backup"
+mkdir -p "$ARTIFACT_BACKUP"
+MEMORY_MONITOR_PID=""
+SYSTEM_LOGCAT_PID=""
+
+cleanup() {
+    echo "==> Trap fired (exit code: $?). Copying artifacts to backup location..."
+    # Stop background monitors
+    kill "$MEMORY_MONITOR_PID" 2>/dev/null || true
+    kill "$SYSTEM_LOGCAT_PID" 2>/dev/null || true
+    # Copy whatever we have
+    if [[ -d autofix_test_output ]]; then
+        cp -r autofix_test_output/* "$ARTIFACT_BACKUP/" 2>/dev/null || true
+    fi
+    echo "==> Backup artifacts saved to $ARTIFACT_BACKUP"
+    ls -la "$ARTIFACT_BACKUP/" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 export ANDROID_SERIAL=emulator-5554
@@ -115,13 +139,51 @@ echo "==> Current foreground activity:"
 adb shell dumpsys activity activities 2>/dev/null | grep "mResumedActivity" | head -1 || echo "    unknown"
 
 # ---------------------------------------------------------------------------
+# Start background monitoring (before pytest so we capture everything)
+# ---------------------------------------------------------------------------
+echo "==> Starting background monitors..."
+mkdir -p autofix_test_output
+
+# Memory/resource monitor — logs every 10s
+MEMORY_MONITOR_PID=""
+(
+    while true; do
+        echo "--- $(date -u '+%Y-%m-%d %H:%M:%S UTC') ---"
+        free -m 2>/dev/null || vm_stat 2>/dev/null || true
+        # Log emulator RSS
+        EMU_PID=$(pgrep -f "qemu-system" 2>/dev/null || pgrep -f "emulator64" 2>/dev/null || true)
+        if [[ -n "$EMU_PID" ]]; then
+            echo "Emulator PID $EMU_PID RSS: $(ps -o rss= -p "$EMU_PID" 2>/dev/null || echo 'N/A') KB"
+        fi
+        echo ""
+        sleep 10
+    done
+) > autofix_test_output/memory_monitor.log 2>&1 &
+MEMORY_MONITOR_PID=$!
+echo "    Memory monitor PID: $MEMORY_MONITOR_PID"
+
+# System-wide logcat (warnings and above) — captures GPU crashes, OOM kills, etc.
+SYSTEM_LOGCAT_PID=""
+adb logcat -c 2>/dev/null || true  # clear buffer for fresh capture
+adb logcat '*:W' > autofix_test_output/system_logcat.log 2>&1 &
+SYSTEM_LOGCAT_PID=$!
+echo "    System logcat PID: $SYSTEM_LOGCAT_PID"
+
+# ---------------------------------------------------------------------------
 # Run pytest (conftest.py handles APK install, permissions, screen wake)
 # ---------------------------------------------------------------------------
 echo "==> Running autofix tests..."
-mkdir -p autofix_test_output
 
 EXIT_CODE=0
 venv/bin/pytest autofix_tests/ -v --tb=short || EXIT_CODE=$?
 
 echo "==> Pytest exit code: $EXIT_CODE"
+
+# Stop monitors (trap will also try, but clean exit is better)
+kill "$MEMORY_MONITOR_PID" 2>/dev/null || true
+kill "$SYSTEM_LOGCAT_PID" 2>/dev/null || true
+
+echo "==> Final artifact listing:"
+ls -la autofix_test_output/ 2>/dev/null || true
+
 exit "$EXIT_CODE"
