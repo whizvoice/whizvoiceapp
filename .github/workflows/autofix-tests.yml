@@ -125,8 +125,21 @@ jobs:
       - name: Verify APK signing
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          echo "==> Using apksigner: $APKSIGNER"
           echo "==> APK signing certificate:"
-          apksigner verify --print-certs "$APK" 2>&1 || true
+          "$APKSIGNER" verify --print-certs "$APK"
+          # Verify SHA-1 matches expected value
+          ACTUAL_SHA1=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep "SHA-1 digest" | head -1 | awk '{print $NF}')
+          EXPECTED_SHA1="c7992a6ecc0c8ebb0f28d35f94802d883073863b"
+          echo "==> Actual SHA-1:   $ACTUAL_SHA1"
+          echo "==> Expected SHA-1: $EXPECTED_SHA1"
+          if [ "$ACTUAL_SHA1" != "$EXPECTED_SHA1" ]; then
+            echo "ERROR: APK signing certificate does not match expected SHA-1!"
+            echo "The debug keystore secret may be wrong or Gradle used a different keystore."
+            exit 1
+          fi
+          echo "==> SHA-1 matches expected value"
 
       - name: Setup test credentials
         run: |

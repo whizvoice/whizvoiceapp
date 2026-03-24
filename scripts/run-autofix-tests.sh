@@ -39,6 +39,16 @@ done
 # Short settle time after boot
 sleep 5
 
+# Check emulator clock (snapshot restore can cause clock skew)
+echo "==> Checking emulator clock..."
+EMU_DATE=$(adb shell date +%s 2>/dev/null | tr -d '\r')
+HOST_DATE=$(date +%s)
+SKEW=$((HOST_DATE - EMU_DATE))
+echo "    Emulator epoch: $EMU_DATE, Host epoch: $HOST_DATE, Skew: ${SKEW}s"
+if [ "${SKEW#-}" -gt 60 ]; then
+  echo "WARNING: Clock skew > 60s detected. OAuth may fail."
+fi
+
 # ---------------------------------------------------------------------------
 # DIAGNOSTIC: cache.img.qcow2 checksum after emulator boot
 # ---------------------------------------------------------------------------
