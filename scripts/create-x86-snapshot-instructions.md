@@ -98,13 +98,17 @@ The download script (`avd-snapshot-download.sh`) handles path differences betwee
 
 The backing file format MUST be `qcow2` (not `raw`) because `userdata-qemu.img` is QCOW2 despite its `.img` extension.
 
-### Cache partition disabled via `disk.cachePartition=no`
+### Cache partition must be disabled BEFORE snapshot creation
 
-The emulator's cache partition causes snapshot loading failures on CI. The emulator creates an internal QCOW2 overlay on top of `cache.img.qcow2` for writes, and QEMU's `loadvm` checks the overlay (which has no snapshot tag) rather than the base file. This causes "Device 'cache' does not have the requested snapshot 'baseline_clean'".
+The Android emulator's modified QEMU requires ALL block devices to have the snapshot tag during `loadvm`. The cache device always gets a fresh in-memory overlay without the tag, causing "Device 'cache' does not have the requested snapshot 'baseline_clean'".
 
-**Previous attempt:** The `-no-cache` flag does NOT fix this — it controls the HTTP proxy cache, not the cache partition block device.
+**Things that DON'T work** (all tried on CI):
+- `-no-cache` flag — controls HTTP proxy cache, not the cache partition
+- `disk.cachePartition = no` in config.ini/hardware-qemu.ini after AVD creation — emulator ignores it, still creates cache device
+- Deleting cache.img/cache.img.qcow2 — emulator still creates cache device
+- Creating fresh cache.img.qcow2 with snapshot tag — emulator creates in-memory overlay on top, QEMU checks the overlay (no tag) not the file
 
-**Fix:** Set `disk.cachePartition=no` in `config.ini` and delete `cache.img`/`cache.img.qcow2` before emulator start. This prevents the emulator from creating a cache block device at all. QEMU's `loadvm` only checks block devices that exist. The cache partition on API 36 is unused (legacy OTA/Dalvik cache; ART replaces Dalvik, and A/B updates don't use it).
+**Fix:** Set `disk.cachePartition = no` in config.ini BEFORE first emulator boot (during AVD creation). The `setup-snapshot-droplet.sh` script does this. When the snapshot is saved without a cache device, `loadvm` on CI won't look for a cache snapshot tag. The cache partition on API 36 is unused (legacy OTA/Dalvik cache).
 
 ### GPU rendering modes
 
@@ -125,7 +129,7 @@ The emulator's cache partition causes snapshot loading failures on CI. The emula
 1. **Download**: `avd-snapshot-download.sh` extracts snapshot, rewrites paths in `.ini` files, `snapshot.pb`, and QCOW2 backing references
 2. **Backup**: Workflow backs up QCOW2 files before the `emulator-runner` action modifies `config.ini`
 3. **Restore**: `pre-emulator-launch-script` restores QCOW2 files and patches `config.ini` right before emulator launch
-4. **Boot**: Emulator boots with `-snapshot baseline_clean` (full snapshot load). Cache partition is disabled via `disk.cachePartition=no` in config.ini (prevents cache device from being created, which would otherwise fail snapshot loading)
+4. **Boot**: Emulator boots with `-snapshot baseline_clean` (full snapshot load). Cache partition was disabled at snapshot creation time (`disk.cachePartition=no` in config.ini before first boot), so the snapshot doesn't include cache device state
 
 ### Droplet
 
@@ -136,13 +140,13 @@ The emulator's cache partition causes snapshot loading failures on CI. The emula
 
 ## Open Issues (March 2026)
 
-### Cold boot QCOW2 replacement (resolved)
+### Cold boot QCOW2 replacement (resolved — requires snapshot recreation)
 
-**Diagnosed:** The emulator creates an internal QCOW2 overlay on top of `cache.img.qcow2` for writes. QEMU's `loadvm` checks the overlay (which has no snapshot tag) rather than the base file, causing "Device 'cache' does not have the requested snapshot 'baseline_clean'".
+**Root cause:** The Android emulator's modified QEMU requires ALL block devices to have the snapshot tag during `loadvm`. The emulator always creates a fresh in-memory overlay on the cache device. This overlay has no snapshot tag, so `loadvm` fails with "Device 'cache' does not have the requested snapshot 'baseline_clean'".
 
-**Previous attempt:** `-no-cache` flag did NOT work — it controls the HTTP proxy cache, not the cache partition block device. The cache.img.qcow2 file still had the tag (verified by qemu-img after boot), but the emulator's internal overlay didn't.
+**What didn't work (all tried):** `-no-cache` flag, `disk.cachePartition = no` after AVD creation, deleting cache files, creating fresh cache.img.qcow2 with tag. The emulator ignores all runtime attempts to disable the cache device.
 
-**Fix:** Set `disk.cachePartition=no` in `config.ini` and delete `cache.img`/`cache.img.qcow2` before emulator start. This prevents the cache block device from being created at all. QEMU's `loadvm` only checks block devices that exist. The cache partition on API 36 is unused (legacy OTA/Dalvik cache).
+**Fix:** Set `disk.cachePartition = no` BEFORE first emulator boot during snapshot creation. The `setup-snapshot-droplet.sh` script now does this after `avdmanager create avd`. The snapshot is saved without a cache device, so `loadvm` won't look for a cache snapshot tag on CI.
 
 ### WhatsApp crashes emulator with swiftshader_indirect
 

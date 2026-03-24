@@ -97,6 +97,18 @@ echo "no" | avdmanager create avd \
     --device "pixel_6" \
     --force
 
+# Disable cache partition BEFORE first boot. The Android emulator's modified
+# QEMU requires ALL block devices to have the snapshot tag during loadvm.
+# The cache device always gets a fresh in-memory overlay without the tag,
+# causing "Device 'cache' does not have the requested snapshot" on CI.
+# By disabling it before AVD creation, the snapshot won't include cache state.
+AVD_DIR_SETUP="$HOME/.android/avd/${AVD_NAME}.avd"
+echo "==> Disabling cache partition (prevents snapshot loading issues on CI)..."
+sed -i '/^disk.cachePartition/d' "$AVD_DIR_SETUP/config.ini"
+echo "disk.cachePartition = no" >> "$AVD_DIR_SETUP/config.ini"
+rm -f "$AVD_DIR_SETUP/cache.img" "$AVD_DIR_SETUP/cache.img.qcow2"
+echo "    Set disk.cachePartition = no, removed cache.img files"
+
 # ---------------------------------------------------------------------------
 # Step 4b: Generate adb keys (prevents "unauthorized" on first boot)
 # ---------------------------------------------------------------------------
