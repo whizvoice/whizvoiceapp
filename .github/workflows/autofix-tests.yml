@@ -65,7 +65,7 @@ jobs:
           chmod +x scripts/avd-snapshot-download.sh
           ./scripts/avd-snapshot-download.sh \
             --force \
-            --release-tag emulator-snapshot-x86_64-v2 \
+            --release-tag emulator-snapshot-x86_64-v3 \
             --system-image "system-images;android-36;google_apis_playstore;x86_64" \
             --target-api 36
           # Read emulator build saved by download script
