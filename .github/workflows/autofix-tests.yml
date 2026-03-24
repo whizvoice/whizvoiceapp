@@ -113,8 +113,11 @@ jobs:
         run: |
           mkdir -p ~/.android
           echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
+          echo "==> Debug keystore file size: $(wc -c < ~/.android/debug.keystore) bytes"
           echo "==> Debug keystore SHA-1:"
-          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey 2>&1 | grep SHA1
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey 2>&1 | grep -i "sha1\|sha-1\|error\|exception" || echo "    WARNING: keytool produced no SHA output"
+          echo "==> All aliases in keystore:"
+          keytool -list -keystore ~/.android/debug.keystore -storepass android 2>&1 | head -10
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
