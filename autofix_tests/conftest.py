@@ -99,6 +99,18 @@ def app_installed():
         check=True, cwd=project_dir, env=os.environ
     )
 
+    # Grant overlay permission (install.sh doesn't handle this)
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'appops', 'set', DEBUG_PACKAGE,
+         'SYSTEM_ALERT_WINDOW', 'allow'],
+        check=False
+    )
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'grant', DEBUG_PACKAGE,
+         'android.permission.SYSTEM_ALERT_WINDOW'],
+        check=False
+    )
+
     # Enable accessibility service via adb settings (reliable on emulator)
     enable_accessibility_service()
 
