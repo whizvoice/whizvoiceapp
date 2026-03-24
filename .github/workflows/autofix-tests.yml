@@ -192,17 +192,16 @@ jobs:
             'echo "==> Enabling QCOW2 overlay in config.ini..."' \
             'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
             'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
-            'echo "==> Creating fresh cache.img.qcow2 with snapshot tag..."' \
-            'QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"' \
-            'rm -f "$AVD_DIR/cache.img.qcow2"' \
-            '"$QEMU_IMG_EMU" create -f qcow2 -b "$AVD_DIR/cache.img" -F raw "$AVD_DIR/cache.img.qcow2"' \
-            '"$QEMU_IMG_EMU" snapshot -c baseline_clean "$AVD_DIR/cache.img.qcow2"' \
-            'echo "    Created cache.img.qcow2 with baseline_clean tag:"' \
-            '"$QEMU_IMG_EMU" snapshot -l "$AVD_DIR/cache.img.qcow2" 2>&1 | head -5' \
+            'echo "==> Ensuring cache partition is disabled..."' \
+            'sed -i "/^disk.cachePartition/d" "$AVD_DIR/config.ini"' \
+            'echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
+            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "/^disk.cachePartition/d" "$AVD_DIR/hardware-qemu.ini"; echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
+            'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
+            'echo "    disk.cachePartition=no set, cache files removed"' \
             'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
             'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
-            'echo "==> DIAGNOSTIC: cache.img.qcow2 status BEFORE emulator start:"' \
-            'ls -la "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2" 2>&1' \
+            'echo "==> DIAGNOSTIC: cache files status BEFORE emulator start:"' \
+            'ls -la "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2" 2>&1 || echo "    No cache files (expected)"' \
             'echo "==> Restore complete. Emulator should load snapshot next."' \
             > /tmp/restore-qcow2.sh
           chmod +x /tmp/restore-qcow2.sh

@@ -43,10 +43,24 @@ sleep 5
 # DIAGNOSTIC: cache.img.qcow2 checksum after emulator boot
 # ---------------------------------------------------------------------------
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
-echo "==> DIAGNOSTIC: cache.img.qcow2 status AFTER emulator boot:"
-ls -la "$AVD_DIR/cache.img.qcow2" 2>&1 || echo "    cache.img.qcow2 does not exist"
-QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"
-"$QEMU_IMG_EMU" snapshot -l "$AVD_DIR/cache.img.qcow2" 2>&1 | head -5 || true
+echo "==> DIAGNOSTIC: cache files status AFTER emulator boot:"
+ls -la "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2" 2>&1 || echo "    No cache files (expected if snapshot was created without cache partition)"
+
+echo "==> DIAGNOSTIC: QEMU block devices (what files the emulator actually opened):"
+EMU_PID=$(pgrep -f "qemu-system" 2>/dev/null || pgrep -f "emulator" 2>/dev/null | head -1)
+if [[ -n "$EMU_PID" ]]; then
+    echo "    Emulator PID: $EMU_PID"
+    echo "    --- Open files matching cache/qcow2/img ---"
+    ls -la /proc/"$EMU_PID"/fd 2>/dev/null | grep -i "cache\|qcow2\|\.img" | sed 's/^/    /' || true
+    echo "    --- /proc/$EMU_PID/maps matching cache ---"
+    grep -i "cache" /proc/"$EMU_PID"/maps 2>/dev/null | sed 's/^/    /' || echo "    (no cache mappings found)"
+    echo "    --- All open .img and .qcow2 files ---"
+    readlink -f /proc/"$EMU_PID"/fd/* 2>/dev/null | grep -E "\.img|\.qcow2|cache" | sort -u | sed 's/^/    /' || echo "    (could not read fd links)"
+else
+    echo "    Could not find emulator PID"
+fi
+echo "    --- AVD directory listing ---"
+ls -la "$AVD_DIR"/*.img "$AVD_DIR"/*.qcow2 2>/dev/null | sed 's/^/    /' || echo "    No img/qcow2 files found"
 
 # ---------------------------------------------------------------------------
 # Push test credentials (conftest.py doesn't handle this)
