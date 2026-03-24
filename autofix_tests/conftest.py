@@ -33,7 +33,7 @@ PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
 os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
 os.environ['ANDROID_HOME'] = ANDROID_HOME
 
-# Default to emulator-5556 unless overridden
+# Default to emulator-5554 unless overridden
 os.environ['ANDROID_SERIAL'] = EMULATOR_SERIAL
 print(f"Targeting emulator: {EMULATOR_SERIAL}")
 
@@ -85,8 +85,7 @@ def app_installed():
     # Verify snapshot loaded with required apps (e.g., WhatsApp)
     verify_required_apps()
 
-    # Install the pre-built debug APK to the emulator
-    # (APK is built in a prior CI step or locally before running tests)
+    # Install using install.sh (handles permissions, signature mismatches, accessibility)
     project_dir = os.path.join(os.path.dirname(__file__), '..')
     apk_path = os.path.join(project_dir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
     if not os.path.exists(apk_path):
@@ -96,15 +95,8 @@ def app_installed():
             check=True, cwd=project_dir
         )
     subprocess.run(
-        ['adb', '-s', EMULATOR_SERIAL, 'install', '-r', apk_path],
-        check=True
-    )
-
-    # Grant overlay permission
-    subprocess.run(
-        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'appops', 'set', DEBUG_PACKAGE,
-         'SYSTEM_ALERT_WINDOW', 'allow'],
-        check=False
+        [os.path.join(project_dir, 'install.sh'), '--skip-build', '--force'],
+        check=True, cwd=project_dir, env=os.environ
     )
 
     # Enable accessibility service via adb settings (reliable on emulator)

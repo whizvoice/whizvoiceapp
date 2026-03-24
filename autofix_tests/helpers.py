@@ -13,7 +13,7 @@ import time
 
 ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
 PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
-EMULATOR_SERIAL = os.environ.get('ANDROID_SERIAL', 'emulator-5556')
+EMULATOR_SERIAL = os.environ.get('ANDROID_SERIAL', 'emulator-5554')
 DEBUG_PACKAGE = "com.example.whiz.debug"
 ACCESSIBILITY_SERVICE = f"{DEBUG_PACKAGE}/com.example.whiz.accessibility.WhizAccessibilityService"
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
