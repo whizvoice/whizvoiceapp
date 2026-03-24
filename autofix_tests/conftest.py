@@ -21,6 +21,8 @@ import android_accessibility_tester
 import subprocess
 import pytest
 import time
+import glob
+import shutil
 
 from helpers import (
     EMULATOR_SERIAL, DEBUG_PACKAGE,
@@ -64,6 +66,28 @@ load_anthropic_api_key()
 
 
 # ---------------------------------------------------------------------------
+# Screenshot collection on test failure
+# ---------------------------------------------------------------------------
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Copy /tmp/whiz_*.png and /tmp/whiz_*.jpg into autofix_test_output/ on test failure."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        output_dir = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
+        os.makedirs(output_dir, exist_ok=True)
+        for pattern in ("/tmp/whiz_*.png", "/tmp/whiz_*.jpg"):
+            for src in glob.glob(pattern):
+                dst = os.path.join(output_dir, os.path.basename(src))
+                try:
+                    shutil.copy2(src, dst)
+                    print(f"Copied screenshot to artifacts: {dst}")
+                except OSError as e:
+                    print(f"Failed to copy {src}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -77,7 +101,6 @@ def app_installed():
 
     # Create output directory
     output_dir = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
-    import shutil
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
