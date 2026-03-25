@@ -134,6 +134,13 @@ def app_installed():
         check=False
     )
 
+    # Grant contacts permission (needed for WhatsApp contact lookup)
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'grant', DEBUG_PACKAGE,
+         'android.permission.READ_CONTACTS'],
+        check=False
+    )
+
     # Enable accessibility service via adb settings (reliable on emulator)
     enable_accessibility_service()
 
