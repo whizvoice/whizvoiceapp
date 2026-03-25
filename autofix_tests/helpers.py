@@ -9,8 +9,6 @@ approach (same as run_screen_agent_tests.py).
 import subprocess
 import os
 import time
-import xml.etree.ElementTree as ET
-import re
 
 
 ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
@@ -165,50 +163,27 @@ def check_element_exists_in_ui(tester, content_desc=None, text=None, wait_after_
     )
 
 
-def find_element_center(tester, content_desc=None, text=None):
-    """Find an element in the UI hierarchy and return its center coordinates.
+def check_screen_shows(tester, description):
+    """Check if the current screen matches a description using screenshot + Claude vision.
+
+    Unlike check_element_exists_in_ui, this does NOT use uiautomator dump,
+    so it won't disrupt the accessibility service.
 
     Args:
         tester: AndroidAccessibilityTester instance
-        content_desc: Content description to match (exact)
-        text: Text content to match (exact)
+        description: What should be visible on screen
 
     Returns:
-        (x, y) tuple of center coordinates, or None if not found
+        True if the screenshot matches the description, False otherwise
     """
     try:
-        device_path = "/sdcard/ui_hierarchy_find.xml"
-        local_path = "/tmp/ui_hierarchy_find.xml"
-        adb_prefix = ['adb', '-s', EMULATOR_SERIAL]
-
-        subprocess.run(adb_prefix + ['shell', f'uiautomator dump {device_path}'],
-                       capture_output=True, check=True)
-        time.sleep(0.5)
-        subprocess.run(adb_prefix + ['pull', device_path, local_path],
-                       capture_output=True, check=True)
-
-        with open(local_path, 'r') as f:
-            xml_content = f.read()
-        root = ET.fromstring(xml_content)
-
-        for node in root.iter():
-            if content_desc and node.get('content-desc') == content_desc:
-                pass
-            elif text and node.get('text') == text:
-                pass
-            else:
-                continue
-
-            bounds = node.get('bounds', '')
-            match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-            if match:
-                x1, y1, x2, y2 = [int(v) for v in match.groups()]
-                return ((x1 + x2) // 2, (y1 + y2) // 2)
-
-        return None
+        screenshot_path = "/tmp/screen_check.png"
+        tester.screenshot(screenshot_path)
+        result = tester.validate_screenshot(screenshot_path, description)
+        return result.result
     except Exception as e:
-        print(f"Error finding element: {e}")
-        return None
+        print(f"Error checking screen: {e}")
+        return False
 
 
 def save_failed_screenshot(tester, test_name, step_name):
@@ -221,9 +196,14 @@ def save_failed_screenshot(tester, test_name, step_name):
 
 
 def login_if_needed(tester):
-    """Log in to the app if we're on the login screen."""
-    is_login_screen = check_element_exists_in_ui(
-        tester, text="Sign in with Google", wait_after_dump=2.0
+    """Log in to the app if we're on the login screen.
+
+    Uses screenshot + Claude vision to check screen state (no uiautomator dump)
+    so the accessibility service permission is not disrupted.
+    """
+    is_login_screen = check_screen_shows(
+        tester,
+        "The WhizVoice app login/welcome screen with a 'Sign in with Google' button"
     )
 
     if not is_login_screen:
@@ -236,157 +216,114 @@ def login_if_needed(tester):
     subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'svc', 'power', 'stayon', 'true'], check=False)
     time.sleep(1)
 
-    # Phase 1: Find and tap "Sign in with Google", then wait for account chooser.
-    # Retry the tap if the account chooser doesn't appear (ANR dialogs can steal focus).
+    # Phase 1: Tap "Sign in with Google" and wait for account chooser.
+    # Retry if the account chooser doesn't appear (ANR dialogs can steal focus).
     max_sign_in_attempts = 3
-    chooser_timeout = 15
     poll_interval = 3
-    account_selected = False
+    login_done = False
 
     for attempt in range(1, max_sign_in_attempts + 1):
-        # Dismiss any ANR dialog before attempting to tap sign-in
-        has_anr = check_element_exists_in_ui(
-            tester, text="System UI isn't responding", wait_after_dump=0.5
-        )
-        if has_anr:
+        # Dismiss any ANR dialog before tapping sign-in
+        if check_screen_shows(tester, "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"):
             print("ANR dialog detected before sign-in tap, dismissing...")
-            wait_btn = find_element_center(tester, text="Wait")
-            if wait_btn:
-                tester.tap(*wait_btn)
-            else:
-                tester.tap(540, 1395)
+            tester.tap(540, 1395)  # "Wait" button
             time.sleep(2)
 
-        # Find and tap "Sign in with Google" by its actual position in the UI tree
-        sign_in_coords = find_element_center(tester, text="Sign in with Google")
-        if sign_in_coords:
-            print(f"Tapping 'Sign in with Google' at {sign_in_coords} (attempt {attempt})")
-            tester.tap(*sign_in_coords)
-        else:
-            print(f"Could not find 'Sign in with Google' in UI tree, using fallback tap (attempt {attempt})")
-            tester.tap(540, 1488)
+        # Tap "Sign in with Google" button (center of our login screen button)
+        print(f"Tapping 'Sign in with Google' (attempt {attempt})")
+        tester.tap(540, 1488)
+        time.sleep(3)
 
-        # Poll for account chooser dialog
+        # Check what appeared: account chooser, or did login complete directly?
+        chooser_timeout = 15
         elapsed = 0
         while elapsed < chooser_timeout:
+            if check_screen_shows(
+                tester,
+                "A Google account chooser dialog showing 'Choose an account' with one or more account options"
+            ):
+                print("Account chooser detected, selecting test account...")
+                # Tap the first account in the chooser list
+                tester.tap(540, 1271)
+                time.sleep(3)
+                login_done = True
+                break
+
+            if check_screen_shows(
+                tester,
+                "The WhizVoice app showing 'My Chats' page with chat list, "
+                "OR an 'Enable Accessibility Service' dialog"
+            ):
+                print("Login completed directly")
+                login_done = True
+                break
+
+            if check_screen_shows(
+                tester,
+                "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"
+            ):
+                print("ANR dialog detected, dismissing and retrying...")
+                tester.tap(540, 1395)  # "Wait" button
+                time.sleep(2)
+                break  # Retry sign-in tap
+
             time.sleep(poll_interval)
             elapsed += poll_interval
-
-            # Check for account chooser
-            has_account_chooser = check_element_exists_in_ui(
-                tester, text="Choose an account", wait_after_dump=1.0
-            )
-            if has_account_chooser:
-                print("Account chooser dialog detected, selecting test account...")
-                # Find the first account entry (email or name) to tap
-                account_coords = find_element_center(tester, text="Whiz Voice Test")
-                if account_coords:
-                    print(f"Tapping account at {account_coords}")
-                    tester.tap(*account_coords)
-                else:
-                    # Fallback: tap approximate center of first account row
-                    print("Account text not found, using fallback tap")
-                    tester.tap(540, 1271)
-                time.sleep(2)
-                account_selected = True
-                break
-
-            # Check if login already completed (no chooser needed)
-            reached_my_chats = check_element_exists_in_ui(
-                tester, text="My Chats", wait_after_dump=0.5
-            )
-            if reached_my_chats:
-                print("Login completed without account chooser")
-                account_selected = True
-                break
-            on_accessibility_dialog = check_element_exists_in_ui(
-                tester, text="Enable Accessibility Service", wait_after_dump=0.5
-            )
-            if on_accessibility_dialog:
-                print("Login completed (accessibility dialog shown)")
-                account_selected = True
-                break
-
-            # Dismiss ANR if it appeared during the wait
-            has_anr = check_element_exists_in_ui(
-                tester, text="System UI isn't responding", wait_after_dump=0.5
-            )
-            if has_anr:
-                print("ANR dialog detected while waiting for chooser, dismissing...")
-                wait_btn = find_element_center(tester, text="Wait")
-                if wait_btn:
-                    tester.tap(*wait_btn)
-                else:
-                    tester.tap(540, 1395)
-                time.sleep(2)
-                # Break out to retry the sign-in tap
-                break
-
             print(f"Waiting for account chooser... ({elapsed}s/{chooser_timeout}s)")
 
-        if account_selected:
+        if login_done:
             break
-        print(f"Account chooser did not appear after attempt {attempt}, retrying sign-in tap...")
+        print(f"Account chooser did not appear after attempt {attempt}, retrying...")
 
-    # Phase 2: Poll for login to complete (up to 30s)
+    # Phase 2: Wait for login to finish (up to 30s)
     login_timeout = 30
     elapsed = 0
-    reached_my_chats = False
-    on_accessibility_dialog = False
+    success = False
     while elapsed < login_timeout:
         time.sleep(poll_interval)
         elapsed += poll_interval
-        reached_my_chats = check_element_exists_in_ui(
-            tester, text="My Chats", wait_after_dump=1.0
-        )
-        if reached_my_chats:
+
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app showing 'My Chats' page with chat list, "
+            "OR an 'Enable Accessibility Service' dialog"
+        ):
+            success = True
             break
-        on_accessibility_dialog = check_element_exists_in_ui(
-            tester, text="Enable Accessibility Service", wait_after_dump=1.0
-        )
-        if on_accessibility_dialog:
-            break
-        # Dismiss ANR dialogs
-        has_anr = check_element_exists_in_ui(
-            tester, text="System UI isn't responding", wait_after_dump=0.5
-        )
-        if has_anr:
-            print("ANR dialog detected, tapping Wait to dismiss...")
-            wait_btn = find_element_center(tester, text="Wait")
-            if wait_btn:
-                tester.tap(*wait_btn)
-            else:
-                tester.tap(540, 1395)
+
+        if check_screen_shows(
+            tester,
+            "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"
+        ):
+            print("ANR dialog detected, dismissing...")
+            tester.tap(540, 1395)
             time.sleep(2)
             continue
+
         print(f"Waiting for login to complete... ({elapsed}s/{login_timeout}s)")
 
-    if not reached_my_chats and not on_accessibility_dialog:
+    if not success:
         save_failed_screenshot(tester, "login_if_needed", "failed_after_login")
         assert False, "Failed to log in - expected My Chats page or accessibility dialog"
 
-    if reached_my_chats:
-        print("Successfully logged in and reached My Chats page")
-    else:
-        print("Successfully logged in (accessibility dialog shown)")
+    print("Successfully logged in")
 
 
 def navigate_to_my_chats(tester, test_name="unknown"):
     """Navigate to the My Chats page by pressing back until we reach it.
+
+    Uses screenshot + Claude vision to check screen state (no uiautomator dump).
 
     Returns:
         tuple: (success: bool, error_message: str)
     """
     max_attempts = 5
     for attempt in range(max_attempts):
-        has_my_chats_title = check_element_exists_in_ui(
-            tester, content_desc="My Chats Title", wait_after_dump=2.0
-        )
-        has_new_chat = check_element_exists_in_ui(
-            tester, content_desc="New Chat", wait_after_dump=0
-        )
-
-        if has_my_chats_title and has_new_chat:
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app 'My Chats' page showing a list of chats "
+            "with a 'New Chat' button visible"
+        ):
             print("Successfully navigated to My Chats page")
             return True, ""
 
