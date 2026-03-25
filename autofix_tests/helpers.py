@@ -24,10 +24,15 @@ REQUIRED_PACKAGES = [
 ]
 
 
+
 def is_emulator(serial=None):
     """Check if the target device is an emulator."""
     serial = serial or EMULATOR_SERIAL
     return serial.startswith('emulator-')
+
+
+# Double all timeouts on emulator (CI emulators are slower)
+TIMEOUT_MULTIPLIER = 2 if is_emulator() else 1
 
 
 def verify_required_apps():
@@ -180,6 +185,8 @@ def check_screen_shows(tester, description):
         screenshot_path = "/tmp/screen_check.png"
         tester.screenshot(screenshot_path)
         result = tester.validate_screenshot(screenshot_path, description)
+        if not result.result:
+            print(f"Screen check failed for '{description}': {result.error}")
         return result.result
     except Exception as e:
         print(f"Error checking screen: {e}")
@@ -214,12 +221,12 @@ def login_if_needed(tester):
     # Wake screen in case it went dark before we could tap
     subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
     subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'svc', 'power', 'stayon', 'true'], check=False)
-    time.sleep(1)
+    time.sleep(1 * TIMEOUT_MULTIPLIER)
 
     # Phase 1: Tap "Sign in with Google" and wait for account chooser.
     # Retry if the account chooser doesn't appear (ANR dialogs can steal focus).
     max_sign_in_attempts = 3
-    poll_interval = 3
+    poll_interval = 2 * TIMEOUT_MULTIPLIER
     login_done = False
 
     for attempt in range(1, max_sign_in_attempts + 1):
@@ -227,15 +234,15 @@ def login_if_needed(tester):
         if check_screen_shows(tester, "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"):
             print("ANR dialog detected before sign-in tap, dismissing...")
             tester.tap(540, 1395)  # "Wait" button
-            time.sleep(2)
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
 
         # Tap "Sign in with Google" button (center of our login screen button)
         print(f"Tapping 'Sign in with Google' (attempt {attempt})")
         tester.tap(540, 1488)
-        time.sleep(3)
+        time.sleep(2 * TIMEOUT_MULTIPLIER)
 
         # Check what appeared: account chooser, or did login complete directly?
-        chooser_timeout = 15
+        chooser_timeout = 10 * TIMEOUT_MULTIPLIER
         elapsed = 0
         while elapsed < chooser_timeout:
             if check_screen_shows(
@@ -245,7 +252,7 @@ def login_if_needed(tester):
                 print("Account chooser detected, selecting test account...")
                 # Tap the first account in the chooser list
                 tester.tap(540, 1271)
-                time.sleep(3)
+                time.sleep(2 * TIMEOUT_MULTIPLIER)
                 login_done = True
                 break
 
@@ -264,7 +271,7 @@ def login_if_needed(tester):
             ):
                 print("ANR dialog detected, dismissing and retrying...")
                 tester.tap(540, 1395)  # "Wait" button
-                time.sleep(2)
+                time.sleep(2 * TIMEOUT_MULTIPLIER)
                 break  # Retry sign-in tap
 
             time.sleep(poll_interval)
@@ -275,8 +282,8 @@ def login_if_needed(tester):
             break
         print(f"Account chooser did not appear after attempt {attempt}, retrying...")
 
-    # Phase 2: Wait for login to finish (up to 30s)
-    login_timeout = 30
+    # Phase 2: Wait for login to finish (up to 15s base, 30s on emulator)
+    login_timeout = 15 * TIMEOUT_MULTIPLIER
     elapsed = 0
     success = False
     while elapsed < login_timeout:
@@ -297,7 +304,7 @@ def login_if_needed(tester):
         ):
             print("ANR dialog detected, dismissing...")
             tester.tap(540, 1395)
-            time.sleep(2)
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
             continue
 
         print(f"Waiting for login to complete... ({elapsed}s/{login_timeout}s)")
@@ -331,7 +338,7 @@ def navigate_to_my_chats(tester, test_name="unknown"):
         save_failed_screenshot(tester, test_name, f"navigate_to_my_chats_attempt_{attempt + 1}")
 
         tester.press_back()
-        time.sleep(2)
+        time.sleep(1 * TIMEOUT_MULTIPLIER)
 
     save_failed_screenshot(tester, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
     return False, f"Could not reach My Chats page after {max_attempts} back presses"
