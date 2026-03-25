@@ -208,13 +208,33 @@ def login_if_needed(tester):
     Uses screenshot + Claude vision to check screen state (no uiautomator dump)
     so the accessibility service permission is not disrupted.
     """
-    is_login_screen = check_screen_shows(
-        tester,
-        "The WhizVoice app login/welcome screen with a 'Sign in with Google' button"
-    )
+    # Wait for the app to finish loading (splash screen) before checking.
+    # Poll until we see the login screen, My Chats, or accessibility dialog.
+    app_ready_timeout = 15 * TIMEOUT_MULTIPLIER
+    poll_interval = 2 * TIMEOUT_MULTIPLIER
+    elapsed = 0
+    is_login_screen = False
+
+    while elapsed < app_ready_timeout:
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app login/welcome screen with a 'Sign in with Google' button"
+        ):
+            is_login_screen = True
+            break
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app showing 'My Chats' page with chat list, "
+            "OR an 'Enable Accessibility Service' dialog"
+        ):
+            print("Already logged in, skipping login flow")
+            return
+        print(f"Waiting for app to finish loading... ({elapsed}s/{app_ready_timeout}s)")
+        time.sleep(poll_interval)
+        elapsed += poll_interval
 
     if not is_login_screen:
-        print("Already logged in, skipping login flow")
+        print("App did not reach login or My Chats screen, skipping login flow")
         return
 
     print("Login screen detected, proceeding with login...")
