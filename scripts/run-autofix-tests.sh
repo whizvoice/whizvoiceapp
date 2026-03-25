@@ -242,6 +242,16 @@ SYSTEM_LOGCAT_PID=$!
 echo "    System logcat PID: $SYSTEM_LOGCAT_PID"
 
 # ---------------------------------------------------------------------------
+# Free memory: kill Gradle daemon and any stale Java processes from build
+# ---------------------------------------------------------------------------
+echo "==> Killing Gradle daemon to free memory..."
+./gradlew --stop 2>/dev/null || true
+pkill -f "GradleDaemon" 2>/dev/null || true
+sleep 2
+echo "    Memory after Gradle cleanup:"
+free -m 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Run pytest (conftest.py handles APK install, permissions, screen wake)
 # ---------------------------------------------------------------------------
 echo "==> Running autofix tests..."

@@ -122,6 +122,9 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
 
+      - name: Stop Gradle daemon to free memory for emulator
+        run: ./gradlew --stop
+
       - name: Verify APK signing
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
