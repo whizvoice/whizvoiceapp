@@ -86,6 +86,24 @@ def pytest_runtest_makereport(item, call):
                 except OSError as e:
                     print(f"Failed to copy {src}: {e}")
 
+        # Pull screen agent UI dumps from emulator
+        try:
+            result = subprocess.run(
+                ['adb', '-s', EMULATOR_SERIAL, 'shell', 'ls', '/sdcard/Download/whiz_ui_dump_*.txt'],
+                capture_output=True, text=True
+            )
+            for remote_path in result.stdout.strip().split('\n'):
+                remote_path = remote_path.strip()
+                if remote_path and not remote_path.startswith('ls:'):
+                    local_path = os.path.join(output_dir, os.path.basename(remote_path))
+                    subprocess.run(
+                        ['adb', '-s', EMULATOR_SERIAL, 'pull', remote_path, local_path],
+                        capture_output=True
+                    )
+                    print(f"Pulled UI dump to artifacts: {local_path}")
+        except Exception as e:
+            print(f"Failed to pull UI dumps: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
