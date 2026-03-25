@@ -1177,6 +1177,15 @@ class ScreenAgentTools @Inject constructor(
                         break
                     }
 
+                    // Try to dismiss known dialogs before pressing back
+                    if (currentScreen == WhatsAppScreen.UNKNOWN) {
+                        if (dismissWhatsAppNotificationDialog(rootNode)) {
+                            rootNode.recycle()
+                            delay(500)
+                            continue  // Re-check screen after dismissal
+                        }
+                    }
+
                     rootNode.recycle()
 
                     // Not on chat list yet, press back
@@ -7918,6 +7927,86 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
     
+    /**
+     * Dismiss WhatsApp's "Turn on notifications" bottom sheet dialog.
+     * Looks for the dialog text and taps the X/close button to dismiss it.
+     * Returns true if the dialog was found and dismissed.
+     */
+    private fun dismissWhatsAppNotificationDialog(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            // Check if the notifications dialog is showing
+            val notifNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Turn on notifications", notifNodes)
+
+            if (notifNodes.isEmpty()) {
+                return false
+            }
+            Log.i(TAG, "Found WhatsApp 'Turn on notifications' dialog, dismissing...")
+            notifNodes.forEach { it.recycle() }
+
+            // Look for the close/dismiss button (X button) by content description
+            val closeDescriptions = listOf("Close", "Dismiss", "close", "dismiss")
+            for (desc in closeDescriptions) {
+                val closeNodes = rootNode.findAccessibilityNodeInfosByText(desc)
+                if (closeNodes != null && closeNodes.isNotEmpty()) {
+                    for (node in closeNodes) {
+                        // Check content-desc matches (findByText also matches text content)
+                        if (node.contentDescription?.toString()?.contains(desc, ignoreCase = true) == true) {
+                            val clickable = findClickableParent(node)
+                            if (clickable != null) {
+                                val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                clickable.recycle()
+                                if (clicked) {
+                                    Log.d(TAG, "Dismissed WhatsApp notification dialog via '$desc' button")
+                                    closeNodes.forEach { it.recycle() }
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                    closeNodes.forEach { it.recycle() }
+                }
+            }
+
+            // Fallback: try clicking any ImageButton that might be the X close button
+            // The X is typically at the top of the bottom sheet
+            val imageButtons = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByClassName(rootNode, "android.widget.ImageButton", imageButtons)
+            for (btn in imageButtons) {
+                val bounds = android.graphics.Rect()
+                btn.getBoundsInScreen(bounds)
+                // The X button is typically in the upper portion of the dialog
+                if (bounds.top < rootNode.let { r -> android.graphics.Rect().also { r.getBoundsInScreen(it) }.centerY() }) {
+                    val clickable = findClickableParent(btn) ?: btn
+                    val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed WhatsApp notification dialog via ImageButton at ${bounds}")
+                        imageButtons.forEach { it.recycle() }
+                        return true
+                    }
+                }
+            }
+            imageButtons.forEach { it.recycle() }
+
+            Log.w(TAG, "Found notification dialog but could not find close button")
+            return false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing WhatsApp notification dialog: ${e.message}")
+            return false
+        }
+    }
+
+    private fun findNodesByClassName(node: AccessibilityNodeInfo, className: String, results: MutableList<AccessibilityNodeInfo>) {
+        if (node.className?.toString() == className) {
+            results.add(AccessibilityNodeInfo.obtain(node))
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            findNodesByClassName(child, className, results)
+            child.recycle()
+        }
+    }
+
     private enum class WhatsAppScreen {
         CHAT_LIST,
         INSIDE_CHAT,
