@@ -17,10 +17,39 @@ MEMORY_MONITOR_PID=""
 SYSTEM_LOGCAT_PID=""
 
 cleanup() {
-    echo "==> Trap fired (exit code: $?). Copying artifacts to backup location..."
+    local exit_code=$?
+    echo "==> Trap fired (exit code: $exit_code). Collecting crash diagnostics..."
     # Stop background monitors
     kill "$MEMORY_MONITOR_PID" 2>/dev/null || true
     kill "$SYSTEM_LOGCAT_PID" 2>/dev/null || true
+
+    mkdir -p autofix_test_output
+
+    # Capture crash diagnostics
+    echo "==> Crash diagnostics at exit:"
+    echo "    Exit code: $exit_code"
+
+    echo "    OOM killer events:"
+    dmesg 2>/dev/null | grep -i "oom\|killed process\|out of memory" | tail -20 || echo "    None detected"
+
+    echo "    Emulator processes at exit:"
+    ps aux | grep -i "emulator\|qemu" | grep -v grep || echo "    No emulator processes"
+
+    echo "    Memory at exit:"
+    free -m 2>/dev/null || echo "    free not available"
+
+    echo "    QCOW2 file locks at exit:"
+    AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+    for f in "$AVD_DIR"/*.qcow2; do
+        if [[ -f "$f" ]]; then
+            echo "    $(basename "$f"):"
+            fuser -v "$f" 2>&1 | sed 's/^/        /' || echo "        no locks"
+        fi
+    done
+
+    # Save dmesg at exit
+    dmesg --time-format iso 2>/dev/null | tail -100 > autofix_test_output/dmesg_at_exit.log || true
+
     # Copy whatever we have
     if [[ -d autofix_test_output ]]; then
         cp -r autofix_test_output/* "$ARTIFACT_BACKUP/" 2>/dev/null || true
@@ -62,6 +91,31 @@ done
 
 # Short settle time after boot
 sleep 5
+
+# ---------------------------------------------------------------------------
+# System diagnostics at boot
+# ---------------------------------------------------------------------------
+mkdir -p autofix_test_output
+echo "==> System diagnostics at boot:"
+echo "    Memory:"
+free -m 2>/dev/null || echo "    free not available"
+echo "    Swap:"
+cat /proc/meminfo 2>/dev/null | grep -E "SwapTotal|SwapFree|MemAvailable" | sed 's/^/    /' || true
+echo "    Disk:"
+df -h / | sed 's/^/    /'
+echo "    Emulator processes:"
+ps aux | grep -i "emulator\|qemu" | grep -v grep | sed 's/^/    /' || echo "    No emulator processes"
+echo "    QCOW2 file locks at boot:"
+AVD_DIR_DIAG="$HOME/.android/avd/whiz-test-device.avd"
+for f in "$AVD_DIR_DIAG"/*.qcow2; do
+    if [[ -f "$f" ]]; then
+        echo "    $(basename "$f"):"
+        fuser -v "$f" 2>&1 | sed 's/^/        /' || echo "        no locks"
+    fi
+done
+
+# Save dmesg at boot for comparison with exit
+dmesg --time-format iso 2>/dev/null | tail -50 > autofix_test_output/dmesg_at_boot.log || true
 
 # Check emulator clock (snapshot restore can cause clock skew)
 echo "==> Checking emulator clock..."
@@ -108,6 +162,14 @@ adb push test_credentials.json /data/local/tmp/test_credentials.json
 echo "==> Verifying QCOW2 snapshots before test..."
 AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
 QEMU_IMG_EMU="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/emulator/qemu-img"
+
+echo "==> QCOW2 file lock state BEFORE qemu-img:"
+for f in "$AVD_DIR"/*.qcow2; do
+    if [[ -f "$f" ]]; then
+        echo "    $(basename "$f"): $(fuser -v "$f" 2>&1 || echo 'no locks')"
+    fi
+done
+
 set +e  # Don't exit on qemu-img lock errors (emulator holds locks)
 for qcow2 in "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
     if [[ -f "$qcow2" ]]; then
@@ -119,6 +181,13 @@ for qcow2 in "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qco
     fi
 done
 set -e
+
+echo "==> QCOW2 file lock state AFTER qemu-img:"
+for f in "$AVD_DIR"/*.qcow2; do
+    if [[ -f "$f" ]]; then
+        echo "    $(basename "$f"): $(fuser -v "$f" 2>&1 || echo 'no locks')"
+    fi
+done
 echo "==> AVD directory timestamps before test:"
 ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
 
@@ -144,19 +213,22 @@ adb shell dumpsys activity activities 2>/dev/null | grep "mResumedActivity" | he
 echo "==> Starting background monitors..."
 mkdir -p autofix_test_output
 
-# Memory/resource monitor — logs every 10s
+# Memory/resource monitor — logs every 15s with swap details
 MEMORY_MONITOR_PID=""
 (
     while true; do
         echo "--- $(date -u '+%Y-%m-%d %H:%M:%S UTC') ---"
         free -m 2>/dev/null || vm_stat 2>/dev/null || true
-        # Log emulator RSS
+        cat /proc/meminfo 2>/dev/null | grep -E "SwapTotal|SwapFree|MemAvailable|Dirty|Writeback" || true
+        # Log emulator RSS and VSZ
         EMU_PID=$(pgrep -f "qemu-system" 2>/dev/null || pgrep -f "emulator64" 2>/dev/null || true)
         if [[ -n "$EMU_PID" ]]; then
-            echo "Emulator PID $EMU_PID RSS: $(ps -o rss= -p "$EMU_PID" 2>/dev/null || echo 'N/A') KB"
+            echo "Emulator PID $EMU_PID: RSS=$(ps -o rss= -p "$EMU_PID" 2>/dev/null || echo 'N/A')KB VSZ=$(ps -o vsz= -p "$EMU_PID" 2>/dev/null || echo 'N/A')KB"
         fi
+        # Check for recent OOM events
+        dmesg 2>/dev/null | grep -i "oom\|killed process" | tail -1 || true
         echo ""
-        sleep 10
+        sleep 15
     done
 ) > autofix_test_output/memory_monitor.log 2>&1 &
 MEMORY_MONITOR_PID=$!
