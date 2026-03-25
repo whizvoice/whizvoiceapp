@@ -25,7 +25,7 @@ import glob
 import shutil
 
 from helpers import (
-    EMULATOR_SERIAL, DEBUG_PACKAGE,
+    EMULATOR_SERIAL, DEBUG_PACKAGE, TIMEOUT_MULTIPLIER,
     enable_accessibility_service, login_if_needed,
     verify_required_apps,
 )
@@ -211,7 +211,7 @@ def tester(app_installed):
         device_id=EMULATOR_SERIAL
     )
     tester.open_app(DEBUG_PACKAGE)
-    time.sleep(3)
+    time.sleep(3 * TIMEOUT_MULTIPLIER)
 
     # Log in if needed
     login_if_needed(tester)
