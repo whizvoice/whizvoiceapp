@@ -229,6 +229,15 @@ def login_if_needed(tester):
         ):
             print("Already logged in, skipping login flow")
             return
+        # Dismiss ANR dialogs that block the app from appearing
+        if check_screen_shows(
+            tester,
+            "A system dialog saying 'isn't responding' with 'Close app' or 'Wait' buttons"
+        ):
+            print("ANR dialog detected during app loading, tapping 'Wait'...")
+            tester.tap(540, 1395)
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
+            continue
         print(f"Waiting for app to finish loading... ({elapsed}s/{app_ready_timeout}s)")
         time.sleep(poll_interval)
         elapsed += poll_interval
