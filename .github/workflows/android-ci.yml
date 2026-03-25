@@ -143,6 +143,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.DEBUG_KEYSTORE_BASE64 }}' | base64 -d > ~/.android/debug.keystore
+
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -455,6 +460,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.DEBUG_KEYSTORE_BASE64 }}' | base64 -d > ~/.android/debug.keystore
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
