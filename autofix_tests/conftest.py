@@ -207,6 +207,11 @@ def tester(app_installed):
     )
     time.sleep(0.5)
 
+    # Wake screen before opening app (may have gone dark since app_installed)
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_MENU'], check=False)
+    time.sleep(1)
+
     tester = android_accessibility_tester.AndroidAccessibilityTester(
         device_id=EMULATOR_SERIAL
     )
