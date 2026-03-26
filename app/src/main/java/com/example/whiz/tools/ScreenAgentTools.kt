@@ -1248,13 +1248,6 @@ class ScreenAgentTools @Inject constructor(
                 if (chatNodes.isNotEmpty()) {
                     Log.i(TAG, "Found ${chatNodes.size} nodes matching chat name")
 
-                    // DEBUG: REMOVE AFTER INVESTIGATION — dump UI before clicking matched node
-                    val debugPreClickRoot = accessibilityService.getCurrentRootNode()
-                    if (debugPreClickRoot != null) {
-                        dumpUIHierarchy(debugPreClickRoot, "debug_whatsapp_before_click_match", "DEBUG: UI before clicking matched node for '$chatName'. ${chatNodes.size} matches found.")
-                        debugPreClickRoot.recycle()
-                    }
-
                     // Try to click on each matching node until one succeeds
                     for (chatNode in chatNodes) {
                         // Use skipProfilePictures=true to avoid clicking on profile pictures
@@ -1322,8 +1315,7 @@ class ScreenAgentTools @Inject constructor(
                                                 }
                                             }
                                         } else {
-                                            // DEBUG: REMOVE AFTER INVESTIGATION — dump UI when click didn't open chat
-                                            dumpUIHierarchy(profileRoot, "debug_whatsapp_click_wrong_screen", "DEBUG: Click succeeded but not in chat, no message_btn. Screen after clicking '$chatName'")
+                                            dumpUIHierarchy(profileRoot, "whatsapp_click_opened_wrong_screen", "Click succeeded but not in chat and no message_btn found after clicking '$chatName'")
                                             profileRoot.recycle()
                                         }
                                     }
@@ -1400,12 +1392,6 @@ class ScreenAgentTools @Inject constructor(
                         // Wait for search results to appear
                         waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
 
-                        // DEBUG: REMOVE AFTER INVESTIGATION — dump UI after search results load
-                        val debugSearchRoot = accessibilityService.getCurrentRootNode()
-                        if (debugSearchRoot != null) {
-                            dumpUIHierarchy(debugSearchRoot, "debug_whatsapp_after_search", "DEBUG: UI after searching for '$chatName'")
-                            debugSearchRoot.recycle()
-                        }
                     }
                 }
 
@@ -1419,27 +1405,15 @@ class ScreenAgentTools @Inject constructor(
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
 
-            // Fallback: try "New Chat" flow via FAB button for contacts without chat history
-            Log.i(TAG, "Trying 'New Chat' via FAB button for contact without chat history: $chatName")
-            val newChatResult = startNewWhatsAppChat(accessibilityService, chatName)
-            if (newChatResult) {
-                Log.i(TAG, "Successfully opened new chat with $chatName via FAB")
-                return WhatsAppResult(
-                    success = true,
-                    action = "select_chat",
-                    chatName = chatName
-                )
-            }
-
             // UI dump for debugging - try to get current screen state
             val finalRootNode = accessibilityService.getCurrentRootNode()
             if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts and FAB fallback")
+                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts")
                 finalRootNode.recycle()
             } else {
                 logScreenAgentError(
                     reason = "whatsapp_chat_not_found",
-                    errorMessage = "Could not find chat '$chatName' after $attempts attempts and FAB fallback (no root node)",
+                    errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
                     packageName = "com.whatsapp"
                 )
             }
@@ -7990,187 +7964,6 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
     
-    /**
-     * Start a new WhatsApp chat via the FAB "Send message" button.
-     * Used as a fallback when search doesn't find a contact (no chat history).
-     * Returns true if a chat was successfully opened.
-     */
-    private suspend fun startNewWhatsAppChat(
-        accessibilityService: WhizAccessibilityService,
-        contactName: String
-    ): Boolean {
-        try {
-            // Re-launch WhatsApp to get to the chat list reliably
-            // (pressing back from search can be unreliable — may exit WhatsApp entirely)
-            val launchResult = launchApp("WhatsApp", enableOverlay = false)
-            if (!launchResult.success) {
-                Log.w(TAG, "Failed to re-launch WhatsApp for FAB fallback: ${launchResult.error}")
-                return false
-            }
-            delay(2000) // Wait for WhatsApp to load
-
-            // Navigate to chat list if not already there
-            for (attempt in 1..4) {
-                val navRoot = accessibilityService.getCurrentRootNode()
-                if (navRoot != null) {
-                    val screen = detectWhatsAppScreen(navRoot)
-                    navRoot.recycle()
-                    if (screen == WhatsAppScreen.CHAT_LIST) {
-                        Log.i(TAG, "On chat list for FAB fallback (attempt $attempt)")
-                        break
-                    }
-                    // Dismiss notification dialog if present
-                    val dialogRoot = accessibilityService.getCurrentRootNode()
-                    if (dialogRoot != null) {
-                        dismissWhatsAppNotificationDialog(dialogRoot)
-                        dialogRoot.recycle()
-                    }
-                    accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                    delay(1000)
-                } else {
-                    delay(1000)
-                }
-            }
-
-            // Verify we're on the chat list
-            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 3000)) {
-                Log.w(TAG, "Could not reach chat list for FAB fallback")
-                return false
-            }
-
-            // Find and tap the "Send message" FAB
-            val rootNode = accessibilityService.getCurrentRootNode() ?: return false
-            val fabNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/fabText")
-            if (fabNodes == null || fabNodes.isEmpty()) {
-                Log.w(TAG, "FAB 'Send message' button not found")
-                rootNode.recycle()
-                return false
-            }
-
-            val fabClicked = fabNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            fabNodes.forEach { it.recycle() }
-            rootNode.recycle()
-
-            if (!fabClicked) {
-                Log.w(TAG, "Failed to click FAB button")
-                return false
-            }
-
-            Log.i(TAG, "Tapped 'Send message' FAB, waiting for contact picker...")
-
-            // Wait for contacts to load (progress bar disappears, contact list appears)
-            val pickerReady = waitForCondition(maxWaitMs = 5000) {
-                val r = accessibilityService.getCurrentRootNode()
-                if (r != null) {
-                    // Check if contact list has loaded (contactpicker_row_name exists)
-                    val names = r.findAccessibilityNodeInfosByViewId("com.whatsapp:id/contactpicker_row_name")
-                    val hasContacts = names != null && names.isNotEmpty()
-                    names?.forEach { it.recycle() }
-                    r.recycle()
-                    hasContacts
-                } else false
-            }
-
-            if (!pickerReady) {
-                Log.w(TAG, "Contact picker did not load in time")
-                val debugRoot = accessibilityService.getCurrentRootNode()
-                if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "whatsapp_contact_picker_no_search", "Contact picker did not load contacts in time")
-                    debugRoot.recycle()
-                }
-                return false
-            }
-
-            // Try to find the contact directly by text (may be visible without searching)
-            var resultRoot = accessibilityService.getCurrentRootNode() ?: return false
-            var contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
-
-            // If not found directly, try using the search button
-            if (contactNodes == null || contactNodes.none { it.className?.toString() != "android.widget.EditText" }) {
-                contactNodes?.forEach { it.recycle() }
-                resultRoot.recycle()
-
-                Log.d(TAG, "Contact not visible in picker, trying search...")
-                val searchRoot = accessibilityService.getCurrentRootNode() ?: return false
-                val searchBtnNodes = searchRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/menuitem_search")
-                if (searchBtnNodes != null && searchBtnNodes.isNotEmpty()) {
-                    searchBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    searchBtnNodes.forEach { it.recycle() }
-                    searchRoot.recycle()
-                    delay(1000)
-
-                    // Now find the search input field and type
-                    val searchFieldRoot = accessibilityService.getCurrentRootNode() ?: return false
-                    val searchFields = searchFieldRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
-                        ?: searchFieldRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/contactpicker_text_filter")
-                    if (searchFields != null && searchFields.isNotEmpty()) {
-                        searchFields[0].performAction(
-                            AccessibilityNodeInfo.ACTION_SET_TEXT,
-                            android.os.Bundle().apply {
-                                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, contactName)
-                            }
-                        )
-                        searchFields.forEach { it.recycle() }
-                    }
-                    searchFieldRoot.recycle()
-                    delay(1500) // Wait for search results
-                } else {
-                    searchRoot.recycle()
-                }
-
-                resultRoot = accessibilityService.getCurrentRootNode() ?: return false
-                contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
-            }
-            if (contactNodes != null && contactNodes.isNotEmpty()) {
-                for (node in contactNodes) {
-                    // Skip the search input itself
-                    if (node.className?.toString() == "android.widget.EditText") continue
-
-                    val clickable = findClickableParent(node)
-                    if (clickable != null) {
-                        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        clickable.recycle()
-                        if (clicked) {
-                            Log.i(TAG, "Clicked contact '$contactName' in picker")
-                            contactNodes.forEach { it.recycle() }
-                            resultRoot.recycle()
-
-                            // Verify we're now inside a chat
-                            delay(1000)
-                            val chatCheck = accessibilityService.getCurrentRootNode()
-                            if (chatCheck != null) {
-                                val isInChat = detectWhatsAppScreen(chatCheck) == WhatsAppScreen.INSIDE_CHAT
-                                chatCheck.recycle()
-                                if (isInChat) {
-                                    Log.i(TAG, "Successfully entered new chat with $contactName")
-                                    return true
-                                }
-                                Log.w(TAG, "Clicked contact but not in chat yet, waiting...")
-                                delay(1000)
-                                val retryCheck = accessibilityService.getCurrentRootNode()
-                                if (retryCheck != null) {
-                                    val inChat = detectWhatsAppScreen(retryCheck) == WhatsAppScreen.INSIDE_CHAT
-                                    retryCheck.recycle()
-                                    return inChat
-                                }
-                            }
-                            return false
-                        }
-                    }
-                }
-                contactNodes.forEach { it.recycle() }
-            }
-
-            Log.w(TAG, "No matching contact found in picker for '$contactName'")
-            dumpUIHierarchy(resultRoot, "whatsapp_contact_picker_no_match", "Contact '$contactName' not found in contact picker")
-            resultRoot.recycle()
-            return false
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in startNewWhatsAppChat fallback", e)
-            return false
-        }
-    }
-
     /**
      * Dismiss WhatsApp's "Turn on notifications" bottom sheet dialog.
      * Taps the X/close button (com.whatsapp:id/cancel, desc="Close").
