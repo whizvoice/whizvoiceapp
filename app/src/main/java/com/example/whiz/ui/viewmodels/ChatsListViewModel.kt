@@ -8,13 +8,14 @@ import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.services.WakeWordService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import android.util.Log
 
 @HiltViewModel
@@ -30,6 +31,10 @@ class ChatsListViewModel @Inject constructor(
     // Pull-to-refresh state
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    // Initial load state — true until first sync completes
+    private val _isInitialLoad = MutableStateFlow(true)
+    val isInitialLoad: StateFlow<Boolean> = _isInitialLoad.asStateFlow()
     
     // Connection status - true when we had to use cached data
     private val _isShowingCachedData = MutableStateFlow(false)
@@ -77,13 +82,19 @@ class ChatsListViewModel @Inject constructor(
                     repository.refreshConversations()
                 } else {
                     Log.d(TAG, "ChatsListViewModel init: ${repository.conversations.value.size} conversations already cached")
+                    _isInitialLoad.value = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
-                // Error is silently handled - we'll show cached data
+                _isInitialLoad.value = false
             }
         }
 
+        // Clear isInitialLoad once chats flow emits non-empty data
+        viewModelScope.launch {
+            chats.first { it.isNotEmpty() }
+            _isInitialLoad.value = false
+        }
     }
 
     // Create a new chat

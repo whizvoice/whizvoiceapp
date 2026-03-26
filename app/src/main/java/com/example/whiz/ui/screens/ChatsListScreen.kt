@@ -80,6 +80,7 @@ fun ChatsListScreen(
 ) {
     val chats by viewModel.chats.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val isInitialLoad by viewModel.isInitialLoad.collectAsState()
     val isShowingCachedData by viewModel.isShowingCachedData.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     
@@ -190,7 +191,19 @@ fun ChatsListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (chats.isEmpty()) {
+            if (chats.isEmpty() && isInitialLoad) {
+                // Show loading text while initial sync is in progress
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Loading chats...",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (chats.isEmpty()) {
                 EmptyChatsList(onNewChatClick = onNewChatClick)
             } else {
                 ChatsList(
