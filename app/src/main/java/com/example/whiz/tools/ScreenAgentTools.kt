@@ -1181,7 +1181,8 @@ class ScreenAgentTools @Inject constructor(
                     if (currentScreen == WhatsAppScreen.UNKNOWN) {
                         if (dismissWhatsAppNotificationDialog(rootNode)) {
                             rootNode.recycle()
-                            delay(2000)  // Wait for WhatsApp UI to settle after dialog dismissal
+                            // Poll until we're on a known screen (chat list) instead of hard wait
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 5000)
                             continue  // Re-check screen after dismissal
                         }
                     }
@@ -1397,7 +1398,7 @@ class ScreenAgentTools @Inject constructor(
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
-                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 2000)
+                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
 
                         // DEBUG: REMOVE AFTER INVESTIGATION — dump UI after search results load
                         val debugSearchRoot = accessibilityService.getCurrentRootNode()
