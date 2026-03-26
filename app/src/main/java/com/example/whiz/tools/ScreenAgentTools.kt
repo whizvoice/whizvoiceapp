@@ -1282,9 +1282,43 @@ class ScreenAgentTools @Inject constructor(
                                         chatName = chatName
                                     )
                                 } else {
-                                    // Click succeeded but we're not in the chat (e.g., profile popup opened)
-                                    // Press back and try the next node
-                                    Log.w(TAG, "Click succeeded but not in chat - pressing back to retry")
+                                    // Click succeeded but we're not in the chat (e.g., contact profile page opened)
+                                    // Check for message_btn on contact profile page
+                                    Log.w(TAG, "Click succeeded but not in chat - checking for contact profile message button")
+                                    val profileRoot = accessibilityService.getCurrentRootNode()
+                                    if (profileRoot != null) {
+                                        val messageBtnNodes = profileRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
+                                        if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
+                                            Log.i(TAG, "Found message_btn on contact profile, clicking to open chat")
+                                            val msgClicked = messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                            messageBtnNodes.forEach { it.recycle() }
+                                            profileRoot.recycle()
+                                            if (msgClicked) {
+                                                delay(1000)
+                                                val msgInChat = waitForCondition(maxWaitMs = 2000) {
+                                                    val r = accessibilityService.getCurrentRootNode()
+                                                    if (r != null) {
+                                                        val ic = detectWhatsAppScreen(r) == WhatsAppScreen.INSIDE_CHAT
+                                                        r.recycle()
+                                                        ic
+                                                    } else false
+                                                }
+                                                if (msgInChat) {
+                                                    chatNodes.forEach { it.recycle() }
+                                                    rootNode.recycle()
+                                                    return WhatsAppResult(
+                                                        success = true,
+                                                        action = "select_chat",
+                                                        chatName = chatName
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            profileRoot.recycle()
+                                        }
+                                    }
+                                    // Fall back to pressing back and retrying
+                                    Log.w(TAG, "No message_btn found, pressing back to retry")
                                     accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                                     delay(300)
                                 }
