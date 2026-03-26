@@ -271,12 +271,24 @@ def login_if_needed(tester):
         time.sleep(2 * TIMEOUT_MULTIPLIER)
 
         # Check what appeared: account chooser, or did login complete directly?
+        # Check ANR first since it can overlay other dialogs.
         chooser_timeout = 10 * TIMEOUT_MULTIPLIER
         elapsed = 0
         while elapsed < chooser_timeout:
+            # Priority 1: Dismiss ANR dialogs (can overlay account chooser)
             if check_screen_shows(
                 tester,
-                "A Google account chooser dialog showing 'Choose an account' with one or more account options"
+                "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
+            ):
+                print("ANR dialog detected, tapping 'Wait' to dismiss...")
+                tester.tap(540, 1395)  # "Wait" button
+                time.sleep(2 * TIMEOUT_MULTIPLIER)
+                continue  # Re-check after dismissing (account chooser may be underneath)
+
+            # Priority 2: Check for account chooser
+            if check_screen_shows(
+                tester,
+                "A dialog showing 'Choose an account' with an account listed"
             ):
                 print("Account chooser detected, selecting test account...")
                 # Tap the first account in the chooser list
@@ -285,6 +297,7 @@ def login_if_needed(tester):
                 login_done = True
                 break
 
+            # Priority 3: Check if login already completed
             if check_screen_shows(
                 tester,
                 "The WhizVoice app showing 'My Chats' page with chat list, "
@@ -293,15 +306,6 @@ def login_if_needed(tester):
                 print("Login completed directly")
                 login_done = True
                 break
-
-            if check_screen_shows(
-                tester,
-                "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
-            ):
-                print("ANR dialog detected, dismissing and retrying...")
-                tester.tap(540, 1395)  # "Wait" button
-                time.sleep(2 * TIMEOUT_MULTIPLIER)
-                break  # Retry sign-in tap
 
             time.sleep(poll_interval)
             elapsed += poll_interval
