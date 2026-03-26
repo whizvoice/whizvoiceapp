@@ -24,7 +24,7 @@ def test_whatsapp_input_not_found(tester):
     # Send a voice command that triggers WhatsApp messaging via screen agent
     # Use a contact name that exists in WhatsApp on the test device
     send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(30)  # wait for screen agent to complete
+    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
 
     # The draft overlay is transient - it may have already been shown and dismissed.
     # First check if we're still in WhatsApp with the overlay visible
