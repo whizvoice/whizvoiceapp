@@ -14,26 +14,26 @@ fun MicrophonePermissionDialog(
     onRequestPermission: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.semantics { 
+        onDismissRequest = {}, // Make dialog non-dismissible
+        modifier = Modifier.semantics {
             contentDescription = "Microphone permission dialog"
         },
-        title = { 
+        title = {
             Text(
                 "Microphone Permission Required",
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Microphone permission required title"
                 }
-            ) 
+            )
         },
-        text = { 
+        text = {
             Text(
                 "Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?",
                 textAlign = TextAlign.Start,
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Microphone permission explanation"
                 }
-            ) 
+            )
         },
         confirmButton = {
             Button(
@@ -41,26 +41,14 @@ fun MicrophonePermissionDialog(
                     onRequestPermission()
                     onDismiss()
                 },
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Grant microphone permission button"
                 }
             ) {
                 Text("Grant Permission")
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.semantics { 
-                    contentDescription = "Dismiss microphone permission dialog button"
-                }
-            ) {
-                Text("Not Now")
-            }
-        }
+        dismissButton = null // Remove the dismiss button entirely
     )
 }
 
