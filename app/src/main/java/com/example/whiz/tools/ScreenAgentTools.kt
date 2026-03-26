@@ -1181,7 +1181,7 @@ class ScreenAgentTools @Inject constructor(
                     if (currentScreen == WhatsAppScreen.UNKNOWN) {
                         if (dismissWhatsAppNotificationDialog(rootNode)) {
                             rootNode.recycle()
-                            delay(500)
+                            delay(2000)  // Wait for WhatsApp UI to settle after dialog dismissal
                             continue  // Re-check screen after dismissal
                         }
                     }
