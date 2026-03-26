@@ -1368,15 +1368,27 @@ class ScreenAgentTools @Inject constructor(
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
 
+            // Fallback: try "New Chat" flow via FAB button for contacts without chat history
+            Log.i(TAG, "Trying 'New Chat' via FAB button for contact without chat history: $chatName")
+            val newChatResult = startNewWhatsAppChat(accessibilityService, chatName)
+            if (newChatResult) {
+                Log.i(TAG, "Successfully opened new chat with $chatName via FAB")
+                return WhatsAppResult(
+                    success = true,
+                    action = "select_chat",
+                    chatName = chatName
+                )
+            }
+
             // UI dump for debugging - try to get current screen state
             val finalRootNode = accessibilityService.getCurrentRootNode()
             if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts")
+                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts and FAB fallback")
                 finalRootNode.recycle()
             } else {
                 logScreenAgentError(
                     reason = "whatsapp_chat_not_found",
-                    errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
+                    errorMessage = "Could not find chat '$chatName' after $attempts attempts and FAB fallback (no root node)",
                     packageName = "com.whatsapp"
                 )
             }
@@ -7927,6 +7939,153 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
     
+    /**
+     * Start a new WhatsApp chat via the FAB "Send message" button.
+     * Used as a fallback when search doesn't find a contact (no chat history).
+     * Returns true if a chat was successfully opened.
+     */
+    private suspend fun startNewWhatsAppChat(
+        accessibilityService: WhizAccessibilityService,
+        contactName: String
+    ): Boolean {
+        try {
+            // Exit search first by pressing back
+            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+            delay(500)
+
+            // Wait for chat list to appear
+            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 3000)) {
+                // Try one more back press
+                accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                delay(500)
+                if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 2000)) {
+                    Log.w(TAG, "Could not return to chat list for FAB fallback")
+                    return false
+                }
+            }
+
+            // Find and tap the "Send message" FAB
+            val rootNode = accessibilityService.getCurrentRootNode() ?: return false
+            val fabNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/fabText")
+            if (fabNodes == null || fabNodes.isEmpty()) {
+                Log.w(TAG, "FAB 'Send message' button not found")
+                rootNode.recycle()
+                return false
+            }
+
+            val fabClicked = fabNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            fabNodes.forEach { it.recycle() }
+            rootNode.recycle()
+
+            if (!fabClicked) {
+                Log.w(TAG, "Failed to click FAB button")
+                return false
+            }
+
+            Log.i(TAG, "Tapped 'Send message' FAB, waiting for contact picker...")
+            delay(1500) // Wait for contact picker to load
+
+            // Find the search/filter input in the contact picker
+            val pickerRoot = accessibilityService.getCurrentRootNode() ?: return false
+
+            // Try multiple possible resource IDs for the contact picker search
+            val searchInputIds = listOf(
+                "com.whatsapp:id/contactpicker_text_filter",
+                "com.whatsapp:id/menuitem_search",
+                "com.whatsapp:id/search_input",
+                "com.whatsapp:id/entry"
+            )
+
+            var searchInput: AccessibilityNodeInfo? = null
+            for (id in searchInputIds) {
+                val nodes = pickerRoot.findAccessibilityNodeInfosByViewId(id)
+                if (nodes != null && nodes.isNotEmpty()) {
+                    searchInput = nodes[0]
+                    nodes.drop(1).forEach { it.recycle() }
+                    Log.d(TAG, "Found contact picker search input: $id")
+                    break
+                }
+            }
+
+            if (searchInput == null) {
+                // Try looking for any EditText as fallback
+                Log.w(TAG, "No known search input found in contact picker, dumping UI...")
+                dumpUIHierarchy(pickerRoot, "whatsapp_contact_picker_no_search", "Contact picker opened but search input not found")
+                pickerRoot.recycle()
+                return false
+            }
+
+            // Type the contact name
+            val setText = searchInput.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, contactName)
+                }
+            )
+            searchInput.recycle()
+            pickerRoot.recycle()
+
+            if (!setText) {
+                Log.w(TAG, "Failed to set text in contact picker search")
+                return false
+            }
+
+            Log.d(TAG, "Typed '$contactName' in contact picker, waiting for results...")
+            delay(1500) // Wait for contact search results
+
+            // Find and click the matching contact
+            val resultRoot = accessibilityService.getCurrentRootNode() ?: return false
+            val contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
+            if (contactNodes != null && contactNodes.isNotEmpty()) {
+                for (node in contactNodes) {
+                    // Skip the search input itself
+                    if (node.className?.toString() == "android.widget.EditText") continue
+
+                    val clickable = findClickableParent(node)
+                    if (clickable != null) {
+                        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickable.recycle()
+                        if (clicked) {
+                            Log.i(TAG, "Clicked contact '$contactName' in picker")
+                            contactNodes.forEach { it.recycle() }
+                            resultRoot.recycle()
+
+                            // Verify we're now inside a chat
+                            delay(1000)
+                            val chatCheck = accessibilityService.getCurrentRootNode()
+                            if (chatCheck != null) {
+                                val isInChat = detectWhatsAppScreen(chatCheck) == WhatsAppScreen.INSIDE_CHAT
+                                chatCheck.recycle()
+                                if (isInChat) {
+                                    Log.i(TAG, "Successfully entered new chat with $contactName")
+                                    return true
+                                }
+                                Log.w(TAG, "Clicked contact but not in chat yet, waiting...")
+                                delay(1000)
+                                val retryCheck = accessibilityService.getCurrentRootNode()
+                                if (retryCheck != null) {
+                                    val inChat = detectWhatsAppScreen(retryCheck) == WhatsAppScreen.INSIDE_CHAT
+                                    retryCheck.recycle()
+                                    return inChat
+                                }
+                            }
+                            return false
+                        }
+                    }
+                }
+                contactNodes.forEach { it.recycle() }
+            }
+
+            Log.w(TAG, "No matching contact found in picker for '$contactName'")
+            dumpUIHierarchy(resultRoot, "whatsapp_contact_picker_no_match", "Contact '$contactName' not found in contact picker")
+            resultRoot.recycle()
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in startNewWhatsAppChat fallback", e)
+            return false
+        }
+    }
+
     /**
      * Dismiss WhatsApp's "Turn on notifications" bottom sheet dialog.
      * Taps the X/close button (com.whatsapp:id/cancel, desc="Close").
