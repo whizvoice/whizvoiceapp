@@ -7999,19 +7999,42 @@ class ScreenAgentTools @Inject constructor(
         contactName: String
     ): Boolean {
         try {
-            // Exit search first by pressing back
-            accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-            delay(500)
+            // Re-launch WhatsApp to get to the chat list reliably
+            // (pressing back from search can be unreliable — may exit WhatsApp entirely)
+            val launchResult = launchApp("WhatsApp", enableOverlay = false)
+            if (!launchResult.success) {
+                Log.w(TAG, "Failed to re-launch WhatsApp for FAB fallback: ${launchResult.error}")
+                return false
+            }
+            delay(2000) // Wait for WhatsApp to load
 
-            // Wait for chat list to appear
-            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 3000)) {
-                // Try one more back press
-                accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                delay(500)
-                if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 2000)) {
-                    Log.w(TAG, "Could not return to chat list for FAB fallback")
-                    return false
+            // Navigate to chat list if not already there
+            for (attempt in 1..4) {
+                val navRoot = accessibilityService.getCurrentRootNode()
+                if (navRoot != null) {
+                    val screen = detectWhatsAppScreen(navRoot)
+                    navRoot.recycle()
+                    if (screen == WhatsAppScreen.CHAT_LIST) {
+                        Log.i(TAG, "On chat list for FAB fallback (attempt $attempt)")
+                        break
+                    }
+                    // Dismiss notification dialog if present
+                    val dialogRoot = accessibilityService.getCurrentRootNode()
+                    if (dialogRoot != null) {
+                        dismissWhatsAppNotificationDialog(dialogRoot)
+                        dialogRoot.recycle()
+                    }
+                    accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                    delay(1000)
+                } else {
+                    delay(1000)
                 }
+            }
+
+            // Verify we're on the chat list
+            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 3000)) {
+                Log.w(TAG, "Could not reach chat list for FAB fallback")
+                return false
             }
 
             // Find and tap the "Send message" FAB
