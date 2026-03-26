@@ -232,7 +232,7 @@ def login_if_needed(tester):
         # Dismiss ANR dialogs that block the app from appearing
         if check_screen_shows(
             tester,
-            "A system dialog saying 'isn't responding' with 'Close app' or 'Wait' buttons"
+            "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
         ):
             print("ANR dialog detected during app loading, tapping 'Wait'...")
             tester.tap(540, 1395)
@@ -260,7 +260,7 @@ def login_if_needed(tester):
 
     for attempt in range(1, max_sign_in_attempts + 1):
         # Dismiss any ANR dialog before tapping sign-in
-        if check_screen_shows(tester, "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"):
+        if check_screen_shows(tester, "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"):
             print("ANR dialog detected before sign-in tap, dismissing...")
             tester.tap(540, 1395)  # "Wait" button
             time.sleep(2 * TIMEOUT_MULTIPLIER)
@@ -296,7 +296,7 @@ def login_if_needed(tester):
 
             if check_screen_shows(
                 tester,
-                "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"
+                "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
             ):
                 print("ANR dialog detected, dismissing and retrying...")
                 tester.tap(540, 1395)  # "Wait" button
@@ -329,7 +329,7 @@ def login_if_needed(tester):
 
         if check_screen_shows(
             tester,
-            "An ANR dialog saying 'System UI isn't responding' with a 'Wait' button"
+            "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
         ):
             print("ANR dialog detected, dismissing...")
             tester.tap(540, 1395)
