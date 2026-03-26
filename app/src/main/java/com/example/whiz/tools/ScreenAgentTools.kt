@@ -1247,6 +1247,13 @@ class ScreenAgentTools @Inject constructor(
                 if (chatNodes.isNotEmpty()) {
                     Log.i(TAG, "Found ${chatNodes.size} nodes matching chat name")
 
+                    // DEBUG: REMOVE AFTER INVESTIGATION — dump UI before clicking matched node
+                    val debugPreClickRoot = accessibilityService.getCurrentRootNode()
+                    if (debugPreClickRoot != null) {
+                        dumpUIHierarchy(debugPreClickRoot, "debug_whatsapp_before_click_match", "DEBUG: UI before clicking matched node for '$chatName'. ${chatNodes.size} matches found.")
+                        debugPreClickRoot.recycle()
+                    }
+
                     // Try to click on each matching node until one succeeds
                     for (chatNode in chatNodes) {
                         // Use skipProfilePictures=true to avoid clicking on profile pictures
@@ -1314,6 +1321,8 @@ class ScreenAgentTools @Inject constructor(
                                                 }
                                             }
                                         } else {
+                                            // DEBUG: REMOVE AFTER INVESTIGATION — dump UI when click didn't open chat
+                                            dumpUIHierarchy(profileRoot, "debug_whatsapp_click_wrong_screen", "DEBUG: Click succeeded but not in chat, no message_btn. Screen after clicking '$chatName'")
                                             profileRoot.recycle()
                                         }
                                     }
@@ -1389,9 +1398,16 @@ class ScreenAgentTools @Inject constructor(
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
                         waitForSearchResults(accessibilityService, chatName, maxWaitMs = 2000)
+
+                        // DEBUG: REMOVE AFTER INVESTIGATION — dump UI after search results load
+                        val debugSearchRoot = accessibilityService.getCurrentRootNode()
+                        if (debugSearchRoot != null) {
+                            dumpUIHierarchy(debugSearchRoot, "debug_whatsapp_after_search", "DEBUG: UI after searching for '$chatName'")
+                            debugSearchRoot.recycle()
+                        }
                     }
                 }
-                
+
                 // Recycle root node
                 rootNode.recycle()
                 
