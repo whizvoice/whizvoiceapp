@@ -8780,6 +8780,14 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
 
+                // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+                val nodePackage = node.packageName?.toString() ?: ""
+                if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                    Log.d(TAG, "Skipping non-WhatsApp node: package='$nodePackage', text='${node.text}'")
+                    node.recycle()
+                    continue
+                }
+
                 // Normalize the node text and description for comparison
                 val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
                 val cleanedNodeDesc = nodeDesc?.let { normalizeChatName(it) }
@@ -8949,6 +8957,12 @@ class ScreenAgentTools @Inject constructor(
                 return
             }
 
+            // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+            val nodePackage = node.packageName?.toString() ?: ""
+            if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                return
+            }
+
             // Check current node's text
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
@@ -9050,6 +9064,13 @@ class ScreenAgentTools @Inject constructor(
             var bestTop = Int.MAX_VALUE
 
             for (node in clickableNodes) {
+                // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+                val nodePackage = node.packageName?.toString() ?: ""
+                if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                    node.recycle()
+                    continue
+                }
+
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 

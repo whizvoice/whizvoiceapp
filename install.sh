@@ -199,8 +199,9 @@ if adb shell pm list packages 2>/dev/null | grep -q "^package:${PACKAGE_NAME}$";
         log_with_time "⏳ Ensuring permissions are granted..."
         adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
         adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+        adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
         log_with_time "✅ Permissions granted"
-        
+
         # Launch and stop the app to verify it works
         log_with_time "⏳ Verifying app installation..."
         adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" >/dev/null 2>&1 || true
@@ -270,6 +271,7 @@ fi
 log_with_time "⏳ Granting permissions..."
 adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
 adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
 log_with_time "✅ Permissions granted"
 
 # Launch and stop the app to verify installation
