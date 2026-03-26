@@ -8056,59 +8056,70 @@ class ScreenAgentTools @Inject constructor(
             }
 
             Log.i(TAG, "Tapped 'Send message' FAB, waiting for contact picker...")
-            delay(1500) // Wait for contact picker to load
 
-            // Find the search/filter input in the contact picker
-            val pickerRoot = accessibilityService.getCurrentRootNode() ?: return false
-
-            // Try multiple possible resource IDs for the contact picker search
-            val searchInputIds = listOf(
-                "com.whatsapp:id/contactpicker_text_filter",
-                "com.whatsapp:id/menuitem_search",
-                "com.whatsapp:id/search_input",
-                "com.whatsapp:id/entry"
-            )
-
-            var searchInput: AccessibilityNodeInfo? = null
-            for (id in searchInputIds) {
-                val nodes = pickerRoot.findAccessibilityNodeInfosByViewId(id)
-                if (nodes != null && nodes.isNotEmpty()) {
-                    searchInput = nodes[0]
-                    nodes.drop(1).forEach { it.recycle() }
-                    Log.d(TAG, "Found contact picker search input: $id")
-                    break
-                }
+            // Wait for contacts to load (progress bar disappears, contact list appears)
+            val pickerReady = waitForCondition(maxWaitMs = 5000) {
+                val r = accessibilityService.getCurrentRootNode()
+                if (r != null) {
+                    // Check if contact list has loaded (contactpicker_row_name exists)
+                    val names = r.findAccessibilityNodeInfosByViewId("com.whatsapp:id/contactpicker_row_name")
+                    val hasContacts = names != null && names.isNotEmpty()
+                    names?.forEach { it.recycle() }
+                    r.recycle()
+                    hasContacts
+                } else false
             }
 
-            if (searchInput == null) {
-                // Try looking for any EditText as fallback
-                Log.w(TAG, "No known search input found in contact picker, dumping UI...")
-                dumpUIHierarchy(pickerRoot, "whatsapp_contact_picker_no_search", "Contact picker opened but search input not found")
-                pickerRoot.recycle()
+            if (!pickerReady) {
+                Log.w(TAG, "Contact picker did not load in time")
+                val debugRoot = accessibilityService.getCurrentRootNode()
+                if (debugRoot != null) {
+                    dumpUIHierarchy(debugRoot, "whatsapp_contact_picker_no_search", "Contact picker did not load contacts in time")
+                    debugRoot.recycle()
+                }
                 return false
             }
 
-            // Type the contact name
-            val setText = searchInput.performAction(
-                AccessibilityNodeInfo.ACTION_SET_TEXT,
-                android.os.Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, contactName)
+            // Try to find the contact directly by text (may be visible without searching)
+            var resultRoot = accessibilityService.getCurrentRootNode() ?: return false
+            var contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
+
+            // If not found directly, try using the search button
+            if (contactNodes == null || contactNodes.none { it.className?.toString() != "android.widget.EditText" }) {
+                contactNodes?.forEach { it.recycle() }
+                resultRoot.recycle()
+
+                Log.d(TAG, "Contact not visible in picker, trying search...")
+                val searchRoot = accessibilityService.getCurrentRootNode() ?: return false
+                val searchBtnNodes = searchRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/menuitem_search")
+                if (searchBtnNodes != null && searchBtnNodes.isNotEmpty()) {
+                    searchBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    searchBtnNodes.forEach { it.recycle() }
+                    searchRoot.recycle()
+                    delay(1000)
+
+                    // Now find the search input field and type
+                    val searchFieldRoot = accessibilityService.getCurrentRootNode() ?: return false
+                    val searchFields = searchFieldRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+                        ?: searchFieldRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/contactpicker_text_filter")
+                    if (searchFields != null && searchFields.isNotEmpty()) {
+                        searchFields[0].performAction(
+                            AccessibilityNodeInfo.ACTION_SET_TEXT,
+                            android.os.Bundle().apply {
+                                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, contactName)
+                            }
+                        )
+                        searchFields.forEach { it.recycle() }
+                    }
+                    searchFieldRoot.recycle()
+                    delay(1500) // Wait for search results
+                } else {
+                    searchRoot.recycle()
                 }
-            )
-            searchInput.recycle()
-            pickerRoot.recycle()
 
-            if (!setText) {
-                Log.w(TAG, "Failed to set text in contact picker search")
-                return false
+                resultRoot = accessibilityService.getCurrentRootNode() ?: return false
+                contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
             }
-
-            Log.d(TAG, "Typed '$contactName' in contact picker, waiting for results...")
-            delay(1500) // Wait for contact search results
-
-            // Find and click the matching contact
-            val resultRoot = accessibilityService.getCurrentRootNode() ?: return false
-            val contactNodes = resultRoot.findAccessibilityNodeInfosByText(contactName)
             if (contactNodes != null && contactNodes.isNotEmpty()) {
                 for (node in contactNodes) {
                     // Skip the search input itself
