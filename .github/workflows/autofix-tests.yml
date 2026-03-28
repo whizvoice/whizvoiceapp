@@ -1,0 +1,273 @@
+name: Autofix Verification Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  autofix-verification:
+    name: Autofix Verification
+    if: startsWith(github.head_ref, 'autofix/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout whizvoiceapp
+        uses: actions/checkout@v4
+
+      - name: Checkout android_accessibility_tester
+        uses: actions/checkout@v4
+        with:
+          repository: ruthgrace/android_accessibility_tester
+          path: android_accessibility_tester
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/powershell
+          df -h
+
+      - name: Install zstd
+        run: sudo apt-get install -y zstd
+
+      - name: Download x86_64 emulator snapshot
+        id: download-snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/avd-snapshot-download.sh
+          ./scripts/avd-snapshot-download.sh \
+            --force \
+            --release-tag emulator-snapshot-x86_64-v3 \
+            --system-image "system-images;android-36;google_apis_playstore;x86_64" \
+            --target-api 36
+          # Read emulator build saved by download script
+          BUILD_FILE="$HOME/.android/avd/whiz-test-device.avd/snapshot_emulator_build.txt"
+          if [[ -f "$BUILD_FILE" ]]; then
+            EMULATOR_BUILD=$(cat "$BUILD_FILE")
+            echo "emulator_build=${EMULATOR_BUILD}" >> "$GITHUB_OUTPUT"
+            echo "==> Using emulator build from snapshot: ${EMULATOR_BUILD}"
+          fi
+
+      - name: Setup ADB keys
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.ADB_PRIVATE_KEY }}' > ~/.android/adbkey
+          chmod 600 ~/.android/adbkey
+          ssh-keygen -y -f ~/.android/adbkey > ~/.android/adbkey.pub 2>/dev/null || adb keygen ~/.android/adbkey.pub || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install pytest
+          pip install -e android_accessibility_tester
+
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
+          echo "==> Debug keystore file size: $(wc -c < ~/.android/debug.keystore) bytes"
+          echo "==> Debug keystore SHA-1:"
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey 2>&1 | grep -i "sha1\|sha-1\|error\|exception" || echo "    WARNING: keytool produced no SHA output"
+          echo "==> All aliases in keystore:"
+          keytool -list -keystore ~/.android/debug.keystore -storepass android 2>&1 | head -10
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/build-cache
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: Stop Gradle daemon to free memory for emulator
+        run: ./gradlew --stop
+
+      - name: Verify APK signing
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          echo "==> Using apksigner: $APKSIGNER"
+          echo "==> APK signing certificate:"
+          "$APKSIGNER" verify --print-certs "$APK"
+          # Verify SHA-1 matches expected value
+          ACTUAL_SHA1=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep "SHA-1 digest" | head -1 | awk '{print $NF}')
+          EXPECTED_SHA1="c7992a6ecc0c8ebb0f28d35f94802d883073863b"
+          echo "==> Actual SHA-1:   $ACTUAL_SHA1"
+          echo "==> Expected SHA-1: $EXPECTED_SHA1"
+          if [ "$ACTUAL_SHA1" != "$EXPECTED_SHA1" ]; then
+            echo "ERROR: APK signing certificate does not match expected SHA-1!"
+            echo "The debug keystore secret may be wrong or Gradle used a different keystore."
+            exit 1
+          fi
+          echo "==> SHA-1 matches expected value"
+
+      - name: Setup test credentials
+        run: |
+          echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
+
+      - name: Create QCOW2 restore script
+        run: |
+          AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+          BACKUP_DIR="/tmp/qcow2-backup"
+
+          # Log which qemu-img we're using
+          QEMU_IMG_SYS=$(which qemu-img 2>/dev/null || echo "NOT FOUND")
+          QEMU_IMG_EMU="$ANDROID_SDK_ROOT/emulator/qemu-img"
+          echo "==> qemu-img versions:"
+          echo "    System: $QEMU_IMG_SYS"
+          $QEMU_IMG_SYS --version 2>&1 | head -1 || true
+          echo "    Emulator: $QEMU_IMG_EMU"
+          $QEMU_IMG_EMU --version 2>&1 | head -1 || true
+
+          # Log QCOW2 state BEFORE backup (using BOTH qemu-img versions)
+          echo "==> QCOW2 state BEFORE backup:"
+          for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '{print $5, $6, $7, $8}')"
+              echo "      system qemu-img:"
+              qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "        NO baseline_clean tag (system)"
+              echo "      emulator qemu-img:"
+              $QEMU_IMG_EMU snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "        NO baseline_clean tag (emulator)"
+            else
+              echo "    $f: DOES NOT EXIST"
+            fi
+          done
+
+          # Back up QCOW2 files now (before emulator-runner modifies config.ini)
+          mkdir -p "$BACKUP_DIR"
+          echo "==> Backing up QCOW2 overlay files..."
+          for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            if [ -f "$AVD_DIR/$f" ]; then
+              cp "$AVD_DIR/$f" "$BACKUP_DIR/$f"
+              echo "    Backed up $f ($(du -sh "$AVD_DIR/$f" | cut -f1))"
+            fi
+          done
+
+          # Write restore script (emulator-runner executes pre-launch script
+          # line-by-line in separate shells, so we need a single script file)
+          printf '%s\n' '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"' \
+            'BACKUP_DIR="/tmp/qcow2-backup"' \
+            'echo "==> Restoring QCOW2 overlay files after config.ini modification..."' \
+            'for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            '  if [ -f "$BACKUP_DIR/$f" ]; then' \
+            '    cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"' \
+            '    echo "    Restored $f"' \
+            '  else' \
+            '    echo "    WARNING: $BACKUP_DIR/$f not found!"' \
+            '  fi' \
+            'done' \
+            'echo "==> QCOW2 state AFTER restore:"' \
+            'for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            '  if [ -f "$AVD_DIR/$f" ]; then' \
+            '    echo "    $f: $(ls -la "$AVD_DIR/$f" | awk '"'"'{print $5, $6, $7, $8}'"'"')"' \
+            '    qemu-img snapshot -l "$AVD_DIR/$f" 2>&1 | grep -E "baseline" || echo "      NO baseline_clean tag"' \
+            '  fi' \
+            'done' \
+            'echo "==> Enabling QCOW2 overlay in config.ini..."' \
+            'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
+            'grep userdata.useQcow2 "$AVD_DIR/config.ini"' \
+            'echo "==> Ensuring cache partition is disabled..."' \
+            'sed -i "/^disk.cachePartition/d" "$AVD_DIR/config.ini"' \
+            'echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
+            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "/^disk.cachePartition/d" "$AVD_DIR/hardware-qemu.ini"; echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
+            'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
+            'echo "    disk.cachePartition=no set, cache files removed"' \
+            'echo "==> Adding hw.cpu.ncore=2 to snapshot hardware.ini..."' \
+            'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
+            'echo "==> DIAGNOSTIC: cache files status BEFORE emulator start:"' \
+            'ls -la "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2" 2>&1 || echo "    No cache files (expected)"' \
+            'echo "==> Restore complete. Emulator should load snapshot next."' \
+            > /tmp/restore-qcow2.sh
+          chmod +x /tmp/restore-qcow2.sh
+
+      - name: Run autofix verification tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANDROID_ACCESSIBILITY_TESTER_PATH: ${{ github.workspace }}/android_accessibility_tester
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis_playstore
+          arch: x86_64
+          emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
+          force-avd-creation: false
+          avd-name: whiz-test-device
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 3072 -no-snapshot-load -no-snapshot-save
+          disable-animations: true
+          pre-emulator-launch-script: /tmp/restore-qcow2.sh
+          script: bash scripts/run-autofix-tests.sh
+
+      - name: Diagnose test artifacts
+        if: always()
+        run: |
+          echo "==> Checking primary artifact location (autofix_test_output/):"
+          ls -la autofix_test_output/ 2>/dev/null || echo "    Directory does not exist or is empty"
+          echo ""
+          echo "==> Checking backup artifact location (/tmp/autofix-artifacts-backup/):"
+          ls -la /tmp/autofix-artifacts-backup/ 2>/dev/null || echo "    Directory does not exist or is empty"
+          echo ""
+          # If primary is empty but backup has files, copy them back
+          if [ ! -d autofix_test_output ] || [ -z "$(ls -A autofix_test_output 2>/dev/null)" ]; then
+            if [ -d /tmp/autofix-artifacts-backup ] && [ -n "$(ls -A /tmp/autofix-artifacts-backup 2>/dev/null)" ]; then
+              echo "==> Primary empty, restoring from backup..."
+              mkdir -p autofix_test_output
+              cp -r /tmp/autofix-artifacts-backup/* autofix_test_output/
+              echo "==> Restored artifacts:"
+              ls -la autofix_test_output/
+            fi
+          fi
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: autofix-test-output
+          path: |
+            autofix_test_output/
+            /tmp/autofix-artifacts-backup/
+          retention-days: 30

@@ -2,9 +2,12 @@
 #
 # Download and restore the whiz-test-device AVD snapshot from GitHub Releases.
 #
-# Usage: ./scripts/avd-snapshot-download.sh [--force]
+# Usage: ./scripts/avd-snapshot-download.sh [--force] [--release-tag TAG] [--system-image IMAGE] [--target-api LEVEL]
 #
 set -euo pipefail
+
+# Resolve script directory early (before any cd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # Constants — update these when uploading a new snapshot
@@ -23,6 +26,9 @@ FORCE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=true; shift ;;
+        --release-tag) RELEASE_TAG="$2"; shift 2 ;;
+        --system-image) SYSTEM_IMAGE="$2"; shift 2 ;;
+        --target-api) TARGET_API="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -125,8 +131,30 @@ m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
 print(' '.join(m['parts']))
 ")
 
+EMULATOR_BUILD=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('emulator_build', ''))
+")
+
+SNAPSHOT_SDK_ROOT=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('snapshot_sdk_root', ''))
+")
+
+SNAPSHOT_HOME=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print(m.get('snapshot_home', ''))
+")
+
 echo "    Expected SHA-256: $EXPECTED_SHA256"
 echo "    Parts: $PARTS"
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    echo "    Emulator build: $EMULATOR_BUILD"
+    echo "    NOTE: Pin emulator-build: $EMULATOR_BUILD in your CI workflow to match this snapshot."
+fi
 
 # ---------------------------------------------------------------------------
 # Reassemble parts
@@ -166,30 +194,147 @@ mkdir -p "$AVD_DIR"
 zstd -d "$ARCHIVE_PATH" --stdout | tar -xf - -C "$AVD_DIR"
 
 # ---------------------------------------------------------------------------
-# Rewrite absolute paths
+# Verify QCOW2 internal snapshots after extraction
+# ---------------------------------------------------------------------------
+echo "==> Verifying QCOW2 internal snapshots after extraction..."
+QEMU_IMG=""
+for candidate in "${SDK_ROOT}/emulator/qemu-img" "qemu-img"; do
+    if command -v "$candidate" &>/dev/null || [[ -x "$candidate" ]]; then
+        QEMU_IMG="$candidate"
+        break
+    fi
+done
+if [[ -z "$QEMU_IMG" ]]; then
+    echo "    Warning: qemu-img not found, skipping QCOW2 snapshot verification."
+else
+    for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+        if [[ -f "$qcow2" ]]; then
+            echo "    $(basename "$qcow2"):"
+            "$QEMU_IMG" snapshot -l "$qcow2" 2>&1 | grep -E "(ID|baseline)" || echo "      NO SNAPSHOTS FOUND"
+        fi
+    done
+fi
+echo "==> Checking QCOW2 backing file paths..."
+if [[ -n "$QEMU_IMG" ]]; then
+    for qcow2 in "$AVD_DIR"/cache.img.qcow2 "$AVD_DIR"/userdata-qemu.img.qcow2 "$AVD_DIR"/encryptionkey.img.qcow2; do
+        if [[ -f "$qcow2" ]]; then
+            BACKING=$("$QEMU_IMG" info "$qcow2" 2>/dev/null | grep "backing file:" | head -1 | sed 's/backing file: //' | sed 's/ (actual.*//')
+            if [[ -n "$BACKING" ]]; then
+                echo "    $(basename "$qcow2"): backing file = $BACKING"
+                if [[ "$BACKING" != "$(basename "$BACKING")" ]] && [[ "$BACKING" != "$AVD_DIR/"* ]]; then
+                    echo "      WARNING: absolute path from different machine. Snapshot loading may fail."
+                    echo "      Recreate the AVD and snapshot from scratch to get relative backing paths."
+                fi
+            fi
+        fi
+    done
+fi
+
+echo "==> AVD directory timestamps after extraction:"
+ls -la "$AVD_DIR"/*.qcow2 "$AVD_DIR"/*.img 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Rewrite absolute paths and system image references
 # ---------------------------------------------------------------------------
 echo "==> Rewriting absolute paths..."
 
-for ini_file in "$AVD_DIR/hardware-qemu.ini" \
+SED_INPLACE=(sed -i)
+if [[ "$(uname)" == "Darwin" ]]; then
+    SED_INPLACE=(sed -i '')
+fi
+
+# Compute the target system image subpath (e.g. "system-images/android-33/google_apis/x86_64/")
+TARGET_SYSDIR="$(echo "$SYSTEM_IMAGE" | tr ';' '/')/"
+
+for ini_file in "$AVD_DIR/config.ini" \
+                "$AVD_DIR/hardware-qemu.ini" \
                 "$AVD_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Rewriting $(basename "$ini_file")"
-        sed -i '' "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
-        sed -i '' "s|__HOME__|${HOME}|g" "$ini_file"
+        # Convert Windows backslashes to forward slashes (snapshot may have been created on Windows)
+        "${SED_INPLACE[@]}" 's|\\|/|g' "$ini_file"
+        "${SED_INPLACE[@]}" "s|__SDK_ROOT__|${SDK_ROOT}|g" "$ini_file"
+        "${SED_INPLACE[@]}" "s|__HOME__|${HOME}|g" "$ini_file"
+
+        # Rewrite system image path if it differs from target
+        # Matches patterns like "system-images/android-NN/target_type/arch/"
+        OLD_SYSDIR=$(grep -oE 'system-images/android-[0-9]+/[^/]+/[^/]+/' "$ini_file" | head -1 || true)
+        if [[ -n "$OLD_SYSDIR" ]] && [[ "$OLD_SYSDIR" != "$TARGET_SYSDIR" ]]; then
+            echo "    Rewriting system image path: $OLD_SYSDIR -> $TARGET_SYSDIR"
+            "${SED_INPLACE[@]}" "s|${OLD_SYSDIR}|${TARGET_SYSDIR}|g" "$ini_file"
+        fi
     fi
 done
+
+# Rewrite paths in snapshot.pb (protobuf binary with length-prefixed strings)
+SNAPSHOT_PB="$AVD_DIR/snapshots/$SNAPSHOT_NAME/snapshot.pb"
+if [[ -f "$SNAPSHOT_PB" ]]; then
+    # Convert Windows backslashes to forward slashes first (snapshot may have been created on Windows)
+    echo "    Converting backslashes in snapshot.pb..."
+    python3 "$SCRIPT_DIR/rewrite_snapshot_paths.py" "$SNAPSHOT_PB" "\\" "/"
+
+    # Normalize backslashes in manifest paths so they match the now-forward-slash .pb content
+    SNAPSHOT_SDK_ROOT=$(echo "$SNAPSHOT_SDK_ROOT" | tr '\\' '/')
+    SNAPSHOT_HOME=$(echo "$SNAPSHOT_HOME" | tr '\\' '/')
+
+    # Build replacement args: try manifest paths first, fall back to scanning the .pb
+    PB_ARGS=()
+    if [[ -n "$SNAPSHOT_SDK_ROOT" ]] && [[ "$SNAPSHOT_SDK_ROOT" != "$SDK_ROOT" ]]; then
+        PB_ARGS+=("$SNAPSHOT_SDK_ROOT" "$SDK_ROOT")
+    fi
+    if [[ -n "$SNAPSHOT_HOME" ]] && [[ "$SNAPSHOT_HOME" != "$HOME" ]]; then
+        PB_ARGS+=("$SNAPSHOT_HOME" "$HOME")
+    fi
+
+    # If manifest didn't have the paths, auto-detect from the .pb itself
+    if [[ ${#PB_ARGS[@]} -eq 0 ]]; then
+        DETECTED_HOME=$(strings "$SNAPSHOT_PB" | grep -oE '/[^ ]+/\.android/avd' | head -1 | sed 's|/.android/avd||')
+        DETECTED_SDK=$(strings "$SNAPSHOT_PB" | grep -oE '/[^ ]+/system-images/' | head -1 | sed 's|/system-images/||')
+        if [[ -n "$DETECTED_SDK" ]] && [[ "$DETECTED_SDK" != "$SDK_ROOT" ]]; then
+            PB_ARGS+=("$DETECTED_SDK" "$SDK_ROOT")
+        fi
+        if [[ -n "$DETECTED_HOME" ]] && [[ "$DETECTED_HOME" != "$HOME" ]]; then
+            PB_ARGS+=("$DETECTED_HOME" "$HOME")
+        fi
+    fi
+
+    # Also rewrite the system image subpath if it differs
+    OLD_PB_SYSDIR=$(strings "$SNAPSHOT_PB" | grep -oE 'system-images/android-[0-9]+/[^/]+/[^/]+/' | head -1 || true)
+    if [[ -n "$OLD_PB_SYSDIR" ]] && [[ "$OLD_PB_SYSDIR" != "$TARGET_SYSDIR" ]]; then
+        echo "    Rewriting snapshot.pb system image path: $OLD_PB_SYSDIR -> $TARGET_SYSDIR"
+        PB_ARGS+=("$OLD_PB_SYSDIR" "$TARGET_SYSDIR")
+    fi
+
+    if [[ ${#PB_ARGS[@]} -gt 0 ]]; then
+        echo "    Rewriting snapshot.pb paths..."
+        python3 "$SCRIPT_DIR/rewrite_snapshot_paths.py" "$SNAPSHOT_PB" "${PB_ARGS[@]}"
+    else
+        echo "    snapshot.pb paths already match local environment."
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Generate top-level AVD .ini
 # ---------------------------------------------------------------------------
 echo "==> Writing $AVD_INI"
 mkdir -p "$(dirname "$AVD_INI")"
+# Use TARGET_API if set, otherwise extract from SYSTEM_IMAGE (e.g. "system-images;android-35;..." -> 35)
+if [[ -z "${TARGET_API:-}" ]]; then
+    TARGET_API=$(echo "$SYSTEM_IMAGE" | sed 's/.*android-\([0-9]*\).*/\1/')
+fi
 cat > "$AVD_INI" <<EOF
 avd.ini.encoding=UTF-8
 path=${AVD_DIR}
 path.rel=avd/${AVD_NAME}.avd
-target=android-35
+target=android-${TARGET_API}
 EOF
+
+# ---------------------------------------------------------------------------
+# Save emulator build number for CI to read
+# ---------------------------------------------------------------------------
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    echo "$EMULATOR_BUILD" > "$AVD_DIR/snapshot_emulator_build.txt"
+fi
 
 # ---------------------------------------------------------------------------
 # Create runtime directories (emulator expects these)

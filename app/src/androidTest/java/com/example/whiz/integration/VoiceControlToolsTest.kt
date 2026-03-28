@@ -689,7 +689,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             Log.d(TAG, "⏳ Waiting for notification bubble mode to activate...")
             var bubbleStarted = false
             val bubbleStartTime = System.currentTimeMillis()
-            val bubbleTimeout = 10000L // 5 seconds timeout for bubble to activate
+            val bubbleTimeout = 35000L // 35 seconds timeout for bubble to activate (cold-cache Claude API can take ~30s)
 
             while (System.currentTimeMillis() - bubbleStartTime < bubbleTimeout) {
                 if (BubbleOverlayService.isActive) {

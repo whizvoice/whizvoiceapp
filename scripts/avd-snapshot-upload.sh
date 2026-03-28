@@ -2,7 +2,7 @@
 #
 # Package and upload the whiz-test-device AVD snapshot to GitHub Releases.
 #
-# Usage: ./scripts/avd-snapshot-upload.sh [--version v1]
+# Usage: ./scripts/avd-snapshot-upload.sh [--version v1] [--emulator-build BUILD_NUMBER]
 #
 set -euo pipefail
 
@@ -10,6 +10,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 VERSION="v1"
+EMULATOR_BUILD=""
 REPO="whizvoice/whizvoiceapp"
 AVD_NAME="whiz-test-device"
 AVD_DIR="$HOME/.android/avd/${AVD_NAME}.avd"
@@ -24,16 +25,37 @@ ARCHIVE_PATH="/tmp/avd-snapshot.tar.zst"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
+        --emulator-build) EMULATOR_BUILD="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 RELEASE_TAG="emulator-snapshot-${VERSION}"
 
+# Auto-detect emulator build number if not provided
+if [[ -z "$EMULATOR_BUILD" ]]; then
+    EMULATOR_BIN=""
+    for candidate in "${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}/emulator/emulator" \
+                     "/opt/homebrew/share/android-commandlinetools/emulator/emulator"; do
+        if [[ -x "$candidate" ]]; then
+            EMULATOR_BIN="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$EMULATOR_BIN" ]]; then
+        EMULATOR_BUILD=$("$EMULATOR_BIN" -version 2>/dev/null | grep -o 'build_id [0-9]*' | head -1 | awk '{print $2}' || true)
+    fi
+    if [[ -z "$EMULATOR_BUILD" ]]; then
+        echo "Warning: Could not auto-detect emulator build number. Use --emulator-build to set it."
+    else
+        echo "==> Auto-detected emulator build: $EMULATOR_BUILD"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-for cmd in zstd gh tar split shasum; do
+for cmd in zstd gh tar split sha256sum; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: '$cmd' is required but not found in PATH"
         exit 1
@@ -41,9 +63,11 @@ for cmd in zstd gh tar split shasum; do
 done
 
 # Ensure emulator is not running (snapshot files can be corrupted if in use)
-if pgrep -f "qemu-system.*${AVD_NAME}" &>/dev/null; then
-    echo "Error: Emulator appears to be running. Shut it down first."
-    exit 1
+if command -v pgrep &>/dev/null; then
+    if pgrep -f "qemu-system.*${AVD_NAME}" &>/dev/null; then
+        echo "Error: Emulator appears to be running. Shut it down first."
+        exit 1
+    fi
 fi
 
 if [[ ! -d "$AVD_DIR" ]]; then
@@ -103,17 +127,27 @@ echo "==> Sanitizing absolute paths"
 SDK_ROOT=$(grep '^android.sdk.root' "$STAGING_DIR/hardware-qemu.ini" | cut -d'=' -f2 | tr -d ' ')
 if [[ -z "$SDK_ROOT" ]]; then
     echo "Warning: Could not detect SDK root from hardware-qemu.ini"
-    SDK_ROOT="$HOME/Library/Android/sdk"
+    SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 fi
+
+_sed_inplace() {
+    if sed --version &>/dev/null; then
+        # GNU sed (Linux)
+        sed -i "$@"
+    else
+        # BSD sed (macOS)
+        sed -i '' "$@"
+    fi
+}
 
 for ini_file in "$STAGING_DIR/hardware-qemu.ini" \
                 "$STAGING_DIR/snapshots/$SNAPSHOT_NAME/hardware.ini"; do
     if [[ -f "$ini_file" ]]; then
         echo "    Sanitizing $(basename "$ini_file")"
         # Replace SDK root first (longer path, to avoid partial replacement)
-        sed -i '' "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
+        _sed_inplace "s|${SDK_ROOT}|__SDK_ROOT__|g" "$ini_file"
         # Replace home directory
-        sed -i '' "s|${HOME}|__HOME__|g" "$ini_file"
+        _sed_inplace "s|${HOME}|__HOME__|g" "$ini_file"
     fi
 done
 
@@ -129,7 +163,7 @@ echo "    Archive size: $ARCHIVE_SIZE"
 # ---------------------------------------------------------------------------
 # Checksum
 # ---------------------------------------------------------------------------
-SHA256=$(shasum -a 256 "$ARCHIVE_PATH" | cut -d' ' -f1)
+SHA256=$(sha256sum "$ARCHIVE_PATH" | cut -d' ' -f1)
 echo "    SHA-256: $SHA256"
 
 # ---------------------------------------------------------------------------
@@ -162,14 +196,22 @@ for part in "${PARTS[@]}"; do
 done
 PART_FILES_JSON+="]"
 
+EMULATOR_BUILD_JSON=""
+if [[ -n "$EMULATOR_BUILD" ]]; then
+    EMULATOR_BUILD_JSON="\"emulator_build\": \"${EMULATOR_BUILD}\","
+fi
+
 cat > "$MANIFEST_PATH" <<EOF
 {
   "version": "${VERSION}",
-  "arch": "arm64-v8a",
-  "api_level": 35,
-  "system_image": "system-images;android-35;google_apis_playstore;arm64-v8a",
+  "arch": "x86_64",
+  "api_level": 36,
+  "system_image": "system-images;android-36;google_apis_playstore;x86_64",
+  ${EMULATOR_BUILD_JSON}
   "avd_name": "${AVD_NAME}",
   "snapshot_name": "${SNAPSHOT_NAME}",
+  "snapshot_sdk_root": "${SDK_ROOT}",
+  "snapshot_home": "${HOME}",
   "parts": ${PART_FILES_JSON},
   "sha256": "${SHA256}",
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -204,9 +246,9 @@ gh release create "$RELEASE_TAG" \
     --title "Emulator AVD Snapshot ${VERSION}" \
     --notes "AVD snapshot for \`${AVD_NAME}\` with \`${SNAPSHOT_NAME}\` snapshot.
 
-**Arch:** arm64-v8a (Apple Silicon)
-**API Level:** 35
-**System Image:** google_apis_playstore;arm64-v8a
+**Arch:** x86_64
+**API Level:** 36
+**System Image:** google_apis_playstore;x86_64
 **SHA-256:** \`${SHA256}\`
 **Parts:** ${#PARTS[@]}
 

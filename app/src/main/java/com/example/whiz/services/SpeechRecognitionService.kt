@@ -810,36 +810,54 @@ class SpeechRecognitionService @Inject constructor(
 
                 Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
 
-                if (segmentText.isNotBlank()) {
+                // Fallback: if segment result is empty but we had good partials,
+                // use the last partial. Android's segmented recognizer sometimes
+                // delivers partials but then returns an empty final result.
+                // Guard: only fall back when peakPartialLength >= 4 to avoid
+                // sending noise artifacts ("a", "uh") as real messages.
+                val effectiveText = if (segmentText.isBlank() && _transcriptionState.value.isNotBlank()) {
+                    if (peakPartialLength >= 4) {
+                        val fallback = _transcriptionState.value.trim()
+                        Log.w(TAG, "🔄 SEGMENTED: Empty segment result but had partial '$fallback' (peak: $peakPartialLength), using as fallback")
+                        fallback
+                    } else {
+                        Log.d(TAG, "🔄 SEGMENTED: Empty segment result with short partials (peak: $peakPartialLength), suppressing fallback")
+                        ""
+                    }
+                } else {
+                    segmentText
+                }
+
+                if (effectiveText.isNotBlank()) {
                     // Guard against late segment results that duplicate already-sent text.
                     // Dedup state is reset in onBeginningOfSpeech, so this only catches
                     // duplicates within the same speech segment (not repeated utterances).
                     val autoSentText = BubbleOverlayService.lastAutoSentText
                     val isDupOfCallback = lastCallbackText.isNotBlank()
-                        && (segmentText.trim() == lastCallbackText.trim()
-                            || segmentText.trim().startsWith(lastCallbackText.trim())
-                            || lastCallbackText.trim().startsWith(segmentText.trim()))
+                        && (effectiveText.trim() == lastCallbackText.trim()
+                            || effectiveText.trim().startsWith(lastCallbackText.trim())
+                            || lastCallbackText.trim().startsWith(effectiveText.trim()))
                     val isDupOfAutoSent = autoSentText.isNotBlank()
-                        && (segmentText.trim() == autoSentText.trim()
-                            || segmentText.trim().startsWith(autoSentText.trim())
-                            || autoSentText.trim().startsWith(segmentText.trim()))
+                        && (effectiveText.trim() == autoSentText.trim()
+                            || effectiveText.trim().startsWith(autoSentText.trim())
+                            || autoSentText.trim().startsWith(effectiveText.trim()))
                     if (isDupOfCallback || isDupOfAutoSent) {
                         val dupSource = if (isDupOfAutoSent) "auto-sent '$autoSentText'"
                             else "callback '$lastCallbackText'"
-                        Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$segmentText' " +
+                        Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$effectiveText' " +
                                 "(already $dupSource)")
                     } else {
-                        _transcriptionState.value = segmentText
+                        _transcriptionState.value = effectiveText
                         lastSpeechActivityTimestamp = System.currentTimeMillis()
 
                         try {
-                            BubbleOverlayService.updateUserTranscription(segmentText)
+                            BubbleOverlayService.updateUserTranscription(effectiveText)
                         } catch (e: Exception) {
                             Log.w(TAG, "Could not update bubble overlay: ${e.message}")
                         }
 
-                        recognitionCallback?.invoke(segmentText)
-                        lastCallbackText = segmentText
+                        recognitionCallback?.invoke(effectiveText)
+                        lastCallbackText = effectiveText
                     }
                 }
 

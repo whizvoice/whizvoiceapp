@@ -67,13 +67,35 @@ jobs:
         run: ./gradlew testDebugUnitTest --stacktrace --parallel --build-cache --configuration-cache
 
       - name: Generate unit test report
-        uses: dorny/test-reporter@v1
         if: success() || failure()
-        with:
-          name: Unit Test Results
-          path: "app/build/test-results/testDebugUnitTest/TEST-*.xml"
-          reporter: java-junit
-          fail-on-error: true
+        run: |
+          echo "## Unit Test Results" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import xml.etree.ElementTree as ET, glob, sys
+          files = glob.glob('app/build/test-results/testDebugUnitTest/TEST-*.xml')
+          total = passed = failed = skipped = 0
+          failures = []
+          for f in files:
+              tree = ET.parse(f)
+              root = tree.getroot()
+              for tc in root.findall('.//testcase'):
+                  total += 1
+                  if tc.find('failure') is not None:
+                      failed += 1
+                      failures.append(f\"{tc.get('classname')}.{tc.get('name')}\")
+                  elif tc.find('skipped') is not None:
+                      skipped += 1
+                  else:
+                      passed += 1
+          print(f'| Passed | Failed | Skipped | Total |')
+          print(f'|--------|--------|---------|-------|')
+          print(f'| {passed} | {failed} | {skipped} | {total} |')
+          if failures:
+              print()
+              print('### Failed Tests')
+              for f in failures:
+                  print(f'- {f}')
+          " >> $GITHUB_STEP_SUMMARY
 
       - name: Upload lint results
         uses: actions/upload-artifact@v4
@@ -120,6 +142,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.DEBUG_KEYSTORE_BASE64 }}' | base64 -d > ~/.android/debug.keystore
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -363,14 +390,35 @@ jobs:
           fi
 
       - name: Generate instrumented test report
-        uses: dorny/test-reporter@v1
         if: success() || failure()
-        with:
-          name: Instrumented Test Results (API ${{ matrix.api-level }})
-          path: |
-            app/build/outputs/androidTest-results/connected/debug/TEST-*.xml
-          reporter: java-junit
-          fail-on-error: false
+        run: |
+          echo "## Instrumented Test Results (API ${{ matrix.api-level }})" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import xml.etree.ElementTree as ET, glob
+          files = glob.glob('app/build/outputs/androidTest-results/connected/debug/TEST-*.xml')
+          total = passed = failed = skipped = 0
+          failures = []
+          for f in files:
+              tree = ET.parse(f)
+              root = tree.getroot()
+              for tc in root.findall('.//testcase'):
+                  total += 1
+                  if tc.find('failure') is not None:
+                      failed += 1
+                      failures.append(f\"{tc.get('classname')}.{tc.get('name')}\")
+                  elif tc.find('skipped') is not None:
+                      skipped += 1
+                  else:
+                      passed += 1
+          print(f'| Passed | Failed | Skipped | Total |')
+          print(f'|--------|--------|---------|-------|')
+          print(f'| {passed} | {failed} | {skipped} | {total} |')
+          if failures:
+              print()
+              print('### Failed Tests')
+              for f in failures:
+                  print(f'- {f}')
+          " >> $GITHUB_STEP_SUMMARY
 
       - name: Debug - List test result files
         if: always()
@@ -412,6 +460,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.DEBUG_KEYSTORE_BASE64 }}' | base64 -d > ~/.android/debug.keystore
 
       - name: Cache Gradle packages
         uses: actions/cache@v4

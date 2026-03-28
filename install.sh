@@ -44,10 +44,14 @@ check_for_devices() {
         log_with_time "💡 Ensure USB debugging is enabled on your device and it's properly connected."
         exit 1
     fi
-    # Prefer physical device over emulator when both are connected
-    DEVICE_SERIAL=$(adb devices | grep -v "^emulator-" | grep "device$" | head -1 | cut -f1)
-    if [[ -n "$DEVICE_SERIAL" ]]; then
-        export ANDROID_SERIAL="$DEVICE_SERIAL"
+    # Respect existing ANDROID_SERIAL if set; otherwise prefer physical device over emulator
+    if [[ -n "$ANDROID_SERIAL" ]]; then
+        DEVICE_SERIAL="$ANDROID_SERIAL"
+    else
+        DEVICE_SERIAL=$(adb devices | grep -v "^emulator-" | grep "device$" | head -1 | cut -f1)
+        if [[ -n "$DEVICE_SERIAL" ]]; then
+            export ANDROID_SERIAL="$DEVICE_SERIAL"
+        fi
     fi
     log_with_time "✅ ADB device found."
 }
@@ -195,8 +199,9 @@ if adb shell pm list packages 2>/dev/null | grep -q "^package:${PACKAGE_NAME}$";
         log_with_time "⏳ Ensuring permissions are granted..."
         adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
         adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+        adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
         log_with_time "✅ Permissions granted"
-        
+
         # Launch and stop the app to verify it works
         log_with_time "⏳ Verifying app installation..."
         adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" >/dev/null 2>&1 || true
@@ -266,6 +271,7 @@ fi
 log_with_time "⏳ Granting permissions..."
 adb shell pm grant "$PACKAGE_NAME" android.permission.RECORD_AUDIO 2>/dev/null || true
 adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/null || true
+adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
 log_with_time "✅ Permissions granted"
 
 # Launch and stop the app to verify installation

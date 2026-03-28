@@ -1177,6 +1177,16 @@ class ScreenAgentTools @Inject constructor(
                         break
                     }
 
+                    // Try to dismiss known dialogs before pressing back
+                    if (currentScreen == WhatsAppScreen.UNKNOWN) {
+                        if (dismissWhatsAppNotificationDialog(rootNode)) {
+                            rootNode.recycle()
+                            // Poll until we're on a known screen (chat list) instead of hard wait
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 5000)
+                            continue  // Re-check screen after dismissal
+                        }
+                    }
+
                     rootNode.recycle()
 
                     // Not on chat list yet, press back
@@ -1250,7 +1260,7 @@ class ScreenAgentTools @Inject constructor(
                             
                             if (success) {
                                 // Wait to verify we're in the chat
-                                val inChat = waitForCondition(maxWaitMs = 2000) {
+                                val inChat = waitForCondition(maxWaitMs = 5000) {
                                     val rootNode = accessibilityService.getCurrentRootNode()
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
@@ -1273,9 +1283,44 @@ class ScreenAgentTools @Inject constructor(
                                         chatName = chatName
                                     )
                                 } else {
-                                    // Click succeeded but we're not in the chat (e.g., profile popup opened)
-                                    // Press back and try the next node
-                                    Log.w(TAG, "Click succeeded but not in chat - pressing back to retry")
+                                    // Click succeeded but we're not in the chat (e.g., contact profile page opened)
+                                    // Check for message_btn on contact profile page
+                                    Log.w(TAG, "Click succeeded but not in chat - checking for contact profile message button")
+                                    val profileRoot = accessibilityService.getCurrentRootNode()
+                                    if (profileRoot != null) {
+                                        val messageBtnNodes = profileRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
+                                        if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
+                                            Log.i(TAG, "Found message_btn on contact profile, clicking to open chat")
+                                            val msgClicked = messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                            messageBtnNodes.forEach { it.recycle() }
+                                            profileRoot.recycle()
+                                            if (msgClicked) {
+                                                delay(1000)
+                                                val msgInChat = waitForCondition(maxWaitMs = 5000) {
+                                                    val r = accessibilityService.getCurrentRootNode()
+                                                    if (r != null) {
+                                                        val ic = detectWhatsAppScreen(r) == WhatsAppScreen.INSIDE_CHAT
+                                                        r.recycle()
+                                                        ic
+                                                    } else false
+                                                }
+                                                if (msgInChat) {
+                                                    chatNodes.forEach { it.recycle() }
+                                                    rootNode.recycle()
+                                                    return WhatsAppResult(
+                                                        success = true,
+                                                        action = "select_chat",
+                                                        chatName = chatName
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            dumpUIHierarchy(profileRoot, "whatsapp_click_opened_wrong_screen", "Click succeeded but not in chat and no message_btn found after clicking '$chatName'")
+                                            profileRoot.recycle()
+                                        }
+                                    }
+                                    // Fall back to pressing back and retrying
+                                    Log.w(TAG, "No message_btn found, pressing back to retry")
                                     accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                                     delay(300)
                                 }
@@ -1345,10 +1390,11 @@ class ScreenAgentTools @Inject constructor(
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
-                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 2000)
+                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
+
                     }
                 }
-                
+
                 // Recycle root node
                 rootNode.recycle()
                 
@@ -1526,6 +1572,63 @@ class ScreenAgentTools @Inject constructor(
                     error = "Could not get root node"
                 )
             }
+
+            // If we're on a contact profile page (has message_btn), click it to open the chat
+            val messageBtnNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
+            if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
+                Log.d(TAG, "On contact profile page, clicking message button to open chat")
+                messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                messageBtnNodes.forEach { it.recycle() }
+                rootNode.recycle()
+                delay(1500) // Wait for chat to open
+                val chatRootNode = accessibilityService.getCurrentRootNode()
+                if (chatRootNode == null) {
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not get root node after navigating from contact profile"
+                    )
+                }
+                val inputNodesFromProfile = mutableListOf<AccessibilityNodeInfo>()
+                findWhatsAppMessageInput(chatRootNode, inputNodesFromProfile, 0)
+                if (inputNodesFromProfile.isEmpty()) {
+                    dumpUIHierarchy(chatRootNode, "whatsapp_input_not_found", "Could not find message input field in WhatsApp after contact profile click")
+                    chatRootNode.recycle()
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not find message input field after navigating from contact profile"
+                    )
+                }
+                // Re-enter function logic with the new root; simplest approach: replace rootNode and inputNodes
+                val screenHeight2 = context.resources.displayMetrics.heightPixels
+                val inputNode2 = if (inputNodesFromProfile.size > 1) {
+                    inputNodesFromProfile.minByOrNull { node ->
+                        val r = android.graphics.Rect()
+                        node.getBoundsInScreen(r)
+                        Math.abs(r.centerY() - screenHeight2 * 0.85)
+                    } ?: inputNodesFromProfile[0]
+                } else {
+                    inputNodesFromProfile[0]
+                }
+                inputNode2.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                delay(500)
+                val appBounds2 = android.graphics.Rect()
+                chatRootNode.getBoundsInScreen(appBounds2)
+                val rect2 = android.graphics.Rect()
+                inputNode2.getBoundsInScreen(rect2)
+                val overlayBounds2 = android.graphics.Rect(appBounds2.left, rect2.top, appBounds2.right, rect2.bottom)
+                val overlayStarted2 = MessageDraftOverlayService.show(context, overlayBounds2, message, previousText)
+                inputNodesFromProfile.forEach { it.recycle() }
+                chatRootNode.recycle()
+                return DraftResult(
+                    success = overlayStarted2,
+                    message = message,
+                    overlayShown = overlayStarted2,
+                    error = if (!overlayStarted2) "Failed to show draft overlay" else null
+                )
+            }
+            messageBtnNodes?.forEach { it.recycle() }
 
             // Find the WhatsApp message input field specifically
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
@@ -7861,6 +7964,68 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
     
+    /**
+     * Dismiss WhatsApp's "Turn on notifications" bottom sheet dialog.
+     * Taps the X/close button (com.whatsapp:id/cancel, desc="Close").
+     * Returns true if the dialog was found and dismissed.
+     */
+    private fun dismissWhatsAppNotificationDialog(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            // Check if the notifications dialog is showing via its title
+            val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/permission_title")
+            val hasDialog = titleNodes != null && titleNodes.isNotEmpty()
+            titleNodes?.forEach { it.recycle() }
+
+            if (!hasDialog) {
+                // Fallback: check by text in case resource ID changed
+                val textNodes = mutableListOf<AccessibilityNodeInfo>()
+                findNodesByText(rootNode, "Turn on notifications", textNodes)
+                val found = textNodes.isNotEmpty()
+                textNodes.forEach { it.recycle() }
+                if (!found) return false
+            }
+
+            Log.i(TAG, "Found WhatsApp 'Turn on notifications' dialog, dismissing...")
+
+            // Primary: tap the cancel button by resource ID
+            val cancelNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/cancel")
+            if (cancelNodes != null && cancelNodes.isNotEmpty()) {
+                for (node in cancelNodes) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) {
+                        Log.d(TAG, "Dismissed WhatsApp notification dialog via com.whatsapp:id/cancel")
+                        cancelNodes.forEach { it.recycle() }
+                        return true
+                    }
+                }
+                cancelNodes.forEach { it.recycle() }
+            }
+
+            // Fallback: find the Close button by content description
+            val closeNodes = rootNode.findAccessibilityNodeInfosByText("Close")
+            if (closeNodes != null && closeNodes.isNotEmpty()) {
+                for (node in closeNodes) {
+                    if (node.contentDescription?.toString() == "Close") {
+                        val clickable = findClickableParent(node) ?: node
+                        val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.d(TAG, "Dismissed WhatsApp notification dialog via 'Close' content-desc")
+                            closeNodes.forEach { it.recycle() }
+                            return true
+                        }
+                    }
+                }
+                closeNodes.forEach { it.recycle() }
+            }
+
+            Log.w(TAG, "Found notification dialog but could not find close button")
+            return false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error dismissing WhatsApp notification dialog: ${e.message}")
+            return false
+        }
+    }
+
     private enum class WhatsAppScreen {
         CHAT_LIST,
         INSIDE_CHAT,
@@ -7913,6 +8078,16 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Check for Community page - it has conversations_row_contact_name like the
+            // main chat list, but it's a different screen. Detect it early and return
+            // UNKNOWN so back-navigation will press back to the real chat list.
+            val communityName = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/community_navigation_communityName")
+            if (communityName != null && communityName.isNotEmpty()) {
+                communityName.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp Community page - not the main chat list")
+                return WhatsAppScreen.UNKNOWN
+            }
+
             // Check if we're inside a chat first (most specific screen)
             // A chat screen has the message input field and/or conversation elements
             val messageInputField = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/entry")
@@ -7930,12 +8105,15 @@ class ScreenAgentTools @Inject constructor(
                 return WhatsAppScreen.INSIDE_CHAT
             }
 
-            // Check for chat list elements
-            val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
-            if (chatList != null && chatList.isNotEmpty()) {
-                chatList.forEach { it.recycle() }
-                Log.d(TAG, "On WhatsApp chat list")
-                return WhatsAppScreen.CHAT_LIST
+            // Check for chat list elements - only if we have main screen indicators,
+            // since conversations_row_contact_name also appears on Community pages
+            if (isMainChatList) {
+                val chatList = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+                if (chatList != null && chatList.isNotEmpty()) {
+                    chatList.forEach { it.recycle() }
+                    Log.d(TAG, "On WhatsApp chat list")
+                    return WhatsAppScreen.CHAT_LIST
+                }
             }
 
             // Check for the tab layout which indicates we're on the main screen with tabs
@@ -8602,6 +8780,14 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
 
+                // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+                val nodePackage = node.packageName?.toString() ?: ""
+                if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                    Log.d(TAG, "Skipping non-WhatsApp node: package='$nodePackage', text='${node.text}'")
+                    node.recycle()
+                    continue
+                }
+
                 // Normalize the node text and description for comparison
                 val cleanedNodeText = nodeText?.let { normalizeChatName(it) }
                 val cleanedNodeDesc = nodeDesc?.let { normalizeChatName(it) }
@@ -8771,6 +8957,12 @@ class ScreenAgentTools @Inject constructor(
                 return
             }
 
+            // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+            val nodePackage = node.packageName?.toString() ?: ""
+            if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                return
+            }
+
             // Check current node's text
             val nodeText = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
@@ -8872,6 +9064,13 @@ class ScreenAgentTools @Inject constructor(
             var bestTop = Int.MAX_VALUE
 
             for (node in clickableNodes) {
+                // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
+                val nodePackage = node.packageName?.toString() ?: ""
+                if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
+                    node.recycle()
+                    continue
+                }
+
                 val rect = android.graphics.Rect()
                 node.getBoundsInScreen(rect)
 

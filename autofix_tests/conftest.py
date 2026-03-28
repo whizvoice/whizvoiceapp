@@ -10,16 +10,24 @@ import os
 
 # Add this directory to path so helpers.py can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.expanduser('~/android_accessibility_tester'))
+# Support CI via ANDROID_ACCESSIBILITY_TESTER_PATH env var, fallback to ~/android_accessibility_tester
+_aat_path = os.environ.get(
+    'ANDROID_ACCESSIBILITY_TESTER_PATH',
+    os.path.expanduser('~/android_accessibility_tester')
+)
+sys.path.insert(0, _aat_path)
 
 import android_accessibility_tester
 import subprocess
 import pytest
 import time
+import glob
+import shutil
 
 from helpers import (
-    EMULATOR_SERIAL, DEBUG_PACKAGE,
+    EMULATOR_SERIAL, DEBUG_PACKAGE, TIMEOUT_MULTIPLIER,
     enable_accessibility_service, login_if_needed,
+    verify_required_apps,
 )
 
 ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
@@ -27,13 +35,17 @@ PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
 os.environ['PATH'] = f"{PLATFORM_TOOLS}:{os.environ.get('PATH', '')}"
 os.environ['ANDROID_HOME'] = ANDROID_HOME
 
-# Default to emulator-5556 unless overridden
+# Default to emulator-5554 unless overridden
 os.environ['ANDROID_SERIAL'] = EMULATOR_SERIAL
 print(f"Targeting emulator: {EMULATOR_SERIAL}")
 
 
 def load_anthropic_api_key():
-    """Load ANTHROPIC_API_KEY from export_anthropic_key.sh file."""
+    """Load ANTHROPIC_API_KEY from environment or export_anthropic_key.sh file."""
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        print("ANTHROPIC_API_KEY already set in environment")
+        return
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     key_file = os.path.join(script_dir, '..', 'export_anthropic_key.sh')
 
@@ -54,6 +66,46 @@ load_anthropic_api_key()
 
 
 # ---------------------------------------------------------------------------
+# Screenshot collection on test failure
+# ---------------------------------------------------------------------------
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Copy /tmp/whiz_*.png and /tmp/whiz_*.jpg into autofix_test_output/ on test failure."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        output_dir = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
+        os.makedirs(output_dir, exist_ok=True)
+        for pattern in ("/tmp/whiz_*.png", "/tmp/whiz_*.jpg"):
+            for src in glob.glob(pattern):
+                dst = os.path.join(output_dir, os.path.basename(src))
+                try:
+                    shutil.copy2(src, dst)
+                    print(f"Copied screenshot to artifacts: {dst}")
+                except OSError as e:
+                    print(f"Failed to copy {src}: {e}")
+
+        # Pull screen agent UI dumps from emulator
+        try:
+            result = subprocess.run(
+                ['adb', '-s', EMULATOR_SERIAL, 'shell', 'ls', '/sdcard/Download/whiz_ui_dump_*.txt'],
+                capture_output=True, text=True
+            )
+            for remote_path in result.stdout.strip().split('\n'):
+                remote_path = remote_path.strip()
+                if remote_path and not remote_path.startswith('ls:'):
+                    local_path = os.path.join(output_dir, os.path.basename(remote_path))
+                    subprocess.run(
+                        ['adb', '-s', EMULATOR_SERIAL, 'pull', remote_path, local_path],
+                        capture_output=True
+                    )
+                    print(f"Pulled UI dump to artifacts: {local_path}")
+        except Exception as e:
+            print(f"Failed to pull UI dumps: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -67,28 +119,43 @@ def app_installed():
 
     # Create output directory
     output_dir = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
-    import shutil
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Build and install the debug app directly to the emulator
-    # (install.sh overrides ANDROID_SERIAL to prefer physical device, which may not work)
+    # Verify snapshot loaded with required apps (e.g., WhatsApp)
+    verify_required_apps()
+
+    # Install using install.sh (handles permissions, signature mismatches, accessibility)
     project_dir = os.path.join(os.path.dirname(__file__), '..')
     apk_path = os.path.join(project_dir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
+    if not os.path.exists(apk_path):
+        print(f"APK not found at {apk_path}, building...")
+        subprocess.run(
+            [os.path.join(project_dir, 'gradlew'), 'assembleDebug', '--console=plain', '--quiet'],
+            check=True, cwd=project_dir
+        )
     subprocess.run(
-        [os.path.join(project_dir, 'gradlew'), 'assembleDebug', '--console=plain', '--quiet'],
-        check=True, cwd=project_dir
-    )
-    subprocess.run(
-        ['adb', '-s', EMULATOR_SERIAL, 'install', '-r', apk_path],
-        check=True
+        [os.path.join(project_dir, 'install.sh'), '--skip-build', '--force'],
+        check=True, cwd=project_dir, env=os.environ
     )
 
-    # Grant overlay permission
+    # Grant overlay permission (install.sh doesn't handle this)
     subprocess.run(
         ['adb', '-s', EMULATOR_SERIAL, 'shell', 'appops', 'set', DEBUG_PACKAGE,
          'SYSTEM_ALERT_WINDOW', 'allow'],
+        check=False
+    )
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'grant', DEBUG_PACKAGE,
+         'android.permission.SYSTEM_ALERT_WINDOW'],
+        check=False
+    )
+
+    # Grant contacts permission (needed for WhatsApp contact lookup)
+    subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'grant', DEBUG_PACKAGE,
+         'android.permission.READ_CONTACTS'],
         check=False
     )
 
@@ -116,7 +183,9 @@ def app_installed():
     _logcat_process = subprocess.Popen(
         ['adb', '-s', EMULATOR_SERIAL, 'logcat', '-s',
          'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*',
-         'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*'],
+         'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*',
+         'AuthRepository:*', 'AuthViewModel:*', 'GoogleSignIn:*',
+         'Credentials:*', 'GmsClient:*', 'SignInClient:*', 'Auth:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
@@ -156,11 +225,16 @@ def tester(app_installed):
     )
     time.sleep(0.5)
 
+    # Wake screen before opening app (may have gone dark since app_installed)
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_MENU'], check=False)
+    time.sleep(1)
+
     tester = android_accessibility_tester.AndroidAccessibilityTester(
         device_id=EMULATOR_SERIAL
     )
     tester.open_app(DEBUG_PACKAGE)
-    time.sleep(3)
+    time.sleep(3 * TIMEOUT_MULTIPLIER)
 
     # Log in if needed
     login_if_needed(tester)

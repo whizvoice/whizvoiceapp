@@ -447,7 +447,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 10000L, // Give more time for sync after reconnection
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "bot response about LEGO history after reconnection"
                 )
                 
@@ -611,7 +611,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Step 2: Send first message and disconnect immediately
-                val message1 = "ID ${System.currentTimeMillis()}: Please tell me the history of the world's most popular caffeinated drink?"
+                val message1 = "ID ${System.currentTimeMillis()}: Answer without tools. Please tell me the history of the world's most popular caffeinated drink?"
                 val sent1 = ComposeTestHelper.sendMessage(composeTestRule, message1)
                 if (!sent1) {
                     failWithScreenshot("Failed to send first message", "first_message_send_failed")
@@ -718,7 +718,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Step 4: Send second message and disconnect immediately
-                val message2 = "ID ${System.currentTimeMillis()}: Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
+                val message2 = "ID ${System.currentTimeMillis()}: Answer without tools. Tell me the history of the type of pasta commonly eaten with alfredo sauce?"
                 val sent2 = ComposeTestHelper.sendMessage(composeTestRule, message2)
                 if (!sent2) {
                     failWithScreenshot("Failed to send second message", "second_message_send_failed")
@@ -928,7 +928,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "coffee/tea response after reconnection"
                 )
                 
@@ -1029,7 +1029,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,  // Increased timeout to handle slower Claude API responses
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "fettuccine response after reconnection"
                 )
                 
@@ -1382,7 +1382,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 15000L,
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "Paris response in first chat"
                 )
                 
@@ -1492,53 +1492,26 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 composeTestRule.onNodeWithText(secondChatFirstMessage.take(20), substring = true).performClick()
                 
-                // Wait for chat to load by checking for the first message using content description
+                // Wait for chat to load by checking for the last offline message (visible at bottom)
                 val secondChatLoaded = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
-                    selector = { 
+                    selector = {
                         composeTestRule.onNode(
-                            ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(secondChatFirstMessage.substringBefore(":"))}.*")
+                            ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(offlineMessages2.last().substringBefore(":"))}.*")
                         )
                     },
                     timeoutMs = 2000L,
-                    description = "second chat loaded with first message"
+                    description = "second chat loaded with last offline message"
                 )
                 if (!secondChatLoaded) {
                     failWithScreenshot("Second chat did not load after clicking", "second_chat_not_loaded_after_click")
                 }
                 
-                // Verify all user messages are present in second chat using content descriptions
+                // Verify all user messages are present in second chat via repository (reliable regardless of scroll position)
+                val chatMessages = repository.getMessagesForChat(chatId2!!).first()
                 for (message in listOf(secondChatFirstMessage) + offlineMessages2) {
-                    // Use content description which is more reliable
-                    val contentDesc = "User message: $message"
-                    
-                    val messageFound = ComposeTestHelper.waitForElement(
-                        composeTestRule = composeTestRule,
-                        selector = { 
-                            composeTestRule.onNodeWithContentDescription(
-                                contentDesc
-                            )
-                        },
-                        timeoutMs = 3000L,
-                        description = "user message with content description"
-                    )
-                    
-                    if (!messageFound) {
-                        // Fallback: Try with substring matching on the content description
-                        val fallbackFound = ComposeTestHelper.waitForElement(
-                            composeTestRule = composeTestRule,
-                            selector = { 
-                                composeTestRule.onNode(
-                                    ComposeTestHelper.hasContentDescriptionMatching(".*User message:.*${Regex.escape(message.take(30))}.*")
-                                )
-                            },
-                            timeoutMs = 1000L,
-                            description = "user message with regex content description"
-                        )
-                        
-                        if (!fallbackFound) {
-                            failWithScreenshot("User message not found in second chat: ${message.take(50)}", "second_chat_missing_user_message")
-                        }
+                    if (!chatMessages.any { it.content.contains(message) }) {
+                        failWithScreenshot("User message not found in second chat: ${message.take(50)}", "second_chat_missing_user_message")
                     }
                 }
                 Log.d(TAG, "✅ All user messages found in second chat")
@@ -1569,7 +1542,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                             useUnmergedTree = true
                         )
                     },
-                    timeoutMs = 20000L,
+                    timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "Rome response in second chat"
                 )
                 

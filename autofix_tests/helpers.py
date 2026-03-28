@@ -13,16 +13,55 @@ import time
 
 ANDROID_HOME = os.environ.get('ANDROID_HOME', '/opt/homebrew/share/android-commandlinetools')
 PLATFORM_TOOLS = os.path.join(ANDROID_HOME, 'platform-tools')
-EMULATOR_SERIAL = os.environ.get('ANDROID_SERIAL', 'emulator-5556')
+EMULATOR_SERIAL = os.environ.get('ANDROID_SERIAL', 'emulator-5554')
 DEBUG_PACKAGE = "com.example.whiz.debug"
 ACCESSIBILITY_SERVICE = f"{DEBUG_PACKAGE}/com.example.whiz.accessibility.WhizAccessibilityService"
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'autofix_test_output')
+
+
+REQUIRED_PACKAGES = [
+    ("com.whatsapp", "WhatsApp"),
+]
+
 
 
 def is_emulator(serial=None):
     """Check if the target device is an emulator."""
     serial = serial or EMULATOR_SERIAL
     return serial.startswith('emulator-')
+
+
+# Double all timeouts on emulator (CI emulators are slower)
+TIMEOUT_MULTIPLIER = 2 if is_emulator() else 1
+
+
+def verify_required_apps():
+    """Verify that required apps are installed on the device.
+
+    This catches the case where an emulator snapshot failed to load
+    (cold boot fallback) and the device is missing apps that should
+    have been in the snapshot.
+    """
+    result = subprocess.run(
+        ['adb', '-s', EMULATOR_SERIAL, 'shell', 'pm', 'list', 'packages'],
+        capture_output=True, text=True
+    )
+    installed = result.stdout
+
+    missing = []
+    for package, name in REQUIRED_PACKAGES:
+        if package in installed:
+            print(f"  [OK] {name} ({package}) is installed")
+        else:
+            print(f"  [FAIL] {name} ({package}) is NOT installed")
+            missing.append(name)
+
+    if missing:
+        raise RuntimeError(
+            f"Required apps not installed: {', '.join(missing)}. "
+            f"The emulator snapshot may not have loaded correctly (cold boot fallback). "
+            f"Recreate the snapshot with all required apps installed and configured."
+        )
 
 
 def get_device_model():
@@ -129,6 +168,31 @@ def check_element_exists_in_ui(tester, content_desc=None, text=None, wait_after_
     )
 
 
+def check_screen_shows(tester, description):
+    """Check if the current screen matches a description using screenshot + Claude vision.
+
+    Unlike check_element_exists_in_ui, this does NOT use uiautomator dump,
+    so it won't disrupt the accessibility service.
+
+    Args:
+        tester: AndroidAccessibilityTester instance
+        description: What should be visible on screen
+
+    Returns:
+        True if the screenshot matches the description, False otherwise
+    """
+    try:
+        screenshot_path = "/tmp/screen_check.png"
+        tester.screenshot(screenshot_path)
+        result = tester.validate_screenshot(screenshot_path, description)
+        if not result.result:
+            print(f"Screen check failed for '{description}': {result.error}")
+        return result.result
+    except Exception as e:
+        print(f"Error checking screen: {e}")
+        return False
+
+
 def save_failed_screenshot(tester, test_name, step_name):
     """Save a screenshot and UI dump when a test step fails.
 
@@ -139,52 +203,167 @@ def save_failed_screenshot(tester, test_name, step_name):
 
 
 def login_if_needed(tester):
-    """Log in to the app if we're on the login screen."""
-    is_login_screen = check_element_exists_in_ui(
-        tester, text="Sign in with Google", wait_after_dump=2.0
-    )
+    """Log in to the app if we're on the login screen.
 
-    if is_login_screen:
-        print("Login screen detected, proceeding with login...")
-        tester.tap(540, 1450)
-        time.sleep(2)
-        tester.tap(540, 1300)
-        time.sleep(3)
+    Uses screenshot + Claude vision to check screen state (no uiautomator dump)
+    so the accessibility service permission is not disrupted.
+    """
+    # Wait for the app to finish loading (splash screen) before checking.
+    # Poll until we see the login screen, My Chats, or accessibility dialog.
+    app_ready_timeout = 15 * TIMEOUT_MULTIPLIER
+    poll_interval = 2 * TIMEOUT_MULTIPLIER
+    elapsed = 0
+    is_login_screen = False
 
-        reached_my_chats = check_element_exists_in_ui(
-            tester, text="My Chats", wait_after_dump=2.0
-        )
-        on_accessibility_dialog = check_element_exists_in_ui(
-            tester, text="Enable Accessibility Service", wait_after_dump=2.0
-        )
-        if not reached_my_chats and not on_accessibility_dialog:
-            save_failed_screenshot(tester, "login_if_needed", "failed_after_login")
-            assert False, "Failed to log in - expected My Chats page or accessibility dialog"
+    while elapsed < app_ready_timeout:
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app login/welcome screen with a 'Sign in with Google' button"
+        ):
+            is_login_screen = True
+            break
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app showing 'My Chats' page with chat list, "
+            "OR an 'Enable Accessibility Service' dialog"
+        ):
+            print("Already logged in, skipping login flow")
+            return
+        # Dismiss ANR dialogs that block the app from appearing
+        if check_screen_shows(
+            tester,
+            "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
+        ):
+            print("ANR dialog detected during app loading, tapping 'Wait'...")
+            tester.tap(540, 1395)
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
+            continue
+        print(f"Waiting for app to finish loading... ({elapsed}s/{app_ready_timeout}s)")
+        time.sleep(poll_interval)
+        elapsed += poll_interval
 
-        if reached_my_chats:
-            print("Successfully logged in and reached My Chats page")
-        else:
-            print("Successfully logged in (accessibility dialog shown)")
-    else:
-        print("Already logged in, skipping login flow")
+    if not is_login_screen:
+        print("App did not reach login or My Chats screen, skipping login flow")
+        return
+
+    print("Login screen detected, proceeding with login...")
+    # Wake screen in case it went dark before we could tap
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], check=False)
+    subprocess.run(['adb', '-s', EMULATOR_SERIAL, 'shell', 'svc', 'power', 'stayon', 'true'], check=False)
+    time.sleep(1 * TIMEOUT_MULTIPLIER)
+
+    # Phase 1: Tap "Sign in with Google" and wait for account chooser.
+    # Retry if the account chooser doesn't appear (ANR dialogs can steal focus).
+    max_sign_in_attempts = 3
+    poll_interval = 2 * TIMEOUT_MULTIPLIER
+    login_done = False
+
+    for attempt in range(1, max_sign_in_attempts + 1):
+        # Dismiss any ANR dialog before tapping sign-in
+        if check_screen_shows(tester, "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"):
+            print("ANR dialog detected before sign-in tap, dismissing...")
+            tester.tap(540, 1395)  # "Wait" button
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
+
+        # Tap "Sign in with Google" button (center of our login screen button)
+        print(f"Tapping 'Sign in with Google' (attempt {attempt})")
+        tester.tap(540, 1488)
+        time.sleep(2 * TIMEOUT_MULTIPLIER)
+
+        # Check what appeared: account chooser, or did login complete directly?
+        # Check ANR first since it can overlay other dialogs.
+        chooser_timeout = 10 * TIMEOUT_MULTIPLIER
+        elapsed = 0
+        while elapsed < chooser_timeout:
+            # Priority 1: Dismiss ANR dialogs (can overlay account chooser)
+            if check_screen_shows(
+                tester,
+                "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
+            ):
+                print("ANR dialog detected, tapping 'Wait' to dismiss...")
+                tester.tap(540, 1395)  # "Wait" button
+                time.sleep(2 * TIMEOUT_MULTIPLIER)
+                continue  # Re-check after dismissing (account chooser may be underneath)
+
+            # Priority 2: Check for account chooser
+            if check_screen_shows(
+                tester,
+                "A dialog showing 'Choose an account' with an account listed"
+            ):
+                print("Account chooser detected, selecting test account...")
+                # Tap the first account in the chooser list
+                tester.tap(540, 1271)
+                time.sleep(2 * TIMEOUT_MULTIPLIER)
+                login_done = True
+                break
+
+            # Priority 3: Check if login already completed
+            if check_screen_shows(
+                tester,
+                "The WhizVoice app showing 'My Chats' page with chat list, "
+                "OR an 'Enable Accessibility Service' dialog"
+            ):
+                print("Login completed directly")
+                login_done = True
+                break
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            print(f"Waiting for account chooser... ({elapsed}s/{chooser_timeout}s)")
+
+        if login_done:
+            break
+        print(f"Account chooser did not appear after attempt {attempt}, retrying...")
+
+    # Phase 2: Wait for login to finish (up to 15s base, 30s on emulator)
+    login_timeout = 15 * TIMEOUT_MULTIPLIER
+    elapsed = 0
+    success = False
+    while elapsed < login_timeout:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app showing 'My Chats' page with chat list, "
+            "OR an 'Enable Accessibility Service' dialog"
+        ):
+            success = True
+            break
+
+        if check_screen_shows(
+            tester,
+            "A dialog with the words 'isn't responding' and buttons that say 'Close app' and 'Wait'"
+        ):
+            print("ANR dialog detected, dismissing...")
+            tester.tap(540, 1395)
+            time.sleep(2 * TIMEOUT_MULTIPLIER)
+            continue
+
+        print(f"Waiting for login to complete... ({elapsed}s/{login_timeout}s)")
+
+    if not success:
+        save_failed_screenshot(tester, "login_if_needed", "failed_after_login")
+        assert False, "Failed to log in - expected My Chats page or accessibility dialog"
+
+    print("Successfully logged in")
 
 
 def navigate_to_my_chats(tester, test_name="unknown"):
     """Navigate to the My Chats page by pressing back until we reach it.
+
+    Uses screenshot + Claude vision to check screen state (no uiautomator dump).
 
     Returns:
         tuple: (success: bool, error_message: str)
     """
     max_attempts = 5
     for attempt in range(max_attempts):
-        has_my_chats_title = check_element_exists_in_ui(
-            tester, content_desc="My Chats Title", wait_after_dump=2.0
-        )
-        has_new_chat = check_element_exists_in_ui(
-            tester, content_desc="New Chat", wait_after_dump=0
-        )
-
-        if has_my_chats_title and has_new_chat:
+        if check_screen_shows(
+            tester,
+            "The WhizVoice app 'My Chats' page showing a list of chats "
+            "with a 'New Chat' button visible"
+        ):
             print("Successfully navigated to My Chats page")
             return True, ""
 
@@ -192,7 +371,7 @@ def navigate_to_my_chats(tester, test_name="unknown"):
         save_failed_screenshot(tester, test_name, f"navigate_to_my_chats_attempt_{attempt + 1}")
 
         tester.press_back()
-        time.sleep(2)
+        time.sleep(1 * TIMEOUT_MULTIPLIER)
 
     save_failed_screenshot(tester, test_name, f"navigate_to_my_chats_failed_after_{max_attempts}_attempts")
     return False, f"Could not reach My Chats page after {max_attempts} back presses"
