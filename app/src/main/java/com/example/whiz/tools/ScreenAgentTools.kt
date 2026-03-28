@@ -1260,7 +1260,7 @@ class ScreenAgentTools @Inject constructor(
                             
                             if (success) {
                                 // Wait to verify we're in the chat
-                                val inChat = waitForCondition(maxWaitMs = 2000) {
+                                val inChat = waitForCondition(maxWaitMs = 5000) {
                                     val rootNode = accessibilityService.getCurrentRootNode()
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
@@ -1296,7 +1296,7 @@ class ScreenAgentTools @Inject constructor(
                                             profileRoot.recycle()
                                             if (msgClicked) {
                                                 delay(1000)
-                                                val msgInChat = waitForCondition(maxWaitMs = 2000) {
+                                                val msgInChat = waitForCondition(maxWaitMs = 5000) {
                                                     val r = accessibilityService.getCurrentRootNode()
                                                     if (r != null) {
                                                         val ic = detectWhatsAppScreen(r) == WhatsAppScreen.INSIDE_CHAT
