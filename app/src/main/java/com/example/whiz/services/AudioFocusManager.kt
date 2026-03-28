@@ -69,6 +69,16 @@ class AudioFocusManager @Inject constructor(
             audioManager.abandonAudioFocusRequest(it)
         }
 
+        // Bug fix: reset the flag so that a previous intentional abandon
+        // doesn't prevent re-requests after an external focus steal
+        intentionalDuckingAbandon = false
+
+        // Clean up any stale request before creating a new one
+        duckingFocusRequest?.let {
+            Log.d(TAG, "Abandoning stale ducking request before creating new one")
+            audioManager.abandonAudioFocusRequest(it)
+        }
+
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANT)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
