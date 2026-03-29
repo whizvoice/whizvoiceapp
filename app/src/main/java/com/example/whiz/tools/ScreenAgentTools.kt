@@ -1659,8 +1659,12 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
-                val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
-                                   inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                // Note: Use ACTION_CLICK only (not ACTION_FOCUS || ACTION_CLICK) because WhatsApp
+                // auto-focuses the input field when entering a chat, so ACTION_FOCUS would succeed
+                // without triggering the keyboard, short-circuiting the || and skipping ACTION_CLICK.
+                val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                val clickSuccess = clickResult
+                Log.d(TAG, "EditText: click=$clickResult")
 
                 if (clickSuccess) {
                     Log.d(TAG, "Clicked/focused input field to open keyboard")
