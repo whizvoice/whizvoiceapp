@@ -64,6 +64,9 @@ class BubbleOverlayService : Service() {
     @Inject
     lateinit var toolExecutor: ToolExecutor
 
+    @Inject
+    lateinit var audioFocusManager: AudioFocusManager
+
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
     private var dismissTargetView: View? = null
@@ -917,6 +920,7 @@ class BubbleOverlayService : Service() {
         voiceManager.stopListening()
         voiceManager.stopSpeaking()
         voiceManager.setVoiceResponseEnabled(false)
+        audioFocusManager.abandonDuckingFocus()
 
         // Clear saved TTS state since bubble session is ending
         voiceManager.ttsStateBeforeBackground = null
