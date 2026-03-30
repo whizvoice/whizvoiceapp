@@ -3,7 +3,7 @@ package com.example.whiz.ui.components
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -138,9 +138,6 @@ fun ContactsPermissionDialog(
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
                 modifier = Modifier.semantics {
                     contentDescription = "Dismiss contacts permission dialog button"
                 }
@@ -193,9 +190,6 @@ fun CalendarPermissionDialog(
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
                 modifier = Modifier.semantics {
                     contentDescription = "Dismiss calendar permission dialog button"
                 }
@@ -242,15 +236,12 @@ fun AccessibilityPermissionDialog(
             )
         },
         confirmButton = {
-            TextButton(
+            Button(
                 onClick = {
                     onOpenSettings()
                     // Don't dismiss here - let onResume handle it when returning from Settings
                 },
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Open accessibility settings button"
                 }
             ) {

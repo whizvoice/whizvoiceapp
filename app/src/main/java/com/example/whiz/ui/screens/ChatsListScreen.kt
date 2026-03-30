@@ -38,7 +38,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ButtonDefaults
+
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -263,10 +263,7 @@ fun ChatsList(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { chatToDelete = null },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = Color.Black
-                    )
+                    onClick = { chatToDelete = null }
                 ) {
                     Text("Cancel")
                 }
