@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import kotlin.system.exitProcess
+import com.google.android.material.color.DynamicColors
 import dagger.hilt.android.HiltAndroidApp
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.services.SpeechRecognitionService
@@ -30,6 +31,9 @@ class WhizApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Apply Material You dynamic colors to all activities
+        DynamicColors.applyToActivitiesIfAvailable(this)
 
         Log.d("WhizApplication", "Application created - AppLifecycleService will automatically track foreground/background state")
 

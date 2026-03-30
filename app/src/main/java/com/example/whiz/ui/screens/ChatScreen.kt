@@ -1176,7 +1176,7 @@ fun MessageItem(
     
     val backgroundColor = when (message.type) {
         MessageType.USER -> MaterialTheme.colorScheme.surface  // White background for user messages
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer  // Light yellow from theme
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
     }
     val textColor = when (message.type) {
         MessageType.USER -> MaterialTheme.colorScheme.onSurface  // Black text for user messages
@@ -1186,8 +1186,8 @@ fun MessageItem(
     
     // Custom selection colors for user messages to ensure visibility
     val customSelectionColors = TextSelectionColors(
-        handleColor = MaterialTheme.colorScheme.primary,  // Yellow handle
-        backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)  // Semi-transparent yellow
+        handleColor = MaterialTheme.colorScheme.primary,
+        backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
     )
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {

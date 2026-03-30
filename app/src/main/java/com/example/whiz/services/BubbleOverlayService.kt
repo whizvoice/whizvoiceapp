@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -21,7 +22,9 @@ import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.annotation.AttrRes
 import androidx.cardview.widget.CardView
+import com.google.android.material.color.DynamicColors
 import com.example.whiz.MainActivity
 import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.ChatViewModel
@@ -67,6 +70,8 @@ class BubbleOverlayService : Service() {
     @Inject
     lateinit var audioFocusManager: AudioFocusManager
 
+    private val themedContext: Context by lazy { DynamicColors.wrapContextIfAvailable(this) }
+
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
     private var dismissTargetView: View? = null
@@ -88,7 +93,13 @@ class BubbleOverlayService : Service() {
     private var dismissedByUser = false
 
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
-    
+
+    private fun resolveThemeColor(@AttrRes attrId: Int): Int {
+        val typedValue = TypedValue()
+        themedContext.theme.resolveAttribute(attrId, typedValue, true)
+        return typedValue.data
+    }
+
     companion object {
         private const val TAG = "BubbleOverlayService"
         private const val CLICK_THRESHOLD = 30
@@ -283,7 +294,7 @@ class BubbleOverlayService : Service() {
     
     @SuppressLint("InflateParams")
     private fun createDismissTarget() {
-        dismissTargetView = LayoutInflater.from(this).inflate(R.layout.bubble_dismiss_target, null)
+        dismissTargetView = LayoutInflater.from(themedContext).inflate(R.layout.bubble_dismiss_target, null)
 
         // Force circular clipping
         dismissTargetView?.clipToOutline = true
@@ -324,7 +335,7 @@ class BubbleOverlayService : Service() {
 
     @SuppressLint("InflateParams")
     private fun createChatHead() {
-        chatHeadView = LayoutInflater.from(this).inflate(R.layout.bubble_chat_head, null)
+        chatHeadView = LayoutInflater.from(themedContext).inflate(R.layout.bubble_chat_head, null)
         
         // Set content description for accessibility and testing
         chatHeadView?.findViewById<CardView>(R.id.chat_head)?.contentDescription = "WhizVoice Chat Bubble"
@@ -819,9 +830,9 @@ class BubbleOverlayService : Service() {
             )
             
             messageBubble?.setCardBackgroundColor(
-                resources.getColor(
-                    if (isUserMessage) R.color.user_bubble else R.color.assistant_bubble,
-                    null
+                resolveThemeColor(
+                    if (isUserMessage) com.google.android.material.R.attr.colorSurface
+                    else com.google.android.material.R.attr.colorSecondaryContainer
                 )
             )
             
@@ -848,7 +859,7 @@ class BubbleOverlayService : Service() {
             messageText?.text = "$text..."
             messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
             messageBubble?.setCardBackgroundColor(
-                resources.getColor(R.color.user_bubble, null)
+                resolveThemeColor(com.google.android.material.R.attr.colorSurface)
             )
 
             // Show message bubble

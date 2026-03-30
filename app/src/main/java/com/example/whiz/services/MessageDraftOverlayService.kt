@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
 import com.example.whiz.R
+import com.google.android.material.color.DynamicColors
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -32,6 +33,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MessageDraftOverlayService : Service() {
+    private val themedContext: Context by lazy { DynamicColors.wrapContextIfAvailable(this) }
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
     private var dismissButtonView: View? = null
@@ -132,7 +134,7 @@ class MessageDraftOverlayService : Service() {
         }
         
         // Inflate the overlay layout
-        overlayView = LayoutInflater.from(this).inflate(R.layout.message_draft_overlay, null)
+        overlayView = LayoutInflater.from(themedContext).inflate(R.layout.message_draft_overlay, null)
         
         // Ensure the overlay is fully opaque (Note: Android 12+ enforces max 80% opacity for security)
         overlayView?.alpha = 1.0f
