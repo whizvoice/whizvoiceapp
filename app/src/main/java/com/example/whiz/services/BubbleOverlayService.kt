@@ -74,6 +74,8 @@ class BubbleOverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
+    private var speechBubbleView: View? = null
+    private var speechBubbleParams: WindowManager.LayoutParams? = null
     private var dismissTargetView: View? = null
     private var dismissTargetParams: WindowManager.LayoutParams? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
@@ -236,6 +238,7 @@ class BubbleOverlayService : Service() {
         }
 
         createChatHead()
+        createSpeechBubble()
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
 
@@ -419,6 +422,11 @@ class BubbleOverlayService : Service() {
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
                     windowManager.updateViewLayout(chatHeadView, params)
 
+                    // Reposition speech bubble to follow chat head during drag
+                    if (speechBubbleView?.visibility == View.VISIBLE) {
+                        positionSpeechBubble()
+                    }
+
                     // Update dismiss target size based on proximity
                     if (isDragging) {
                         updateDismissTargetProximity(params)
@@ -456,7 +464,74 @@ class BubbleOverlayService : Service() {
             }
         }
     }
-    
+
+    @SuppressLint("InflateParams")
+    private fun createSpeechBubble() {
+        speechBubbleView = LayoutInflater.from(themedContext).inflate(R.layout.bubble_speech, null)
+
+        speechBubbleParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = 0
+            y = 0
+        }
+
+        speechBubbleView?.visibility = View.GONE
+
+        try {
+            windowManager.addView(speechBubbleView, speechBubbleParams)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add speech bubble view", e)
+        }
+    }
+
+    private fun positionSpeechBubble() {
+        val chatParams = chatHeadView?.layoutParams as? WindowManager.LayoutParams ?: return
+        val sbView = speechBubbleView ?: return
+        val sbParams = speechBubbleParams ?: return
+
+        val density = resources.displayMetrics.density
+        val chatHeadSizePx = (60 * density).toInt()
+        val gapPx = (8 * density).toInt()
+        val maxBubbleWidth = (200 * density).toInt() + (24 * density).toInt() // maxWidth + padding
+
+        // Measure the speech bubble to get its actual size
+        sbView.measure(
+            View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.UNSPECIFIED
+        )
+        val bubbleHeight = sbView.measuredHeight
+
+        // x: offset from right edge — place speech bubble to the left of chat head
+        sbParams.x = chatParams.x + chatHeadSizePx + gapPx
+
+        // y: try to vertically center on chat head, but clamp to screen bounds
+        val chatHeadCenterY = chatParams.y + chatHeadSizePx / 2
+        var bubbleY = chatHeadCenterY - bubbleHeight / 2
+
+        // Clamp to screen bounds
+        val screenHeight = resources.displayMetrics.heightPixels
+        bubbleY = bubbleY.coerceIn(0, (screenHeight - bubbleHeight).coerceAtLeast(0))
+
+        sbParams.y = bubbleY
+
+        try {
+            windowManager.updateViewLayout(sbView, sbParams)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error positioning speech bubble", e)
+        }
+    }
+
     private fun showDismissTarget() {
         dismissTargetView?.let { view ->
             if (!isDismissTargetVisible) {
@@ -799,8 +874,8 @@ class BubbleOverlayService : Service() {
 
     private fun showMessage(text: String, isUserMessage: Boolean, isSystemMessage: Boolean = false) {
         handler.post {
-            val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
-            val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
+            val messageBubble = speechBubbleView?.findViewById<CardView>(R.id.message_bubble)
+            val messageText = speechBubbleView?.findViewById<TextView>(R.id.message_text)
 
             // Capture and reset partial flag before processing
             val wasShowingPartial = isShowingPartial
@@ -812,7 +887,7 @@ class BubbleOverlayService : Service() {
             // Check if previous message was superseded in under 1 second
             // Skip when previous message was a system message (mode change) since those aren't real messages
             // Skip when transitioning from partial to final result (natural transition, not a superseded message)
-            if (messageBubble?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage && !wasShowingPartial) {
+            if (speechBubbleView?.visibility == View.VISIBLE && lastMessageShownTimestamp > 0L && !lastMessageWasSystemMessage && !wasShowingPartial) {
                 val elapsed = System.currentTimeMillis() - lastMessageShownTimestamp
                 if (elapsed < UNREAD_THRESHOLD_MS) {
                     hasUnreadMessage = true
@@ -825,23 +900,24 @@ class BubbleOverlayService : Service() {
             // Set message text and styling
             messageText?.text = text
             messageText?.setTypeface(
-                messageText.typeface, 
+                messageText.typeface,
                 if (isUserMessage) android.graphics.Typeface.NORMAL else android.graphics.Typeface.ITALIC
             )
-            
+
             messageBubble?.setCardBackgroundColor(
                 resolveThemeColor(
                     if (isUserMessage) com.google.android.material.R.attr.colorSurface
                     else com.google.android.material.R.attr.colorSecondaryContainer
-                )
+                ) or 0xFF000000.toInt()
             )
-            
-            // Show message bubble
-            messageBubble?.visibility = View.VISIBLE
-            
+
+            // Show speech bubble and position it relative to chat head
+            speechBubbleView?.visibility = View.VISIBLE
+            positionSpeechBubble()
+
             // Auto-hide message after delay
             hideMessageRunnable = Runnable {
-                messageBubble?.visibility = View.GONE
+                speechBubbleView?.visibility = View.GONE
             }
             handler.postDelayed(hideMessageRunnable!!, MESSAGE_DISPLAY_DURATION)
         }
@@ -849,8 +925,8 @@ class BubbleOverlayService : Service() {
 
     private fun showPartialMessage(text: String) {
         handler.post {
-            val messageBubble = chatHeadView?.findViewById<CardView>(R.id.message_bubble)
-            val messageText = chatHeadView?.findViewById<TextView>(R.id.message_text)
+            val messageBubble = speechBubbleView?.findViewById<CardView>(R.id.message_bubble)
+            val messageText = speechBubbleView?.findViewById<TextView>(R.id.message_text)
 
             // Cancel any pending auto-hide timer — bubble stays visible while partials stream
             hideMessageRunnable?.let { handler.removeCallbacks(it) }
@@ -859,11 +935,12 @@ class BubbleOverlayService : Service() {
             messageText?.text = "$text..."
             messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
             messageBubble?.setCardBackgroundColor(
-                resolveThemeColor(com.google.android.material.R.attr.colorSurface)
+                resolveThemeColor(com.google.android.material.R.attr.colorSurface) or 0xFF000000.toInt()
             )
 
-            // Show message bubble
-            messageBubble?.visibility = View.VISIBLE
+            // Show speech bubble and position it relative to chat head
+            speechBubbleView?.visibility = View.VISIBLE
+            positionSpeechBubble()
             isShowingPartial = true
             lastPartialText = text
 
@@ -957,10 +1034,12 @@ class BubbleOverlayService : Service() {
         hideMessageRunnable?.let { handler.removeCallbacks(it) }
         try {
             chatHeadView?.let { windowManager.removeView(it) }
+            speechBubbleView?.let { windowManager.removeView(it) }
             dismissTargetView?.let { windowManager.removeView(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error removing views", e)
         }
+        speechBubbleView = null
 
         // Cancel the service scope to clean up all coroutines and prevent test isolation issues
         // This ensures that the SharedFlows are properly cleaned up even though they now have replay = 0
