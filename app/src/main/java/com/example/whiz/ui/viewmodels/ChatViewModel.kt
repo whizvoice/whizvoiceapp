@@ -2116,15 +2116,21 @@ class ChatViewModel @Inject constructor(
         // Record when we're backgrounding to prevent TTS replay of old messages
         lastBackgroundedTime = System.currentTimeMillis()
 
-        // Stop TTS audio if currently speaking
-        if (ttsManager.isSpeaking.value) {
-            ttsManager.stop()
-        }
-
-        // Disable TTS when backgrounding for better UX (avoid jarring auto-speech on foreground)
-        // Exception: If bubble overlay is active or pending, preserve TTS state so the bubble can speak
         if (!BubbleOverlayService.isActive && !BubbleOverlayService.isPendingStart) {
+            // No bubble — full teardown to prevent background audio
+            Log.d(TAG, "[LOG] No bubble - full TTS teardown")
+
+            pendingTTSCheckJob?.cancel()
+            pendingTTSMessage = null
+
+            if (ttsManager.isSpeaking.value) {
+                Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
+                ttsManager.stop()
+            }
+
             voiceManager.setVoiceResponseEnabled(false)
+        } else {
+            Log.d(TAG, "[LOG] Bubble overlay active/pending - preserving TTS state, active audio, and queued TTS for bubble continuity")
         }
 
         // VoiceManager handles stopping continuous listening on background
@@ -2301,6 +2307,14 @@ class ChatViewModel @Inject constructor(
                     }
                     return
                 }
+            }
+            // Guard against race condition: TTS can fire after app is backgrounded
+            // Bypass guard when bubble is active — bubble keeps TTS alive after Activity backgrounds
+            val bubbleTTSActive = BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart
+            if (!bubbleTTSActive && (!isVoiceResponseEnabled.value || !appLifecycleService.isInForeground())) {
+                Log.d(TAG, "startQueuedTTS: skipping - voiceResponse=${isVoiceResponseEnabled.value}, foreground=${appLifecycleService.isInForeground()}, bubbleTTS=$bubbleTTSActive")
+                pendingTTSMessage = null
+                return
             }
             Log.d(TAG, "Starting queued TTS after user finished speaking: '$message'")
             // Full-duplex: keep mic active when AEC/headphones available

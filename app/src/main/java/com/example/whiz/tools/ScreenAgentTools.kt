@@ -1659,8 +1659,12 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
                 // Click on the input field to focus it and open the keyboard
-                val clickSuccess = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS) ||
-                                   inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                // Note: Use ACTION_CLICK only (not ACTION_FOCUS || ACTION_CLICK) because WhatsApp
+                // auto-focuses the input field when entering a chat, so ACTION_FOCUS would succeed
+                // without triggering the keyboard, short-circuiting the || and skipping ACTION_CLICK.
+                val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                val clickSuccess = clickResult
+                Log.d(TAG, "EditText: click=$clickResult")
 
                 if (clickSuccess) {
                     Log.d(TAG, "Clicked/focused input field to open keyboard")
@@ -5502,38 +5506,11 @@ class ScreenAgentTools @Inject constructor(
                     clickableRoute.recycle()
                     Log.d(TAG, "Clicked first transit route option")
 
-                    // Wait for detail screen to load
-                    Thread.sleep(500)
-
-                    // Get fresh root node and look for "Start glanceable directions"
-                    val newRoot = accessibilityService.getCurrentRootNode()
-                    if (newRoot != null) {
-                        val glanceableNodes = mutableListOf<AccessibilityNodeInfo>()
-                        findNodesByContentDesc(newRoot, "Start glanceable directions", glanceableNodes)
-                        Log.d(TAG, "Transit mode: found ${glanceableNodes.size} glanceable directions buttons")
-
-                        for (node in glanceableNodes) {
-                            val clickableStart = findClickableParent(node)
-                            if (clickableStart != null) {
-                                val clicked = clickableStart.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                clickableStart.recycle()
-                                if (clicked) {
-                                    Log.d(TAG, "Clicked Start glanceable directions button")
-
-                                    // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
-                                    dismissStartThisTripDialog(accessibilityService)
-
-                                    glanceableNodes.forEach { it.recycle() }
-                                    newRoot.recycle()
-                                    tripCardNodeList.forEach { it.recycle() }
-                                    transitRoot.recycle()
-                                    return true
-                                }
-                            }
-                        }
-                        glanceableNodes.forEach { it.recycle() }
-                        newRoot.recycle()
-                    }
+                    // Google Maps now goes directly to trip details after clicking a card
+                    // (previously required clicking "Start glanceable directions" button)
+                    tripCardNodeList.forEach { it.recycle() }
+                    transitRoot.recycle()
+                    return true
                 } else {
                     Log.w(TAG, "Transit mode: could not find clickable parent for trip card")
                 }

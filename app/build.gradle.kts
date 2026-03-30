@@ -87,7 +87,7 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
     androidResources {
-        noCompress += listOf("pb", "scorer", "conf", "json")
+        noCompress += listOf("pb", "scorer", "conf", "json", "onnx")
     }
     packaging {
         jniLibs {
@@ -180,7 +180,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-swiperefresh:0.36.0")
 
     // Data & Storage
-    implementation("androidx.datastore:datastore-preferences:1.2.0")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
     
     // Text diffing library (Google's diff-match-patch)
     implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
@@ -190,6 +190,9 @@ dependencies {
 
     // Wake word detection (Vosk offline speech recognition)
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // ONNX Runtime for wake word classifier
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

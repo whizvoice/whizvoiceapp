@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.HearingDisabled
@@ -73,6 +74,8 @@ fun ChatsListScreen(
     onSettingsClick: () -> Unit,
     hasPermission: Boolean = false,
     onRequestPermission: () -> Unit = {},
+    isDeveloperMode: Boolean = false,
+    onBugReportClick: () -> Unit = {},
     viewModel: ChatsListViewModel = hiltViewModel()
 ) {
     val chats by viewModel.chats.collectAsState()
@@ -111,6 +114,17 @@ fun ChatsListScreen(
             CenterAlignedTopAppBar(
                 title = { Text("My Chats", modifier = Modifier.semantics { contentDescription = "My Chats Title" }) },
                 actions = {
+                    if (isDeveloperMode) {
+                        IconButton(
+                            onClick = onBugReportClick,
+                            modifier = Modifier.semantics { contentDescription = "Bug Report" }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BugReport,
+                                contentDescription = null
+                            )
+                        }
+                    }
                     if (!hasPermission) {
                         IconButton(
                             onClick = onRequestPermission,

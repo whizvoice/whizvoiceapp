@@ -25,6 +25,9 @@ class WhizApplication : Application() {
     @Inject
     lateinit var wakeWordPreferences: WakeWordPreferences
 
+    @Inject
+    lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
+
     override fun onCreate() {
         super.onCreate()
 
@@ -63,6 +66,13 @@ class WhizApplication : Application() {
                     Log.e("WhizApplication", "Crash saved to file: ${crashFile.absolutePath}")
                 } catch (e: Exception) {
                     Log.e("WhizApplication", "Failed to save crash to file", e)
+                }
+
+                // Release audio ducking so other apps' volume returns to normal
+                try {
+                    audioFocusManager.abandonDuckingFocus()
+                } catch (e: Exception) {
+                    Log.e("WhizApplication", "Failed to release audio ducking on crash", e)
                 }
 
                 // Show toast on main thread

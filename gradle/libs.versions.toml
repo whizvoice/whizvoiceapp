@@ -15,7 +15,7 @@ hilt = "2.56"
 hilt-navigation = "1.2.0"
 navigation-compose = "2.8.9"
 coroutines = "1.8.0"
-datastoreCoreAndroid = "1.2.0"
+datastoreCoreAndroid = "1.2.1"
 
 [libraries]
 # Core Android

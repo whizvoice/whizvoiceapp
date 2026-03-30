@@ -121,9 +121,25 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var rageShakeDetector: RageShakeDetector
 
-    // Rage shake bug report state
+    @Inject
+    lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
+
+    @Inject
+    lateinit var wakeWordPreferences: com.example.whiz.data.preferences.WakeWordPreferences
+
+    // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
     private val isSubmittingRageShake = mutableStateOf(false)
+    private var bugReportSource = "rage_shake" // "rage_shake" or "bug_button"
+
+    private data class BugReportSnapshot(
+        val uiHierarchy: String?,
+        val currentPackage: String?,
+        val screenshotBase64: String?,
+        val logcat: String?,
+        val audioBase64: String?
+    )
+    private var pendingSnapshot: BugReportSnapshot? = null
 
     // ViewModel for creating new chats on assistant relaunch
     private val chatsListViewModel: ChatsListViewModel by viewModels()
@@ -240,12 +256,36 @@ class MainActivity : ComponentActivity() {
                         } catch (e: Exception) {
                             Log.w(TAG, "Haptic feedback failed", e)
                         }
-                        showRageShakeDialog.value = true
+                        bugReportSource = "rage_shake"
+                        captureBugReportSnapshot()
                     }
                 } finally {
                     rageShakeDetector.stopListening()
                 }
             }
+        }
+
+        // Manage audio-only WakeWordService when dev mode is on but wake word is off
+        lifecycleScope.launch {
+            // Combine dev mode and wake word state
+            kotlinx.coroutines.flow.combine(
+                devPreferences.isDeveloperMode,
+                wakeWordPreferences.isEnabled
+            ) { devMode, wakeWordEnabled -> devMode to wakeWordEnabled }
+                .collect { (devMode, wakeWordEnabled) ->
+                    if (devMode && !wakeWordEnabled) {
+                        // Start audio-only mode for bug report audio capture
+                        Log.d(TAG, "Dev mode ON, wake word OFF -> starting audio-only WakeWordService")
+                        com.example.whiz.services.WakeWordService.startAudioOnly(this@MainActivity)
+                    } else if (!devMode && !wakeWordEnabled) {
+                        // Stop audio-only service if dev mode disabled and wake word not running
+                        if (com.example.whiz.services.WakeWordService.isRunning) {
+                            Log.d(TAG, "Dev mode OFF, wake word OFF -> stopping audio-only WakeWordService")
+                            com.example.whiz.services.WakeWordService.stop(this@MainActivity)
+                        }
+                    }
+                    // If wake word is enabled, normal mode is already running — no change needed
+                }
         }
 
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
@@ -354,6 +394,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     
+                    val isDeveloperMode by devPreferences.isDeveloperMode.collectAsState()
+
                     WhizNavHost(
                         navController = navController,
                         preloadManager = preloadManager,
@@ -362,6 +404,8 @@ class MainActivity : ComponentActivity() {
                         hasPermission = stablePermissionManager.microphonePermissionGranted.collectAsState().value,
                         onRequestPermission = { requestMicrophonePermission() },
                         isVoiceLaunch = isVoiceLaunch,
+                        isDeveloperMode = isDeveloperMode,
+                        onBugReportClick = { bugReportSource = "bug_button"; captureBugReportSnapshot() },
                         onChatViewModelReady = { vm ->
                             // Allow tests to capture the ViewModel
                             testViewModelCallback?.invoke(vm)
@@ -461,6 +505,7 @@ class MainActivity : ComponentActivity() {
                             onDismiss = {
                                 showRageShakeDialog.value = false
                                 isSubmittingRageShake.value = false
+                                pendingSnapshot = null
                             },
                             onSubmit = { description ->
                                 submitRageShakeReport(description)
@@ -1118,71 +1163,137 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Submit a rage shake bug report with screenshot, UI hierarchy, and device info.
+     * Capture logcat output for our app process.
      */
-    private fun submitRageShakeReport(description: String) {
-        isSubmittingRageShake.value = true
-        Log.i(TAG, "Submitting rage shake report")
+    private fun captureLogcat(): String? {
+        return try {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-d", "--pid", "${android.os.Process.myPid()}")
+            )
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            if (output.isBlank()) return null
+            // Keep last 200KB to avoid 413 errors (logcat can be very large)
+            val maxSize = 200_000
+            if (output.length > maxSize) output.takeLast(maxSize) else output
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to capture logcat", e)
+            null
+        }
+    }
+
+    /**
+     * Capture all diagnostic data at the moment the bug is triggered (before showing the dialog).
+     * This ensures the snapshot reflects the actual bug state, not the dialog.
+     */
+    private fun captureBugReportSnapshot() {
+        Log.i(TAG, "Capturing bug report snapshot")
 
         // Capture UI hierarchy and package name synchronously from accessibility service
         val uiHierarchy = WhizAccessibilityService.getCurrentUiHierarchy()
         val currentPackage = WhizAccessibilityService.getCurrentPackageName()
 
-        // Take screenshot asynchronously, then upload
+        // Capture logcat synchronously
+        val logcat = captureLogcat()
+
+        // Capture audio snapshot from WakeWordService ring buffer
+        val audioBase64 = try {
+            com.example.whiz.services.WakeWordService.getAudioSnapshot()?.let { pcmData ->
+                val wavBytes = com.example.whiz.services.WakeWordService.pcmToWavBytes(pcmData)
+                Base64.encodeToString(wavBytes, Base64.NO_WRAP)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to capture audio snapshot", e)
+            null
+        }
+
+        // Take screenshot asynchronously, then store snapshot and show dialog
         WhizAccessibilityService.takeScreenshotAsync { bitmap ->
-            lifecycleScope.launch(Dispatchers.IO) {
+            val screenshotBase64 = bitmap?.let {
                 try {
-                    // Encode screenshot as base64 JPEG
-                    val screenshotBase64 = bitmap?.let {
-                        try {
-                            val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
-                            val stream = ByteArrayOutputStream()
-                            softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
-                            softwareBitmap.recycle()
-                            it.recycle()
-                            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to encode screenshot", e)
-                            null
-                        }
-                    }
-
-                    val displayMetrics = resources.displayMetrics
-                    val request = ApiService.UiDumpCreate(
-                        dumpReason = "rage_shake",
-                        errorMessage = description.ifBlank { null },
-                        uiHierarchy = uiHierarchy,
-                        packageName = currentPackage,
-                        deviceModel = Build.MODEL,
-                        deviceManufacturer = Build.MANUFACTURER,
-                        androidVersion = Build.VERSION.RELEASE,
-                        screenWidth = displayMetrics.widthPixels,
-                        screenHeight = displayMetrics.heightPixels,
-                        appVersion = BuildConfig.VERSION_NAME,
-                        conversationId = null,
-                        recentActions = null,
-                        screenAgentContext = buildMap {
-                            put("report_type", "rage_shake")
-                            if (screenshotBase64 != null) {
-                                put("screenshot_base64", screenshotBase64)
-                            }
-                        }
-                    )
-
-                    apiService.uploadUiDump(request)
-                    Log.i(TAG, "Rage shake report uploaded successfully")
-
-                    launch(Dispatchers.Main) {
-                        isSubmittingRageShake.value = false
-                        showRageShakeDialog.value = false
-                        Toast.makeText(this@MainActivity, "Bug report submitted. Thank you!", Toast.LENGTH_SHORT).show()
-                    }
+                    val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
+                    val stream = ByteArrayOutputStream()
+                    softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
+                    softwareBitmap.recycle()
+                    it.recycle()
+                    Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to upload rage shake report", e)
-                    launch(Dispatchers.Main) {
-                        isSubmittingRageShake.value = false
-                        Toast.makeText(this@MainActivity, "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show()
+                    Log.w(TAG, "Failed to encode screenshot", e)
+                    null
+                }
+            }
+
+            pendingSnapshot = BugReportSnapshot(
+                uiHierarchy = uiHierarchy,
+                currentPackage = currentPackage,
+                screenshotBase64 = screenshotBase64,
+                logcat = logcat,
+                audioBase64 = audioBase64
+            )
+            Log.i(TAG, "Bug report snapshot captured, showing dialog")
+            showRageShakeDialog.value = true
+        }
+    }
+
+    /**
+     * Submit a rage shake bug report using the pre-captured snapshot data.
+     */
+    private fun submitRageShakeReport(description: String) {
+        isSubmittingRageShake.value = true
+        Log.i(TAG, "Submitting rage shake report")
+
+        val snapshot = pendingSnapshot
+        if (snapshot == null) {
+            Log.e(TAG, "No pending snapshot available, cannot submit report")
+            isSubmittingRageShake.value = false
+            Toast.makeText(this, "Bug report data was lost. Please try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val displayMetrics = resources.displayMetrics
+                val request = ApiService.UiDumpCreate(
+                    dumpReason = bugReportSource,
+                    errorMessage = description.ifBlank { null },
+                    uiHierarchy = snapshot.uiHierarchy,
+                    packageName = snapshot.currentPackage,
+                    deviceModel = Build.MODEL,
+                    deviceManufacturer = Build.MANUFACTURER,
+                    androidVersion = Build.VERSION.RELEASE,
+                    screenWidth = displayMetrics.widthPixels,
+                    screenHeight = displayMetrics.heightPixels,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    conversationId = null,
+                    recentActions = null,
+                    screenAgentContext = buildMap {
+                        put("report_type", bugReportSource)
+                        if (snapshot.screenshotBase64 != null) {
+                            put("screenshot_base64", snapshot.screenshotBase64)
+                        }
+                        if (snapshot.logcat != null) {
+                            put("logcat", snapshot.logcat)
+                        }
+                        if (snapshot.audioBase64 != null) {
+                            put("audio_base64", snapshot.audioBase64)
+                        }
                     }
+                )
+
+                apiService.uploadUiDump(request)
+                Log.i(TAG, "Rage shake report uploaded successfully")
+
+                launch(Dispatchers.Main) {
+                    isSubmittingRageShake.value = false
+                    showRageShakeDialog.value = false
+                    pendingSnapshot = null
+                    Toast.makeText(this@MainActivity, "Bug report submitted. Thank you!", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to upload rage shake report", e)
+                launch(Dispatchers.Main) {
+                    isSubmittingRageShake.value = false
+                    Toast.makeText(this@MainActivity, "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show()
                 }
             }
         }

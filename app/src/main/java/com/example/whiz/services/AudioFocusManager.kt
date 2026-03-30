@@ -54,7 +54,20 @@ class AudioFocusManager @Inject constructor(
      * @return true if ducking focus was granted
      */
     fun requestDuckingFocus(): Boolean {
-        if (_isDuckingActive.value) return true
+        intentionalDuckingAbandon = false
+        // Always ask the system rather than trusting our own state —
+        // guards against silent focus revocation on some OEM devices.
+        // requestAudioFocus() is idempotent: returns GRANTED if already held.
+
+        // Bug fix: reset the flag so that a previous intentional abandon
+        // doesn't prevent re-requests after an external focus steal
+        intentionalDuckingAbandon = false
+
+        // Clean up any stale request before creating a new one
+        duckingFocusRequest?.let {
+            Log.d(TAG, "Abandoning stale ducking request before creating new one")
+            audioManager.abandonAudioFocusRequest(it)
+        }
 
         // Bug fix: reset the flag so that a previous intentional abandon
         // doesn't prevent re-requests after an external focus steal
