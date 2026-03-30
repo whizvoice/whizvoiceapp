@@ -16,6 +16,17 @@ ln -s whizvoiceapp/test_output.log test_output.log
 
 and then open cursor with whiz as the project folder so that it has access to update both the webapp and the android app as necessary
 
+### optional: android claude code skills
+
+to install android-specific claude code skills (feature delivery, bug investigation, code review, etc.):
+
+```
+git clone https://github.com/tsurantino/android-skills.git ~/android-skills
+ln -s ~/android-skills/skills whizvoiceapp/.claude/skills
+```
+
+the symlink is gitignored so each developer sets it up locally.
+
 ## testing
 
 ### run tests on device

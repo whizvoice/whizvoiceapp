@@ -28,3 +28,4 @@ screen_agent_test_output/*
 debug_apk_checksum
 production_apk_checksum
 constants.py
+.claude/skills
