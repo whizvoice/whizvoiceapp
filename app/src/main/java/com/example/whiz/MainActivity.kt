@@ -233,9 +233,6 @@ class MainActivity : ComponentActivity() {
         // Check for all permissions at startup
         checkAllPermissions()
 
-        // Upload any pending crash report from previous session
-        uploadPendingCrashReport()
-
         // Start rage shake detection tied to activity lifecycle
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -1299,49 +1296,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Upload any pending crash report from a previous app crash.
-     * Called on app startup to send crash data to Supabase.
-     */
-    private fun uploadPendingCrashReport() {
-        val crashFile = File(filesDir, "pending_crash.json")
-        if (!crashFile.exists()) return
-
-        Log.i(TAG, "Found pending crash report, uploading...")
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val crashData = JSONObject(crashFile.readText())
-                val stackTrace = crashData.optString("stack_trace", "Unknown")
-                val firstLine = stackTrace.lineSequence().firstOrNull() ?: "Unknown crash"
-
-                val request = ApiService.UiDumpCreate(
-                    dumpReason = "app_crash",
-                    errorMessage = firstLine,
-                    uiHierarchy = null,
-                    packageName = packageName,
-                    deviceModel = crashData.optString("device_model"),
-                    deviceManufacturer = crashData.optString("device_manufacturer"),
-                    androidVersion = crashData.optString("android_version"),
-                    screenWidth = null,
-                    screenHeight = null,
-                    appVersion = crashData.optString("app_version"),
-                    conversationId = null,
-                    recentActions = null,
-                    screenAgentContext = mapOf(
-                        "thread_name" to crashData.optString("thread_name"),
-                        "stack_trace" to stackTrace,
-                        "crash_timestamp" to crashData.optLong("timestamp")
-                    )
-                )
-
-                apiService.uploadUiDump(request)
-                crashFile.delete()  // Only delete after successful upload
-                Log.i(TAG, "Crash report uploaded successfully")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to upload crash report (will retry on next launch)", e)
-                // Keep file for retry on next launch
-            }
-        }
-    }
 }
