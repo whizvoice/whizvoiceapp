@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import android.view.ContextThemeWrapper
 import com.example.whiz.R
 import com.google.android.material.color.DynamicColors
 import android.text.SpannableStringBuilder
@@ -33,7 +34,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MessageDraftOverlayService : Service() {
-    private val themedContext: Context by lazy { DynamicColors.wrapContextIfAvailable(this) }
+    private val themedContext: Context by lazy {
+        DynamicColors.wrapContextIfAvailable(ContextThemeWrapper(this, R.style.Theme_Whiz))
+    }
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
     private var dismissButtonView: View? = null
