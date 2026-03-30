@@ -181,9 +181,16 @@ class MessageDraftOverlayService : Service() {
             realSize.y
         }
 
+        // FLAG_LAYOUT_NO_LIMITS shifts the coordinate origin down by the status bar height.
+        // Measured empirically: offset = 132px = status bar height exactly.
+        val statusBarHeight = run {
+            val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
+        }
+
         // Calculate height from the input field position to actual bottom of screen
         val overlayHeight = realScreenHeight - bounds.top
-        
+
         // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
             overlayWidth,  // Use app width from bounds
@@ -201,12 +208,11 @@ class MessageDraftOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.left  // Start from app's left edge
-            // Position the overlay at the input field's top position
-            y = bounds.top  // Positioned at input field
+            y = bounds.top - statusBarHeight  // Compensate for FLAG_LAYOUT_NO_LIMITS offset
         }
-        
-        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top}, width=$overlayWidth (app width), height=$overlayHeight, realScreenHeight=$realScreenHeight")
-        
+
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - statusBarHeight}, width=$overlayWidth (app width), height=$overlayHeight, statusBarHeight=$statusBarHeight, realScreenHeight=$realScreenHeight")
+
         try {
             windowManager.addView(overlayView, params)
             Log.d(TAG, "Draft overlay added successfully")
@@ -233,7 +239,7 @@ class MessageDraftOverlayService : Service() {
 
             // Schedule auto-dismiss
             scheduleAutoDismiss()
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add draft overlay", e)
             stopSelf()
