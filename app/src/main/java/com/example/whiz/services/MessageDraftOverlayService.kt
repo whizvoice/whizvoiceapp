@@ -152,13 +152,11 @@ class MessageDraftOverlayService : Service() {
         val linearLayout = overlayView?.findViewById<CardView>(R.id.draft_card)?.getChildAt(0)
         linearLayout?.background?.alpha = 255
 
-        // Force text colors to be fully opaque
-        overlayView?.findViewById<TextView>(R.id.draft_label)?.let { label ->
-            label.setTextColor(label.currentTextColor or 0xFF000000.toInt())
-        }
-        overlayView?.findViewById<TextView>(R.id.draft_message_text)?.let { text ->
-            text.setTextColor(text.currentTextColor or 0xFF000000.toInt())
-        }
+        // Force text to maximum contrast: black in light mode, white in dark mode
+        val nightMode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val textColor = if (nightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) Color.WHITE else Color.BLACK
+        overlayView?.findViewById<TextView>(R.id.draft_label)?.setTextColor(textColor)
+        overlayView?.findViewById<TextView>(R.id.draft_message_text)?.setTextColor(textColor)
 
         // Set the message text with track changes if previous text is provided
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
