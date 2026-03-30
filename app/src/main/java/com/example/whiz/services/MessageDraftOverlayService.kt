@@ -196,7 +196,7 @@ class MessageDraftOverlayService : Service() {
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -210,6 +210,23 @@ class MessageDraftOverlayService : Service() {
         try {
             windowManager.addView(overlayView, params)
             Log.d(TAG, "Draft overlay added successfully")
+
+            // Correct position after layout — FLAG_LAYOUT_NO_LIMITS can shift the
+            // coordinate origin, so measure actual vs desired and fix the offset
+            overlayView?.post {
+                val loc = IntArray(2)
+                overlayView?.getLocationOnScreen(loc)
+                val correction = loc[1] - bounds.top
+                if (correction != 0) {
+                    params.y -= correction
+                    try {
+                        windowManager.updateViewLayout(overlayView, params)
+                        Log.d(TAG, "Overlay position corrected by ${correction}px")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to correct overlay position", e)
+                    }
+                }
+            }
 
             // Add dismiss button overlay
             createDismissButton(bounds)
