@@ -899,6 +899,7 @@ class BubbleOverlayService : Service() {
 
             // Set message text and styling
             messageText?.text = text
+            messageText?.setTextColor(android.graphics.Color.BLACK)
             messageText?.setTypeface(
                 messageText.typeface,
                 if (isUserMessage) android.graphics.Typeface.NORMAL else android.graphics.Typeface.ITALIC
@@ -928,6 +929,7 @@ class BubbleOverlayService : Service() {
 
             // Set partial text with trailing "..." to indicate in-progress
             messageText?.text = "$text..."
+            messageText?.setTextColor(android.graphics.Color.BLACK)
             messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
             messageBubble?.setCardBackgroundColor(android.graphics.Color.WHITE)
 

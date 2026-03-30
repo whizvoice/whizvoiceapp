@@ -4,7 +4,7 @@
     android:id="@+id/draft_card"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    app:cardBackgroundColor="?attr/colorSecondaryContainer"
+    app:cardBackgroundColor="@android:color/white"
     app:cardCornerRadius="0dp"
     app:cardElevation="8dp"
     android:layout_margin="0dp"
@@ -17,7 +17,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="?attr/colorSecondaryContainer"
+        android:background="@android:color/white"
         android:paddingHorizontal="16dp"
         android:paddingVertical="12dp">
 
@@ -27,7 +27,7 @@
             android:layout_height="wrap_content"
             android:text="WhizVoice Draft"
             android:textSize="11sp"
-            android:textColor="?attr/colorOnSecondaryContainer"
+            android:textColor="@android:color/black"
             android:textStyle="bold"
             android:layout_marginBottom="4dp"/>
 
@@ -35,7 +35,7 @@
             android:id="@+id/draft_message_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="?attr/colorOnSecondaryContainer"
+            android:textColor="@android:color/black"
             android:textSize="16sp"
             android:lineSpacingMultiplier="1.2"
             android:maxLines="5"
