@@ -144,8 +144,22 @@ class MessageDraftOverlayService : Service() {
         overlayView?.findViewById<CardView>(R.id.draft_card)?.apply {
             alpha = 1.0f
             cardElevation = 8f
+            // Force card background to be fully opaque (dynamic theme colors can be semi-transparent)
+            setCardBackgroundColor(cardBackgroundColor.defaultColor or 0xFF000000.toInt())
         }
-        
+
+        // Force the LinearLayout background to be fully opaque too
+        val linearLayout = overlayView?.findViewById<CardView>(R.id.draft_card)?.getChildAt(0)
+        linearLayout?.background?.alpha = 255
+
+        // Force text colors to be fully opaque
+        overlayView?.findViewById<TextView>(R.id.draft_label)?.let { label ->
+            label.setTextColor(label.currentTextColor or 0xFF000000.toInt())
+        }
+        overlayView?.findViewById<TextView>(R.id.draft_message_text)?.let { text ->
+            text.setTextColor(text.currentTextColor or 0xFF000000.toInt())
+        }
+
         // Set the message text with track changes if previous text is provided
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
         if (previousText != null && previousText != message) {

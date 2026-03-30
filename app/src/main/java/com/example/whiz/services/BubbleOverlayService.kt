@@ -24,6 +24,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.annotation.AttrRes
 import androidx.cardview.widget.CardView
+import android.view.ContextThemeWrapper
 import com.google.android.material.color.DynamicColors
 import com.example.whiz.MainActivity
 import com.example.whiz.R
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import android.content.res.Configuration
 import kotlin.math.abs
 import kotlin.math.pow
 import com.example.whiz.data.remote.WhizServerRepository
@@ -70,7 +72,9 @@ class BubbleOverlayService : Service() {
     @Inject
     lateinit var audioFocusManager: AudioFocusManager
 
-    private val themedContext: Context by lazy { DynamicColors.wrapContextIfAvailable(this) }
+    private val themedContext: Context by lazy {
+        DynamicColors.wrapContextIfAvailable(ContextThemeWrapper(this, R.style.Theme_Whiz))
+    }
 
     private lateinit var windowManager: WindowManager
     private var chatHeadView: View? = null
@@ -101,6 +105,17 @@ class BubbleOverlayService : Service() {
         themedContext.theme.resolveAttribute(attrId, typedValue, true)
         return typedValue.data
     }
+
+    private fun isDarkMode(): Boolean {
+        val nightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return nightMode == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun bubbleBackgroundColor(): Int =
+        if (isDarkMode()) android.graphics.Color.DKGRAY else android.graphics.Color.WHITE
+
+    private fun bubbleTextColor(): Int =
+        if (isDarkMode()) android.graphics.Color.WHITE else android.graphics.Color.BLACK
 
     companion object {
         private const val TAG = "BubbleOverlayService"
@@ -899,13 +914,13 @@ class BubbleOverlayService : Service() {
 
             // Set message text and styling
             messageText?.text = text
-            messageText?.setTextColor(android.graphics.Color.BLACK)
+            messageText?.setTextColor(bubbleTextColor())
             messageText?.setTypeface(
                 messageText.typeface,
                 if (isUserMessage) android.graphics.Typeface.NORMAL else android.graphics.Typeface.ITALIC
             )
 
-            messageBubble?.setCardBackgroundColor(android.graphics.Color.WHITE)
+            messageBubble?.setCardBackgroundColor(bubbleBackgroundColor())
 
             // Show speech bubble and position it relative to chat head
             speechBubbleView?.visibility = View.VISIBLE
@@ -929,9 +944,9 @@ class BubbleOverlayService : Service() {
 
             // Set partial text with trailing "..." to indicate in-progress
             messageText?.text = "$text..."
-            messageText?.setTextColor(android.graphics.Color.BLACK)
+            messageText?.setTextColor(bubbleTextColor())
             messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
-            messageBubble?.setCardBackgroundColor(android.graphics.Color.WHITE)
+            messageBubble?.setCardBackgroundColor(bubbleBackgroundColor())
 
             // Show speech bubble and position it relative to chat head
             speechBubbleView?.visibility = View.VISIBLE
