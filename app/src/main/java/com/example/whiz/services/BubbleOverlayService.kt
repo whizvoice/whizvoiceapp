@@ -904,12 +904,7 @@ class BubbleOverlayService : Service() {
                 if (isUserMessage) android.graphics.Typeface.NORMAL else android.graphics.Typeface.ITALIC
             )
 
-            messageBubble?.setCardBackgroundColor(
-                resolveThemeColor(
-                    if (isUserMessage) com.google.android.material.R.attr.colorSurface
-                    else com.google.android.material.R.attr.colorSecondaryContainer
-                ) or 0xFF000000.toInt()
-            )
+            messageBubble?.setCardBackgroundColor(android.graphics.Color.WHITE)
 
             // Show speech bubble and position it relative to chat head
             speechBubbleView?.visibility = View.VISIBLE
@@ -934,9 +929,7 @@ class BubbleOverlayService : Service() {
             // Set partial text with trailing "..." to indicate in-progress
             messageText?.text = "$text..."
             messageText?.setTypeface(messageText.typeface, android.graphics.Typeface.ITALIC)
-            messageBubble?.setCardBackgroundColor(
-                resolveThemeColor(com.google.android.material.R.attr.colorSurface) or 0xFF000000.toInt()
-            )
+            messageBubble?.setCardBackgroundColor(android.graphics.Color.WHITE)
 
             // Show speech bubble and position it relative to chat head
             speechBubbleView?.visibility = View.VISIBLE
