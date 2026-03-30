@@ -112,7 +112,7 @@ fun ChatsListScreen(
             SnackbarHost(hostState = snackbarHostState)
         },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text("My Chats", modifier = Modifier.semantics { contentDescription = "My Chats Title" }) },
                 actions = {
                     if (isDeveloperMode) {
