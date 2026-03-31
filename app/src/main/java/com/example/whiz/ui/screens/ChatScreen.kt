@@ -55,7 +55,6 @@ import androidx.compose.animation.core.StartOffset // Import StartOffset
 import androidx.compose.material3.MaterialTheme // Ensure MaterialTheme is imported if not covered by wildcard
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
-import com.example.whiz.permissions.MicrophonePermissionHandler
 import com.example.whiz.permissions.PermissionHandler
 import androidx.navigation.NavController
 import com.example.whiz.ui.navigation.Screen // Update this import
@@ -673,6 +672,7 @@ fun ChatScreen(
     }
     
     // Auto-prompt for microphone permission when app opens (if not already granted)
+    // Also dismiss the dialog when permission is granted (e.g. via MainActivity dialog)
     LaunchedEffect(effectiveHasPermission) {
         Log.d("ChatScreen", "Auto-permission check: effectiveHasPermission=$effectiveHasPermission")
         if (!effectiveHasPermission) {
@@ -680,6 +680,8 @@ fun ChatScreen(
             kotlinx.coroutines.delay(500L)
             Log.d("ChatScreen", "Auto-showing permission dialog - no microphone permission granted")
             showPermissionDialog = true
+        } else {
+            showPermissionDialog = false
         }
     }
     
@@ -704,24 +706,13 @@ fun ChatScreen(
         clipboardManager.setPrimaryClip(clipData)
     }
 
-    // Microphone permission dialog
+    // Microphone permission dialog (triggered by tapping mic without permission)
     if (showPermissionDialog) {
-        AlertDialog(
-            onDismissRequest = { showPermissionDialog = false },
-            title = { Text("Microphone Permission Required") },
-            text = { Text("Whiz is a voice assistant that requires microphone access to function properly. Would you like to grant microphone permission now?") },
-            confirmButton = {
-                Button(onClick = {
-                    showPermissionDialog = false
-                    onRequestPermission()
-                }) {
-                    Text("Grant Permission")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { showPermissionDialog = false }) {
-                    Text("Not Now")
-                }
+        com.example.whiz.ui.components.MicrophonePermissionDialog(
+            onDismiss = { showPermissionDialog = false },
+            onRequestPermission = {
+                showPermissionDialog = false
+                onRequestPermission()
             }
         )
     }
