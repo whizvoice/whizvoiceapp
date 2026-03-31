@@ -1,19 +1,96 @@
 package com.example.whiz.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+
+/**
+ * Inline dialog that renders within the activity's window instead of creating
+ * a separate window. This is required for lock screen compatibility —
+ * AlertDialog creates a separate window that doesn't inherit
+ * setShowWhenLocked(true), making buttons untappable on the lock screen.
+ */
+@Composable
+private fun InlineDialog(
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    title: @Composable (() -> Unit)? = null,
+    text: @Composable (() -> Unit)? = null,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable (() -> Unit)? = null
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(Float.MAX_VALUE)
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onDismissRequest() },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = modifier
+                .widthIn(max = 340.dp)
+                .padding(horizontal = 24.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { /* consume click so scrim handler doesn't fire */ },
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                if (title != null) {
+                    ProvideTextStyle(MaterialTheme.typography.headlineSmall) {
+                        title()
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+                if (text != null) {
+                    ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )) {
+                        text()
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (dismissButton != null) {
+                        dismissButton()
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    confirmButton()
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun MicrophonePermissionDialog(
     onDismiss: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = {}, // Make dialog non-dismissible
         modifier = Modifier.semantics {
             contentDescription = "Microphone permission dialog"
@@ -57,7 +134,7 @@ fun OverlayPermissionDialog(
     onDismiss: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = {}, // Make dialog non-dismissible
         modifier = Modifier.semantics {
             contentDescription = "Overlay permission dialog"
@@ -101,7 +178,7 @@ fun ContactsPermissionDialog(
     onDismiss: () -> Unit,
     onGrantPermission: () -> Unit
 ) {
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.semantics {
             contentDescription = "Contacts permission dialog"
@@ -153,7 +230,7 @@ fun CalendarPermissionDialog(
     onDismiss: () -> Unit,
     onGrantPermission: () -> Unit
 ) {
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.semantics {
             contentDescription = "Calendar permission dialog"
@@ -205,18 +282,18 @@ fun AccessibilityPermissionDialog(
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = {}, // Make dialog non-dismissible
-        modifier = Modifier.semantics { 
+        modifier = Modifier.semantics {
             contentDescription = "Accessibility permission dialog"
         },
-        title = { 
+        title = {
             Text(
                 "Enable Accessibility Service",
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Enable accessibility service title"
                 }
-            ) 
+            )
         },
         text = {
             Text(
@@ -230,7 +307,7 @@ fun AccessibilityPermissionDialog(
                       "2. Find 'WhizVoice' in the list\n" +
                       "3. Toggle it ON and confirm",
                 textAlign = TextAlign.Start,
-                modifier = Modifier.semantics { 
+                modifier = Modifier.semantics {
                     contentDescription = "Accessibility permission explanation"
                 }
             )

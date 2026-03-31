@@ -25,6 +25,9 @@ class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(co
         }
         Log.d(TAG, "Starting AssistantActivity from session's onCreate")
         startAssistantActivity(intent)
+        // Finish session immediately so its window doesn't steal touch input
+        // from the activity (especially critical on the lock screen)
+        finish()
     }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
