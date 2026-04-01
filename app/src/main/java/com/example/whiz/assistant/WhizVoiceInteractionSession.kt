@@ -11,23 +11,15 @@ import com.example.whiz.AssistantActivity
 
 class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(context) {
     private val TAG = "WhizVoiceInteractionSession"
+    private var activityLaunched = false
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate: Session created")
-        
+
         // Launch AssistantActivity which handles all the business logic
         // AssistantActivity uses Hilt for dependency injection
-        val intent = Intent(context, AssistantActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra("IS_ASSISTANT_LAUNCH", true)
-            putExtra("FROM_VOICE_SERVICE", true)
-        }
-        Log.d(TAG, "Starting AssistantActivity from session's onCreate")
-        startAssistantActivity(intent)
-        // Finish session immediately so its window doesn't steal touch input
-        // from the activity (especially critical on the lock screen)
-        finish()
+        launchAssistantActivity()
     }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
@@ -54,17 +46,29 @@ class WhizVoiceInteractionSession(context: Context) : VoiceInteractionSession(co
             "Consider using the new voice interaction APIs when available.")
     override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
         super.onHandleAssist(data, structure, content)
-        Log.d(TAG, "onHandleAssist received")
+        Log.d(TAG, "onHandleAssist received (activityLaunched=$activityLaunched)")
 
+        // onCreate already launched the activity — don't launch again or we'll
+        // crash with "Session does not match active session" after finish().
+        if (activityLaunched) {
+            Log.d(TAG, "onHandleAssist: Activity already launched from onCreate, skipping")
+            return
+        }
+        launchAssistantActivity()
+    }
+
+    private fun launchAssistantActivity() {
         val intent = Intent(context, AssistantActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("IS_ASSISTANT_LAUNCH", true)
             putExtra("FROM_VOICE_SERVICE", true)
-            data?.let { bundle -> putExtra("assist_bundle", bundle) }
         }
-        Log.d(TAG, "onHandleAssist: Starting AssistantActivity")
+        Log.d(TAG, "Launching AssistantActivity")
+        activityLaunched = true
         startAssistantActivity(intent)
-        finish() // Finish the session as the activity is now handling it.
+        // Finish session immediately so its window doesn't steal touch input
+        // from the activity (especially critical on the lock screen)
+        finish()
     }
 
 //    override fun onCreateContentView(): View {
