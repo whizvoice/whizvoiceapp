@@ -469,14 +469,9 @@ def test_whatsapp_draft_message(tester):
         print("\n========================================")
         print("STEP 6: Waiting for draft overlay to appear")
         print("========================================")
-        # wait for draft overlay to appear over whatsapp input text bar
-        # Y position varies by device: Pixel 8 uses 1380, Pixel 7a uses 1425
-        device_model = get_device_model()
-        overlay_y = 1380 if "Pixel 8" in device_model else 1425
-        # Wait for draft overlay to appear - check for the draft_card view via pixel color
-        # Colors are dynamic (Material You) so we accept any non-background color change
-        print(f"👀 Waiting for draft overlay at pixel (300, {overlay_y})...")
-        result = tester.wait_for_pixel_color(300, overlay_y, ['#fff9c4', '#fffad0', '#fff176', '#d2cea4', '#d2cfa5', '#e8def8', '#d0bcff', '#cac4d0', '#e6e0e9', '#eaddff'], timeout=30.0)
+        # Wait for draft overlay to appear by monitoring logcat for the overlay service log
+        print("👀 Waiting for draft overlay via logcat...")
+        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0)
         if result['matched']:
             print("✅ Draft overlay detected!")
         else:
@@ -495,7 +490,7 @@ def test_whatsapp_draft_message(tester):
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey whats up hows it going just tryna test whiz voice'. "
-            "There is also a colored notification bubble with the outline of a robot head. "
+            "There is also a white notification bubble with the outline of a robot head. "
             "There may or may not be an icon inside the robot head outline. "
         )
         if not validation_result:
@@ -534,7 +529,7 @@ def test_whatsapp_draft_message(tester):
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'just trying to test whiz voice' but may not be an exact match. "
             "The overlay should have some text in red strike out and some text in blue. "
-            "There is also a colored notification bubble with the outline of a robot head "
+            "There is also a white notification bubble with the outline of a robot head "
             "and a microphone icon inside."
         )
         if not validation_result:
@@ -573,7 +568,7 @@ def test_whatsapp_draft_message(tester):
             "At the bottom of the screen, there is NO colored overlay. "
             "The most recent message is something with text similar to: "
             "just trying to test WhizVoice. The exact wording does not matter. "
-            "There is also a colored notification bubble with the outline of a robot head "
+            "There is also a white notification bubble with the outline of a robot head "
             "and a microphone icon inside."
         )
         if not validation_result:
@@ -838,7 +833,7 @@ def test_youtube_music_integration(tester):
             "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
             "2) You should see the beginning of a list of songs. "
             "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
-            "There may or may not be a colored notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
+            "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
         )
         if not playlist_validation:
             print("❌ 90s pop playlist validation failed!")
@@ -1212,10 +1207,9 @@ def test_sms_draft_message(tester):
         print("\n========================================")
         print("STEP 6: Waiting for draft overlay to appear")
         print("========================================")
-        # wait for draft overlay to appear over SMS input text bar
-        # Wait for draft overlay - colors are dynamic (Material You) so accept multiple variants
-        print("👀 Waiting for draft overlay at pixel (300, 1380)...")
-        result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd', '#e8def8', '#d0bcff', '#cac4d0', '#e6e0e9', '#eaddff'], timeout=30.0)
+        # Wait for draft overlay to appear by monitoring logcat for the overlay service log
+        print("👀 Waiting for draft overlay via logcat...")
+        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0)
 
         # If overlay detection failed, capture diagnostics before asserting
         if not result['matched']:
@@ -1236,7 +1230,7 @@ def test_sms_draft_message(tester):
             f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey testing SMS from whiz voice'. "
-            "There is also a colored notification bubble with an outline of something (it's a robot head). "
+            "There is also a white notification bubble with an outline of something (it's a robot head). "
             "There may or may not be an icon inside the outline. "
         )
         if not validation_result:
@@ -1274,7 +1268,7 @@ def test_sms_draft_message(tester):
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'testing SMS'. "
             "The overlay should have some text in red strike out and some text in blue. "
-            "There is also a colored notification bubble with the outline of a robot head. "
+            "There is also a white notification bubble with the outline of a robot head. "
             "There may or may not be an icon inside the robot head outline. "
         )
         if not validation_result:
@@ -1314,7 +1308,7 @@ def test_sms_draft_message(tester):
             "reworded to be more polite (e.g. 'Hope you're doing well'). "
             "The text input field at the bottom should be empty or show a placeholder like 'RCS message' or 'Text message'. "
             "There should be NO colored overlay covering the bottom of the screen. "
-            "A colored notification bubble with a robot head outline may be visible. "
+            "A notification bubble with a robot head outline may be visible. "
             "Return True if there is a sent message bubble containing any text related to 'testing SMS' or 'Whiz Voice'. "
             "Return False ONLY if the message text is still sitting in the input field at the bottom and was NOT sent."
         )
