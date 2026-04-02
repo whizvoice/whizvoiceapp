@@ -5,11 +5,6 @@
     android:viewportWidth="512"
     android:viewportHeight="512">
     
-    <!-- Background with yellow fill -->
-    <path
-        android:fillColor="#F8DE7E"
-        android:pathData="M0,0 h512 v512 h-512 z"/>
-    
     <!-- Robot outline -->
     <path
         android:fillColor="#000000"

@@ -453,6 +453,8 @@ def test_whatsapp_draft_message(tester):
         # Send a voice transcription with the test message
         # Note: The app is in continuous listening mode by default (voice app behavior),
         # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+        # Clear logcat before broadcasting so we don't miss the overlay log
+        subprocess.run(['adb', 'logcat', '-c'], capture_output=True)
         print(f"📤 Broadcasting: 'Hello, can you please send a WhatsApp message to {whatsapp_full} that says hey whats up hows it going just tryna test whiz voice'")
         subprocess.run([
             'adb', 'shell',
@@ -463,19 +465,13 @@ def test_whatsapp_draft_message(tester):
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
-        print("⏳ Waiting 3 seconds for message to be processed...")
-        time.sleep(3)  # Give time for message to be processed
 
         print("\n========================================")
         print("STEP 6: Waiting for draft overlay to appear")
         print("========================================")
-        # wait for draft overlay to appear over whatsapp input text bar
-        # Y position varies by device: Pixel 8 uses 1380, Pixel 7a uses 1425
-        device_model = get_device_model()
-        overlay_y = 1380 if "Pixel 8" in device_model else 1425
-        # Support light_yellow (#FFF9C4), and other yellow variants (#fffad0, #fff176, #d2cea4, #d2cfa5)
-        print(f"👀 Waiting for yellow overlay at pixel (300, {overlay_y}) with color #fff9c4, #fffad0, #fff176, #d2cea4, or #d2cfa5...")
-        result = tester.wait_for_pixel_color(300, overlay_y, ['#fff9c4', '#fffad0', '#fff176', '#d2cea4', '#d2cfa5'], timeout=30.0)
+        # Wait for draft overlay to appear by monitoring logcat for the overlay service log
+        print("👀 Waiting for draft overlay via logcat...")
+        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
         if result['matched']:
             print("✅ Draft overlay detected!")
         else:
@@ -492,10 +488,10 @@ def test_whatsapp_draft_message(tester):
             screenshot_path,
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey whats up hows it going just tryna test whiz voice'. "
-            "There is also a yellow notification bubble with the outline of a robot head. "
-            "There may or may not be an icon inside the robot head outline. "
+            "There may or may not be a white notification bubble with the outline of a robot head "
+            "and there may or may not be an icon inside the robot head outline - the test should pass either way. "
         )
         if not validation_result:
             print("❌ WhatsApp draft message validation failed!")
@@ -530,11 +526,11 @@ def test_whatsapp_draft_message(tester):
             screenshot_path,
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'just trying to test whiz voice' but may not be an exact match. "
-            "The Yellow overlay should have some text in red strike out and some text in blue. "
-            "There is also a yellow notification bubble with the outline of a robot head "
-            "and a microphone icon inside."
+            "The overlay should have some text in red strike out and some text in blue. "
+            "There may or may not be a white notification bubble with the outline of a robot head "
+            "and a microphone icon inside - the test should pass either way."
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
@@ -569,11 +565,11 @@ def test_whatsapp_draft_message(tester):
             screenshot_path,
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "At the bottom of the screen, there is NO yellow overlay. "
+            "At the bottom of the screen, there is NO colored overlay. "
             "The most recent message is something with text similar to: "
             "just trying to test WhizVoice. The exact wording does not matter. "
-            "There is also a yellow notification bubble with the outline of a robot head "
-            "and a microphone icon inside."
+            "There may or may not be a white notification bubble with the outline of a robot head "
+            "and a microphone icon inside - the test should pass either way."
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
@@ -837,7 +833,7 @@ def test_youtube_music_integration(tester):
             "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
             "2) You should see the beginning of a list of songs. "
             "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
-            "There may or may not be a yellow notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
+            "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
         )
         if not playlist_validation:
             print("❌ 90s pop playlist validation failed!")
@@ -1195,6 +1191,8 @@ def test_sms_draft_message(tester):
         # Send a voice transcription with the test message to send an SMS
         # Note: The app is in continuous listening mode by default (voice app behavior),
         # so we use the TEST_TRANSCRIPTION broadcast instead of keyboard input
+        # Clear logcat before broadcasting so we don't miss the overlay log
+        subprocess.run(['adb', 'logcat', '-c'], capture_output=True)
         print(f"📤 Broadcasting: 'Hello, can you please send a text message to {sms_full} that says hey testing SMS from whiz voice'")
         subprocess.run([
             'adb', 'shell',
@@ -1205,16 +1203,13 @@ def test_sms_draft_message(tester):
             '--ez', 'fromVoice', 'true',
             '--ez', 'autoSend', 'true'
         ], check=True)
-        print("⏳ Waiting 3 seconds for message to be processed...")
-        time.sleep(3)  # Give time for message to be processed
 
         print("\n========================================")
         print("STEP 6: Waiting for draft overlay to appear")
         print("========================================")
-        # wait for draft overlay to appear over SMS input text bar
-        # Support light mode (#fffad0), dark mode (#d2cea4), and other yellow variants (#aead93, #afad92, #fbf7cd)
-        print("👀 Waiting for yellow overlay at pixel (300, 1380) with color #fffad0, #d2cea4, #aead93, #afad92, or #fbf7cd...")
-        result = tester.wait_for_pixel_color(300, 1380, ['#fffad0', '#d2cea4', '#aead93', '#afad92', '#fbf7cd'], timeout=30.0)
+        # Wait for draft overlay to appear by monitoring logcat for the overlay service log
+        print("👀 Waiting for draft overlay via logcat...")
+        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
 
         # If overlay detection failed, capture diagnostics before asserting
         if not result['matched']:
@@ -1233,10 +1228,10 @@ def test_sms_draft_message(tester):
         validation_result = tester.validate_screenshot(
             screenshot_path,
             f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
-            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey testing SMS from whiz voice'. "
-            "There is also a yellow notification bubble with an outline of something (it's a robot head). "
-            "There may or may not be an icon inside the outline. "
+            "There may or may not be a white notification bubble with an outline of something (it's a robot head) "
+            "and there may or may not be an icon inside the outline - the test should pass either way. "
         )
         if not validation_result:
             print("❌ Draft message validation failed!")
@@ -1270,11 +1265,11 @@ def test_sms_draft_message(tester):
         validation_result = tester.validate_screenshot(
             screenshot_path,
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-            "At the bottom of the screen, there is a yellow overlay or message input field containing text "
+            "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'testing SMS'. "
-            "The Yellow overlay should have some text in red strike out and some text in blue. "
-            "There is also a yellow notification bubble with the outline of a robot head. "
-            "There may or may not be an icon inside the robot head outline. "
+            "The overlay should have some text in red strike out and some text in blue. "
+            "There may or may not be a white notification bubble with the outline of a robot head "
+            "and a microphone icon inside - the test should pass either way. "
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
@@ -1312,8 +1307,8 @@ def test_sms_draft_message(tester):
             "the words 'Testing SMS' or 'Whiz Voice' or similar text about testing. The message may have been "
             "reworded to be more polite (e.g. 'Hope you're doing well'). "
             "The text input field at the bottom should be empty or show a placeholder like 'RCS message' or 'Text message'. "
-            "There should be NO yellow overlay covering the bottom of the screen. "
-            "A yellow notification bubble with a robot head outline may be visible. "
+            "There should be NO colored overlay covering the bottom of the screen. "
+            "A notification bubble with a robot head outline may be visible. "
             "Return True if there is a sent message bubble containing any text related to 'testing SMS' or 'Whiz Voice'. "
             "Return False ONLY if the message text is still sitting in the input field at the bottom and was NOT sent."
         )

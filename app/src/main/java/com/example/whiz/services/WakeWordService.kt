@@ -75,11 +75,21 @@ class WakeWordService : Service() {
         private var instance: WakeWordService? = null
 
         fun start(context: Context) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO permission not granted — skipping WakeWordService start")
+                return
+            }
             val intent = Intent(context, WakeWordService::class.java)
             context.startForegroundService(intent)
         }
 
         fun startAudioOnly(context: Context) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO permission not granted — skipping WakeWordService startAudioOnly")
+                return
+            }
             val intent = Intent(context, WakeWordService::class.java)
             intent.putExtra(EXTRA_AUDIO_ONLY, true)
             context.startForegroundService(intent)
@@ -220,7 +230,13 @@ class WakeWordService : Service() {
         isAudioOnly = intent?.getBooleanExtra(EXTRA_AUDIO_ONLY, false) ?: false
         Log.d(TAG, "onStartCommand: isAudioOnly=$isAudioOnly")
 
-        startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground failed (likely missing RECORD_AUDIO permission) — stopping service", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (isAudioOnly) {
             startAudioOnlyCapture()
         } else {

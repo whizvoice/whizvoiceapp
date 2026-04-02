@@ -12,9 +12,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.dp
 fun RageShakeReportDialog(
     isSubmitting: Boolean,
     onDismiss: () -> Unit,
+    onSnooze: () -> Unit,
     onSubmit: (description: String) -> Unit
 ) {
     var description by remember { mutableStateOf("") }
@@ -81,17 +84,25 @@ fun RageShakeReportDialog(
             }
         },
         dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                enabled = !isSubmitting,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.semantics {
-                    contentDescription = "Cancel bug report button"
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = onSnooze,
+                    enabled = !isSubmitting,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Turn off shaking button"
+                    }
+                ) {
+                    Text("Turn off shaking")
                 }
-            ) {
-                Text("Cancel")
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !isSubmitting,
+                    modifier = Modifier.semantics {
+                        contentDescription = "Cancel bug report button"
+                    }
+                ) {
+                    Text("Cancel")
+                }
             }
         }
     )

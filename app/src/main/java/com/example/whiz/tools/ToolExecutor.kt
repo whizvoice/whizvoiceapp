@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import com.example.whiz.services.RageShakeDetector
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -55,7 +56,8 @@ class ToolExecutor @Inject constructor(
     private val screenAgentTools: ScreenAgentTools,
     private val deviceControlTools: DeviceControlTools,
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
-    private val authRepository: com.example.whiz.data.auth.AuthRepository
+    private val authRepository: com.example.whiz.data.auth.AuthRepository,
+    private val rageShakeDetector: RageShakeDetector
 ) {
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
@@ -257,6 +259,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_stop_ringing" -> {
                         executeStopRinging(requestId)
+                    }
+                    "agent_snooze_rage_shake" -> {
+                        executeSnoozeRageShake(requestId)
                     }
                     "agent_get_next_alarm" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.getNextAlarm() }
@@ -1708,6 +1713,34 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_stop_ringing",
                     requestId = requestId,
                     error = "Failed to stop ringing: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSnoozeRageShake(requestId: String) {
+        try {
+            Log.i(TAG, "Executing agent_snooze_rage_shake")
+            rageShakeDetector.snooze()
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "Shake detection paused for 10 minutes.")
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_snooze_rage_shake result for requestId=$requestId: ${resultJson.toString(2)}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_snooze_rage_shake",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_snooze_rage_shake", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_snooze_rage_shake",
+                    requestId = requestId,
+                    error = "Failed to snooze rage shake: ${e.message}"
                 )
             )
         }

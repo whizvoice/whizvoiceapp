@@ -13,12 +13,12 @@ plugins {
 
 android {
     namespace = "com.example.whiz"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.whiz"
         minSdk = 31
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
@@ -35,7 +35,7 @@ android {
         }
     }
 
-    buildToolsVersion = "35.0.0"
+    buildToolsVersion = "36.0.0"
 
     signingConfigs {
         getByName("debug") {

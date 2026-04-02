@@ -1,5 +1,7 @@
 package com.example.whiz
 
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -38,7 +40,8 @@ class AssistantActivity : AppCompatActivity() {
         // Note: voiceManager is not yet injected here (Hilt injects during super.onCreate)
         val fromWakeWord = intent.getBooleanExtra("FROM_WAKE_WORD", false)
         val fromVoiceService = intent.getBooleanExtra("FROM_VOICE_SERVICE", false)
-        val isLockScreenLaunch = fromWakeWord || fromVoiceService
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        val isLockScreenLaunch = fromWakeWord || fromVoiceService || km.isKeyguardLocked
         if (isLockScreenLaunch) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)

@@ -233,9 +233,6 @@ class MainActivity : ComponentActivity() {
         // Check for all permissions at startup
         checkAllPermissions()
 
-        // Upload any pending crash report from previous session
-        uploadPendingCrashReport()
-
         // Start rage shake detection tied to activity lifecycle
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -261,6 +258,18 @@ class MainActivity : ComponentActivity() {
                     }
                 } finally {
                     rageShakeDetector.stopListening()
+                }
+            }
+        }
+
+        // Dismiss rage shake dialog when snoozed via voice command
+        lifecycleScope.launch {
+            rageShakeDetector.snoozed.collect {
+                if (showRageShakeDialog.value) {
+                    Log.i(TAG, "Rage shake snoozed - dismissing dialog")
+                    showRageShakeDialog.value = false
+                    isSubmittingRageShake.value = false
+                    pendingSnapshot = null
                 }
             }
         }
@@ -304,9 +313,16 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = { onSuccess, onCancelled ->
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked) {
+                // Must clear showWhenLocked so the keyguard PIN entry can appear
+                // (otherwise our activity occludes the keyguard, causing a deadlock)
+                setShowWhenLocked(false)
                 km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
                     override fun onDismissSucceeded() { onSuccess() }
-                    override fun onDismissCancelled() { onCancelled() }
+                    override fun onDismissCancelled() {
+                        // User cancelled — restore showWhenLocked so the activity stays visible
+                        setShowWhenLocked(true)
+                        onCancelled()
+                    }
                 })
             } else {
                 onSuccess() // Already unlocked
@@ -433,28 +449,30 @@ class MainActivity : ComponentActivity() {
                             PermissionManager.RequiredStep.MICROPHONE -> {
                                 com.example.whiz.ui.components.MicrophonePermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
-                                    onRequestPermission = { requestMicrophonePermission() }
+                                    onRequestPermission = { executeWithUnlock { requestMicrophonePermission() } }
                                 )
                             }
                             PermissionManager.RequiredStep.ACCESSIBILITY -> {
                                 com.example.whiz.ui.components.AccessibilityPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
-                                    onOpenSettings = { openAccessibilitySettings() }
+                                    onOpenSettings = { executeWithUnlock { openAccessibilitySettings() } }
                                 )
                             }
                             PermissionManager.RequiredStep.OVERLAY -> {
                                 com.example.whiz.ui.components.OverlayPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },
                                     onRequestPermission = {
-                                        // Open system settings for overlay permission
-                                        // Note: Android 16+ strips package name from URI due to security restrictions
-                                        // Users will need to manually find the app in the list
-                                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                        executeWithUnlock {
+                                            // Open system settings for overlay permission
+                                            // Note: Android 16+ strips package name from URI due to security restrictions
+                                            // Users will need to manually find the app in the list
+                                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
 
-                                        try {
-                                            startActivity(intent)
-                                        } catch (e: Exception) {
-                                            Log.e("MainActivity", "Failed to open overlay settings", e)
+                                            try {
+                                                startActivity(intent)
+                                            } catch (e: Exception) {
+                                                Log.e("MainActivity", "Failed to open overlay settings", e)
+                                            }
                                         }
                                     }
                                 )
@@ -475,7 +493,7 @@ class MainActivity : ComponentActivity() {
                                 contactsPermissionOnDenied = null
                             },
                             onGrantPermission = {
-                                requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                                executeWithUnlock { requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) }
                             }
                         )
                     }
@@ -490,10 +508,12 @@ class MainActivity : ComponentActivity() {
                                 calendarPermissionOnDenied = null
                             },
                             onGrantPermission = {
-                                requestCalendarPermissionLauncher.launch(arrayOf(
-                                    Manifest.permission.READ_CALENDAR,
-                                    Manifest.permission.WRITE_CALENDAR
-                                ))
+                                executeWithUnlock {
+                                    requestCalendarPermissionLauncher.launch(arrayOf(
+                                        Manifest.permission.READ_CALENDAR,
+                                        Manifest.permission.WRITE_CALENDAR
+                                    ))
+                                }
                             }
                         )
                     }
@@ -503,6 +523,12 @@ class MainActivity : ComponentActivity() {
                         com.example.whiz.ui.components.RageShakeReportDialog(
                             isSubmitting = isSubmittingRageShake.value,
                             onDismiss = {
+                                showRageShakeDialog.value = false
+                                isSubmittingRageShake.value = false
+                                pendingSnapshot = null
+                            },
+                            onSnooze = {
+                                rageShakeDetector.snooze()
                                 showRageShakeDialog.value = false
                                 isSubmittingRageShake.value = false
                                 pendingSnapshot = null
@@ -902,6 +928,23 @@ class MainActivity : ComponentActivity() {
     private fun requestMicrophonePermission() {
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
+
+    /**
+     * Wraps an action with a keyguard dismiss check. If the device is locked,
+     * prompts the user to unlock first, then executes the action.
+     * Reuses the existing requestUnlockCallback used by ToolExecutor.
+     */
+    private fun executeWithUnlock(action: () -> Unit) {
+        val callback = requestUnlockCallback
+        if (callback != null) {
+            callback(
+                { action() },
+                { /* user cancelled unlock, do nothing */ }
+            )
+        } else {
+            action()
+        }
+    }
     
     override fun onResume() {
         super.onResume()
@@ -1299,49 +1342,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Upload any pending crash report from a previous app crash.
-     * Called on app startup to send crash data to Supabase.
-     */
-    private fun uploadPendingCrashReport() {
-        val crashFile = File(filesDir, "pending_crash.json")
-        if (!crashFile.exists()) return
-
-        Log.i(TAG, "Found pending crash report, uploading...")
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val crashData = JSONObject(crashFile.readText())
-                val stackTrace = crashData.optString("stack_trace", "Unknown")
-                val firstLine = stackTrace.lineSequence().firstOrNull() ?: "Unknown crash"
-
-                val request = ApiService.UiDumpCreate(
-                    dumpReason = "app_crash",
-                    errorMessage = firstLine,
-                    uiHierarchy = null,
-                    packageName = packageName,
-                    deviceModel = crashData.optString("device_model"),
-                    deviceManufacturer = crashData.optString("device_manufacturer"),
-                    androidVersion = crashData.optString("android_version"),
-                    screenWidth = null,
-                    screenHeight = null,
-                    appVersion = crashData.optString("app_version"),
-                    conversationId = null,
-                    recentActions = null,
-                    screenAgentContext = mapOf(
-                        "thread_name" to crashData.optString("thread_name"),
-                        "stack_trace" to stackTrace,
-                        "crash_timestamp" to crashData.optLong("timestamp")
-                    )
-                )
-
-                apiService.uploadUiDump(request)
-                crashFile.delete()  // Only delete after successful upload
-                Log.i(TAG, "Crash report uploaded successfully")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to upload crash report (will retry on next launch)", e)
-                // Keep file for retry on next launch
-            }
-        }
-    }
 }

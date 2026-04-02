@@ -6,7 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -93,12 +95,13 @@ private fun AnnotatedString.Builder.processNode(
             }
 
             is Link -> {
-                pushStyle(
-                    SpanStyle(
+                val url = child.destination
+                pushLink(LinkAnnotation.Url(url, TextLinkStyles(
+                    style = SpanStyle(
                         color = Color.Blue,
                         textDecoration = TextDecoration.Underline
                     )
-                )
+                )))
                 processNode(child, color, baseFontSize)
                 pop()
             }

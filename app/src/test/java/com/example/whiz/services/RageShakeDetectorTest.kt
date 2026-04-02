@@ -73,4 +73,20 @@ class RageShakeDetectorTest {
         fireShakeSequence()
         assertEquals("Second shake should also trigger", 2, detector.triggerCount)
     }
+
+    @Test
+    fun `shakes during snooze period dont trigger`() {
+        detector.snooze()
+        fireShakeSequence()
+        assertEquals("Shakes during snooze should not trigger", 0, detector.triggerCount)
+    }
+
+    @Test
+    fun `shakes after snooze expires do trigger`() {
+        detector.snooze()
+        // Advance past the 10-minute snooze
+        currentTime += 10 * 60 * 1000L + 1
+        fireShakeSequence()
+        assertEquals("Shakes after snooze expires should trigger", 1, detector.triggerCount)
+    }
 }

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="@color/primary_variant">
+    android:color="?attr/colorPrimaryContainer">
     <item>
         <shape android:shape="oval">
-            <solid android:color="@color/primary" />
+            <solid android:color="?attr/colorPrimary" />
             <stroke
                 android:width="2dp"
-                android:color="@color/accent" />
+                android:color="?attr/colorPrimary" />
             <size
                 android:width="60dp"
                 android:height="60dp" />

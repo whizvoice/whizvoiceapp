@@ -1,6 +1,9 @@
 package com.example.whiz.services
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -10,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
-import android.media.AudioManager
 
 @Singleton
 class TTSManager @Inject constructor(
@@ -65,7 +67,16 @@ class TTSManager @Inject constructor(
                 isInitialized = true
                 _initializationError.value = false
                 setupUtteranceListener()
-                Log.d(TAG, "TTS initialized successfully")
+                // Route TTS through VOICE_COMMUNICATION so the system AEC
+                // can correlate playback with our VOICE_COMMUNICATION mic
+                // and cancel the echo.
+                tts?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                Log.d(TAG, "TTS initialized successfully with VOICE_COMMUNICATION audio attributes")
                 onInitialized(true)
                 // Notify all pending callbacks
                 synchronized(pendingCallbacks) {

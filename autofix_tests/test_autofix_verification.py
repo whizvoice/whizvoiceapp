@@ -34,7 +34,7 @@ def test_whatsapp_input_not_found(tester):
             "/tmp/whiz_whatsapp_input_result.png",
             "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
             "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a yellow draft message overlay in the WhatsApp chat input field containing the message, "
+            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
             "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
             "or the Whiz chat showing a success message or asking for confirmation to send the message. "
             "It should NOT show an error message, a failure to find the message input field, "

@@ -775,7 +775,11 @@ class ChatViewModel @Inject constructor(
                                         }
                                         "CLAUDE_AUTHENTICATION_ERROR", "CLAUDE_API_KEY_MISSING" -> {
                                             Log.w(TAG, "Handling Claude authentication error ($errorCode) from server: $errorMessageFromServer")
-                                            _showAuthErrorDialog.value = errorMessageFromServer 
+                                            _showAuthErrorDialog.value = errorMessageFromServer
+                                        }
+                                        "CLAUDE_OVERLOADED" -> {
+                                            Log.w(TAG, "Claude API overloaded: $errorMessageFromServer")
+                                            messageContentForChat = errorMessageFromServer
                                         }
                                         else -> {
                                             val errorDetail = jsonObject.optString("detail", "")

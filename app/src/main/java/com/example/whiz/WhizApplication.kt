@@ -5,10 +5,15 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import kotlin.system.exitProcess
+import com.google.android.material.color.DynamicColors
 import dagger.hilt.android.HiltAndroidApp
+import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.services.WakeWordService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import javax.inject.Inject
@@ -28,8 +33,17 @@ class WhizApplication : Application() {
     @Inject
     lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
 
+    @Inject
+    lateinit var apiService: ApiService
+
     override fun onCreate() {
         super.onCreate()
+
+        // Apply Material You dynamic colors to all activities
+        DynamicColors.applyToActivitiesIfAvailable(this)
+
+        // Upload any pending crash report from previous session as early as possible
+        uploadPendingCrashReport()
 
         Log.d("WhizApplication", "Application created - AppLifecycleService will automatically track foreground/background state")
 
@@ -91,6 +105,47 @@ class WhizApplication : Application() {
             } finally {
                 // Kill the process
                 exitProcess(1)
+            }
+        }
+    }
+
+    private fun uploadPendingCrashReport() {
+        val crashFile = File(filesDir, "pending_crash.json")
+        if (!crashFile.exists()) return
+
+        Log.i("WhizApplication", "Found pending crash report, uploading...")
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val crashData = JSONObject(crashFile.readText())
+                val stackTrace = crashData.optString("stack_trace", "Unknown")
+                val firstLine = stackTrace.lineSequence().firstOrNull() ?: "Unknown crash"
+
+                val request = ApiService.UiDumpCreate(
+                    dumpReason = "app_crash",
+                    errorMessage = firstLine,
+                    uiHierarchy = null,
+                    packageName = packageName,
+                    deviceModel = crashData.optString("device_model"),
+                    deviceManufacturer = crashData.optString("device_manufacturer"),
+                    androidVersion = crashData.optString("android_version"),
+                    screenWidth = null,
+                    screenHeight = null,
+                    appVersion = crashData.optString("app_version"),
+                    conversationId = null,
+                    recentActions = null,
+                    screenAgentContext = mapOf(
+                        "thread_name" to crashData.optString("thread_name"),
+                        "stack_trace" to stackTrace,
+                        "crash_timestamp" to crashData.optLong("timestamp")
+                    )
+                )
+
+                apiService.uploadUiDump(request)
+                crashFile.delete()
+                Log.i("WhizApplication", "Crash report uploaded successfully")
+            } catch (e: Exception) {
+                Log.w("WhizApplication", "Failed to upload crash report (will retry on next launch)", e)
             }
         }
     }

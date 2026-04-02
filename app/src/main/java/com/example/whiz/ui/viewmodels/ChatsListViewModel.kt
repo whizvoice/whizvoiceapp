@@ -68,28 +68,10 @@ class ChatsListViewModel @Inject constructor(
         )
 
     init {
-        // Ensure conversations are loaded when the ViewModel is created
+        // Clean up stale optimistic chats on initial load
         viewModelScope.launch {
-            try {
-                Log.d(TAG, "ChatsListViewModel init: Checking if conversations need to be loaded")
-
-                // Clean up stale optimistic chats on initial load
-                repository.cleanupStaleOptimisticChats()
-
-                // If we don't have any conversations cached, trigger a refresh
-                if (repository.conversations.value.isEmpty()) {
-                    Log.d(TAG, "ChatsListViewModel init: No conversations cached, triggering refresh")
-                    repository.refreshConversations()
-                } else {
-                    Log.d(TAG, "ChatsListViewModel init: ${repository.conversations.value.size} conversations already cached")
-                    _isInitialLoad.value = false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "ChatsListViewModel init: Error checking conversations", e)
-                _isInitialLoad.value = false
-            }
+            repository.cleanupStaleOptimisticChats()
         }
-
         // Clear isInitialLoad once chats flow emits non-empty data
         viewModelScope.launch {
             chats.first { it.isNotEmpty() }
@@ -150,6 +132,7 @@ class ChatsListViewModel @Inject constructor(
                     whizServerRepository.connect(forPriming = true)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "refreshChats: Error during incremental sync", e)
                 // Even on error, we show cached data
                 _isShowingCachedData.value = true

@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,13 +31,14 @@ import androidx.compose.material.icons.filled.HearingDisabled
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ButtonDefaults
+
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -111,7 +113,7 @@ fun ChatsListScreen(
             SnackbarHost(hostState = snackbarHostState)
         },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text("My Chats", modifier = Modifier.semantics { contentDescription = "My Chats Title" }) },
                 actions = {
                     if (isDeveloperMode) {
@@ -227,7 +229,8 @@ fun ChatsList(
     var chatToDelete by remember { mutableStateOf<ChatEntity?>(null) }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 8.dp)
     ) {
         items(chats) { chat ->
             ChatItem(
@@ -235,7 +238,10 @@ fun ChatsList(
                 onClick = { onChatClick(chat.id) },
                 onLongPress = { chatToDelete = chat }
             )
-            HorizontalDivider()
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
         }
     }
 
@@ -257,10 +263,7 @@ fun ChatsList(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { chatToDelete = null },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = Color.Black
-                    )
+                    onClick = { chatToDelete = null }
                 ) {
                     Text("Cancel")
                 }

@@ -18,7 +18,9 @@ import android.widget.ImageView
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import android.view.ContextThemeWrapper
 import com.example.whiz.R
+import com.google.android.material.color.DynamicColors
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -32,6 +34,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MessageDraftOverlayService : Service() {
+    private val themedContext: Context by lazy {
+        DynamicColors.wrapContextIfAvailable(ContextThemeWrapper(this, R.style.Theme_Whiz))
+    }
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
     private var dismissButtonView: View? = null
@@ -132,15 +137,27 @@ class MessageDraftOverlayService : Service() {
         }
         
         // Inflate the overlay layout
-        overlayView = LayoutInflater.from(this).inflate(R.layout.message_draft_overlay, null)
+        overlayView = LayoutInflater.from(themedContext).inflate(R.layout.message_draft_overlay, null)
         
         // Ensure the overlay is fully opaque (Note: Android 12+ enforces max 80% opacity for security)
         overlayView?.alpha = 1.0f
         overlayView?.findViewById<CardView>(R.id.draft_card)?.apply {
             alpha = 1.0f
             cardElevation = 8f
+            // Force card background to be fully opaque (dynamic theme colors can be semi-transparent)
+            setCardBackgroundColor(cardBackgroundColor.defaultColor or 0xFF000000.toInt())
         }
-        
+
+        // Force the LinearLayout background to be fully opaque too
+        val linearLayout = overlayView?.findViewById<CardView>(R.id.draft_card)?.getChildAt(0)
+        linearLayout?.background?.alpha = 255
+
+        // Force text to maximum contrast: black in light mode, white in dark mode
+        val nightMode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val textColor = if (nightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) Color.WHITE else Color.BLACK
+        overlayView?.findViewById<TextView>(R.id.draft_label)?.setTextColor(textColor)
+        overlayView?.findViewById<TextView>(R.id.draft_message_text)?.setTextColor(textColor)
+
         // Set the message text with track changes if previous text is provided
         val messageText = overlayView?.findViewById<TextView>(R.id.draft_message_text)
         if (previousText != null && previousText != message) {
@@ -164,9 +181,16 @@ class MessageDraftOverlayService : Service() {
             realSize.y
         }
 
+        // FLAG_LAYOUT_NO_LIMITS shifts the coordinate origin down by the status bar height.
+        // Measured empirically: offset = 132px = status bar height exactly.
+        val statusBarHeight = run {
+            val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
+        }
+
         // Calculate height from the input field position to actual bottom of screen
         val overlayHeight = realScreenHeight - bounds.top
-        
+
         // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
             overlayWidth,  // Use app width from bounds
@@ -178,27 +202,44 @@ class MessageDraftOverlayService : Service() {
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.left  // Start from app's left edge
-            // Position the overlay at the input field's top position
-            y = bounds.top  // Positioned at input field
+            y = bounds.top - statusBarHeight  // Compensate for FLAG_LAYOUT_NO_LIMITS offset
         }
-        
-        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top}, width=$overlayWidth (app width), height=$overlayHeight, realScreenHeight=$realScreenHeight")
-        
+
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - statusBarHeight}, width=$overlayWidth (app width), height=$overlayHeight, statusBarHeight=$statusBarHeight, realScreenHeight=$realScreenHeight")
+
         try {
             windowManager.addView(overlayView, params)
             Log.d(TAG, "Draft overlay added successfully")
+
+            // Correct position after layout — FLAG_LAYOUT_NO_LIMITS can shift the
+            // coordinate origin, so measure actual vs desired and fix the offset
+            overlayView?.post {
+                val loc = IntArray(2)
+                overlayView?.getLocationOnScreen(loc)
+                val correction = loc[1] - bounds.top
+                if (correction != 0) {
+                    params.y -= correction
+                    try {
+                        windowManager.updateViewLayout(overlayView, params)
+                        Log.d(TAG, "Overlay position corrected by ${correction}px")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to correct overlay position", e)
+                    }
+                }
+            }
 
             // Add dismiss button overlay
             createDismissButton(bounds)
 
             // Schedule auto-dismiss
             scheduleAutoDismiss()
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add draft overlay", e)
             stopSelf()

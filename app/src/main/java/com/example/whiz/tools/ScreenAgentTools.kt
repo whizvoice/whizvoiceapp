@@ -1617,7 +1617,21 @@ class ScreenAgentTools @Inject constructor(
                 chatRootNode.getBoundsInScreen(appBounds2)
                 val rect2 = android.graphics.Rect()
                 inputNode2.getBoundsInScreen(rect2)
-                val overlayBounds2 = android.graphics.Rect(appBounds2.left, rect2.top, appBounds2.right, rect2.bottom)
+                // Find the input bar container by resource ID
+                var containerTop2 = rect2.top
+                val containerIds2 = listOf("com.whatsapp:id/footer", "com.whatsapp:id/edit_layout", "com.whatsapp:id/text_entry_layout")
+                for (containerId in containerIds2) {
+                    val containers = chatRootNode.findAccessibilityNodeInfosByViewId(containerId)
+                    if (containers != null && containers.isNotEmpty()) {
+                        val cr = android.graphics.Rect()
+                        containers[0].getBoundsInScreen(cr)
+                        containerTop2 = cr.top
+                        Log.d(TAG, "Found input container '$containerId': bounds=$cr")
+                        containers.forEach { it.recycle() }
+                        break
+                    }
+                }
+                val overlayBounds2 = android.graphics.Rect(appBounds2.left, containerTop2, appBounds2.right, rect2.bottom)
                 val overlayStarted2 = MessageDraftOverlayService.show(context, overlayBounds2, message, previousText)
                 inputNodesFromProfile.forEach { it.recycle() }
                 chatRootNode.recycle()
@@ -1755,17 +1769,34 @@ class ScreenAgentTools @Inject constructor(
                 val appBounds = android.graphics.Rect()
                 updatedRootNode.getBoundsInScreen(appBounds)
 
-                Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
+                // Find the input bar container by resource ID to get the full input area bounds
+                // (including attach/camera/mic buttons). The accessibility tree parent may skip
+                // intermediate layout nodes, so we search by known WhatsApp resource IDs instead.
+                var containerTop = rect.top
+                val containerIds = listOf("com.whatsapp:id/footer", "com.whatsapp:id/edit_layout", "com.whatsapp:id/text_entry_layout")
+                for (containerId in containerIds) {
+                    val containers = updatedRootNode.findAccessibilityNodeInfosByViewId(containerId)
+                    if (containers != null && containers.isNotEmpty()) {
+                        val cr = android.graphics.Rect()
+                        containers[0].getBoundsInScreen(cr)
+                        containerTop = cr.top
+                        Log.d(TAG, "Found input container '$containerId': bounds=$cr")
+                        containers.forEach { it.recycle() }
+                        break
+                    }
+                }
+
+                Log.d(TAG, "Using input field at bounds: $rect, containerTop=$containerTop")
                 Log.d(TAG, "WhatsApp window bounds: $appBounds (width=${appBounds.width()})")
                 Log.d(TAG, "Screen dimensions: ${context.resources.displayMetrics.widthPixels} x ${context.resources.displayMetrics.heightPixels}")
                 Log.d(TAG, "Input field is at ${(rect.top.toFloat() / context.resources.displayMetrics.heightPixels * 100).toInt()}% of screen height")
 
-                // Create bounds for overlay that uses app width but input field's vertical position
+                // Create bounds for overlay that uses app width but container's vertical position
                 val overlayBounds = android.graphics.Rect(
-                    appBounds.left,  // Use app's left edge
-                    rect.top,        // Use input field's vertical position
-                    appBounds.right, // Use app's right edge
-                    rect.bottom      // Use input field's bottom
+                    appBounds.left,   // Use app's left edge
+                    containerTop,     // Use container top to cover full input bar
+                    appBounds.right,  // Use app's right edge
+                    rect.bottom       // Use input field's bottom
                 )
 
                 // Start the draft overlay service with the bounds, message, and previousText
@@ -2772,16 +2803,35 @@ class ScreenAgentTools @Inject constructor(
                 val appBounds = android.graphics.Rect()
                 updatedRootNode.getBoundsInScreen(appBounds)
 
-                Log.d(TAG, "Using input field at bounds: $rect (left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom})")
+                // For SMS, walk up accessibility parents to find a reasonable container.
+                // Use the first ancestor whose height is within 3x of the input field's height.
+                val smsEditTextHeight = rect.height()
+                var smsContainerTop = rect.top
+                var smsCurrent: AccessibilityNodeInfo? = finalInputNode.parent
+                var smsWalkDepth = 0
+                while (smsCurrent != null && smsWalkDepth < 5) {
+                    val pr = android.graphics.Rect()
+                    smsCurrent.getBoundsInScreen(pr)
+                    Log.d(TAG, "SMS parent walk depth $smsWalkDepth: bounds=$pr, height=${pr.height()}, editTextHeight=$smsEditTextHeight")
+                    if (pr.height() <= smsEditTextHeight * 3 && pr.top < rect.top) {
+                        smsContainerTop = pr.top
+                        Log.d(TAG, "Found SMS input container at depth $smsWalkDepth: bounds=$pr")
+                        break
+                    }
+                    smsCurrent = smsCurrent.parent
+                    smsWalkDepth++
+                }
+
+                Log.d(TAG, "Using input field at bounds: $rect, containerTop=$smsContainerTop")
                 Log.d(TAG, "SMS app window bounds: $appBounds (width=${appBounds.width()})")
                 Log.d(TAG, "Input field is at ${(rect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
 
-                // Create bounds for overlay that uses app width but input field's vertical position
+                // Create bounds for overlay that uses app width but container's vertical position
                 val overlayBounds = android.graphics.Rect(
-                    appBounds.left,  // Use app's left edge
-                    rect.top,        // Use input field's vertical position
-                    appBounds.right, // Use app's right edge
-                    rect.bottom      // Use input field's bottom
+                    appBounds.left,    // Use app's left edge
+                    smsContainerTop,   // Use container top to cover full input bar
+                    appBounds.right,   // Use app's right edge
+                    rect.bottom        // Use input field's bottom
                 )
 
                 // Start the draft overlay service with the bounds, message, and previousText
