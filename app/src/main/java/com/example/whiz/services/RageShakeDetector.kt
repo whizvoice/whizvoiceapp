@@ -25,6 +25,7 @@ class RageShakeDetector @Inject constructor(
         private const val SHAKE_THRESHOLD = 15f // m/s^2 net acceleration
         private const val SHAKE_COUNT_THRESHOLD = 4
         private const val SHAKE_WINDOW_MS = 1000L
+        private const val SNOOZE_DURATION_MS = 10 * 60 * 1000L // 10 minutes
     }
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -33,7 +34,14 @@ class RageShakeDetector @Inject constructor(
     private val _shakeDetected = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val shakeDetected: SharedFlow<Unit> = _shakeDetected.asSharedFlow()
 
+    private val _snoozed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val snoozed: SharedFlow<Unit> = _snoozed.asSharedFlow()
+
     private val shakeTimestamps = mutableListOf<Long>()
+
+    @Volatile
+    var snoozeUntil: Long = 0L
+        private set
 
     @VisibleForTesting
     var triggerCount = 0
@@ -63,8 +71,16 @@ class RageShakeDetector @Inject constructor(
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
+    fun snooze() {
+        snoozeUntil = clock() + SNOOZE_DURATION_MS
+        _snoozed.tryEmit(Unit)
+        Log.i(TAG, "Rage shake snoozed for 10 minutes")
+    }
+
     @VisibleForTesting
     fun processAcceleration(x: Float, y: Float, z: Float) {
+        if (clock() < snoozeUntil) return
+
         val acceleration = sqrt(x * x + y * y + z * z) - SensorManager.GRAVITY_EARTH
         if (acceleration < SHAKE_THRESHOLD) return
 

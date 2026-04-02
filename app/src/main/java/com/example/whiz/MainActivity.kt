@@ -262,6 +262,18 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Dismiss rage shake dialog when snoozed via voice command
+        lifecycleScope.launch {
+            rageShakeDetector.snoozed.collect {
+                if (showRageShakeDialog.value) {
+                    Log.i(TAG, "Rage shake snoozed - dismissing dialog")
+                    showRageShakeDialog.value = false
+                    isSubmittingRageShake.value = false
+                    pendingSnapshot = null
+                }
+            }
+        }
+
         // Manage audio-only WakeWordService when dev mode is on but wake word is off
         lifecycleScope.launch {
             // Combine dev mode and wake word state
@@ -511,6 +523,12 @@ class MainActivity : ComponentActivity() {
                         com.example.whiz.ui.components.RageShakeReportDialog(
                             isSubmitting = isSubmittingRageShake.value,
                             onDismiss = {
+                                showRageShakeDialog.value = false
+                                isSubmittingRageShake.value = false
+                                pendingSnapshot = null
+                            },
+                            onSnooze = {
+                                rageShakeDetector.snooze()
                                 showRageShakeDialog.value = false
                                 isSubmittingRageShake.value = false
                                 pendingSnapshot = null
