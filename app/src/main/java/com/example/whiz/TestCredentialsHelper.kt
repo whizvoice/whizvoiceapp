@@ -38,20 +38,10 @@ object TestCredentialsHelper {
                 if (projectRootFile.exists()) {
                     projectRootFile.readText()
                 } else {
-                    // Final fallback to hardcoded values
-                    """
-                    {
-                      "google_test_account": {
-                        "email": "REDACTED_TEST_EMAIL",
-                        "password": "REDACTED_TEST_PASSWORD",
-                        "display_name": "Test User",
-                        "user_id": "REDACTED_TEST_USER_ID"
-                      },
-                      "test_environment": {
-                        "test_auth_secret": "REDACTED_TEST_SECRET"
-                      }
-                    }
-                    """.trimIndent()
+                    throw IllegalStateException(
+                        "test_credentials.json not found. Copy test_credentials.json.example " +
+                        "to test_credentials.json and fill in your test credentials."
+                    )
                 }
             }
             
@@ -70,18 +60,12 @@ object TestCredentialsHelper {
             return cachedCredentials!!
             
         } catch (e: Exception) {
-            // Fallback to hardcoded values if file reading fails
-            Log.w("TestCredentialsHelper", "Failed to read test_credentials.json, using fallback values: ${e.message}")
-            
-            cachedCredentials = TestCredentials(
-                email = "REDACTED_TEST_EMAIL",
-                password = "REDACTED_TEST_PASSWORD",
-                displayName = "Test User",
-                userId = "REDACTED_TEST_USER_ID",
-                testAuthSecret = "REDACTED_TEST_SECRET"
+            Log.e("TestCredentialsHelper", "Failed to read test_credentials.json: ${e.message}")
+            throw IllegalStateException(
+                "test_credentials.json not found or invalid. Copy test_credentials.json.example " +
+                "to test_credentials.json and fill in your test credentials.",
+                e
             )
-            
-            return cachedCredentials!!
         }
     }
 } 
