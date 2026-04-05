@@ -71,6 +71,7 @@ class ToolExecutor @Inject constructor(
         "agent_search_google_maps_location", "agent_search_google_maps_phrase",
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
         "agent_fullscreen_google_maps", "agent_select_location_from_list",
+        "agent_dial_phone_number",
         "agent_press_call_button",
         "agent_save_calendar_event",
         "agent_fitbit_add_quick_calories",
