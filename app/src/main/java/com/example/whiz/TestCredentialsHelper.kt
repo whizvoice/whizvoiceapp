@@ -33,9 +33,13 @@ object TestCredentialsHelper {
             } catch (e: Exception) {
                 null
             } ?: run {
+                // Try /data/local/tmp (pushed by test script via adb push)
+                val adbPushedFile = File("/data/local/tmp/test_credentials.json")
                 // Fallback to project root file
                 val projectRootFile = File("../test_credentials.json")
-                if (projectRootFile.exists()) {
+                if (adbPushedFile.exists()) {
+                    adbPushedFile.readText()
+                } else if (projectRootFile.exists()) {
                     projectRootFile.readText()
                 } else {
                     throw IllegalStateException(
