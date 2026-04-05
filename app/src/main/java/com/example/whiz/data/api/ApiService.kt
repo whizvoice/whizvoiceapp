@@ -184,6 +184,15 @@ interface ApiService {
     @POST("/api/subscription/cancel")
     suspend fun cancelSubscription(): CancelSubscriptionResponse
 
+    // ========== PENDING REQUESTS ENDPOINTS ==========
+    data class PendingRequestsResponse(
+        @SerializedName("has_pending") val hasPending: Boolean,
+        @SerializedName("request_ids") val requestIds: List<String>
+    )
+
+    @GET("/api/conversations/{id}/pending-requests")
+    suspend fun getPendingRequests(@Path("id") conversationId: Long): PendingRequestsResponse
+
     // ========== UI DUMP ENDPOINTS ==========
     data class UiDumpCreate(
         @SerializedName("dump_reason") val dumpReason: String,

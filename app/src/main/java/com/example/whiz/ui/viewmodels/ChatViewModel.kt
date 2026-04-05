@@ -82,9 +82,29 @@ class ChatViewModel @Inject constructor(
                 _isTransitioning = value
                 if (value) transitionStartTimeMs = System.currentTimeMillis()
             }
+
+        /**
+         * Track the active ChatViewModel instance. When the Activity is recreated,
+         * a new ViewModel is created but old ones' coroutine collectors keep running.
+         * Only the active instance should process transcriptions and other side effects.
+         */
+        @Volatile
+        var activeInstance: ChatViewModel? = null
     }
 
     private val TAG = "ChatViewModel"
+
+    init {
+        // Register this as the active instance — old instances' collectors will check this
+        // and skip processing to avoid duplicate sends
+        val previousInstance = activeInstance
+        activeInstance = this
+        if (previousInstance != null && previousInstance !== this) {
+            Log.w(TAG, "⚠️ New ChatViewModel replacing previous instance (Activity recreated). Old collectors will be deactivated.")
+        }
+    }
+
+    private fun isActiveInstance(): Boolean = activeInstance === this
 
     // Config state
     val configUseRemoteAgent = true;
@@ -391,6 +411,7 @@ class ChatViewModel @Inject constructor(
             BubbleOverlayService.userTranscriptionFlow
                 .distinctUntilChanged() // Prevent duplicate consecutive emissions
                 .collect { transcription ->
+                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
                     if (transcription.isNotBlank() && BubbleOverlayService.isActive) {
                         Log.d(TAG, "Received transcription from bubble mode (bubble active): '$transcription'")
                         sendUserInput(transcription)
@@ -400,8 +421,22 @@ class ChatViewModel @Inject constructor(
                 }
         }
 
-        // NOTE: ChatScreen collects from voiceManager.transcriptionFlow for regular (non-bubble) transcriptions
-        // and calls sendUserInput() there. We don't duplicate that logic here to avoid sending messages twice.
+        // Collect voice transcriptions for regular (non-bubble) mode
+        // This runs in the ViewModel (Activity-scoped singleton) to avoid duplicate sends
+        // from multiple ChatScreen compositions during navigation transitions
+        // Guard with isActiveInstance() in case Activity was recreated and old ViewModel still has running collectors
+        viewModelScope.launch {
+            voiceManager.transcriptionFlow
+                .distinctUntilChanged()
+                .collect { transcription ->
+                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
+                    if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
+                        Log.d(TAG, "Received voice transcription (main app): '$transcription'")
+                        updateInputText(transcription, fromVoice = true)
+                        sendUserInput(transcription)
+                    }
+                }
+        }
 
         // Enhanced server message collection with interrupt handling
         serverMessageCollectorJob = viewModelScope.launch {
@@ -1345,9 +1380,13 @@ class ChatViewModel @Inject constructor(
             try {
                 // 🔧 Enhanced cleanup when switching chats
                 Log.d(TAG, "Loading chat $chatId. Current chat: ${_chatId.value}, Pending requests: ${pendingRequests.size}")
-                
-                // Disconnect from server if switching chats or loading new
-                if (configUseRemoteAgent) {
+
+                // Skip disconnect when re-entering the same chat (e.g. navigating from chat list back)
+                // The ViewModel survives navigation (Activity-scoped), so pendingRequests and WebSocket are still valid
+                val isSameChat = chatId > 0 && chatId == _chatId.value
+
+                // Disconnect from server if switching chats or loading new (but not when re-entering the same chat)
+                if (configUseRemoteAgent && !isSameChat) {
                     try {
                         // Clear reconnection flag since this is an intentional disconnect
                         isReconnectingAfterDisconnect = false
@@ -1357,6 +1396,8 @@ class ChatViewModel @Inject constructor(
                     } catch (e: Exception) {
                         Log.e(TAG, "Error disconnecting WebSocket during loadChat", e)
                     }
+                } else if (isSameChat) {
+                    Log.d(TAG, "🔥 loadChat: Re-entering same chat $chatId - skipping disconnect to preserve pending requests")
                 }
                 
                 // Clear superseded request tracking on chat load
@@ -1511,11 +1552,14 @@ class ChatViewModel @Inject constructor(
 
                 // Connect to server if needed *after* chat ID is set
                 // BUT respect manual disconnect flag (for testing connection errors)
-                Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
+                Log.d(TAG, "🔌 Checking WebSocket reconnect: configUseRemoteAgent=$configUseRemoteAgent, _chatId.value=${_chatId.value}, isConnected=${whizServerRepository.isConnected()}, isSameChat=$isSameChat, persistentDisconnectForTest=${whizServerRepository.persistentDisconnectForTest()}")
                 // Connect for existing chats (chatId > 0) and optimistic chats (chatId < -1)
                 // Don't connect only for the "new chat" placeholder (chatId = -1) or uninitialized state (chatId = 0)
                 // New chats will connect when sending the first message with an optimistic ID
-                if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
+                // Skip reconnect if re-entering the same chat and already connected
+                if (isSameChat && whizServerRepository.isConnected()) {
+                    Log.d(TAG, "🔌 Skipping WebSocket reconnect - re-entering same chat and already connected")
+                } else if (configUseRemoteAgent && _chatId.value != -1L && _chatId.value != 0L && !whizServerRepository.persistentDisconnectForTest()) {
                     try {
                         Log.d(TAG, "🔌 Reconnecting WebSocket after loadChat for chat ${_chatId.value}...")
                         Log.d(TAG, "🔌 WEBSOCKET CONNECT TRACE - chatId: ${_chatId.value}, requested chatId: $chatId", Exception("WebSocket connect stack trace"))
@@ -1531,6 +1575,25 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔌 Skipping WebSocket reconnect - manually disconnected")
                 }
                 
+                // Check server for pending requests to restore thinking indicator
+                // Only needed when switching chats (Fix 1 handles same-chat case by preserving pendingRequests)
+                if (configUseRemoteAgent && !isSameChat && _chatId.value > 0) {
+                    try {
+                        val serverPendingIds = repository.getPendingRequests(_chatId.value)
+                        if (serverPendingIds.isNotEmpty()) {
+                            Log.d(TAG, "🔥 Server reports ${serverPendingIds.size} pending requests for chat ${_chatId.value}: $serverPendingIds")
+                            for (requestId in serverPendingIds) {
+                                if (!pendingRequests.containsKey(requestId)) {
+                                    pendingRequests[requestId] = _chatId.value
+                                }
+                            }
+                            updateRespondingStateForCurrentChat()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error checking pending requests from server", e)
+                    }
+                }
+
                 // Check for orphaned messages that need retry
                 // Include optimistic chats (negative IDs) that may have unsent messages
                 if (configUseRemoteAgent && _chatId.value != 0L && _chatId.value != -1L) {

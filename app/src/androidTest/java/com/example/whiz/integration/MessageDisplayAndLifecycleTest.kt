@@ -83,6 +83,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     private val TAG = "MessageDisplayTest"
     private val uniqueTestId = "MSG_DISPLAY_TEST_${System.currentTimeMillis()}"
 
+    // Track the navigation-scoped ViewModel for thinking indicator tests
+    private var navigationScopedViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
+
     // Authentication is now handled automatically by BaseIntegrationTest
     val authenticated = true // Always authenticated via BaseIntegrationTest
 
@@ -90,9 +93,15 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         // Call parent authentication setup first
         super.setUpAuthentication()
-        
+
+        // Set up callback to capture the navigation-scoped ViewModel
+        MainActivity.testViewModelCallback = { viewModel ->
+            Log.d(TAG, "📝 Captured navigation-scoped ViewModel: ${viewModel.hashCode()}")
+            navigationScopedViewModel = viewModel
+        }
+
         // device is already initialized by parent class
-        
+
         // Set up test data
         runBlocking {
             try {
@@ -208,12 +217,29 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 // Don't logout - let user stay logged in
                 
                 Log.d(TAG, "✅ Test cleanup completed (user remains authenticated, UI state cleaned)")
-                
+
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Error during test cleanup", e)
                 // Don't fail the test if cleanup fails
+            } finally {
+                MainActivity.testViewModelCallback = null
+                navigationScopedViewModel = null
             }
         }
+    }
+
+    private fun waitForViewModel(timeout: Long = 10000L): com.example.whiz.ui.viewmodels.ChatViewModel? {
+        val startTime = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startTime < timeout) {
+            val vm = navigationScopedViewModel
+            if (vm != null) {
+                Log.d(TAG, "ViewModel captured after ${System.currentTimeMillis() - startTime}ms")
+                return vm
+            }
+            Thread.sleep(200)
+        }
+        Log.e(TAG, "Failed to capture ViewModel within ${timeout}ms")
+        return null
     }
 
     @Test
@@ -613,6 +639,184 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             Log.e(TAG, "🔍 Second message: '$secondMessage'")
             throw e
         }
+        }
+    }
+
+    /**
+     * Test that the thinking indicator (isResponding) survives navigation away and back to the same chat.
+     *
+     * Flow:
+     * 1. Send a message that will take the server a few seconds to process
+     * 2. Verify isResponding becomes true (thinking indicator active)
+     * 3. Navigate back to chat list
+     * 4. Re-enter the same chat
+     * 5. Verify isResponding is still true (thinking indicator preserved)
+     *
+     * This tests Fix 1: skipping WebSocket disconnect when re-entering the same chat.
+     */
+    @Test
+    fun thinkingIndicator_survivesNavigationAwayAndBack() {
+        val testMessage = "$uniqueTestId: Write me a very detailed 500 word essay about the history of computing. Take your time."
+
+        runBlocking {
+            try {
+                Log.d(TAG, "🧪 Starting thinking indicator navigation test")
+
+                // Step 1: Launch app
+                Log.d(TAG, "🚀 Launching app...")
+                if (!ComposeTestHelper.launchAppAndWaitForLoad(composeTestRule, isVoiceLaunch = false, packageName = packageName)) {
+                    failWithScreenshot("thinking_app_failed_to_load", "App failed to launch")
+                }
+
+                if (!ComposeTestHelper.isAppReady(composeTestRule)) {
+                    failWithScreenshot("thinking_app_not_ready", "App not ready for testing")
+                }
+
+                // Step 2: Navigate to new chat
+                Log.d(TAG, "📱 Navigating to new chat...")
+                if (!ComposeTestHelper.isOnChatScreen(composeTestRule)) {
+                    if (!ComposeTestHelper.navigateToNewChat(composeTestRule)) {
+                        failWithScreenshot("thinking_new_chat_failed", "Failed to navigate to new chat")
+                    }
+                    val chatLoaded = ComposeTestHelper.waitForElement(
+                        composeTestRule = composeTestRule,
+                        selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+                        timeoutMs = 5000L,
+                        description = "chat input field"
+                    )
+                    if (!chatLoaded) {
+                        failWithScreenshot("thinking_chat_not_loaded", "Chat screen did not load")
+                    }
+                }
+
+                // Step 3: Capture ViewModel
+                val viewModel = waitForViewModel()
+                if (viewModel == null) {
+                    failWithScreenshot("thinking_no_viewmodel", "Failed to capture ChatViewModel")
+                    return@runBlocking
+                }
+                Log.d(TAG, "✅ Captured ViewModel: ${viewModel.hashCode()}")
+
+                // Step 4: Send message (don't wait for response)
+                Log.d(TAG, "💬 Sending message (will navigate away before response)...")
+                val messageSent = ComposeTestHelper.sendMessage(composeTestRule, testMessage, rapid = true)
+                if (!messageSent) {
+                    failWithScreenshot("thinking_message_send_failed", "Failed to send message")
+                }
+
+                // Step 5: Wait briefly for isResponding to become true
+                Log.d(TAG, "⏳ Waiting for isResponding to become true...")
+                var isRespondingBeforeNav = false
+                val respondingStart = System.currentTimeMillis()
+                while (System.currentTimeMillis() - respondingStart < 5000L) {
+                    if (viewModel.isResponding.value) {
+                        isRespondingBeforeNav = true
+                        Log.d(TAG, "✅ isResponding became true after ${System.currentTimeMillis() - respondingStart}ms")
+                        break
+                    }
+                    Thread.sleep(100)
+                }
+
+                if (!isRespondingBeforeNav) {
+                    Log.w(TAG, "⚠️ isResponding never became true - server may have responded instantly or message didn't send via WebSocket. Skipping navigation test.")
+                    // This is not a test failure - the server might just be very fast
+                    // or the test environment doesn't have WebSocket connectivity
+                    return@runBlocking
+                }
+
+                val chatIdBeforeNav = viewModel.chatId.value
+                Log.d(TAG, "📝 Chat ID before navigation: $chatIdBeforeNav")
+
+                // Step 6: Navigate back to chat list
+                Log.d(TAG, "🔙 Navigating back to chat list while server is still processing...")
+                if (!ComposeTestHelper.navigateBackToChatsList(composeTestRule)) {
+                    failWithScreenshot("thinking_back_nav_failed", "Failed to navigate back to chat list")
+                }
+
+                val chatsListLoaded = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText("My Chats") },
+                    timeoutMs = 5000L,
+                    description = "chats list"
+                )
+                if (!chatsListLoaded) {
+                    failWithScreenshot("thinking_chats_list_not_loaded", "Chat list did not load")
+                }
+                Log.d(TAG, "✅ On chat list. isResponding = ${viewModel.isResponding.value}, pendingRequests size hint from hasPendingRequest")
+
+                // Step 7: Re-enter the same chat
+                Log.d(TAG, "🔍 Looking for chat to re-enter...")
+                val chatFoundInList = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithText(uniqueTestId.take(15), substring = true) },
+                    timeoutMs = 10000L,
+                    description = "chat with test identifier"
+                )
+
+                if (!chatFoundInList) {
+                    failWithScreenshot("thinking_chat_not_in_list", "Could not find chat in list")
+                }
+
+                composeTestRule.onNodeWithText(uniqueTestId.take(15), substring = true).performClick()
+                Log.d(TAG, "✅ Clicked on chat to re-enter")
+
+                // Wait for chat to reload
+                val chatReloaded = ComposeTestHelper.waitForElement(
+                    composeTestRule = composeTestRule,
+                    selector = { composeTestRule.onNodeWithContentDescription("Message input field") },
+                    timeoutMs = 5000L,
+                    description = "chat input field after re-entering"
+                )
+                if (!chatReloaded) {
+                    failWithScreenshot("thinking_chat_reload_failed", "Chat failed to reload after re-entering")
+                }
+
+                // Step 8: Check isResponding after re-entering
+                // Small delay to let loadChat() complete
+                Thread.sleep(500)
+
+                val isRespondingAfterNav = viewModel.isResponding.value
+                val chatIdAfterNav = viewModel.chatId.value
+                Log.d(TAG, "🔍 After re-entering chat:")
+                Log.d(TAG, "   chatId before: $chatIdBeforeNav, after: $chatIdAfterNav")
+                Log.d(TAG, "   isResponding: $isRespondingAfterNav")
+
+                // The response may have arrived while we were on the chat list, which is fine.
+                // But if the server is still processing, isResponding should be true.
+                if (!isRespondingAfterNav) {
+                    // Check if a bot response arrived (meaning the server finished while we were away)
+                    val messages = viewModel.messages.value
+                    val hasBotResponse = messages.any { it.type == MessageType.ASSISTANT && !it.content.startsWith("Error:") }
+                    if (hasBotResponse) {
+                        Log.d(TAG, "✅ Bot response arrived while on chat list - isResponding=false is correct")
+                    } else {
+                        // No bot response yet but isResponding is false - this is the bug!
+                        Log.e(TAG, "❌ FAILURE: No bot response yet but isResponding is false!")
+                        Log.e(TAG, "   This means the thinking indicator was lost during navigation")
+                        failWithScreenshot("thinking_indicator_lost",
+                            "Thinking indicator lost after navigation. No bot response arrived yet but isResponding=false. " +
+                            "chatId before=$chatIdBeforeNav, after=$chatIdAfterNav")
+                    }
+                } else {
+                    Log.d(TAG, "✅ SUCCESS: isResponding is still true after navigation - thinking indicator preserved!")
+                }
+
+                // Capture server chat ID for cleanup
+                try {
+                    if (chatIdAfterNav > 0) {
+                        createdServerChatId = chatIdAfterNav
+                    } else if (chatIdBeforeNav > 0) {
+                        createdServerChatId = chatIdBeforeNav
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not capture chat ID for cleanup: ${e.message}")
+                }
+
+            } catch (e: Exception) {
+                if (e is AssertionError) throw e
+                Log.e(TAG, "❌ UNEXPECTED EXCEPTION in thinking indicator test", e)
+                throw e
+            }
         }
     }
 }
