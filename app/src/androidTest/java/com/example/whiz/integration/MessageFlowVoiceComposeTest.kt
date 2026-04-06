@@ -2,8 +2,7 @@ package com.example.whiz.integration
 
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -70,7 +69,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @get:Rule(order = 2)
-    val composeTestRule = createAndroidComposeRule<MainActivity>()
+    val composeTestRule = createEmptyComposeRule()
 
     @Inject
     lateinit var repository: WhizRepository
@@ -146,7 +145,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch specific flags
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or 0x10000000 // Voice launch specific flags
                 putExtra("tracing_intent_id", System.currentTimeMillis()) // Unique trace ID for voice detection
                 // Don't set sourceBounds for voice launch (manual launches have bounds, voice launches don't)
                 // Voice launch flags (FROM_ASSISTANT, ENABLE_VOICE_MODE, CREATE_NEW_CHAT_ON_START) 
