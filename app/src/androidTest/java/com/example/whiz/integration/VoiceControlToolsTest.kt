@@ -622,7 +622,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             // Launch
-            instrumentation.startActivitySync(voiceLaunchIntent)
+            instrumentation.targetContext.startActivity(voiceLaunchIntent)
 
             // Wait for navigation to chat screen
             val navigatedToChat = device.wait(Until.hasObject(

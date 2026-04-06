@@ -26,7 +26,7 @@ import org.junit.After
 /**
  * Integration tests for voice launch detection functionality using Instrumentation.
  * 
- * This approach uses startActivitySync() to launch activities through the real Android
+ * This approach uses startActivity() to launch activities through the real Android
  * system, which more accurately simulates how Google Assistant launches the app in production.
  * 
  * These tests verify the optimistic chat flow:
@@ -53,19 +53,25 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     lateinit var permissionManager: PermissionManager
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    
+
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
+
+    // Monitor to capture launched activity for cleanup
+    private var activityMonitor: android.app.Instrumentation.ActivityMonitor? = null
 
     @Before
     fun setUp() {
         // Grant microphone permission for voice tests
         android.util.Log.d(TAG, "🎙️ Granting microphone permission for voice tests")
         device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
+
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
-        
+
+        // Set up activity monitor to capture launched activity for cleanup
+        activityMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+
         // Clean up any existing test chats using standardized method
         runBlocking {
             cleanupTestChats(
@@ -82,7 +88,17 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         runBlocking {
             try {
                 android.util.Log.d(TAG, "🧹 Cleaning up test chats created during voice launch tests")
-                
+
+                // Finish any launched activity
+                activityMonitor?.let { monitor ->
+                    val activity = monitor.lastActivity
+                    if (activity != null && !activity.isFinishing) {
+                        activity.finish()
+                    }
+                    instrumentation.removeMonitor(monitor)
+                }
+                activityMonitor = null
+
                 // Clean up tracked chats and any chats with voice launch patterns
                 cleanupTestChats(
                     repository = repository,
@@ -91,7 +107,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
                     enablePatternFallback = true // Enable pattern fallback since voice tests create chats through navigation
                 )
                 createdChatIds.clear()
-                
+
                 android.util.Log.d(TAG, "✅ Voice launch test cleanup completed")
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "⚠️ Error during test cleanup", e)
@@ -127,7 +143,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         val initialChatCount = initialChats.size
 
         // Launch the activity
-        val activity = instrumentation.startActivitySync(voiceLaunchIntent)
+        instrumentation.targetContext.startActivity(voiceLaunchIntent)
         
         // VERIFY: Voice launch should navigate directly to new chat screen (CREATE_NEW_CHAT_ON_START behavior)
         // Wait longer for navigation and UI composition
@@ -171,8 +187,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             android.util.Log.w(TAG, "⚠️ Could not track created chats: ${e.message}")
         }
         
-        // Clean up
-        activity.finish()
+        // Activity cleanup handled by @After
     }
 
     @Test
@@ -201,7 +216,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         val initialChatCount = initialChats.size
 
         // Launch through real Android system like Google Assistant would
-        val activity = instrumentation.startActivitySync(voiceLaunchIntent)
+        instrumentation.targetContext.startActivity(voiceLaunchIntent)
         
         // VERIFY: Voice launch should navigate directly to new chat screen
         val navigatedToChat = device.wait(Until.hasObject(
@@ -297,8 +312,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             android.util.Log.w(TAG, "⚠️ Could not track created chats: ${e.message}")
         }
         
-        // Clean up
-        activity.finish()
+        // Activity cleanup handled by @After
 
     }
 
@@ -325,7 +339,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         }
 
         // Launch through real Android system
-        val activity = instrumentation.startActivitySync(manualLaunchIntent)
+        instrumentation.targetContext.startActivity(manualLaunchIntent)
         
         // VERIFY: Manual launch should load chats list (not navigate to a chat)
         val appLoaded = device.wait(Until.hasObject(
@@ -371,7 +385,6 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
                 "Optimistic chats: ${optimisticChats.size}, Assistant chats: ${assistantChats.size}")
         }
         
-        // Clean up
-        activity.finish()
+        // Activity cleanup handled by @After
     }
 } 

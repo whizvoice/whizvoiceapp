@@ -71,9 +71,12 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     // to avoid Hilt compilation errors with @HiltViewModel classes
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    
+
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
+
+    // Monitor to capture launched activity for cleanup
+    private var activityMonitor: android.app.Instrumentation.ActivityMonitor? = null
 
     @Before
     override fun setUpAuthentication() {
@@ -85,7 +88,10 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         // Also update PermissionManager state to match
         permissionManager.updateMicrophonePermission(true)
-        
+
+        // Set up activity monitor to capture launched activity for cleanup
+        activityMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+
         // Clean up any existing test chats
         runBlocking {
             cleanupTestChats(
@@ -102,7 +108,17 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         runBlocking {
             try {
                 Log.d(TAG, "🧹 Cleaning up test chats created during TTS backgrounding test")
-                
+
+                // Finish any launched activity
+                activityMonitor?.let { monitor ->
+                    val activity = monitor.lastActivity
+                    if (activity != null && !activity.isFinishing) {
+                        activity.finish()
+                    }
+                    instrumentation.removeMonitor(monitor)
+                }
+                activityMonitor = null
+
                 // Clean up tracked chats and any chats with test patterns
                 cleanupTestChats(
                     repository = repository,
@@ -111,7 +127,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
                     enablePatternFallback = true
                 )
                 createdChatIds.clear()
-                
+
                 Log.d(TAG, "✅ TTS backgrounding test cleanup completed")
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Error during test cleanup", e)
@@ -145,7 +161,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         }
         
         // Launch through real Android system like Google Assistant would
-        val activity = instrumentation.startActivitySync(voiceLaunchIntent)
+        instrumentation.targetContext.startActivity(voiceLaunchIntent)
         
         // Wait for voice launch to navigate to new chat screen
         // Voice launch navigation can take time, especially on slower emulators
@@ -436,7 +452,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         // Clean up
         MainActivity.testViewModelCallback = null
         capturedViewModel = null
-        activity.finish()
+        // Activity cleanup handled by @After
         
         Log.d(TAG, "🎉 TTS backgrounding bug test PASSED - TTS correctly stops when app is backgrounded and original message remains visible")
     }

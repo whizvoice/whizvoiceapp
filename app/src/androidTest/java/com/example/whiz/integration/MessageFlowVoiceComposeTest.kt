@@ -161,7 +161,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             }
             
             // Launch through real Android system like Google Assistant would
-            val activity = instrumentation.startActivitySync(voiceLaunchIntent) as MainActivity
+            instrumentation.targetContext.startActivity(voiceLaunchIntent)
             
             // Wait for voice launch to navigate to new chat screen
             Log.d(TAG, "⏳ Waiting for voice launch navigation to complete...")
