@@ -16,7 +16,6 @@ object TestCredentialsHelper {
         val password: String,
         val displayName: String,
         val userId: String,
-        val testAuthSecret: String
     )
     
     private var cachedCredentials: TestCredentials? = null
@@ -58,7 +57,6 @@ object TestCredentialsHelper {
                 password = googleAccount.getString("password"),
                 displayName = googleAccount.getString("display_name"),
                 userId = googleAccount.getString("user_id"),
-                testAuthSecret = testEnv.getString("test_auth_secret")
             )
             
             return cachedCredentials!!
