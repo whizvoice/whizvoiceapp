@@ -367,12 +367,20 @@ class ChatViewModel @Inject constructor(
         // Observe chat migration events from repository
         viewModelScope.launch {
             repository.chatMigrationEvents.collect { (optimisticId, serverId) ->
+                // 🔧 FIX: Update pendingRequests to use the new server ID
+                // This ensures isResponding survives chat ID migration even if user navigated away
+                val requestsToRemap = pendingRequests.filter { it.value == optimisticId }
+                for ((requestId, _) in requestsToRemap) {
+                    pendingRequests[requestId] = serverId
+                    Log.d(TAG, "Chat migration: remapped pending request $requestId from $optimisticId to $serverId")
+                }
+
                 // Check if this migration affects the current chat
                 if (_chatId.value == optimisticId) {
                     Log.d(TAG, "Chat migration detected: updating chat ID from $optimisticId to $serverId")
                     _chatId.value = serverId
                     // The messages flow will automatically update since it observes _chatId
-                    
+
                     // No longer needed - chatId is passed directly to sendMessage
                     Log.d(TAG, "Chat ID migration complete: $serverId")
                 }
@@ -1407,6 +1415,19 @@ class ChatViewModel @Inject constructor(
                 // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
                     if (pendingRequests.isNotEmpty()) {
+                        // 🔧 FIX: Remap pending requests from optimistic ID to server ID before filtering
+                        // When a chat migrates from optimistic to server ID while the user is away,
+                        // pending requests may still reference the old optimistic ID
+                        if (chatId > 0) {
+                            val optimisticId = connectionStateManager.getOptimisticChatId(chatId)
+                            if (optimisticId != null) {
+                                val requestsToRemap = pendingRequests.filter { it.value == optimisticId }
+                                for ((requestId, _) in requestsToRemap) {
+                                    pendingRequests[requestId] = chatId
+                                    Log.d(TAG, "🔥 loadChat: Remapped pending request $requestId from optimistic $optimisticId to server $chatId")
+                                }
+                            }
+                        }
                         val requestsForOtherChats = pendingRequests.filter { it.value != chatId }
                         if (requestsForOtherChats.isNotEmpty()) {
                             Log.w(TAG, "🔥 loadChat: Clearing ${requestsForOtherChats.size} pending requests for other chats: ${requestsForOtherChats.keys}")
