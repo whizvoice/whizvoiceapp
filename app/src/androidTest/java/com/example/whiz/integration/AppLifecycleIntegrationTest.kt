@@ -24,8 +24,11 @@ import javax.inject.Inject
 import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.ui.viewmodels.VoiceManager
+import com.example.whiz.ui.viewmodels.ChatViewModel
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.data.local.MessageType
 import com.example.whiz.integration.GoogleSignInAutomator
+import com.example.whiz.MainActivity
 import com.example.whiz.BaseIntegrationTest
 import androidx.test.InstrumentationRegistry
 import org.junit.After
@@ -68,9 +71,18 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
 
+    // Track the navigation-scoped ViewModel for thinking indicator tests
+    private var navigationScopedViewModel: ChatViewModel? = null
+
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
+
+        // Set up callback to capture the navigation-scoped ViewModel
+        MainActivity.testViewModelCallback = { viewModel ->
+            Log.d(TAG, "📝 Captured navigation-scoped ViewModel: ${viewModel.hashCode()}")
+            navigationScopedViewModel = viewModel
+        }
 
         // Grant microphone permission for testing continuous listening
         Log.d(TAG, "🔐 Granting microphone permission for testing...")
@@ -98,6 +110,8 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             cleanupTestChats()
             Log.d(TAG, "✅ Test cleanup completed")
         }
+        MainActivity.testViewModelCallback = null
+        navigationScopedViewModel = null
     }
 
     private suspend fun cleanupTestChats() {
@@ -120,6 +134,20 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
     private fun delay(millis: Long) {
         Thread.sleep(millis)
+    }
+
+    private fun waitForViewModel(timeout: Long = 10000L): ChatViewModel? {
+        val startTime = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startTime < timeout) {
+            val vm = navigationScopedViewModel
+            if (vm != null) {
+                Log.d(TAG, "ViewModel captured after ${System.currentTimeMillis() - startTime}ms")
+                return vm
+            }
+            Thread.sleep(200)
+        }
+        Log.e(TAG, "Failed to capture ViewModel within ${timeout}ms")
+        return null
     }
 
     @Test
@@ -298,6 +326,33 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             Log.d(TAG, "✅ App confirmed in foreground on chat page")
 
+            // --- Thinking indicator: send a voice message and capture isResponding state ---
+            val viewModel = waitForViewModel()
+            var thinkingIndicatorTracked = false
+            if (viewModel != null) {
+                Log.d(TAG, "✅ Captured ViewModel: ${viewModel.hashCode()}")
+                val testMessage = "$uniqueTestId: Write me a very detailed 500 word essay about the history of computing. Take your time."
+                Log.d(TAG, "💬 Sending voice message to trigger thinking indicator...")
+                simulateVoiceTranscriptionAndSend(testMessage, rapid = true, chatViewModel = viewModel)
+
+                // Wait for isResponding to become true
+                Log.d(TAG, "⏳ Waiting for isResponding to become true...")
+                val respondingStart = System.currentTimeMillis()
+                while (System.currentTimeMillis() - respondingStart < 5000L) {
+                    if (viewModel.isResponding.value) {
+                        thinkingIndicatorTracked = true
+                        Log.d(TAG, "✅ isResponding became true after ${System.currentTimeMillis() - respondingStart}ms")
+                        break
+                    }
+                    Thread.sleep(100)
+                }
+                if (!thinkingIndicatorTracked) {
+                    Log.w(TAG, "⚠️ isResponding never became true - server may have responded instantly. Skipping thinking indicator assertions.")
+                }
+            } else {
+                Log.w(TAG, "⚠️ Could not capture ViewModel - skipping thinking indicator assertions")
+            }
+
             // REAL USER ACTION: Background the app via home button
             Log.d(TAG, "🏠 REAL ACTION: Pressing home to background app...")
             device.pressHome()
@@ -433,6 +488,27 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ VERIFIED: Microphone restart successful (isListening=true)")
             }
             
+            // --- Thinking indicator: verify isResponding survived background/foreground ---
+            if (thinkingIndicatorTracked && viewModel != null) {
+                val isRespondingAfterForeground = viewModel.isResponding.value
+                Log.d(TAG, "🔍 After foregrounding: isResponding=$isRespondingAfterForeground")
+
+                if (!isRespondingAfterForeground) {
+                    // Check if a bot response arrived while backgrounded (that's fine)
+                    val messages = viewModel.messages.value
+                    val hasBotResponse = messages.any { it.type == MessageType.ASSISTANT && !it.content.startsWith("Error:") }
+                    if (hasBotResponse) {
+                        Log.d(TAG, "✅ Bot response arrived while backgrounded - isResponding=false is correct")
+                    } else {
+                        Log.e(TAG, "❌ FAILURE: No bot response yet but isResponding is false!")
+                        Log.e(TAG, "   This means the thinking indicator was lost during background/foreground")
+                        failWithScreenshot("Thinking indicator lost after background/foreground. No bot response arrived yet but isResponding=false.")
+                    }
+                } else {
+                    Log.d(TAG, "✅ SUCCESS: isResponding is still true after background/foreground - thinking indicator preserved!")
+                }
+            }
+
             // Key insight: Real navigation triggered observable coordinator state changes
             Log.d(TAG, "✅ REAL navigation away and back successfully preserves coordinator states: continuous=true, SpeechService.isListening=true")
             
