@@ -874,18 +874,8 @@ fun ChatScreen(
         }
     }
 
-    // Collect transcriptions from VoiceManager flow
-    // Only process when bubble is NOT active (bubble has its own transcription handling)
-    LaunchedEffect(Unit) {
-        voiceManager.transcriptionFlow.distinctUntilChanged().collect { transcription ->
-            if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
-                viewModel.updateInputText(transcription, fromVoice = true)
-                viewModel.sendUserInput(transcription)
-            } else if (transcription.isNotBlank()) {
-                // Ignoring transcription - bubble is active
-            }
-        }
-    }
+    // Voice transcription collection is handled in ChatViewModel (single instance)
+    // to avoid duplicate sends from multiple ChatScreen compositions during navigation transitions
 
     // 🔧 PRODUCTION BUG FIX: Eliminate Scaffold completely to prevent touch interception
     // Replace with simple Column layout - no bottomBar, no padding calculations, no overlays

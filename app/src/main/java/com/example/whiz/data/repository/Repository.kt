@@ -346,6 +346,16 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    suspend fun getPendingRequests(conversationId: Long): List<String> {
+        return try {
+            val response = apiService.getPendingRequests(conversationId)
+            if (response.hasPending) response.requestIds else emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking pending requests for conversation $conversationId", e)
+            emptyList()
+        }
+    }
+
     /**
      * Add user message for optimistic UI - only stores locally, doesn't make API call.
      * Used when we want immediate UI feedback before server processes the message.

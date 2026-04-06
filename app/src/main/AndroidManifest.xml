@@ -43,6 +43,7 @@
         <activity
             android:name="com.example.whiz.MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Whiz"
             android:showWhenLocked="true"
             android:turnScreenOn="true"

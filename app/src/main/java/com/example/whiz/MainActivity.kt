@@ -58,6 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import java.io.ByteArrayOutputStream
 import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.withStarted
 import androidx.lifecycle.Lifecycle
 import com.example.whiz.BuildConfig
 import com.example.whiz.data.api.ApiService
@@ -856,19 +857,21 @@ class MainActivity : ComponentActivity() {
      * Navigate when NavController is actually ready, replacing arbitrary delays
      */
     private fun navigateWhenReady(
-        route: String, 
+        route: String,
         clearBackStack: Boolean = false,
         onNavigated: () -> Unit = {}
     ) {
         lifecycleScope.launch {
-            // Ensure we're in a valid lifecycle state
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // Wait until lifecycle is at least STARTED, then execute once
+            // Using withStarted instead of repeatOnLifecycle to avoid re-navigating
+            // on every lifecycle transition (which creates duplicate ChatScreen instances)
+            lifecycle.withStarted {
                 try {
                     // Wait for NavController to be in a stable state
                     if (::navController.isInitialized && navController.currentDestination != null) {
                         Log.d(TAG, "🚨 NAVIGATE: About to navigate to $route (clearBackStack: $clearBackStack)")
                         Log.d(TAG, "🚨 NAVIGATE: Current destination before nav: ${navController.currentDestination?.route}")
-                        
+
                         if (clearBackStack) {
                             navController.navigate(route) {
                                 popUpTo(0) { inclusive = true } // Clear entire back stack
@@ -879,7 +882,7 @@ class MainActivity : ComponentActivity() {
                                 launchSingleTop = true
                             }
                         }
-                        
+
                         Log.d(TAG, "🚨 NAVIGATE: Navigation completed, current destination: ${navController.currentDestination?.route}")
                         // Execute callback after successful navigation
                         onNavigated()

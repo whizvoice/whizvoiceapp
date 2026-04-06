@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
+import com.example.whiz.BuildConfig
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
@@ -46,13 +47,10 @@ private object PreferenceKeys {
     const val DEVICE_ID = "device_id"
 }
 
-// OAuth client ID for Google Sign-In
+// OAuth client IDs loaded from BuildConfig (set via local.properties)
 private object AuthConfig {
-    // Android client ID (must match package name com.example.whiz and SHA-1 fingerprint)
-    const val GOOGLE_CLIENT_ID = "REDACTED_GOOGLE_CLIENT_ID"
-    
-    // Web client ID for server authentication
-    const val WEB_CLIENT_ID = "REDACTED_WEB_CLIENT_ID"
+    val GOOGLE_CLIENT_ID: String = BuildConfig.GOOGLE_CLIENT_ID
+    val WEB_CLIENT_ID: String = BuildConfig.WEB_CLIENT_ID
 }
 
 data class UserProfile(
@@ -219,7 +217,7 @@ open class AuthRepository @Inject constructor(
             // Assuming successful response (2xx), Retrofit would have populated this.
             // If server returns non-2xx, Retrofit throws HttpException, caught below.
             
-            Log.i(TAG, "🔄 Access token refreshed successfully. New token: ${response.access_token.take(10)}...")
+            Log.i(TAG, "🔄 Access token refreshed successfully")
             // Save the new access token. The refresh token remains the same in this iteration.
             saveAuthTokensFromServer(response.access_token, currentRefreshToken)
             Log.d(TAG, "🔄 New access token saved to preferences")

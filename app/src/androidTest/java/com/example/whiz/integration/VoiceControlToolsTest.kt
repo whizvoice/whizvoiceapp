@@ -2,7 +2,7 @@ package com.example.whiz.integration
 
 import android.content.Intent
 import android.util.Log
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -55,7 +55,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @get:Rule(order = 2)
-    val composeTestRule = createAndroidComposeRule<MainActivity>()
+    val composeTestRule = createEmptyComposeRule()
 
     @Inject
     lateinit var repository: WhizRepository
@@ -143,9 +143,9 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
         Log.d(TAG, "test user: ${credentials.googleTestAccount.email}")
 
         try {
-            // Step 1: Verify app is ready
-            Log.d(TAG, "📱 step 1: verifying app is ready...")
-            if (!ComposeTestHelper.isAppReady(composeTestRule)) {
+            // Step 1: Launch app and verify it's ready
+            Log.d(TAG, "📱 step 1: launching app...")
+            if (!ComposeTestHelper.launchAppAndWaitForLoad(composeTestRule, isVoiceLaunch = false, packageName = packageName)) {
                 Log.e(TAG, "❌ FAILURE: app not ready")
                 failWithScreenshot("voice_control_app_not_ready", "app not ready")
                 return@runBlocking
@@ -595,11 +595,6 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
                 emptyList()
             }
 
-            // Step 0b: Finish the activity that was auto-launched by composeTestRule
-            Log.d(TAG, "🛑 Finishing auto-launched activity before voice launch...")
-            composeTestRule.activityRule.scenario.close()
-            Thread.sleep(500) // Give it time to fully close
-
             // Reset TTS state to ensure clean initial state (previous tests may have left it enabled)
             voiceManager.setVoiceResponseEnabled(false)
             voiceManager.ttsStateBeforeBackground = null
@@ -610,7 +605,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             val voiceLaunchIntent = Intent(instrumentation.targetContext, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or 0x10000000
                 putExtra("tracing_intent_id", System.currentTimeMillis())
             }
 
@@ -622,7 +617,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             }
 
             // Launch
-            instrumentation.startActivitySync(voiceLaunchIntent)
+            instrumentation.targetContext.startActivity(voiceLaunchIntent)
 
             // Wait for navigation to chat screen
             val navigatedToChat = device.wait(Until.hasObject(

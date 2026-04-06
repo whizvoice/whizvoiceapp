@@ -7,7 +7,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.example.whiz.BaseIntegrationTest
-import com.example.whiz.MainActivity
 import com.example.whiz.test_helpers.ComposeTestHelper
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
@@ -27,8 +26,6 @@ import androidx.test.uiautomator.UiDevice
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import com.example.whiz.data.local.WhizDatabase
-import com.example.whiz.data.local.MessageType
-import com.example.whiz.data.local.MessageEntity
 import kotlinx.coroutines.launch
 import android.util.Log
 import com.example.whiz.data.local.ChatEntity
@@ -90,9 +87,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         // Call parent authentication setup first
         super.setUpAuthentication()
-        
+
         // device is already initialized by parent class
-        
+
         // Set up test data
         runBlocking {
             try {
@@ -208,7 +205,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 // Don't logout - let user stay logged in
                 
                 Log.d(TAG, "✅ Test cleanup completed (user remains authenticated, UI state cleaned)")
-                
+
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Error during test cleanup", e)
                 // Don't fail the test if cleanup fails

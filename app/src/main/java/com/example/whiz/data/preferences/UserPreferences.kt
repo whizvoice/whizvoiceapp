@@ -60,7 +60,7 @@ class UserPreferences @Inject constructor(
         try {
             // Wait for a valid server token. This will suspend until a token is available.
             val serverToken = authRepository.serverToken.first { it != null }
-            Log.d(TAG, "Refreshing API token status from server with token: $serverToken")
+            Log.d(TAG, "Refreshing API token status from server")
             
             val response = apiService.getApiTokens() // Assumes getApiTokens uses the token via an interceptor
             _hasClaudeToken.value = response.has_claude_token
@@ -84,17 +84,14 @@ class UserPreferences @Inject constructor(
 
     suspend fun setClaudeToken(token: String) {
         // val serverToken = authRepository.serverToken.value // May not be needed if auth handled by interceptor
-        Log.d(TAG, "Attempting to update Claude token on server via /user/api_key. New token (empty if clearing): '$token'")
+        Log.d(TAG, "Attempting to update Claude token on server via /user/api_key")
         try {
             val request = ApiService.UserApiKeySetRequest(
                 key_name = "claude_api_key", // Key name as expected by backend
                 key_value = token.ifBlank { null } // Send null if token is blank to clear
             )
-            // Log the request for debugging
-            Log.d(TAG, "Sending UserApiKeySetRequest: key_name='${request.key_name}', key_value=${if (request.key_value == null) "null" else "'${request.key_value}'"}")
             val gsonWithNulls = GsonBuilder().serializeNulls().create()
             val json = gsonWithNulls.toJson(request)
-            Log.d(TAG, "Request as JSON with nulls: $json")
             val response = apiService.setUserApiKey(request)
             Log.i(TAG, "Successfully sent Claude token update to server. Response: $response")
             
@@ -110,17 +107,14 @@ class UserPreferences @Inject constructor(
 
     suspend fun setAsanaToken(token: String) {
         // val serverToken = authRepository.serverToken.value // May not be needed if auth handled by interceptor
-        Log.d(TAG, "Attempting to update Asana token on server via /user/api_key. New token (empty if clearing): '$token'")
+        Log.d(TAG, "Attempting to update Asana token on server via /user/api_key")
         try {
             val request = ApiService.UserApiKeySetRequest(
                 key_name = "asana_access_token", // Key name as expected by backend
                 key_value = token.ifBlank { null } // Send null if token is blank to clear
             )
-            // Log the request for debugging
-            Log.d(TAG, "Sending UserApiKeySetRequest for Asana: key_name='${request.key_name}', key_value=${if (request.key_value == null) "null" else "'${request.key_value}'"}")
             val gsonWithNulls = GsonBuilder().serializeNulls().create()
             val json = gsonWithNulls.toJson(request)
-            Log.d(TAG, "Asana Request as JSON with nulls: $json")
             val response = apiService.setUserApiKey(request)
             Log.i(TAG, "Successfully sent Asana token update to server. Response: $response")
             

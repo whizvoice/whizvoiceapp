@@ -103,25 +103,21 @@ fun WhizNavHost(
         navigate(route)
     }
 
-    // Determine start destination with detailed logging
-    val startDestination = if (isAuthenticated) {
-        Log.d("WhizNavHost", "🎯 User is authenticated, determining start destination:")
-        if (fromAssistant && chatId > 0) {
-            Log.d("WhizNavHost", "  ✅ Voice launch with specific chat ID: chat/$chatId")
-            "chat/$chatId"
-        } else if (fromAssistant) {
-            Log.d("WhizNavHost", "  🎤 Voice launch to new chat - using chat/-1")
-            "chat/-1"
+    // Determine start destination once — subsequent navigation is handled programmatically
+    // (LoginScreen navigates to Home on auth, LaunchedEffect handles auth loss)
+    // Using remember prevents NavHost from tearing down and rebuilding its composable graph
+    // on recomposition, which would create duplicate ChatScreen/ViewModel instances
+    val startDestination = remember {
+        if (isAuthenticated) {
+            if (fromAssistant && chatId > 0) "chat/$chatId"
+            else if (fromAssistant) "chat/-1"
+            else Screen.Home.route
         } else {
-            Log.d("WhizNavHost", "  🏠 Regular launch - using home screen")
-            Screen.Home.route
+            Screen.Login.route
         }
-    } else {
-        Log.d("WhizNavHost", "🔐 User not authenticated - using login screen")
-        Screen.Login.route
     }
-    
-    Log.d("WhizNavHost", "🎯 Final startDestination: $startDestination")
+
+    Log.d("WhizNavHost", "🎯 startDestination: $startDestination")
 
     NavHost(
         navController = navController,

@@ -140,7 +140,10 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
             addCategory(Intent.CATEGORY_LAUNCHER)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
-        mainActivity = instrumentation.startActivitySync(launchIntent) as MainActivity
+        val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
+        instrumentation.targetContext.startActivity(launchIntent)
+        mainActivity = monitor.waitForActivityWithTimeout(TEST_TIMEOUT) as? MainActivity
+        instrumentation.removeMonitor(monitor)
 
         // Step 2: Wait for chat list to load
         Log.d(TAG, "⏳ Waiting for chat list to load")

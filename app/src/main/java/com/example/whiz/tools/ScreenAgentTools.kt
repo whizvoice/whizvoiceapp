@@ -8206,7 +8206,10 @@ class ScreenAgentTools @Inject constructor(
         try {
             val conversationContactName = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversation_contact_name")
             if (conversationContactName != null && conversationContactName.isNotEmpty()) {
-                val name = conversationContactName[0].text?.toString()
+                val node = conversationContactName[0]
+                // Prefer contentDescription over text as it contains the full untruncated name
+                val name = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+                    ?: node.text?.toString()
                 conversationContactName.forEach { it.recycle() }
                 Log.d(TAG, "Current WhatsApp chat name: $name")
                 return name

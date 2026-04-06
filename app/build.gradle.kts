@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -9,6 +11,14 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
     alias(libs.plugins.kotlin.compose)
+}
+
+// Load OAuth client IDs from local.properties (must be outside android{} block
+// because `java` is shadowed by the android plugin's accessor inside that scope)
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
 }
 
 android {
@@ -26,7 +36,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        
+
+        buildConfigField("String", "GOOGLE_CLIENT_ID", "\"${localProperties.getProperty("GOOGLE_CLIENT_ID", "")}\"")
+        buildConfigField("String", "WEB_CLIENT_ID", "\"${localProperties.getProperty("WEB_CLIENT_ID", "")}\"")
+
         // Add Room schema location and KSP args
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")

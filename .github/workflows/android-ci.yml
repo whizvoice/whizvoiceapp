@@ -202,6 +202,12 @@ jobs:
           echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
           echo "✅ Test credentials file created"
 
+      - name: Setup local.properties with OAuth client IDs
+        run: |
+          echo "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" >> local.properties
+          echo "WEB_CLIENT_ID=${{ secrets.WEB_CLIENT_ID }}" >> local.properties
+          echo "✅ OAuth client IDs added to local.properties"
+
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:

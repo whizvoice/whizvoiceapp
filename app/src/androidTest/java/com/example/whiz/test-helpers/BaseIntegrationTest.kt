@@ -467,7 +467,7 @@ abstract class BaseIntegrationTest {
         val intent = Intent(context, com.example.whiz.MainActivity::class.java).apply {
             action = Intent.ACTION_MAIN
             addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000 // Voice launch flags
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or 0x10000000 // Voice launch flags
             putExtra("tracing_intent_id", 745783203297493028L) // Magic number that triggers voice mode
         }
         
