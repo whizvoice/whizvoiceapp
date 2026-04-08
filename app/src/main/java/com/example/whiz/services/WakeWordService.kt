@@ -54,8 +54,8 @@ class WakeWordService : Service() {
         // Classifier threshold: probability above which a Vosk candidate is accepted
         private const val CLASSIFIER_THRESHOLD = 0.8f
 
-        // Ring buffer: 10 seconds of 16kHz mono 16-bit PCM = 320000 bytes
-        private const val RING_BUFFER_SECONDS = 10
+        // Ring buffer: 25 seconds of 16kHz mono 16-bit PCM = 800000 bytes
+        private const val RING_BUFFER_SECONDS = 25
         private const val RING_BUFFER_SIZE = RING_BUFFER_SECONDS * SAMPLE_RATE * 2
         // Wake word detection clips are trimmed to 3 seconds
         private const val WAKE_WORD_CLIP_SECONDS = 3
@@ -101,7 +101,7 @@ class WakeWordService : Service() {
         }
 
         /**
-         * Get a snapshot of the audio ring buffer (up to 10 seconds of PCM data).
+         * Get a snapshot of the audio ring buffer (up to 25 seconds of PCM data).
          * Returns null if service isn't running or no audio captured.
          */
         fun getAudioSnapshot(): ByteArray? {
