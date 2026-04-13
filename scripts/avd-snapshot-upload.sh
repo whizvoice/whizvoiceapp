@@ -55,12 +55,26 @@ fi
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-for cmd in zstd gh tar split sha256sum; do
+for cmd in zstd gh tar split sha256sum openssl; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: '$cmd' is required but not found in PATH"
         exit 1
     fi
 done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KEY_FILE="${SCRIPT_DIR}/../snapshot_encryption_key.txt"
+if [[ -z "${SNAPSHOT_ENCRYPTION_KEY:-}" ]]; then
+    if [[ -f "$KEY_FILE" ]]; then
+        SNAPSHOT_ENCRYPTION_KEY=$(cat "$KEY_FILE" | tr -d '[:space:]')
+        export SNAPSHOT_ENCRYPTION_KEY
+    else
+        echo "Error: SNAPSHOT_ENCRYPTION_KEY not set and $KEY_FILE not found."
+        echo "Generate a key with: openssl rand -base64 32"
+        echo "Save it to: $KEY_FILE"
+        exit 1
+    fi
+fi
 
 # Ensure emulator is not running (snapshot files can be corrupted if in use)
 if command -v pgrep &>/dev/null; then
@@ -86,7 +100,7 @@ echo "==> Packaging AVD snapshot (version=$VERSION)"
 # Stage essential files
 # ---------------------------------------------------------------------------
 STAGING_DIR=$(mktemp -d /tmp/avd-snapshot-staging.XXXXXX)
-trap 'echo "==> Cleaning up staging dir"; rm -rf "$STAGING_DIR" "$ARCHIVE_PATH" ${SPLIT_PREFIX}*' EXIT
+trap 'echo "==> Cleaning up staging dir"; rm -rf "$STAGING_DIR" "$ARCHIVE_PATH" "${ARCHIVE_PATH}.enc" ${SPLIT_PREFIX}*' EXIT
 
 echo "==> Staging files to $STAGING_DIR"
 
@@ -158,7 +172,19 @@ echo "==> Compressing with zstd (level 19, multithreaded)..."
 tar -cf - -C "$STAGING_DIR" . | zstd -T0 -19 -o "$ARCHIVE_PATH"
 
 ARCHIVE_SIZE=$(du -sh "$ARCHIVE_PATH" | cut -f1)
-echo "    Archive size: $ARCHIVE_SIZE"
+echo "    Archive size (unencrypted): $ARCHIVE_SIZE"
+
+# ---------------------------------------------------------------------------
+# Encrypt
+# ---------------------------------------------------------------------------
+ENCRYPTED_PATH="${ARCHIVE_PATH}.enc"
+echo "==> Encrypting archive..."
+openssl enc -aes-256-cbc -salt -pbkdf2 -in "$ARCHIVE_PATH" -out "$ENCRYPTED_PATH" -pass env:SNAPSHOT_ENCRYPTION_KEY
+rm "$ARCHIVE_PATH"
+ARCHIVE_PATH="$ENCRYPTED_PATH"
+
+ENCRYPTED_SIZE=$(du -sh "$ARCHIVE_PATH" | cut -f1)
+echo "    Encrypted archive size: $ENCRYPTED_SIZE"
 
 # ---------------------------------------------------------------------------
 # Checksum
@@ -208,6 +234,7 @@ cat > "$MANIFEST_PATH" <<EOF
   "api_level": 36,
   "system_image": "system-images;android-36;google_apis_playstore;x86_64",
   ${EMULATOR_BUILD_JSON}
+  "encrypted": true,
   "avd_name": "${AVD_NAME}",
   "snapshot_name": "${SNAPSHOT_NAME}",
   "snapshot_sdk_root": "${SDK_ROOT}",

@@ -61,6 +61,7 @@ jobs:
         id: download-snapshot
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: |
           chmod +x scripts/avd-snapshot-download.sh
           ./scripts/avd-snapshot-download.sh \
