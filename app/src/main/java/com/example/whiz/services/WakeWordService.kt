@@ -471,7 +471,16 @@ class WakeWordService : Service() {
 
             val phraseKey = when {
                 text.contains("hey whiz") -> "hey_whiz"
+                text.contains("hey") && text.contains("[unk]") -> "hey_unk"
                 else -> return
+            }
+
+            // "hey [unk]" — always reject, but log and capture audio for training
+            if (phraseKey == "hey_unk") {
+                Log.d(TAG, "Rejected 'hey [unk]': '$text' (vosk_confidence=$voskConfidence)")
+                wakeWordPreferences.recordDetection(phraseKey, voskConfidence, false, jsonResult, -1.0)
+                captureDetectionAudio(phraseKey, voskConfidence, false, jsonResult, -1.0)
+                return
             }
 
             // Run ONNX classifier on ring buffer audio if available
