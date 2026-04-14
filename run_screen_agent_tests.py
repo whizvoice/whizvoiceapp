@@ -495,7 +495,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ WhatsApp draft message validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_message_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_message_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp draft message validated successfully!")
         assert validation_result, "Failed to draft WhatsApp message correctly"
@@ -534,7 +534,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_updated_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_updated_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
         assert validation_result, "Failed to draft WhatsApp message correctly"
@@ -573,7 +573,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_sent_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_sent_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp message successfully sent!")
         assert validation_result, "Failed to send WhatsApp message correctly"
@@ -612,7 +612,7 @@ def test_whatsapp_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_deleted_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_deleted_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp message successfully deleted!")
         assert validation_result, "Failed to delete the sent message"
@@ -719,7 +719,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for song to load... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not play_succeeded:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "song_playing_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "song_playing_validation", existing_screenshot=screenshot_path)
         assert play_succeeded, "Failed to load Golden on YouTube Music - song never appeared as current track"
         print("✅ YouTube Music has 'Golden' loaded successfully!")
 
@@ -768,7 +768,7 @@ def test_youtube_music_integration(tester):
         )
         if not validation_result:
             print("❌ Queue validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "queue_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "queue_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
         assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
@@ -812,7 +812,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for music to change... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not music_changed:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_music_change_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_music_change_validation", existing_screenshot=screenshot_path)
         assert music_changed, "Failed to change music from Golden"
         print("✅ Music changed successfully!")
 
@@ -837,7 +837,7 @@ def test_youtube_music_integration(tester):
         )
         if not playlist_validation:
             print("❌ 90s pop playlist validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_playlist_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_playlist_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ 90s pop playlist validated successfully!")
         assert playlist_validation, "Failed to validate 90s pop playlist"
@@ -883,7 +883,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for podcast to start playing... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not podcast_succeeded:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "podcast_playing_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "podcast_playing_validation", existing_screenshot=screenshot_path)
         assert podcast_succeeded, "Failed to play 99% Invisible podcast"
         print("✅ 99% Invisible podcast playing successfully!")
 
@@ -928,7 +928,7 @@ def test_youtube_music_integration(tester):
             print(f"⏳ Waiting for music to pause... ({(i+1)*poll_interval}/{max_wait}s)")
 
         if not pause_succeeded:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "pause_music_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "pause_music_validation", existing_screenshot=screenshot_path)
         assert pause_succeeded, "Failed to pause music - play button never appeared"
         print("✅ Music paused successfully!")
 
@@ -1022,7 +1022,7 @@ def test_google_maps_directions(tester):
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_see_locations")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_see_locations", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show {store_name} location list"
 
         # Send a voice transcription to select the one on Laguna Street
@@ -1050,7 +1050,7 @@ def test_google_maps_directions(tester):
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show {store_name} directions"
 
         # Send a voice transcription to change destination to secondary address
@@ -1076,7 +1076,7 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
         )
         if not validation_result:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_search")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_search", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show {secondary_address} search results"
 
         # Send a voice transcription to request driving directions specifically
@@ -1101,7 +1101,7 @@ def test_google_maps_directions(tester):
             "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
         )
         if not validation_result:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_driving_directions")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_driving_directions", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show driving directions to {secondary_address}"
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
@@ -1119,7 +1119,7 @@ def test_google_maps_directions(tester):
             f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}"
         )
         if not validation_result:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "whizvoice_address_confirmation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "whizvoice_address_confirmation", existing_screenshot=screenshot_path)
         assert validation_result, f"Assistant did not mention the {secondary_address} address in the chat"
 
     finally:
@@ -1181,7 +1181,7 @@ def test_sms_draft_message(tester):
             "The screen shows a 'New Chat' page where users can start a new conversation"
         )
         if not validation_result:
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "new_chat_screen")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "new_chat_screen", existing_screenshot=screenshot_path)
         assert validation_result, "Failed to reach New Chat screen"
         print("✅ Successfully validated New Chat screen")
 
@@ -1235,7 +1235,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft message validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_message_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_message_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS draft message validated successfully!")
         assert validation_result, "Failed to draft SMS message correctly"
@@ -1273,7 +1273,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_updated_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_updated_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
         assert validation_result, "Failed to update SMS draft message correctly"
@@ -1314,7 +1314,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_sent_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_sent_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS message successfully sent!")
         assert validation_result, "Failed to send SMS message correctly"
@@ -1352,7 +1352,7 @@ def test_sms_draft_message(tester):
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_deleted_validation")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_deleted_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS message successfully deleted!")
         assert validation_result, "Failed to delete the sent SMS message"
