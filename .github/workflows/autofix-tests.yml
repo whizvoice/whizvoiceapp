@@ -61,11 +61,12 @@ jobs:
         id: download-snapshot
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
         run: |
           chmod +x scripts/avd-snapshot-download.sh
           ./scripts/avd-snapshot-download.sh \
             --force \
-            --release-tag emulator-snapshot-x86_64-v3 \
+            --release-tag emulator-snapshot-x86_64-v4 \
             --system-image "system-images;android-36;google_apis_playstore;x86_64" \
             --target-api 36
           # Read emulator build saved by download script

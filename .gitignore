@@ -21,6 +21,7 @@ testing
 .production_apk_checksum
 venv
 export_anthropic_key.sh
+snapshot_encryption_key.txt
 current_screen.png
 adb_tests/screenshots/*
 __pycache__/

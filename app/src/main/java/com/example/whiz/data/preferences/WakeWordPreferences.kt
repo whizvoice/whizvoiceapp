@@ -115,7 +115,7 @@ class WakeWordPreferences @Inject constructor(
             val sb = StringBuilder()
             sb.appendLine("Wake Word Detection Stats (updated ${df.format(Date())})")
             sb.appendLine("=".repeat(50))
-            for (phrase in listOf("hey_whiz", "ok_whiz")) {
+            for (phrase in listOf("hey_whiz", "ok_whiz", "hey_unk")) {
                 val s = getStats(phrase)
                 if (s.count == 0L) continue
                 sb.appendLine()
@@ -235,7 +235,7 @@ class WakeWordPreferences @Inject constructor(
 
     fun clearMetrics() {
         val editor = prefs.edit()
-        for (phrase in listOf("hey_whiz", "ok_whiz")) {
+        for (phrase in listOf("hey_whiz", "ok_whiz", "hey_unk")) {
             for (field in listOf("count", "accepted_count", "mean", "m2", "last_confidence", "last_timestamp", "recent")) {
                 editor.remove(metricsKey(phrase, field))
             }

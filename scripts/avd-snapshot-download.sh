@@ -73,7 +73,7 @@ echo "==> Using SDK root: $SDK_ROOT"
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-for cmd in zstd gh shasum; do
+for cmd in zstd gh shasum openssl; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: '$cmd' is required but not found in PATH"
         exit 1
@@ -149,6 +149,12 @@ m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
 print(m.get('snapshot_home', ''))
 ")
 
+IS_ENCRYPTED=$(python3 -c "
+import json
+m = json.load(open('$DOWNLOAD_DIR/avd-snapshot-manifest.json'))
+print('true' if m.get('encrypted', False) else 'false')
+")
+
 echo "    Expected SHA-256: $EXPECTED_SHA256"
 echo "    Parts: $PARTS"
 if [[ -n "$EMULATOR_BUILD" ]]; then
@@ -184,6 +190,30 @@ if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
     exit 1
 fi
 echo "    Checksum verified."
+
+# ---------------------------------------------------------------------------
+# Decrypt (if encrypted)
+# ---------------------------------------------------------------------------
+if [[ "$IS_ENCRYPTED" == "true" ]]; then
+    KEY_FILE="${SCRIPT_DIR}/../snapshot_encryption_key.txt"
+    if [[ -z "${SNAPSHOT_ENCRYPTION_KEY:-}" ]]; then
+        if [[ -f "$KEY_FILE" ]]; then
+            SNAPSHOT_ENCRYPTION_KEY=$(cat "$KEY_FILE" | tr -d '[:space:]')
+            export SNAPSHOT_ENCRYPTION_KEY
+        else
+            echo "Error: Snapshot is encrypted but SNAPSHOT_ENCRYPTION_KEY is not set"
+            echo "and $KEY_FILE not found."
+            echo "This key is required to decrypt the emulator snapshot."
+            echo "In CI, add it as a GitHub Actions secret."
+            exit 1
+        fi
+    fi
+    echo "==> Decrypting archive..."
+    DECRYPTED_PATH="${ARCHIVE_PATH%.enc}"
+    openssl enc -aes-256-cbc -d -salt -pbkdf2 -in "$ARCHIVE_PATH" -out "$DECRYPTED_PATH" -pass env:SNAPSHOT_ENCRYPTION_KEY
+    ARCHIVE_PATH="$DECRYPTED_PATH"
+    echo "    Decryption successful."
+fi
 
 # ---------------------------------------------------------------------------
 # Extract

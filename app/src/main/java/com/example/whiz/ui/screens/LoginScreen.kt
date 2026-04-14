@@ -112,6 +112,30 @@ fun LoginScreen(
         }
     }
 
+    val launchSignIn: () -> Unit = {
+        try {
+            val signInIntent = authViewModel.getSignInIntent()
+            Log.d("LoginScreen", "Launching sign-in intent")
+            signInLauncher.launch(signInIntent)
+        } catch (e: Exception) {
+            Log.e("LoginScreen", "Error launching sign-in", e)
+        }
+    }
+
+    // Dismiss the keyguard first so the Google Sign-In activity isn't launched behind it
+    // when the user reached this screen via the power-button assistant on a locked device.
+    val launchSignInAfterUnlock: () -> Unit = {
+        val unlockCallback = com.example.whiz.MainActivity.requestUnlockCallback
+        if (unlockCallback != null) {
+            unlockCallback(
+                { launchSignIn() },
+                { Log.d("LoginScreen", "User cancelled unlock, not launching sign-in") }
+            )
+        } else {
+            launchSignIn()
+        }
+    }
+
     // Check Google Play Services availability
     LaunchedEffect(Unit) {
         val availability = GoogleApiAvailability.getInstance()
@@ -196,15 +220,7 @@ fun LoginScreen(
                 Spacer(modifier = Modifier.height(32.dp))
 
                 Button(
-                    onClick = {
-                        try {
-                            val signInIntent = authViewModel.getSignInIntent()
-                            Log.d("LoginScreen", "Retrying sign-in intent")
-                            signInLauncher.launch(signInIntent)
-                        } catch (e: Exception) {
-                            Log.e("LoginScreen", "Error launching sign-in retry", e)
-                        }
-                    },
+                    onClick = { launchSignInAfterUnlock() },
                     enabled = !isLoading,
                     modifier = Modifier
                         .fillMaxWidth(0.8f)
@@ -249,15 +265,7 @@ fun LoginScreen(
                 Spacer(modifier = Modifier.height(48.dp))
 
                 Button(
-                    onClick = {
-                        try {
-                            val signInIntent = authViewModel.getSignInIntent()
-                            Log.d("LoginScreen", "Launching sign-in intent")
-                            signInLauncher.launch(signInIntent)
-                        } catch (e: Exception) {
-                            Log.e("LoginScreen", "Error launching sign-in", e)
-                        }
-                    },
+                    onClick = { launchSignInAfterUnlock() },
                     modifier = Modifier
                         .fillMaxWidth(0.8f)
                         .height(50.dp)

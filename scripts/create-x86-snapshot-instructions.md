@@ -64,12 +64,30 @@ After interactive setup, press Enter in the setup script's terminal to save the 
 gh auth login
 git clone https://github.com/whizvoice/whizvoiceapp.git
 cd whizvoiceapp
+# Ensure snapshot_encryption_key.txt exists in the project root
 ./scripts/avd-snapshot-upload.sh --version x86_64-v2
 ```
 
-The upload script packages the AVD files, sanitizes absolute paths, compresses with zstd, and uploads to GitHub Releases.
+The upload script packages the AVD files, sanitizes absolute paths, compresses with zstd, **encrypts with AES-256-CBC**, and uploads to GitHub Releases.
 
 **Disk space note**: The upload script copies files to a staging directory before compressing. If disk is tight, you can use symlinks instead of copies — see the staging code in `avd-snapshot-upload.sh`.
+
+### Snapshot encryption
+
+The snapshot contains login data for the test Google account, so it is encrypted before uploading to GitHub Releases (which are public).
+
+**One-time setup:**
+1. Generate a key: `openssl rand -base64 32`
+2. Save it to `snapshot_encryption_key.txt` in the project root (this file is gitignored)
+3. Add the same key as a GitHub Actions secret named `SNAPSHOT_ENCRYPTION_KEY` in the repo settings (Settings > Secrets and variables > Actions)
+
+**How it works:**
+- The upload and download scripts read the key from `snapshot_encryption_key.txt` (or fall back to `SNAPSHOT_ENCRYPTION_KEY` env var)
+- The upload script encrypts the zstd archive with `openssl enc -aes-256-cbc` before splitting and uploading
+- The download script checks the manifest for `"encrypted": true` and decrypts before extracting
+- The CI workflow passes the secret to the download step via env var
+
+**Fork PRs:** GitHub Actions does not expose secrets to workflows triggered by fork PRs. Tests requiring the snapshot will only run after the PR is merged to main (where secrets are available).
 
 ## Technical Details
 
