@@ -12,12 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # Constants — update these when uploading a new snapshot
 # ---------------------------------------------------------------------------
-SNAPSHOT_VERSION="v1"
+SNAPSHOT_VERSION="x86_64-v4"
 RELEASE_TAG="emulator-snapshot-${SNAPSHOT_VERSION}"
 REPO="whizvoice/whizvoiceapp"
 AVD_NAME="whiz-test-device"
 SNAPSHOT_NAME="baseline_clean"
-SYSTEM_IMAGE="system-images;android-35;google_apis_playstore;arm64-v8a"
+SYSTEM_IMAGE="system-images;android-36;google_apis_playstore;x86_64"
 
 # ---------------------------------------------------------------------------
 # Parse args
