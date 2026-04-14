@@ -209,9 +209,9 @@ if [[ "$IS_ENCRYPTED" == "true" ]]; then
         fi
     fi
     echo "==> Decrypting archive..."
-    DECRYPTED_PATH="${ARCHIVE_PATH%.enc}"
+    DECRYPTED_PATH="${ARCHIVE_PATH}.decrypted"
     openssl enc -aes-256-cbc -d -salt -pbkdf2 -in "$ARCHIVE_PATH" -out "$DECRYPTED_PATH" -pass env:SNAPSHOT_ENCRYPTION_KEY
-    ARCHIVE_PATH="$DECRYPTED_PATH"
+    mv -f "$DECRYPTED_PATH" "$ARCHIVE_PATH"
     echo "    Decryption successful."
 fi
 
