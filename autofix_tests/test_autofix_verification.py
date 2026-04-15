@@ -9,9 +9,12 @@ page (with a message_btn) instead of directly to the chat input field.
 import time
 
 
-def test_whatsapp_input_not_found(tester):
+def test_autofix_whatsapp_input_not_found(tester):
     """Verify WhatsApp messaging finds the input field and drafts a message."""
-    from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
+    from helpers import (
+        navigate_to_my_chats, send_voice_command, save_failed_screenshot,
+        wait_for_websocket_connected,
+    )
 
     # Navigate to My Chats page
     success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
@@ -21,8 +24,11 @@ def test_whatsapp_input_not_found(tester):
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
+    # Wait for WebSocket to connect before sending voice command
+    assert wait_for_websocket_connected(), "WebSocket did not connect in time"
+
+    # Send a voice command that triggers WhatsApp messaging via screen agent.
+    # Always use "Ruth Grace Wong" — this contact exists on the test emulator.
     send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
     time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
 

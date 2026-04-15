@@ -1644,6 +1644,27 @@ class ScreenAgentTools @Inject constructor(
             }
             messageBtnNodes?.forEach { it.recycle() }
 
+            // Check if WhatsApp is still on the conversations list (not inside a chat).
+            // In newer WhatsApp versions the app opens to the conversations list instead of
+            // restoring the last-viewed chat on relaunch, so the 1-second wait above times out.
+            // Without a chatName there is no way to know which conversation to open, and
+            // findWhatsAppMessageInput will always fail on the conversations list (no EditText).
+            val currentScreenForDraft = detectWhatsAppScreen(rootNode)
+            if (currentScreenForDraft == WhatsAppScreen.CHAT_LIST) {
+                Log.w(TAG, "WhatsApp is on conversations list, not inside a chat (chatName=$chatName)")
+                dumpUIHierarchy(rootNode, "whatsapp_input_not_found", "WhatsApp is on conversations list, not inside a chat")
+                rootNode.recycle()
+                return DraftResult(
+                    success = false,
+                    message = message,
+                    error = if (chatName != null) {
+                        "WhatsApp is on the conversations list. Could not navigate to chat '$chatName'. Please try again."
+                    } else {
+                        "WhatsApp is showing the conversations list, not an open chat. Please specify which contact to message."
+                    }
+                )
+            }
+
             // Find the WhatsApp message input field specifically
             val inputNodes = mutableListOf<AccessibilityNodeInfo>()
             findWhatsAppMessageInput(rootNode, inputNodes, 0)
