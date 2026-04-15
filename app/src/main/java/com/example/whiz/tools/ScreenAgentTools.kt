@@ -1392,6 +1392,12 @@ class ScreenAgentTools @Inject constructor(
                         // Wait for search results to appear
                         waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
 
+                        // Capture UI state after search for debugging
+                        val afterSearchRoot = accessibilityService.getCurrentRootNode()
+                        if (afterSearchRoot != null) {
+                            dumpUIHierarchy(afterSearchRoot, "debug_whatsapp_after_search", "DEBUG: UI after searching for '$chatName'")
+                            afterSearchRoot.recycle()
+                        }
                     }
                 }
 
@@ -8187,6 +8193,23 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // Check for search results screen (search is active / user is typing in search bar).
+            // com.whatsapp:id/search_input is present in both old and new WhatsApp when search
+            // is active. New WhatsApp wraps it in search_input_container (HorizontalScrollView),
+            // but the EditText itself keeps the same ID.
+            val searchInput = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchInput != null && searchInput.isNotEmpty()) {
+                searchInput.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
+            }
+            val searchInputContainer = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input_container")
+            if (searchInputContainer != null && searchInputContainer.isNotEmpty()) {
+                searchInputContainer.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input_container visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
