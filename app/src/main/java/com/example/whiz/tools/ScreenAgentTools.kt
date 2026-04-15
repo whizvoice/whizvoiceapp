@@ -8045,7 +8045,17 @@ class ScreenAgentTools @Inject constructor(
                 closeNodes.forEach { it.recycle() }
             }
 
-            Log.w(TAG, "Found notification dialog but could not find close button")
+            // Fallback: press back to dismiss the dialog (works for BottomSheetDialogs shown
+            // as separate windows where the specific dismiss button cannot be found)
+            Log.w(TAG, "Could not find specific dismiss button for notification dialog, pressing back to dismiss")
+            val service = WhizAccessibilityService.getInstance()
+            if (service != null) {
+                service.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+                Log.d(TAG, "Pressed back to dismiss WhatsApp notification dialog")
+                return true
+            }
+
+            Log.w(TAG, "Found notification dialog but could not find close button or accessibility service")
             return false
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing WhatsApp notification dialog: ${e.message}")
