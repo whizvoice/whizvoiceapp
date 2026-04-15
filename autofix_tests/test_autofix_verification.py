@@ -1,67 +1,73 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for debug_whatsapp_click_wrong_screen.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that selectWhatsAppChat correctly returns success when the chat
+loads slightly after the waitForCondition timeout expires — i.e. the
+entry field is present in the accessibility tree by the time the
+else-branch re-reads the root, but the 5-second polling window had
+already elapsed without detecting INSIDE_CHAT.
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
-    from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
+def test_autofix_debug_whatsapp_click_wrong_screen(tester):
+    """Verify fix for debug_whatsapp_click_wrong_screen.
 
-    # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    The failure occurred when selectWhatsAppChat clicked a chat row for
+    Ruth Grace Wong, but newer WhatsApp versions render the message input
+    field (com.whatsapp:id/entry) slightly after the transition completes.
+    The 5-second waitForCondition timed out, the else-branch obtained a
+    profileRoot that already contained the entry field but only checked for
+    message_btn (a contact-profile indicator), found nothing, dumped the UI
+    and pressed Back — abandoning a successful navigation.
+
+    The fix adds a detectWhatsAppScreen() check on profileRoot before the
+    message_btn search, so the function returns success when the chat is
+    already open rather than incorrectly retrying.
+    """
+    from helpers import (
+        navigate_to_my_chats, send_voice_command,
+        save_failed_screenshot, wait_for_websocket_connected,
+    )
+
+    # Navigate to My Chats page first
+    success, error = navigate_to_my_chats(tester, "autofix_debug_whatsapp_click_wrong_screen")
     assert success, f"Could not reach My Chats: {error}"
 
-    # Tap New Chat button
+    # Open a new chat and wait for the WebSocket to connect
     tester.tap(950, 2225)
     time.sleep(2)
+    assert wait_for_websocket_connected(), "WebSocket did not connect in time"
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
+    # Send a voice command that triggers selectWhatsAppChat for Ruth Grace Wong
     send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    time.sleep(60)  # Allow time for screen agent to navigate and draft
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
-    try:
-        result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
-        )
-    except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
-        raise
+    # Primary validation: WhatsApp chat with Ruth Grace Wong is open and
+    # shows the message input field or a drafted/sent message
+    tester.screenshot("/tmp/whiz_click_wrong_screen_result.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_click_wrong_screen_result.png",
+        "The screen shows the WhatsApp chat with Ruth Grace Wong open. "
+        "There should be a message input field visible at the bottom of the screen, "
+        "or a Whiz draft overlay on top of the WhatsApp chat, "
+        "or a sent message bubble in the chat. "
+        "It should NOT show the WhatsApp chat list or an error screen."
+    )
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Fallback: check the Whiz chat for a success confirmation
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
-        try:
-            result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
-            )
-        except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
-            raise
+        tester.screenshot("/tmp/whiz_click_wrong_screen_chat.png")
+        result = tester.validate_screenshot(
+            "/tmp/whiz_click_wrong_screen_chat.png",
+            "The Whiz chat shows an assistant message confirming it drafted or sent "
+            "a WhatsApp message to Ruth Grace Wong, or asking for confirmation to send. "
+            "It should NOT show an error about failing to open the WhatsApp chat."
+        )
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "autofix_debug_whatsapp_click_wrong_screen", "validation_failed")
+    assert result, "Screen agent failed to open WhatsApp chat with Ruth Grace Wong"
