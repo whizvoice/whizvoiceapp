@@ -283,6 +283,7 @@ echo "    Delete all .qcow2 files and start fresh."
 # Step 9: Upload
 # ---------------------------------------------------------------------------
 CURRENT_EMULATOR_BUILD=$(emulator -version 2>/dev/null | grep -oE 'build_id [0-9]+' | awk '{print $2}' || echo "")
+DROPLET_IP=$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null || hostname -I | awk '{print $1}')
 
 echo ""
 echo "============================================================"
@@ -300,6 +301,16 @@ if [[ -n "$CURRENT_EMULATOR_BUILD" ]]; then
 else
     echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v<N> --emulator-build <build_id from 'emulator -version'>"
 fi
+echo ""
+echo "  4. **FROM YOUR LAPTOP** (not this droplet), update the ADB key secret on"
+echo "     both repos so CI can connect to the emulator:"
+echo ""
+echo "       ssh root@${DROPLET_IP} 'cat /root/.android/adbkey' > /tmp/new_adbkey"
+echo "       gh secret set ADB_PRIVATE_KEY --repo whizvoice/whizvoiceapp < /tmp/new_adbkey"
+echo "       gh secret set ADB_PRIVATE_KEY --repo whizvoice/whizvoice    < /tmp/new_adbkey"
+echo "       rm /tmp/new_adbkey"
+echo ""
+echo "     If you skip this step, CI will fail with 'adb: device unauthorized'."
 echo "============================================================"
 echo ""
 

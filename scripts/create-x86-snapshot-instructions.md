@@ -89,6 +89,35 @@ The snapshot contains login data for the test Google account, so it is encrypted
 
 **Fork PRs:** GitHub Actions does not expose secrets to workflows triggered by fork PRs. Tests requiring the snapshot will only run after the PR is merged to main (where secrets are available).
 
+### ADB key — must update every time the snapshot is rebuilt
+
+The emulator's guest OS stores the authorized ADB public key in `/data/misc/adb/adb_keys`. On first boot, the setup script generates a fresh ADB keypair at `/root/.android/adbkey{,.pub}` on the droplet, which becomes the authorized key inside the snapshot. **If the CI runner's `~/.android/adbkey` doesn't match, ADB connections fail with "device unauthorized" and the emulator hangs forever.**
+
+After creating a new snapshot, extract the droplet's ADB key and update the GitHub Actions secrets:
+
+```bash
+# From your laptop, pull the key the droplet generated
+ssh root@<droplet-ip> "cat /root/.android/adbkey" > /tmp/new_adbkey
+
+# Update the secret on both repos
+gh secret set ADB_PRIVATE_KEY --repo whizvoice/whizvoiceapp < /tmp/new_adbkey
+gh secret set ADB_PRIVATE_KEY --repo whizvoice/whizvoice    < /tmp/new_adbkey
+
+rm /tmp/new_adbkey
+```
+
+Both workflows (`autofix-tests.yml` on `whizvoiceapp` and `screen-agent-autofix.yml` on `whizvoice`) write this secret to `~/.android/adbkey` before launching the emulator.
+
+### Emulator build — must match the version the snapshot was saved with
+
+QEMU RAM snapshots are tied to the exact emulator/QEMU binary version. If CI's emulator differs from the droplet's, `loadvm` can fail or hang silently. Always pass `--emulator-build <id>` when uploading:
+
+```bash
+./scripts/avd-snapshot-upload.sh --version x86_64-v<N> --emulator-build $(emulator -version | grep -oE 'build_id [0-9]+' | awk '{print $2}')
+```
+
+The `setup-snapshot-droplet.sh` script prints the correct command with the detected build ID at the end of its run. The upload script stores `emulator_build` in the release manifest, and both workflows pin the emulator to that exact build before booting.
+
 ## Technical Details
 
 ### QCOW2 overlay system
