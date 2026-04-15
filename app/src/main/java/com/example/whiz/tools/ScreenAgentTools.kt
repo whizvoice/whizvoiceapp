@@ -1177,6 +1177,9 @@ class ScreenAgentTools @Inject constructor(
                         break
                     }
 
+                    // Capture package name before any recycle for safety check below
+                    val currentPackage = rootNode.packageName?.toString()
+
                     // Try to dismiss known dialogs before pressing back
                     if (currentScreen == WhatsAppScreen.UNKNOWN) {
                         if (dismissWhatsAppNotificationDialog(rootNode)) {
@@ -1188,6 +1191,16 @@ class ScreenAgentTools @Inject constructor(
                     }
 
                     rootNode.recycle()
+
+                    // Safety check: if back presses have navigated us out of WhatsApp entirely
+                    // (e.g., back from the chat list exits to the launcher), re-launch WhatsApp
+                    // instead of pressing back again into the launcher.
+                    if (currentPackage != "com.whatsapp") {
+                        Log.w(TAG, "WhatsApp no longer in foreground (package: $currentPackage), re-launching")
+                        launchApp("WhatsApp", enableOverlay = false)
+                        delay(2000) // Wait for WhatsApp to fully reload
+                        continue
+                    }
 
                     // Not on chat list yet, press back
                     Log.i(TAG, "Not on chat list, pressing back button")
@@ -8079,7 +8092,12 @@ class ScreenAgentTools @Inject constructor(
             val hasBottomNav = bottomNav != null && bottomNav.isNotEmpty()
             bottomNav?.forEach { it.recycle() }
 
-            val isMainChatList = hasArchivedRow || hasBottomNav
+            // Also check alternative bottom nav IDs used in newer WhatsApp versions
+            val bottomNavAlt = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/bottom_navigation")
+            val hasBottomNavAlt = bottomNavAlt != null && bottomNavAlt.isNotEmpty()
+            bottomNavAlt?.forEach { it.recycle() }
+
+            val isMainChatList = hasArchivedRow || hasBottomNav || hasBottomNavAlt
 
             if (!isMainChatList) {
                 // Only check for archived screen if we don't have the archived_row (which is on main chat list)
@@ -8176,13 +8194,14 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // NEW: Check for bottom nav "Chats" tab by content description
+            // Also handles newer WhatsApp formats like "Chats tab", "Chats, selected", etc.
             val chatsNavNodes = rootNode.findAccessibilityNodeInfosByText("Chats")
             if (chatsNavNodes != null && chatsNavNodes.isNotEmpty()) {
                 for (node in chatsNavNodes) {
                     val desc = node.contentDescription?.toString() ?: ""
-                    if (desc == "Chats") {
+                    if (desc == "Chats" || desc.startsWith("Chats ") || desc.startsWith("Chats,")) {
                         chatsNavNodes.forEach { it.recycle() }
-                        Log.d(TAG, "Found Chats navigation tab (on main screen)")
+                        Log.d(TAG, "Found Chats navigation tab (on main screen, desc='$desc')")
                         return WhatsAppScreen.CHAT_LIST
                     }
                 }
