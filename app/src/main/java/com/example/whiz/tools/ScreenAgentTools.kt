@@ -1288,6 +1288,18 @@ class ScreenAgentTools @Inject constructor(
                                     Log.w(TAG, "Click succeeded but not in chat - checking for contact profile message button")
                                     val profileRoot = accessibilityService.getCurrentRootNode()
                                     if (profileRoot != null) {
+                                        // First check if we're actually in the chat now (may have loaded after the wait expired)
+                                        if (detectWhatsAppScreen(profileRoot) == WhatsAppScreen.INSIDE_CHAT) {
+                                            Log.i(TAG, "Actually in chat now (loaded after wait), returning success")
+                                            chatNodes.forEach { it.recycle() }
+                                            rootNode.recycle()
+                                            profileRoot.recycle()
+                                            return WhatsAppResult(
+                                                success = true,
+                                                action = "select_chat",
+                                                chatName = chatName
+                                            )
+                                        }
                                         val messageBtnNodes = profileRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
                                         if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
                                             Log.i(TAG, "Found message_btn on contact profile, clicking to open chat")
