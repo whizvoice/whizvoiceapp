@@ -282,6 +282,8 @@ echo "    Delete all .qcow2 files and start fresh."
 # ---------------------------------------------------------------------------
 # Step 9: Upload
 # ---------------------------------------------------------------------------
+CURRENT_EMULATOR_BUILD=$(emulator -version 2>/dev/null | grep -oE 'build_id [0-9]+' | awk '{print $2}' || echo "")
+
 echo ""
 echo "============================================================"
 echo "  Snapshot saved and verified!"
@@ -292,8 +294,12 @@ echo "       gh auth login"
 echo "  2. Clone the repo:"
 echo "       git clone https://github.com/whizvoice/whizvoiceapp.git"
 echo "       cd whizvoiceapp"
-echo "  3. Run the upload script:"
-echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v2"
+echo "  3. Run the upload script (pin the emulator build so CI can match it):"
+if [[ -n "$CURRENT_EMULATOR_BUILD" ]]; then
+    echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v<N> --emulator-build ${CURRENT_EMULATOR_BUILD}"
+else
+    echo "       ./scripts/avd-snapshot-upload.sh --version x86_64-v<N> --emulator-build <build_id from 'emulator -version'>"
+fi
 echo "============================================================"
 echo ""
 
