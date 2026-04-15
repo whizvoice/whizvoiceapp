@@ -8348,17 +8348,44 @@ class ScreenAgentTools @Inject constructor(
                         )
                         searchFieldAppeared?.recycle()
 
+                        // NEW: In newer WhatsApp, tapping the search bar may open the
+                        // "Select contact" contact picker instead of an inline search.
+                        // Detect this by the presence of init_contacts_progress and wait
+                        // for contacts to finish loading before searching.
+                        var onContactPicker = false
+                        val pickerCheckRoot = accessibilityService.getCurrentRootNode()
+                        if (pickerCheckRoot != null) {
+                            val initProgress = pickerCheckRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/init_contacts_progress")
+                            onContactPicker = initProgress != null && initProgress.isNotEmpty()
+                            initProgress?.forEach { it.recycle() }
+                            pickerCheckRoot.recycle()
+                        }
+                        if (onContactPicker) {
+                            Log.d(TAG, "WhatsApp contact picker is loading, waiting for contacts to finish loading...")
+                            waitForCondition(maxWaitMs = 5000) {
+                                val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
+                                val progress = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/init_contacts_progress")
+                                val stillLoading = progress != null && progress.isNotEmpty()
+                                progress?.forEach { it.recycle() }
+                                root.recycle()
+                                !stillLoading
+                            }
+                        }
+
                         // Now find the search input field and enter text
                         val searchRootNode = accessibilityService.getCurrentRootNode()
                         if (searchRootNode != null) {
                             val searchFieldEntered = enterSearchText(searchRootNode, searchQuery)
+                            if (!searchFieldEntered && onContactPicker) {
+                                dumpUIHierarchy(searchRootNode, "whatsapp_contact_picker_no_search", "Contact picker opened but search input not found")
+                            }
                             searchRootNode.recycle()
                             return searchFieldEntered
                         }
                     }
                 }
             }
-            
+
             // Alternative: Look for search by content description
             val searchByDesc = rootNode.findAccessibilityNodeInfosByText("Search")
             if (searchByDesc != null && searchByDesc.isNotEmpty()) {
@@ -8367,11 +8394,11 @@ class ScreenAgentTools @Inject constructor(
                     if (clickableNode != null) {
                         Log.d(TAG, "Found search button by text/description")
                         val clicked = accessibilityService.clickNode(clickableNode)
-                        
+
                         if (clickableNode != node) {
                             clickableNode.recycle()
                         }
-                        
+
                         if (clicked) {
                             searchByDesc.forEach { it.recycle() }
                             // Wait for search field to appear
@@ -8382,10 +8409,34 @@ class ScreenAgentTools @Inject constructor(
                             )
                             searchFieldAppeared?.recycle()
 
+                            // NEW: Same contact picker detection for text-based search path
+                            var onContactPickerByText = false
+                            val pickerCheckRootByText = accessibilityService.getCurrentRootNode()
+                            if (pickerCheckRootByText != null) {
+                                val initProgress = pickerCheckRootByText.findAccessibilityNodeInfosByViewId("com.whatsapp:id/init_contacts_progress")
+                                onContactPickerByText = initProgress != null && initProgress.isNotEmpty()
+                                initProgress?.forEach { it.recycle() }
+                                pickerCheckRootByText.recycle()
+                            }
+                            if (onContactPickerByText) {
+                                Log.d(TAG, "WhatsApp contact picker is loading (text path), waiting for contacts to finish loading...")
+                                waitForCondition(maxWaitMs = 5000) {
+                                    val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
+                                    val progress = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/init_contacts_progress")
+                                    val stillLoading = progress != null && progress.isNotEmpty()
+                                    progress?.forEach { it.recycle() }
+                                    root.recycle()
+                                    !stillLoading
+                                }
+                            }
+
                             // Enter search text
                             val searchRootNode = accessibilityService.getCurrentRootNode()
                             if (searchRootNode != null) {
                                 val searchFieldEntered = enterSearchText(searchRootNode, searchQuery)
+                                if (!searchFieldEntered && onContactPickerByText) {
+                                    dumpUIHierarchy(searchRootNode, "whatsapp_contact_picker_no_search", "Contact picker opened but search input not found")
+                                }
                                 searchRootNode.recycle()
                                 return searchFieldEntered
                             }
