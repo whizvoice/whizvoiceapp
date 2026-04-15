@@ -1323,6 +1323,10 @@ class ScreenAgentTools @Inject constructor(
                                     Log.w(TAG, "No message_btn found, pressing back to retry")
                                     accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                                     delay(300)
+                                    // Reset success so the while loop continues to retry
+                                    // (without this, a click that returns true but doesn't navigate
+                                    // into the chat would cause the while loop to exit prematurely)
+                                    success = false
                                 }
                             }
                             clickableNode.recycle()
@@ -8079,7 +8083,14 @@ class ScreenAgentTools @Inject constructor(
             val hasBottomNav = bottomNav != null && bottomNav.isNotEmpty()
             bottomNav?.forEach { it.recycle() }
 
-            val isMainChatList = hasArchivedRow || hasBottomNav
+            // NEW: Detect the new WhatsApp bottom nav style (plain FrameLayouts with content
+            // descriptions "Chats", "Updates", "Communities", "Calls" — no bottom_nav_container).
+            // Also check for the pager which is present on the main WhatsApp screen.
+            val pagerForNav = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/pager")
+            val hasPager = pagerForNav != null && pagerForNav.isNotEmpty()
+            pagerForNav?.forEach { it.recycle() }
+
+            val isMainChatList = hasArchivedRow || hasBottomNav || hasPager
 
             if (!isMainChatList) {
                 // Only check for archived screen if we don't have the archived_row (which is on main chat list)
