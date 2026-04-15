@@ -1288,6 +1288,20 @@ class ScreenAgentTools @Inject constructor(
                                     Log.w(TAG, "Click succeeded but not in chat - checking for contact profile message button")
                                     val profileRoot = accessibilityService.getCurrentRootNode()
                                     if (profileRoot != null) {
+                                        // First check if we're already in the chat — newer WhatsApp versions may
+                                        // take slightly longer to render the entry field, causing waitForCondition
+                                        // to time out even though navigation succeeded.
+                                        if (detectWhatsAppScreen(profileRoot) == WhatsAppScreen.INSIDE_CHAT) {
+                                            Log.i(TAG, "Already in chat after waitForCondition timeout - newer WhatsApp rendered entry field late")
+                                            profileRoot.recycle()
+                                            chatNodes.forEach { it.recycle() }
+                                            rootNode.recycle()
+                                            return WhatsAppResult(
+                                                success = true,
+                                                action = "select_chat",
+                                                chatName = chatName
+                                            )
+                                        }
                                         val messageBtnNodes = profileRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
                                         if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
                                             Log.i(TAG, "Found message_btn on contact profile, clicking to open chat")
@@ -4614,6 +4628,57 @@ class ScreenAgentTools @Inject constructor(
                             // Don't break - continue the loop to wait for Start button
                             modeRootNode.recycle()
                             modeRootNode = null
+                        }
+                    }
+
+                    // Handle origin search screen (new Maps behavior after clicking Directions).
+                    // Newer Google Maps versions show an origin input screen before the directions
+                    // form with mode tabs. Detect this state and try to use the current location as
+                    // the origin so the directions form can appear.
+                    if (!hasModeTabs && !hasStartButton && modeRootNode != null) {
+                        val omniboxNodes = modeRootNode!!.findAccessibilityNodeInfosByViewId(
+                            "com.google.android.apps.maps:id/search_omnibox_container"
+                        )
+                        val isOnOriginSearch = !omniboxNodes.isNullOrEmpty()
+                        omniboxNodes?.forEach { it.recycle() }
+
+                        if (isOnOriginSearch) {
+                            Log.d(TAG, "Detected origin search screen on attempt $attempt (new Maps behavior), trying to use current location as origin")
+                            var selectedOrigin = false
+                            // Try to find "Your location" / "My location" / "Current location" in suggestions
+                            for (locationText in listOf("Your location", "My location", "Current location")) {
+                                val locNodes = modeRootNode!!.findAccessibilityNodeInfosByText(locationText)
+                                if (!locNodes.isNullOrEmpty()) {
+                                    val locNode = locNodes[0]
+                                    val target = if (locNode.isClickable) locNode else findClickableParent(locNode)
+                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                        Log.d(TAG, "Clicked '$locationText' to use as origin on attempt $attempt")
+                                        selectedOrigin = true
+                                    }
+                                    if (target != null && target !== locNode) target.recycle()
+                                    locNodes.forEach { it.recycle() }
+                                    if (selectedOrigin) break
+                                } else {
+                                    locNodes?.forEach { it.recycle() }
+                                }
+                            }
+                            if (!selectedOrigin) {
+                                // Suggestion not visible – type "My location" into the search box so Maps
+                                // recognises it as the current GPS location and offers it as a suggestion.
+                                Log.d(TAG, "Location option not found in suggestions, typing 'My location' in search box")
+                                val editNodes = modeRootNode!!.findAccessibilityNodeInfosByViewId(
+                                    "com.google.android.apps.maps:id/search_omnibox_edit_text"
+                                )
+                                if (!editNodes.isNullOrEmpty()) {
+                                    val textArgs = Bundle()
+                                    textArgs.putCharSequence(
+                                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                        "My location"
+                                    )
+                                    editNodes[0].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArgs)
+                                }
+                                editNodes?.forEach { it.recycle() }
+                            }
                         }
                     }
 
@@ -8187,6 +8252,22 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // Detect search results screen — search_input is present when WhatsApp is in
+            // search mode. Newer versions wrap it in search_input_container (HorizontalScrollView)
+            // but the EditText keeps the same ID in both old and new WhatsApp.
+            val searchInputNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchInputNodes != null && searchInputNodes.isNotEmpty()) {
+                searchInputNodes.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
+            }
+            val searchInputContainerNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input_container")
+            if (searchInputContainerNodes != null && searchInputContainerNodes.isNotEmpty()) {
+                searchInputContainerNodes.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input_container visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
