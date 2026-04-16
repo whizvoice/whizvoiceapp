@@ -4602,8 +4602,11 @@ class ScreenAgentTools @Inject constructor(
                         }
                         allModeCheckNodes.forEach { it.recycle() }
                         val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
+                        // Newer Maps versions may not set isSelected on tab nodes; also treat as transit
+                        // if the requested mode is transit (selectTransportModeAndStart will select the tab)
+                        val requestingTransit = mode?.lowercase() == "transit"
 
-                        if (isTransitMode) {
+                        if (isTransitMode || requestingTransit) {
                             // Transit mode genuinely doesn't have Start button until route is selected
                             directionsScreenFound = true
                             Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")

@@ -256,6 +256,14 @@ if [[ $INSTALL_RESULT -ne 0 ]] && echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAIL
     INSTALL_RESULT=$?
 fi
 
+# Check for insufficient storage and retry with uninstall (CI emulators with limited space)
+if [[ $INSTALL_RESULT -ne 0 ]] && echo "$INSTALL_OUTPUT" | grep -q "INSTALL_FAILED_INSUFFICIENT_STORAGE"; then
+    log_with_time "⚠️  Insufficient storage for replace-install - uninstalling old version first to free space..."
+    adb uninstall "$PACKAGE_NAME" 2>/dev/null || true
+    INSTALL_OUTPUT=$(adb install "$APK_PATH" 2>&1)
+    INSTALL_RESULT=$?
+fi
+
 if [[ $INSTALL_RESULT -eq 0 ]]; then
     log_with_time "✅ App installed successfully!"
 
