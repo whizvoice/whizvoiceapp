@@ -1390,8 +1390,29 @@ class ScreenAgentTools @Inject constructor(
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
                         // Wait for search results to appear
-                        waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
+                        val resultsFound = waitForSearchResults(accessibilityService, chatName, maxWaitMs = 5000)
 
+                        // New WhatsApp versions show a filter row (Unread, Photos, Videos…)
+                        // immediately, then load contact/chat results asynchronously — the
+                        // contact may not appear in the accessibility tree within the first
+                        // 5-second window even though it is already visible on screen.
+                        // If results were not found but the filter row is present, give an
+                        // extra 3 seconds specifically for contacts to populate the tree.
+                        if (!resultsFound) {
+                            val checkRoot = accessibilityService.getCurrentRootNode()
+                            if (checkRoot != null) {
+                                val filterButtons = checkRoot.findAccessibilityNodeInfosByViewId(
+                                    "com.whatsapp:id/search_unread_filter"
+                                )
+                                val hasNewSearchUI = filterButtons != null && filterButtons.isNotEmpty()
+                                filterButtons?.forEach { it.recycle() }
+                                checkRoot.recycle()
+                                if (hasNewSearchUI) {
+                                    Log.d(TAG, "New WhatsApp search UI (filter row present), waiting extra 3s for contacts to load")
+                                    waitForSearchResults(accessibilityService, chatName, maxWaitMs = 3000)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1487,6 +1508,24 @@ class ScreenAgentTools @Inject constructor(
         trackAction("draftWhatsAppMessage: ${message.take(30)}...")
 
         try {
+            // If chatName is null, save the current chat name before launching WhatsApp.
+            // Newer WhatsApp versions may navigate back to the main chat list when the app
+            // is re-launched via intent (even if a conversation was already open). By saving
+            // the chat name here, we can navigate back to it after launchApp if needed.
+            val effectiveChatName: String? = if (chatName == null) {
+                val preLaunchService = WhizAccessibilityService.getInstance()
+                val preLaunchRoot = preLaunchService?.getCurrentRootNode()
+                if (preLaunchRoot != null) {
+                    val preLaunchScreen = detectWhatsAppScreen(preLaunchRoot)
+                    val savedName = if (preLaunchScreen == WhatsAppScreen.INSIDE_CHAT) {
+                        getCurrentWhatsAppChatName(preLaunchRoot)
+                    } else null
+                    preLaunchRoot.recycle()
+                    Log.d(TAG, "Pre-launch WhatsApp state: screen=$preLaunchScreen, savedChatName=$savedName")
+                    savedName
+                } else null
+            } else chatName
+
             // Auto-launch WhatsApp if not already open
             val launchResult = launchApp("WhatsApp", enableOverlay = true)
             if (!launchResult.success) {
@@ -1514,8 +1553,10 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // If chatName is provided, check if we need to navigate to that chat
-            if (chatName != null) {
+            // If chatName (or saved pre-launch chat name) is provided, check if we need to
+            // navigate to that chat. This also handles the case where launchApp in newer
+            // WhatsApp versions navigated away from an open conversation.
+            if (effectiveChatName != null) {
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode != null) {
                     val currentScreen = detectWhatsAppScreen(rootNode)
@@ -1529,23 +1570,23 @@ class ScreenAgentTools @Inject constructor(
                     // Check if we're in the correct chat using normalized comparison
                     // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005 (You)"
                     val normalizedCurrent = normalizeChatName(currentChatName ?: "")
-                    val normalizedRequested = normalizeChatName(chatName)
+                    val normalizedRequested = normalizeChatName(effectiveChatName)
                     val isCorrectChat = currentChatName != null &&
                         (normalizedCurrent == normalizedRequested ||
                          normalizedCurrent.contains(normalizedRequested) ||
                          normalizedRequested.contains(normalizedCurrent))
 
                     if (!isCorrectChat) {
-                        Log.d(TAG, "Not in correct chat (current: $currentChatName [$normalizedCurrent], requested: $chatName [$normalizedRequested]). Auto-selecting chat...")
-                        val selectResult = selectWhatsAppChat(chatName)
+                        Log.d(TAG, "Not in correct chat (current: $currentChatName [$normalizedCurrent], requested: $effectiveChatName [$normalizedRequested]). Auto-selecting chat...")
+                        val selectResult = selectWhatsAppChat(effectiveChatName)
                         if (!selectResult.success) {
                             return DraftResult(
                                 success = false,
                                 message = message,
-                                error = "Could not open chat '$chatName': ${selectResult.error}"
+                                error = "Could not open chat '$effectiveChatName': ${selectResult.error}"
                             )
                         }
-                        Log.d(TAG, "Successfully navigated to chat: $chatName")
+                        Log.d(TAG, "Successfully navigated to chat: $effectiveChatName")
                     } else {
                         Log.d(TAG, "Already in correct chat: $currentChatName")
                     }
@@ -8187,6 +8228,23 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // Check for search results screen — search_input is present in both old and new
+            // WhatsApp when the user has opened search and is viewing results. New WhatsApp also
+            // wraps it in search_input_container (HorizontalScrollView), but the inner EditText
+            // keeps the same ID so we check both for backwards compatibility.
+            val searchInputNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchInputNodes != null && searchInputNodes.isNotEmpty()) {
+                searchInputNodes.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
+            }
+            val searchInputContainer = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input_container")
+            if (searchInputContainer != null && searchInputContainer.isNotEmpty()) {
+                searchInputContainer.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input_container visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
