@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-"""Autofix verification test for gmaps_directions_screen_not_found.
-
-In newer Google Maps versions, clicking the Directions button from a location
-details page shows an origin-input screen ("Search here") before presenting
-the directions form with mode-tabs and a Start button.  The old code only
-looked for `directions_mode_tabs` / the Start button, so it always timed out
-on this intermediate screen.
-
-The fix adds detection of the origin-search screen inside the polling loop
-and tries to click "Your location" / "My location" (or types "My location"
-into the search box) so that the directions form can appear.
-"""
+"""Autofix verification tests."""
 
 import time
+from helpers import (
+    save_failed_screenshot,
+    navigate_to_my_chats, send_voice_command,
+)
 
 
 def test_autofix_gmaps_directions_screen_not_found(tester):
     """Verify fix for gmaps_directions_screen_not_found."""
-    from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
     # Navigate to My Chats page first
     success, error = navigate_to_my_chats(tester, "autofix_gmaps_directions")
@@ -66,4 +58,45 @@ def test_autofix_gmaps_directions_screen_not_found(tester):
         "Screen agent did not successfully navigate to the Google Maps directions screen. "
         "The fix for gmaps_directions_screen_not_found (origin search screen detection) "
         "did not resolve the issue."
+    )
+
+
+def test_autofix_google_maps_unknown_state(tester):
+    """Verify fix for google_maps_unknown_state.
+
+    Tests that the screen agent can navigate through the Maps loading state
+    (ProgressBar visible while fetching location details) without triggering
+    an unknown state error.
+    """
+    success, error = navigate_to_my_chats(tester, "autofix_google_maps_unknown_state")
+    assert success, f"Could not reach My Chats: {error}"
+
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    send_voice_command("get directions to 1117 Tennessee St San Francisco")
+    time.sleep(40)
+
+    tester.screenshot("/tmp/whiz_gmaps_directions.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_gmaps_directions.png",
+        "Google Maps is open and showing either a location details page with a "
+        "Directions button, or a turn-by-turn directions/navigation screen, "
+        "or a route summary screen"
+    )
+    if not result:
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
+        tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
+        result = tester.validate_screenshot(
+            "/tmp/whiz_gmaps_chat_result.png",
+            "The Whiz chat shows a message from the assistant about opening directions "
+            "or navigation in Google Maps. It should NOT show an error about unknown state "
+            "or failing to navigate."
+        )
+        if not result:
+            save_failed_screenshot(tester, "autofix_google_maps_unknown_state", "validation_failed")
+    assert result, (
+        "Google Maps did not reach directions/location details after search — "
+        "SEARCH_LOADING state may not be handled correctly"
     )
