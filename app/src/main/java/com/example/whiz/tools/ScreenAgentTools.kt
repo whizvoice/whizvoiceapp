@@ -2318,10 +2318,13 @@ class ScreenAgentTools @Inject constructor(
                                         if (validationRootNode != null) {
                                             val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
                                             val stillInSearch = validationRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
+                                            // Also check for Compose-based conversation screen (new Google Messages)
+                                            val composeConversationScreen = validationRootNode.findAccessibilityNodeInfosByViewId("ConversationScreenUi")
 
-                                            if (stillInSearch == null || stillInSearch.isEmpty()) {
+                                            if (stillInSearch == null || stillInSearch.isEmpty() || (composeConversationScreen != null && composeConversationScreen.isNotEmpty())) {
                                                 // Successfully opened conversation
                                                 Log.i(TAG, "Successfully opened conversation from search results")
+                                                composeConversationScreen?.forEach { it.recycle() }
                                                 validationRootNode.recycle()
                                                 searchResultsNodes.forEach { it.recycle() }
                                                 searchResultRootNode.recycle()
@@ -2333,6 +2336,7 @@ class ScreenAgentTools @Inject constructor(
                                                     contactName = contactName
                                                 )
                                             } else {
+                                                composeConversationScreen?.forEach { it.recycle() }
                                                 // Still in search - might be showing conversations with this contact
                                                 // Try clicking the first result again
                                                 Log.w(TAG, "Still in search screen after clicking first result")
@@ -2407,7 +2411,51 @@ class ScreenAgentTools @Inject constructor(
 
                                 searchResultsNodes.forEach { it.recycle() }
                             } else {
-                                Log.w(TAG, "Search results container not found")
+                                Log.w(TAG, "Search results container not found - trying Compose UI fallback")
+                                // In newer Compose-based Google Messages, search results don't use the old
+                                // resource IDs. Fall back to finding nodes by contact name text.
+                                val composeFallbackNodes = searchResultRootNode.findAccessibilityNodeInfosByText(contactName)
+                                val nonEditTextFallback = composeFallbackNodes?.filter { it.className != "android.widget.EditText" } ?: emptyList()
+                                Log.d(TAG, "Compose fallback: found ${nonEditTextFallback.size} non-EditText nodes for '$contactName'")
+
+                                if (nonEditTextFallback.isNotEmpty()) {
+                                    val targetNode = nonEditTextFallback[0]
+                                    val clickableResult = if (targetNode.isClickable) targetNode else findClickableParent(targetNode)
+                                    if (clickableResult != null) {
+                                        val clicked = accessibilityService.clickNode(clickableResult)
+                                        Log.d(TAG, "Compose fallback click result: $clicked")
+                                        if (clickableResult != targetNode) clickableResult.recycle()
+
+                                        if (clicked) {
+                                            delay(1500)
+                                            val composeFallbackValidationRoot = accessibilityService.getCurrentRootNode()
+                                            if (composeFallbackValidationRoot != null) {
+                                                val searchBoxNodes = composeFallbackValidationRoot.findAccessibilityNodeInfosByViewId(
+                                                    "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                                                )
+                                                val composeConvScreen = composeFallbackValidationRoot.findAccessibilityNodeInfosByViewId("ConversationScreenUi")
+                                                val conversationOpened = (searchBoxNodes == null || searchBoxNodes.isEmpty()) ||
+                                                    (composeConvScreen != null && composeConvScreen.isNotEmpty())
+                                                searchBoxNodes?.forEach { it.recycle() }
+                                                composeConvScreen?.forEach { it.recycle() }
+                                                composeFallbackValidationRoot.recycle()
+
+                                                if (conversationOpened) {
+                                                    Log.i(TAG, "✅ Opened conversation via Compose fallback")
+                                                    composeFallbackNodes?.forEach { it.recycle() }
+                                                    searchResultRootNode.recycle()
+                                                    rootNode.recycle()
+                                                    return SMSResult(
+                                                        success = true,
+                                                        action = "select_chat",
+                                                        contactName = contactName
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                composeFallbackNodes?.forEach { it.recycle() }
                             }
 
                             searchResultRootNode.recycle()
