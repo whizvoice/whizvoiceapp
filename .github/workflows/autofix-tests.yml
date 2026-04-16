@@ -120,6 +120,11 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Setup local.properties with OAuth client IDs
+        run: |
+          echo "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" >> local.properties
+          echo "WEB_CLIENT_ID=${{ secrets.WEB_CLIENT_ID }}" >> local.properties
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
 
