@@ -8810,6 +8810,21 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
 
+                // Skip profile picture / avatar ImageView nodes.
+                // In newer WhatsApp versions the contact photo has the contact name as its
+                // content description (e.g. desc="Ruth Grace Wong"), so it is returned by
+                // findAccessibilityNodeInfosByText even though it is just an image.
+                // Clicking such a node (or its parent contact_selector) opens a profile popup
+                // rather than the chat. We only want text / name nodes here.
+                val nodeViewId = node.viewIdResourceName ?: ""
+                if (node.className == "android.widget.ImageView" &&
+                    (nodeViewId.contains("contact_photo") || nodeViewId.contains("avatar") ||
+                     nodeViewId.contains("picture") || nodeViewId.contains("photo"))) {
+                    Log.d(TAG, "Skipping profile picture node: viewId='$nodeViewId', desc='${node.contentDescription}'")
+                    node.recycle()
+                    continue
+                }
+
                 // Skip nodes not from WhatsApp (e.g., bubble overlay from our app)
                 val nodePackage = node.packageName?.toString() ?: ""
                 if (nodePackage.isNotEmpty() && !nodePackage.contains("whatsapp")) {
@@ -8879,8 +8894,22 @@ class ScreenAgentTools @Inject constructor(
                         cleanedItemText.startsWith(cleanedChatName) ||
                         cleanedItemText.contains(cleanedChatName) ||
                         isEllipsisMatch) {
-                        Log.d(TAG, "Found chat list match: $itemText")
-                        results.add(AccessibilityNodeInfo.obtain(item))
+                        // Deduplicate: skip if we already have a node at the same screen position.
+                        // The text-search pass above may have already found this same node
+                        // (e.g. conversations_row_contact_name) via its text content.
+                        val itemBounds = android.graphics.Rect()
+                        item.getBoundsInScreen(itemBounds)
+                        val isDuplicate = results.any { existingNode ->
+                            val existingBounds = android.graphics.Rect()
+                            existingNode.getBoundsInScreen(existingBounds)
+                            existingBounds == itemBounds
+                        }
+                        if (!isDuplicate) {
+                            Log.d(TAG, "Found chat list match: $itemText")
+                            results.add(AccessibilityNodeInfo.obtain(item))
+                        } else {
+                            Log.d(TAG, "Skipping duplicate chat list node at $itemBounds: $itemText")
+                        }
                     }
                 }
             }
