@@ -23,6 +23,7 @@ import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
 import com.example.whiz.util.EmulatorDetection
+import com.example.whiz.util.LogcatCapture
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -8570,6 +8571,9 @@ class ScreenAgentTools @Inject constructor(
             file.writeText(uiHierarchy)
             Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
 
+            // Capture logcat synchronously at failure time
+            val logcat = LogcatCapture.capture()
+
             // Take screenshot, then upload with it (or without if screenshot fails)
             WhizAccessibilityService.takeScreenshotAsync { bitmap ->
                 val screenshotBase64 = bitmap?.let {
@@ -8586,11 +8590,10 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
 
-                val screenAgentContext = if (screenshotBase64 != null) {
-                    mapOf("screenshot_base64" to screenshotBase64)
-                } else {
-                    null
-                }
+                val screenAgentContext = buildMap<String, Any> {
+                    screenshotBase64?.let { put("screenshot_base64", it) }
+                    logcat?.let { put("logcat", it) }
+                }.takeIf { it.isNotEmpty() }
 
                 uploadUiDumpToServer(
                     dumpReason = reason,
@@ -8653,11 +8656,14 @@ class ScreenAgentTools @Inject constructor(
      * (app launch failures, accessibility service issues, generic exceptions).
      */
     private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null) {
+        val logcat = LogcatCapture.capture()
+        val screenAgentContext = logcat?.let { mapOf<String, Any>("logcat" to it) }
         uploadUiDumpToServer(
             dumpReason = reason,
             errorMessage = errorMessage,
             uiHierarchy = null,
-            packageName = packageName
+            packageName = packageName,
+            screenAgentContext = screenAgentContext
         )
     }
 
