@@ -1549,6 +1549,20 @@ class ScreenAgentTools @Inject constructor(
                     } else {
                         Log.d(TAG, "Already in correct chat: $currentChatName")
                     }
+                } else {
+                    // rootNode is null — WhatsApp accessibility tree not yet ready (e.g. new
+                    // WhatsApp versions with Meta AI take longer to initialize). Navigate to
+                    // the requested chat directly rather than skipping the navigation.
+                    Log.w(TAG, "Root node null after launch, navigating to chat directly: $chatName")
+                    val selectResult = selectWhatsAppChat(chatName)
+                    if (!selectResult.success) {
+                        return DraftResult(
+                            success = false,
+                            message = message,
+                            error = "Could not open chat '$chatName': ${selectResult.error}"
+                        )
+                    }
+                    Log.d(TAG, "Successfully navigated to chat (after null rootNode): $chatName")
                 }
             }
 
@@ -9075,8 +9089,27 @@ class ScreenAgentTools @Inject constructor(
             }
 
             if (searchInputBottom == 0) {
-                Log.d(TAG, "findFirstSearchResult: Could not find search input field")
-                return null
+                // Fallback: look for any EditText near the top of the screen (may be a
+                // renamed search field in newer WhatsApp versions that integrate Meta AI).
+                val editTextNodes = mutableListOf<AccessibilityNodeInfo>()
+                findEditTextNodes(rootNode, editTextNodes)
+                for (editTextNode in editTextNodes) {
+                    val rect = android.graphics.Rect()
+                    editTextNode.getBoundsInScreen(rect)
+                    // Only consider EditTexts in the top 30% of the screen (search bar area)
+                    val screenHeight = context.resources.displayMetrics.heightPixels
+                    if (rect.bottom > 0 && rect.top < screenHeight * 0.3f) {
+                        searchInputBottom = rect.bottom
+                        Log.d(TAG, "findFirstSearchResult: Using EditText fallback for searchInputBottom=$searchInputBottom")
+                        break
+                    }
+                }
+                editTextNodes.forEach { it.recycle() }
+
+                if (searchInputBottom == 0) {
+                    Log.d(TAG, "findFirstSearchResult: Could not find search input field")
+                    return null
+                }
             }
 
             val screenWidth = context.resources.displayMetrics.widthPixels
