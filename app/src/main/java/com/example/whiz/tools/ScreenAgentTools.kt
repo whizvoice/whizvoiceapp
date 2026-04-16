@@ -1146,7 +1146,6 @@ class ScreenAgentTools @Inject constructor(
             // Try up to 6 times to reach the chat list
             var onChatList = false
             val maxBackAttempts = 6
-            var uiDumped = false  // Only dump UI once for debugging
 
             for (backAttempt in 1..maxBackAttempts) {
                 val rootNode = accessibilityService.getCurrentRootNode()
@@ -1154,12 +1153,6 @@ class ScreenAgentTools @Inject constructor(
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
 
-                    // Dump UI on first UNKNOWN screen detection for debugging
-                    if (currentScreen == WhatsAppScreen.UNKNOWN && !uiDumped) {
-                        Log.w(TAG, "⚠️ WhatsApp screen not recognized, dumping UI for debugging...")
-                        dumpUIHierarchy(rootNode, "whatsapp_unknown_screen", "WhatsApp screen not recognized during navigation")
-                        uiDumped = true
-                    }
 
                     if (currentScreen == WhatsAppScreen.CHAT_LIST) {
                         Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
@@ -4353,8 +4346,6 @@ class ScreenAgentTools @Inject constructor(
                 }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
-                    // Dump UI hierarchy for debugging unknown states
-                    dumpUIHierarchy(rootNode, "google_maps_unknown_state", "Google Maps screen state not recognized")
                     rootNode.recycle()
 
                     // Press back multiple times if needed to get to a known screen
