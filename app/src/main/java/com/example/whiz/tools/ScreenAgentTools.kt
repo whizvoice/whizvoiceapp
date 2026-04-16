@@ -3848,10 +3848,12 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Wait for Maps to be in foreground
+            // Increased timeout to 10000ms to handle new Maps versions that take longer to
+            // transition from previous navigation/route-planning states to a new search
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 5000
+                maxWaitMs = 10000
             )
             if (!appReady) {
                 val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -5053,6 +5055,17 @@ class ScreenAgentTools @Inject constructor(
             searchListNodes.forEach { it.recycle() }
             Log.d(TAG, "Detected Google Maps screen state: SEARCH_RESULTS_LIST (search_list_layout found)")
             return GoogleMapsScreenState.SEARCH_RESULTS_LIST
+        }
+
+        // Check for new Maps location details page: terra_navigation_header_close_button
+        // In updated Maps versions, place_page_view is replaced by this element when showing
+        // location details (e.g., after selecting a search result or via geo: intent).
+        // Placed after nav_container check so active navigation is still detected first.
+        val terraNavCloseNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/terra_navigation_header_close_button")
+        if (terraNavCloseNodes != null && terraNavCloseNodes.isNotEmpty()) {
+            terraNavCloseNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: LOCATION_DETAILS (terra_navigation_header_close_button found)")
+            return GoogleMapsScreenState.LOCATION_DETAILS
         }
 
         // Check for Filters screen by looking for "Sort by" description and Clear/Apply buttons

@@ -1,67 +1,69 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for gmaps_app_not_ready.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that the screen agent can successfully navigate Google Maps to show
+location details or search results after a geo: intent search — including
+when Maps was previously in a navigation-like state (terra_navigation_header_close_button
+visible) which caused the old 5000ms waitForAppReady timeout to expire.
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
+def test_autofix_gmaps_app_not_ready(tester):
+    """Verify fix for gmaps_app_not_ready.
+
+    The fix: increased waitForAppReady timeout to 10000ms and added
+    terra_navigation_header_close_button detection as LOCATION_DETAILS.
+    """
     from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
-    # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    # Navigate to My Chats page first
+    success, error = navigate_to_my_chats(tester, "autofix_gmaps_app_not_ready")
     assert success, f"Could not reach My Chats: {error}"
 
-    # Tap New Chat button
+    # Open new chat
     tester.tap(950, 2225)
-    time.sleep(2)
+    time.sleep(5)  # wait for new chat to open and WebSocket to connect
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
-    send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    # Send a voice command that triggers getGoogleMapsDirections(mode=transit, search=downtown)
+    # This exercises the exact code path that failed: searchGoogleMapsLocation -> waitForAppReady
+    send_voice_command("get me transit directions to downtown")
+    time.sleep(45)  # wait for screen agent to complete (Maps launch + search + selection)
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
+    # Take screenshot to validate result
+    tester.screenshot("/tmp/whiz_gmaps_result.png")
     try:
         result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
+            "/tmp/whiz_gmaps_result.png",
+            "Google Maps is open and showing either: a location details page (with a place "
+            "name and a Directions button), search results for 'downtown', transit route "
+            "options, or a directions screen. The screen should show Maps content, not an "
+            "error message or a loading spinner with no content."
         )
     except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
+        save_failed_screenshot(tester, "autofix_gmaps_app_not_ready", "validate_screenshot_error")
         raise
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Fall back: check if Whiz app shows a successful Maps response
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
+        tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
         try:
             result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
+                "/tmp/whiz_gmaps_chat_result.png",
+                "The Whiz chat shows a message about Google Maps directions to downtown, "
+                "transit options, or a successful navigation result. It should NOT show "
+                "an error like 'Google Maps did not become ready in time'."
             )
         except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
+            save_failed_screenshot(tester, "autofix_gmaps_app_not_ready", "validate_chat_error")
             raise
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "autofix_gmaps_app_not_ready", "validation_failed")
+    assert result, (
+        "Screen agent did not successfully navigate Google Maps for transit directions to downtown. "
+        "Expected Maps to show location details or route options."
+    )
