@@ -1,67 +1,61 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for gmaps_location_select_failed.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that the screen agent can select a specific location from Google Maps
+search results, including when results appear inside the new "Curated with
+Gemini" horizontal category section (child 0 of search_list_layout).
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
+def test_autofix_gmaps_location_select_failed(tester):
+    """Verify that the screen agent can find and select a location from Maps search results."""
     from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
-    # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    # Navigate to My Chats page first
+    success, error = navigate_to_my_chats(tester, "autofix_gmaps_location_select")
     assert success, f"Could not reach My Chats: {error}"
 
-    # Tap New Chat button
+    # Open new chat and let the UI settle
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
-    send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    # Ask about restaurants near me — this triggers the Maps screen agent which searches
+    # and then selects a specific location by fragment. "mango" is the failing fragment.
+    send_voice_command("find mango restaurants near me on Google Maps")
+    time.sleep(35)  # wait for screen agent to complete (Maps launch + search + select)
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
+    # Check what's on screen now
+    tester.screenshot("/tmp/whiz_gmaps_select_result.png")
     try:
         result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
+            "/tmp/whiz_gmaps_select_result.png",
+            "Google Maps is open and showing search results for mango restaurants, "
+            "OR a specific mango restaurant detail page is open, "
+            "OR the Whiz app chat shows location information or a success message about mango restaurants. "
+            "It should NOT show an error about failing to find or click a location."
         )
     except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
+        save_failed_screenshot(tester, "autofix_gmaps_location_select", "validate_screenshot_error")
         raise
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Navigate back to Whiz app to check if the chat shows results
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
+        tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
         try:
             result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
+                "/tmp/whiz_gmaps_chat_result.png",
+                "The Whiz chat shows a response from the assistant about mango restaurants. "
+                "The response might show location details, a map link, directions, or ask "
+                "for confirmation. It should NOT show an error about failing to select a location."
             )
         except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
+            save_failed_screenshot(tester, "autofix_gmaps_location_select", "validate_chat_error")
             raise
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "autofix_gmaps_location_select", "validation_failed")
+    assert result, "Screen agent did not successfully find and select a Maps location"

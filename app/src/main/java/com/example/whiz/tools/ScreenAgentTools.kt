@@ -5949,8 +5949,20 @@ class ScreenAgentTools @Inject constructor(
                         Log.d(TAG, "Child $i contains fragment '$fragment', attempting click")
                         Log.d(TAG, "Child $i: isClickable=${child.isClickable}, className=${child.className}, bounds=${getBoundsString(child)}")
 
-                        // Try to find a clickable node - start with the child and walk up the tree
-                        var clickableNode: AccessibilityNodeInfo? = if (child.isClickable) child else null
+                        // In the new Maps UI, the first list item can be a large "Curated with Gemini"
+                        // section containing many place buttons nested inside category tiles.
+                        // findClickableDescendant would return the first clickable (e.g. the HorizontalScrollView),
+                        // not the specific place button. So first try to find the most specific clickable
+                        // descendant that also contains the fragment text.
+                        var clickableNode: AccessibilityNodeInfo? = findMostSpecificClickableNodeWithText(child, fragment)
+                        if (clickableNode != null) {
+                            Log.d(TAG, "Found most-specific clickable with fragment text: ${clickableNode.className}")
+                        }
+
+                        // Fall back: child itself if clickable
+                        if (clickableNode == null) {
+                            clickableNode = if (child.isClickable) child else null
+                        }
 
                         // Walk up the parent tree to find a clickable ancestor
                         if (clickableNode == null) {
@@ -6029,6 +6041,27 @@ class ScreenAgentTools @Inject constructor(
             }
         }
         return null
+    }
+
+    /**
+     * Find the most specific (deepest) clickable node in the subtree that also contains the given text.
+     * This handles the new Google Maps "Curated with Gemini" UI where places are nested deep inside
+     * category tile sections — we need to click the specific place button, not the outer scroll container.
+     * IMPORTANT: Does NOT recycle any nodes — caller is responsible for recycling.
+     */
+    private fun findMostSpecificClickableNodeWithText(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        // Try to find a more specific match in children first
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (containsText(child, text)) {
+                val deeperResult = findMostSpecificClickableNodeWithText(child, text)
+                if (deeperResult != null) {
+                    return deeperResult
+                }
+            }
+        }
+        // No deeper clickable-with-text found; return self if clickable
+        return if (node.isClickable) node else null
     }
 
     /**
