@@ -1154,6 +1154,16 @@ class ScreenAgentTools @Inject constructor(
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
 
+                    // Dismiss notification permission dialog before checking UNKNOWN or pressing back
+                    if (currentScreen == WhatsAppScreen.NOTIFICATION_PERMISSION_DIALOG) {
+                        Log.i(TAG, "Notification permission dialog detected, dismissing...")
+                        if (dismissWhatsAppNotificationDialog(rootNode)) {
+                            rootNode.recycle()
+                            waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 5000)
+                            continue  // Re-check screen after dismissal
+                        }
+                    }
+
                     // Dump UI on first UNKNOWN screen detection for debugging
                     if (currentScreen == WhatsAppScreen.UNKNOWN && !uiDumped) {
                         Log.w(TAG, "⚠️ WhatsApp screen not recognized, dumping UI for debugging...")
@@ -8060,11 +8070,37 @@ class ScreenAgentTools @Inject constructor(
         SETTINGS,
         STATUS,
         CALLS,
+        NOTIFICATION_PERMISSION_DIALOG,
         UNKNOWN
     }
     
     private fun detectWhatsAppScreen(rootNode: AccessibilityNodeInfo): WhatsAppScreen {
         try {
+            // Check for notification permission dialog (bottom sheet overlay) first.
+            // This dialog appears over the main screen so other elements are hidden.
+            val permissionTitle = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/permission_title")
+            val hasPermissionTitle = permissionTitle != null && permissionTitle.isNotEmpty()
+            permissionTitle?.forEach { it.recycle() }
+            if (hasPermissionTitle) {
+                Log.d(TAG, "WhatsApp notification permission dialog detected")
+                return WhatsAppScreen.NOTIFICATION_PERMISSION_DIALOG
+            }
+            // Fallback: detect by text in case resource ID changes in a future version
+            val notifNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByText(rootNode, "Turn on notifications", notifNodes)
+            val hasNotifText = notifNodes.isNotEmpty()
+            notifNodes.forEach { it.recycle() }
+            if (hasNotifText) {
+                // Confirm it's the dialog by checking for the cancel button
+                val cancelNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/cancel")
+                val hasCancelBtn = cancelNodes != null && cancelNodes.isNotEmpty()
+                cancelNodes?.forEach { it.recycle() }
+                if (hasCancelBtn) {
+                    Log.d(TAG, "WhatsApp notification permission dialog detected (via text fallback)")
+                    return WhatsAppScreen.NOTIFICATION_PERMISSION_DIALOG
+                }
+            }
+
             // Check for Archived screen first - it looks like a chat list but isn't the main one
             // The Archived screen has "Archived" text in the toolbar
             // BUT: The main chat list also has "Archived" text in a row (com.whatsapp:id/archived_row)
