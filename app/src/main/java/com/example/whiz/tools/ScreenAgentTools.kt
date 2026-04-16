@@ -22,6 +22,7 @@ import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
+import com.example.whiz.util.EmulatorDetection
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -8634,7 +8635,8 @@ class ScreenAgentTools @Inject constructor(
                     appVersion = BuildConfig.VERSION_NAME,
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
-                    screenAgentContext = screenAgentContext
+                    screenAgentContext = screenAgentContext,
+                    isEmulator = EmulatorDetection.isRunningOnEmulator()
                 )
 
                 val response = apiService.uploadUiDump(request)
