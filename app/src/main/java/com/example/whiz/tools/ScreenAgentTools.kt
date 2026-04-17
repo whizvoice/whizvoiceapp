@@ -9837,17 +9837,46 @@ class ScreenAgentTools @Inject constructor(
 
         val editField = editCaloriesNodes.first()
 
+        // Get bounds before recycling, needed for tap-to-focus fallback
+        val editBounds = android.graphics.Rect()
+        editField.getBoundsInScreen(editBounds)
+
         // Focus the field and set text
         editField.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
         val arguments = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, calories.toString())
         }
-        val textSet = editField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        var textSet = editField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
         Log.i(TAG, "Set calories text to $calories: $textSet")
 
         editCaloriesNodes.forEach { it.recycle() }
         rootNode.recycle()
+
+        // Compose-based text fields may not respond to ACTION_SET_TEXT without a real tap first.
+        // Tap at the field's coordinates to properly focus it, then retry.
+        if (!textSet) {
+            Log.i(TAG, "ACTION_SET_TEXT failed, trying tap-to-focus fallback for Compose field")
+            val tapX = editBounds.centerX().toFloat()
+            val tapY = editBounds.centerY().toFloat()
+            accessibilityService.performTapGesture(tapX, tapY)
+            delay(500)
+
+            val retryRoot = accessibilityService.getCurrentRootNode()
+            val retryEditNodes = retryRoot?.findAccessibilityNodeInfosByViewId(
+                "com.fitbit.FitbitMobile:id/edit_calories"
+            )
+            val retryEditField = retryEditNodes?.firstOrNull()
+            if (retryEditField != null) {
+                val retryArgs = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, calories.toString())
+                }
+                textSet = retryEditField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, retryArgs)
+                Log.i(TAG, "Retry set calories text to $calories: $textSet")
+                retryEditNodes?.forEach { it.recycle() }
+            }
+            retryRoot?.recycle()
+        }
 
         if (!textSet) {
             val dumpRoot = accessibilityService.getCurrentRootNode()

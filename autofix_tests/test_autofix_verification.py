@@ -1,67 +1,65 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for fitbit_calories_entry_failed.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that the screen agent can successfully enter calories in Fitbit's
+Add Quick Calories screen, including handling the case where the Fitbit
+app uses Compose-based text fields that require a tap gesture before
+ACTION_SET_TEXT will work.
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
+def test_autofix_fitbit_calories_entry_failed(tester):
+    """Verify Fitbit quick calories entry succeeds with tap-to-focus fallback."""
     from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
     # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    success, error = navigate_to_my_chats(tester, "fitbit_calories_entry_failed")
     assert success, f"Could not reach My Chats: {error}"
 
     # Tap New Chat button
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
-    send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    # Send a voice command that triggers addFitbitQuickCalories via screen agent.
+    # Fitbit navigation: Today -> Food tile -> Food detail -> More options ->
+    # Add Quick Calories -> enter amount -> LOG THIS
+    send_voice_command("add 500 quick calories to Fitbit")
+    time.sleep(60)  # wait for screen agent to complete multi-step Fitbit navigation
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
+    # Check if the action completed: either the Fitbit log page is shown or the
+    # Whiz chat confirms success
+    tester.screenshot("/tmp/fitbit_calories_result.png")
     try:
         result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
+            "/tmp/fitbit_calories_result.png",
+            "The screen shows evidence that quick calories were successfully logged in Fitbit. "
+            "This could be: the Fitbit food log page after logging, the Fitbit Today screen, "
+            "or the Whiz chat showing a success message about logging 500 calories to Fitbit. "
+            "It should NOT show an error about 'Failed to enter calorie amount' or be stuck on "
+            "the Fitbit Add Quick Calories entry screen unable to input the number."
         )
     except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
+        save_failed_screenshot(tester, "fitbit_calories_entry_failed", "validate_screenshot_error")
         raise
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Navigate back to Whiz app to check for success/error message in chat
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
+        tester.screenshot("/tmp/fitbit_calories_chat_result.png")
         try:
             result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
+                "/tmp/fitbit_calories_chat_result.png",
+                "The Whiz chat shows a message from the assistant confirming that calories "
+                "were logged to Fitbit, or asking for confirmation. "
+                "It should NOT show an error about failing to enter the calorie amount."
             )
         except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
+            save_failed_screenshot(tester, "fitbit_calories_entry_failed", "validate_chat_error")
             raise
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "fitbit_calories_entry_failed", "validation_failed")
+    assert result, "Screen agent did not successfully log quick calories to Fitbit"
