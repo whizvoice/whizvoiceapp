@@ -1,67 +1,59 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for ytmusic_play_deeplink_no_result.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that the screen agent can play music by an artist (Lush) even when
+YouTube Music navigates directly to the artist page instead of showing search
+results, by clicking the 'Play all' button on the artist detail page.
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
+def test_autofix_ytmusic_play_deeplink_no_result(tester):
+    """Verify fix for ytmusic_play_deeplink_no_result."""
     from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
-    # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    # Navigate to My Chats page first
+    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_deeplink")
     assert success, f"Could not reach My Chats: {error}"
 
-    # Tap New Chat button
+    # Open new chat and let the UI settle before sending a voice command
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
-    send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    # Send a voice command that triggers YouTube Music playback for artist "Lush"
+    # This is the same query that caused the original failure - a well-known artist
+    # where YouTube Music navigates directly to the artist page instead of search results
+    send_voice_command("play Lush on YouTube Music")
+    time.sleep(30)  # wait for screen agent to complete (deep link + artist page navigation)
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
-    try:
-        result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
-        )
-    except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
-        raise
+    # Take a screenshot and validate the result
+    tester.screenshot("/tmp/whiz_ytmusic_result.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_ytmusic_result.png",
+        "YouTube Music is open and music is playing. The screen should show either: "
+        "(1) The YouTube Music app with a mini player bar at the bottom showing a song title and artist, "
+        "(2) The Lush artist page in YouTube Music with a mini player indicating music is playing, "
+        "(3) Any YouTube Music playback screen showing audio is active. "
+        "It should NOT show an error or a blank/empty state."
+    )
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Check if Whiz app shows a success response about playing music
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
+        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
         try:
             result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
+                "/tmp/whiz_ytmusic_chat_result.png",
+                "The Whiz chat shows a success message about playing music by Lush or playing music "
+                "on YouTube Music. The assistant message should confirm that music is now playing. "
+                "It should NOT show an error message about failing to find or click a result."
             )
         except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
+            save_failed_screenshot(tester, "autofix_ytmusic_deeplink", "validate_chat_error")
             raise
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "autofix_ytmusic_deeplink", "validation_failed")
+    assert result, "Screen agent did not successfully play music via YouTube Music artist page"

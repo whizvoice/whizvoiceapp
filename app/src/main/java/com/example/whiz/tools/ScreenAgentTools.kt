@@ -7154,6 +7154,33 @@ class ScreenAgentTools @Inject constructor(
                 return ClickResultInfo(clicked, matchingTitle)
             }
 
+            // Fallback: detect when deep link navigated directly to an artist/album detail page
+            // instead of search results (YouTube Music may bypass search for well-known artists)
+            val artistPageContainers = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/music_element_header_container"
+            )
+            if (!artistPageContainers.isNullOrEmpty()) {
+                Log.d(TAG, "Detected artist/album detail page via deep link - looking for 'Play all' button")
+                artistPageContainers.forEach { it.recycle() }
+
+                for (node in allNodes) {
+                    val contentDesc = node.contentDescription?.toString() ?: ""
+                    if (node.isClickable && contentDesc.equals("Play all", ignoreCase = true)) {
+                        val bounds = android.graphics.Rect()
+                        node.getBoundsInScreen(bounds)
+                        if (bounds.top < 2000) {
+                            Log.d(TAG, "Clicking 'Play all' button on artist/album detail page at Y=${bounds.top}")
+                            val clicked = accessibilityService.clickNode(node)
+                            allNodes.forEach { it.recycle() }
+                            return ClickResultInfo(clicked, null)
+                        }
+                    }
+                }
+                Log.w(TAG, "Artist/album detail page detected but no 'Play all' button found in expected area")
+            } else {
+                artistPageContainers?.forEach { it.recycle() }
+            }
+
             allNodes.forEach { it.recycle() }
             Log.w(TAG, "Could not find any result rows matching types: $acceptableTypes")
             return ClickResultInfo(false, null)
