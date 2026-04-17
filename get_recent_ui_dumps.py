@@ -10,7 +10,7 @@ Usage:
     ./get_recent_ui_dumps.py --id 123
 
     # Get dumps for a specific reason
-    ./get_recent_ui_dumps.py --reason whatsapp_unknown_screen
+    ./get_recent_ui_dumps.py --reason whatsapp_chat_not_found
 
     # Get dumps from the last hour
     ./get_recent_ui_dumps.py --since 1h

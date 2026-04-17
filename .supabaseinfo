@@ -75,7 +75,7 @@ screen_agent_ui_dumps table:
 id | int8
 created_at | timestamp with time zone | now()
 user_id | text | foreign key to users.user_id
-dump_reason | text | NOT NULL | tag like 'whatsapp_unknown_screen', 'ytmusic_no_play_button'
+dump_reason | text | NOT NULL | tag like 'whatsapp_chat_not_found', 'ytmusic_play_error'
 error_message | text | human-readable error description
 ui_hierarchy | text | NOT NULL | full UI dump text content
 package_name | text | app package where error occurred (e.g., 'com.whatsapp')
