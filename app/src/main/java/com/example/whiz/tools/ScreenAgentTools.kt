@@ -5047,6 +5047,21 @@ class ScreenAgentTools @Inject constructor(
             return GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
         }
 
+        // Check if expandingscrollview_container has non-zero width — in newer Google Maps, clicking a
+        // search result expands this panel to show location details while search_list_layout remains
+        // in the accessibility tree as a background element. This check must come before the
+        // search_list_layout check so we correctly identify LOCATION_DETAILS in the new UI.
+        val expandingScrollNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/expandingscrollview_container")
+        if (expandingScrollNodes != null && expandingScrollNodes.isNotEmpty()) {
+            val bounds = android.graphics.Rect()
+            expandingScrollNodes[0].getBoundsInScreen(bounds)
+            expandingScrollNodes.forEach { it.recycle() }
+            if (bounds.width() > 0) {
+                Log.d(TAG, "Detected Google Maps screen state: LOCATION_DETAILS (expandingscrollview_container has non-zero width ${bounds.width()})")
+                return GoogleMapsScreenState.LOCATION_DETAILS
+            }
+        }
+
         // Check for search results list by looking for search_list_layout
         val searchListNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_list_layout")
         if (searchListNodes != null && searchListNodes.isNotEmpty()) {
