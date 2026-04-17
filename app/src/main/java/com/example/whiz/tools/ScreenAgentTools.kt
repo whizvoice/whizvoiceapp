@@ -1165,14 +1165,44 @@ class ScreenAgentTools @Inject constructor(
                         Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
                         onChatList = true
 
-                        // Check if search bar is visible, if not scroll to top
-                        if (!isSearchBarVisible(rootNode)) {
-                            Log.i(TAG, "Search bar not visible, scrolling to top")
-                            rootNode.recycle()
-                            scrollToTopOfChatList(accessibilityService)
-                        } else {
-                            Log.i(TAG, "Search bar is visible")
-                            rootNode.recycle()
+                        // Ensure we're on the Chats tab, not the Communities tab.
+                        // When navigating back from a community page, WhatsApp may land on the
+                        // Communities tab which is misdetected as CHAT_LIST (it has bottom_nav_container
+                        // and other shared elements). Clicking the Chats nav tab is harmless if
+                        // we're already on it, and corrects our position if we're on Communities.
+                        val chatsTabNodes = rootNode.findAccessibilityNodeInfosByText("Chats")
+                        var navigatedToChatsTab = false
+                        if (chatsTabNodes != null && chatsTabNodes.isNotEmpty()) {
+                            for (tabNode in chatsTabNodes) {
+                                val desc = tabNode.contentDescription?.toString() ?: ""
+                                if (desc == "Chats") {
+                                    val clickable = if (tabNode.isClickable) tabNode else findClickableParent(tabNode)
+                                    if (clickable != null) {
+                                        Log.i(TAG, "Clicking Chats tab to ensure we're on Chats screen, not Communities tab")
+                                        navigatedToChatsTab = accessibilityService.clickNode(clickable)
+                                        if (clickable != tabNode) clickable.recycle()
+                                    }
+                                    break
+                                }
+                            }
+                            chatsTabNodes.forEach { it.recycle() }
+                        }
+                        rootNode.recycle()
+                        if (navigatedToChatsTab) {
+                            delay(500) // Wait for Chats tab to load
+                        }
+
+                        // Get fresh root node (rootNode is recycled above)
+                        val nodeForSearchCheck = accessibilityService.getCurrentRootNode()
+                        if (nodeForSearchCheck != null) {
+                            if (!isSearchBarVisible(nodeForSearchCheck)) {
+                                Log.i(TAG, "Search bar not visible, scrolling to top")
+                                nodeForSearchCheck.recycle()
+                                scrollToTopOfChatList(accessibilityService)
+                            } else {
+                                Log.i(TAG, "Search bar is visible")
+                                nodeForSearchCheck.recycle()
+                            }
                         }
                         break
                     }
