@@ -1151,6 +1151,20 @@ class ScreenAgentTools @Inject constructor(
             for (backAttempt in 1..maxBackAttempts) {
                 val rootNode = accessibilityService.getCurrentRootNode()
                 if (rootNode != null) {
+                    // Check if back-presses have accidentally exited WhatsApp (e.g., back to home screen)
+                    val currentPackage = rootNode.packageName?.toString()
+                    if (currentPackage != null && !currentPackage.startsWith("com.whatsapp")) {
+                        Log.w(TAG, "Navigated outside WhatsApp (package: $currentPackage) on attempt $backAttempt, re-launching...")
+                        rootNode.recycle()
+                        val relaunchResult = launchApp("WhatsApp", enableOverlay = true)
+                        if (!relaunchResult.success) {
+                            Log.e(TAG, "Failed to re-launch WhatsApp after navigating away")
+                            break
+                        }
+                        delay(1000)
+                        continue
+                    }
+
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
 
@@ -8187,6 +8201,15 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // NEW: Check for the "New chat" FAB button which is present on the main chat list
+            // across all WhatsApp versions and is a reliable indicator of the chat list screen
+            val fabNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/fab")
+            if (fabNodes != null && fabNodes.isNotEmpty()) {
+                fabNodes.forEach { it.recycle() }
+                Log.d(TAG, "Found WhatsApp FAB (new chat button) — on chat list")
+                return WhatsAppScreen.CHAT_LIST
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")

@@ -65,3 +65,44 @@ def test_whatsapp_input_not_found(tester):
     if not result:
         save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
     assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+
+
+def test_autofix_whatsapp_nav_to_chatlist_failed(tester):
+    """Verify fix for whatsapp_nav_to_chatlist_failed.
+
+    The screen agent was pressing back too many times when navigating WhatsApp,
+    accidentally exiting to the home screen. The fix adds a package check that
+    detects when we've left WhatsApp and re-launches it, plus adds the FAB button
+    as a chat list indicator for newer WhatsApp versions.
+    """
+    from helpers import (
+        navigate_to_my_chats, send_voice_command, save_failed_screenshot,
+        TIMEOUT_MULTIPLIER,
+    )
+
+    # Navigate to My Chats page first
+    success, error = navigate_to_my_chats(tester, "autofix_whatsapp_nav_to_chatlist")
+    assert success, f"Could not reach My Chats: {error}"
+
+    # Open a new chat and let the UI settle before sending a voice command
+    tester.tap(950, 2225)
+    time.sleep(2 * TIMEOUT_MULTIPLIER)
+
+    # Send a voice command that triggers WhatsApp chat navigation via the screen agent
+    send_voice_command("send a whatsapp message to Ruth Grace Wong saying hey")
+    # Wait for screen agent to navigate WhatsApp and open the chat (can be slow on emulator)
+    time.sleep(60 * TIMEOUT_MULTIPLIER)
+
+    # Validate that WhatsApp opened and landed in Ruth Grace Wong's chat
+    tester.screenshot("/tmp/whiz_whatsapp_chat.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_whatsapp_chat.png",
+        "WhatsApp is open and showing a chat conversation with Ruth Grace Wong "
+        "with a message input field visible at the bottom, OR the Whiz app chat "
+        "showing a message about drafting/sending a WhatsApp message to Ruth Grace Wong. "
+        "It should NOT show an error about failing to navigate to the chat list, "
+        "or the Android home screen launcher."
+    )
+    if not result:
+        save_failed_screenshot(tester, "autofix_whatsapp_nav_to_chatlist", "chat_not_opened")
+    assert result, "Screen agent did not navigate to WhatsApp chat for Ruth Grace Wong"
