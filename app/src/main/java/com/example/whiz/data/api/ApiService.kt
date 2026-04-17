@@ -207,7 +207,8 @@ interface ApiService {
         @SerializedName("app_version") val appVersion: String? = null,
         @SerializedName("conversation_id") val conversationId: Long? = null,
         @SerializedName("recent_actions") val recentActions: List<String>? = null,
-        @SerializedName("screen_agent_context") val screenAgentContext: Map<String, Any>? = null
+        @SerializedName("screen_agent_context") val screenAgentContext: Map<String, Any>? = null,
+        @SerializedName("is_emulator") val isEmulator: Boolean? = null
     )
 
     data class UiDumpResponse(

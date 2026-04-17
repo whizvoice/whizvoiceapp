@@ -22,6 +22,8 @@ import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
+import com.example.whiz.util.EmulatorDetection
+import com.example.whiz.util.LogcatCapture
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1146,7 +1148,6 @@ class ScreenAgentTools @Inject constructor(
             // Try up to 6 times to reach the chat list
             var onChatList = false
             val maxBackAttempts = 6
-            var uiDumped = false  // Only dump UI once for debugging
 
             for (backAttempt in 1..maxBackAttempts) {
                 val rootNode = accessibilityService.getCurrentRootNode()
@@ -1154,12 +1155,6 @@ class ScreenAgentTools @Inject constructor(
                     val currentScreen = detectWhatsAppScreen(rootNode)
                     Log.i(TAG, "Back attempt $backAttempt: Current screen = $currentScreen")
 
-                    // Dump UI on first UNKNOWN screen detection for debugging
-                    if (currentScreen == WhatsAppScreen.UNKNOWN && !uiDumped) {
-                        Log.w(TAG, "⚠️ WhatsApp screen not recognized, dumping UI for debugging...")
-                        dumpUIHierarchy(rootNode, "whatsapp_unknown_screen", "WhatsApp screen not recognized during navigation")
-                        uiDumped = true
-                    }
 
                     if (currentScreen == WhatsAppScreen.CHAT_LIST) {
                         Log.i(TAG, "Reached chat list after $backAttempt back button(s)")
@@ -4353,8 +4348,6 @@ class ScreenAgentTools @Inject constructor(
                 }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
-                    // Dump UI hierarchy for debugging unknown states
-                    dumpUIHierarchy(rootNode, "google_maps_unknown_state", "Google Maps screen state not recognized")
                     rootNode.recycle()
 
                     // Press back multiple times if needed to get to a known screen
@@ -8578,6 +8571,9 @@ class ScreenAgentTools @Inject constructor(
             file.writeText(uiHierarchy)
             Log.i(TAG, "📋 UI dump saved to: ${file.absolutePath}")
 
+            // Capture logcat synchronously at failure time
+            val logcat = LogcatCapture.capture()
+
             // Take screenshot, then upload with it (or without if screenshot fails)
             WhizAccessibilityService.takeScreenshotAsync { bitmap ->
                 val screenshotBase64 = bitmap?.let {
@@ -8594,11 +8590,10 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
 
-                val screenAgentContext = if (screenshotBase64 != null) {
-                    mapOf("screenshot_base64" to screenshotBase64)
-                } else {
-                    null
-                }
+                val screenAgentContext = buildMap<String, Any> {
+                    screenshotBase64?.let { put("screenshot_base64", it) }
+                    logcat?.let { put("logcat", it) }
+                }.takeIf { it.isNotEmpty() }
 
                 uploadUiDumpToServer(
                     dumpReason = reason,
@@ -8643,7 +8638,8 @@ class ScreenAgentTools @Inject constructor(
                     appVersion = BuildConfig.VERSION_NAME,
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
-                    screenAgentContext = screenAgentContext
+                    screenAgentContext = screenAgentContext,
+                    isEmulator = EmulatorDetection.isRunningOnEmulator()
                 )
 
                 val response = apiService.uploadUiDump(request)
@@ -8660,11 +8656,14 @@ class ScreenAgentTools @Inject constructor(
      * (app launch failures, accessibility service issues, generic exceptions).
      */
     private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null) {
+        val logcat = LogcatCapture.capture()
+        val screenAgentContext = logcat?.let { mapOf<String, Any>("logcat" to it) }
         uploadUiDumpToServer(
             dumpReason = reason,
             errorMessage = errorMessage,
             uiHierarchy = null,
-            packageName = packageName
+            packageName = packageName,
+            screenAgentContext = screenAgentContext
         )
     }
 

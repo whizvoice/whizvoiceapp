@@ -45,6 +45,7 @@ import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.RageShakeDetector
+import com.example.whiz.util.LogcatCapture
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
 import com.example.whiz.ui.theme.WhizTheme
@@ -1209,26 +1210,6 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Capture logcat output for our app process.
-     */
-    private fun captureLogcat(): String? {
-        return try {
-            val process = Runtime.getRuntime().exec(
-                arrayOf("logcat", "-d", "--pid", "${android.os.Process.myPid()}")
-            )
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-            if (output.isBlank()) return null
-            // Keep last 200KB to avoid 413 errors (logcat can be very large)
-            val maxSize = 200_000
-            if (output.length > maxSize) output.takeLast(maxSize) else output
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to capture logcat", e)
-            null
-        }
-    }
-
-    /**
      * Capture all diagnostic data at the moment the bug is triggered (before showing the dialog).
      * This ensures the snapshot reflects the actual bug state, not the dialog.
      */
@@ -1240,7 +1221,7 @@ class MainActivity : ComponentActivity() {
         val currentPackage = WhizAccessibilityService.getCurrentPackageName()
 
         // Capture logcat synchronously
-        val logcat = captureLogcat()
+        val logcat = LogcatCapture.capture()
 
         // Capture audio snapshot from WakeWordService ring buffer
         val audioBase64 = try {
