@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-"""Autofix verification test for gmaps_directions_screen_not_found.
-
-In newer Google Maps versions, clicking the Directions button from a location
-details page shows an origin-input screen ("Search here") before presenting
-the directions form with mode-tabs and a Start button.  The old code only
-looked for `directions_mode_tabs` / the Start button, so it always timed out
-on this intermediate screen.
-
-The fix adds detection of the origin-search screen inside the polling loop
-and tries to click "Your location" / "My location" (or types "My location"
-into the search box) so that the directions form can appear.
-"""
+"""Autofix verification tests."""
 
 import time
+from helpers import (
+    save_failed_screenshot,
+    navigate_to_my_chats, send_voice_command,
+)
 
 
 def test_autofix_gmaps_directions_screen_not_found(tester):
     """Verify fix for gmaps_directions_screen_not_found."""
-    from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
     # Navigate to My Chats page first
     success, error = navigate_to_my_chats(tester, "autofix_gmaps_directions")
