@@ -6310,6 +6310,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         val maxAttempts = 5
+        var hasRelaunched = false
         for (attempt in 1..maxAttempts) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
@@ -6324,9 +6325,22 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Navigation attempt $attempt: Current package = $packageName")
 
                 if (packageName != "com.google.android.apps.youtube.music") {
-                    Log.w(TAG, "Not in YouTube Music app anymore (package: $packageName), navigation failed")
                     rootNode.recycle()
-                    return false
+                    // Newer YouTube Music versions exit the app when back is pressed from Now Playing.
+                    // Re-launch once and retry navigation rather than failing immediately.
+                    if (hasRelaunched) {
+                        Log.w(TAG, "Not in YouTube Music after relaunch (package: $packageName), giving up")
+                        return false
+                    }
+                    Log.w(TAG, "Left YouTube Music (package: $packageName), re-launching and retrying")
+                    hasRelaunched = true
+                    val relaunchResult = launchApp("YouTube Music", enableOverlay = true)
+                    if (!relaunchResult.success) {
+                        Log.w(TAG, "Failed to re-launch YouTube Music")
+                        return false
+                    }
+                    delay(1500)
+                    continue
                 }
 
                 // Check for and dismiss promotional pop-ups

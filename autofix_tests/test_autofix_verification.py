@@ -1,67 +1,75 @@
 #!/usr/bin/env python3
-"""Autofix verification test for whatsapp_input_not_found.
+"""Autofix verification test for ytmusic_queue_nav_failed.
 
-Tests that the screen agent can successfully send a WhatsApp message,
-including handling the case where WhatsApp navigates to a contact profile
-page (with a message_btn) instead of directly to the chat input field.
+Tests that the screen agent can queue a YouTube Music song even when the
+Now Playing screen is open and pressing back would exit the app (newer
+YouTube Music versions). The fix re-launches YouTube Music if navigation
+presses back too far and exits the app.
 """
 
 import time
 
 
-def test_whatsapp_input_not_found(tester):
-    """Verify WhatsApp messaging finds the input field and drafts a message."""
+def test_autofix_ytmusic_queue_nav_failed(tester):
+    """Verify queuing a YouTube Music song succeeds after playing a song first."""
     from helpers import navigate_to_my_chats, send_voice_command, save_failed_screenshot
 
     # Navigate to My Chats page
-    success, error = navigate_to_my_chats(tester, "whatsapp_input_not_found")
+    success, error = navigate_to_my_chats(tester, "ytmusic_queue_nav_failed")
     assert success, f"Could not reach My Chats: {error}"
 
-    # Tap New Chat button
+    # Tap New Chat button to open a new chat
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Send a voice command that triggers WhatsApp messaging via screen agent
-    # Use a contact name that exists in WhatsApp on the test device
-    send_voice_command("send a WhatsApp message to Ruth Grace Wong saying hello how are you")
-    time.sleep(60)  # wait for screen agent to complete (needs extra time for FAB fallback on new contacts)
+    # First, play a song so YouTube Music is open with a Now Playing screen.
+    # This replicates the state that caused the original failure.
+    send_voice_command("play despacito on youtube music")
+    time.sleep(40)  # wait for the play command to complete
 
-    # The draft overlay is transient - it may have already been shown and dismissed.
-    # First check if we're still in WhatsApp with the overlay visible
-    tester.screenshot("/tmp/whiz_whatsapp_input_result.png")
-    try:
-        result = tester.validate_screenshot(
-            "/tmp/whiz_whatsapp_input_result.png",
-            "The screen shows evidence that a WhatsApp message was successfully sent or drafted. "
-            "This could be: the WhatsApp chat screen showing the sent message 'hello how are you', "
-            "a colored draft message overlay in the WhatsApp chat input field containing the message, "
-            "the WhatsApp chat open with Ruth Grace Wong showing a message input field at the bottom, "
-            "or the Whiz chat showing a success message or asking for confirmation to send the message. "
-            "It should NOT show an error message, a failure to find the message input field, "
-            "or the app stuck on a contact profile page."
-        )
-    except Exception as e:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_screenshot_error")
-        raise
+    # Navigate back to Whiz and open a new chat for the queue command
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(2)
+    success, error = navigate_to_my_chats(tester, "ytmusic_queue_nav_failed_setup")
+    assert success, f"Could not reach My Chats after play: {error}"
+
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    # Now queue another song — this exercises the fixed navigation code
+    send_voice_command("queue shape of you on youtube music")
+    time.sleep(50)  # queue command may need time to navigate and search
+
+    # Take a screenshot to validate the result
+    tester.screenshot("/tmp/ytmusic_queue_result.png")
+
+    # Check if YouTube Music is open and shows the queue was successful,
+    # or if Whiz chat shows a success/confirmation message
+    result = tester.validate_screenshot(
+        "/tmp/ytmusic_queue_result.png",
+        "The screen shows YouTube Music is open with a song playing or queued, "
+        "OR the Whiz Voice app chat showing a success message about queuing a song "
+        "on YouTube Music. It should NOT show an error message about failing to "
+        "navigate YouTube Music or 'Could not navigate to searchable screen'."
+    )
 
     if not result:
-        # Navigate back to Whiz app to check if the chat shows a success message
+        # Also check the Whiz chat for a success confirmation
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_whatsapp_chat_result.png")
+        tester.screenshot("/tmp/ytmusic_queue_chat_result.png")
         try:
             result = tester.validate_screenshot(
-                "/tmp/whiz_whatsapp_chat_result.png",
-                "The Whiz chat shows a message from the assistant about drafting or sending "
-                "a WhatsApp message to Ruth Grace Wong. The message may ask for confirmation "
-                "to send, say the draft was prepared, or confirm the message was sent. "
-                "It should NOT show an error about failing to find the message input field "
-                "or failing to open the WhatsApp chat."
+                "/tmp/ytmusic_queue_chat_result.png",
+                "The Whiz chat shows the assistant successfully queued or added a song "
+                "to the YouTube Music queue. There should be a success message or "
+                "confirmation about queuing 'shape of you' or similar. "
+                "It should NOT show an error about failing to navigate YouTube Music."
             )
         except Exception as e:
-            save_failed_screenshot(tester, "whatsapp_input_not_found", "validate_chat_error")
+            save_failed_screenshot(tester, "ytmusic_queue_nav_failed", "validate_chat_error")
             raise
 
     if not result:
-        save_failed_screenshot(tester, "whatsapp_input_not_found", "validation_failed")
-    assert result, "Screen agent did not successfully send or draft a WhatsApp message"
+        save_failed_screenshot(tester, "ytmusic_queue_nav_failed", "validation_failed")
+    assert result, "Screen agent did not successfully queue a YouTube Music song"
