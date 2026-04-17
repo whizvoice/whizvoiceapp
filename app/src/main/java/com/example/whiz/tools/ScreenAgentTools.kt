@@ -5055,6 +5055,17 @@ class ScreenAgentTools @Inject constructor(
             return GoogleMapsScreenState.SEARCH_RESULTS_LIST
         }
 
+        // Check for search suggestions in fullscreens_group (new Google Maps UI version)
+        val fullscreenGroupNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/fullscreens_group")
+        if (fullscreenGroupNodes != null && fullscreenGroupNodes.isNotEmpty()) {
+            val hasChildren = fullscreenGroupNodes[0].childCount > 0
+            fullscreenGroupNodes.forEach { it.recycle() }
+            if (hasChildren) {
+                Log.d(TAG, "Detected Google Maps screen state: SEARCH_RESULTS_LIST (fullscreens_group with children found)")
+                return GoogleMapsScreenState.SEARCH_RESULTS_LIST
+            }
+        }
+
         // Check for Filters screen by looking for "Sort by" description and Clear/Apply buttons
         // The Filters screen has a unique combination of these elements
         val filtersIndicators = mutableListOf<AccessibilityNodeInfo>()
@@ -5780,7 +5791,23 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (listNodes == null || listNodes.isEmpty()) {
-            Log.w(TAG, "Could not find location list RecyclerView (tried typed_suggest_container and search_list_layout)")
+            // New Google Maps UI: suggestions shown inside fullscreens_group > inner LinearLayout
+            val fullscreenGroupNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/fullscreens_group")
+            Log.d(TAG, "Looking for fullscreens_group: found ${fullscreenGroupNodes?.size ?: 0}")
+            if (fullscreenGroupNodes != null && fullscreenGroupNodes.isNotEmpty()) {
+                val fullscreenGroup = fullscreenGroupNodes[0]
+                if (fullscreenGroup.childCount > 0) {
+                    val innerContainer = fullscreenGroup.getChild(0)
+                    if (innerContainer != null) {
+                        listNodes = listOf(innerContainer)
+                    }
+                }
+                fullscreenGroupNodes.forEach { it.recycle() }
+            }
+        }
+
+        if (listNodes == null || listNodes.isEmpty()) {
+            Log.w(TAG, "Could not find location list RecyclerView (tried typed_suggest_container, search_list_layout, and fullscreens_group)")
             return false
         }
 
@@ -6075,7 +6102,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // Check for filter-related text that indicates this is a filter chip row
-        val filterIndicators = listOf("Open now", "Top rated", "Filters", "Sort by", "Price", "Rating")
+        val filterIndicators = listOf("Open now", "Top rated", "Filters", "Sort by", "Price", "Rating", "No results found")
         for (indicator in filterIndicators) {
             val indicatorNodes = mutableListOf<AccessibilityNodeInfo>()
             findNodesByText(node, indicator, indicatorNodes)
