@@ -1400,17 +1400,20 @@ class ScreenAgentTools @Inject constructor(
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
 
-            // UI dump for debugging - try to get current screen state
-            val finalRootNode = accessibilityService.getCurrentRootNode()
-            if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts")
-                finalRootNode.recycle()
-            } else {
-                logScreenAgentError(
-                    reason = "whatsapp_chat_not_found",
-                    errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
-                    packageName = "com.whatsapp"
-                )
+            // UI dump for debugging — sample 5% (reduce to 1% at higher user volumes)
+            if (Math.random() < 0.05) {
+                val finalRootNode = accessibilityService.getCurrentRootNode()
+                if (finalRootNode != null) {
+                    dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts", expectedFailure = true)
+                    finalRootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "whatsapp_chat_not_found",
+                        errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
+                        packageName = "com.whatsapp",
+                        expectedFailure = true
+                    )
+                }
             }
 
             return WhatsAppResult(
