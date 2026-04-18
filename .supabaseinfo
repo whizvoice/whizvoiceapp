@@ -89,6 +89,7 @@ conversation_id | int8 | foreign key to conversations.id (nullable)
 recent_actions | jsonb | default '[]' | last 5 screen agent actions
 screen_agent_context | jsonb | optional extra debug info
 is_emulator | boolean | nullable | true if the dump came from an Android emulator; autofix trigger is skipped when true
+expected_failure | boolean | default false | true for errors that are expected (e.g. contact not found); autofix trigger is skipped when true
 
 This table stores UI hierarchy dumps captured when the screen agent encounters navigation failures, used for debugging and improving screen agent code.
 

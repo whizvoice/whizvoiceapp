@@ -2419,17 +2419,20 @@ class ScreenAgentTools @Inject constructor(
 
             Log.e(TAG, "Could not find or click on conversation: $contactName after $attempts attempts")
 
-            // UI dump for debugging
-            val finalRootNode = accessibilityService.getCurrentRootNode()
-            if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "sms_chat_not_found", "Could not find SMS conversation '$contactName' after $attempts attempts")
-                finalRootNode.recycle()
-            } else {
-                logScreenAgentError(
-                    reason = "sms_chat_not_found",
-                    errorMessage = "Could not find SMS conversation '$contactName' after $attempts attempts (no root node)",
-                    packageName = "com.google.android.apps.messaging"
-                )
+            // UI dump for debugging — sample 5% (reduce to 1% at higher user volumes)
+            if (Math.random() < 0.05) {
+                val finalRootNode = accessibilityService.getCurrentRootNode()
+                if (finalRootNode != null) {
+                    dumpUIHierarchy(finalRootNode, "sms_chat_not_found", "Could not find SMS conversation '$contactName' after $attempts attempts", expectedFailure = true)
+                    finalRootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "sms_chat_not_found",
+                        errorMessage = "Could not find SMS conversation '$contactName' after $attempts attempts (no root node)",
+                        packageName = "com.google.android.apps.messaging",
+                        expectedFailure = true
+                    )
+                }
             }
 
             return SMSResult(
@@ -8550,7 +8553,7 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
-    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
+    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null, expectedFailure: Boolean = false) {
         try {
             val timestamp = System.currentTimeMillis()
             val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"
@@ -8600,7 +8603,8 @@ class ScreenAgentTools @Inject constructor(
                     errorMessage = errorMessage,
                     uiHierarchy = uiHierarchy,
                     packageName = packageName,
-                    screenAgentContext = screenAgentContext
+                    screenAgentContext = screenAgentContext,
+                    expectedFailure = expectedFailure
                 )
             }
         } catch (e: Exception) {
@@ -8616,7 +8620,8 @@ class ScreenAgentTools @Inject constructor(
         errorMessage: String?,
         uiHierarchy: String?,
         packageName: String?,
-        screenAgentContext: Map<String, Any>? = null
+        screenAgentContext: Map<String, Any>? = null,
+        expectedFailure: Boolean = false
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -8639,7 +8644,8 @@ class ScreenAgentTools @Inject constructor(
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
                     screenAgentContext = screenAgentContext,
-                    isEmulator = EmulatorDetection.isRunningOnEmulator()
+                    isEmulator = EmulatorDetection.isRunningOnEmulator(),
+                    expectedFailure = expectedFailure
                 )
 
                 val response = apiService.uploadUiDump(request)
@@ -8655,7 +8661,7 @@ class ScreenAgentTools @Inject constructor(
      * Log a screen agent error without UI dump. For failures where UI context isn't useful
      * (app launch failures, accessibility service issues, generic exceptions).
      */
-    private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null) {
+    private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null, expectedFailure: Boolean = false) {
         val logcat = LogcatCapture.capture()
         val screenAgentContext = logcat?.let { mapOf<String, Any>("logcat" to it) }
         uploadUiDumpToServer(
@@ -8663,7 +8669,8 @@ class ScreenAgentTools @Inject constructor(
             errorMessage = errorMessage,
             uiHierarchy = null,
             packageName = packageName,
-            screenAgentContext = screenAgentContext
+            screenAgentContext = screenAgentContext,
+            expectedFailure = expectedFailure
         )
     }
 
