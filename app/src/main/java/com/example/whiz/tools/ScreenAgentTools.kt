@@ -4360,29 +4360,6 @@ class ScreenAgentTools @Inject constructor(
                     }
                     // Continue to the Directions button click logic below
                 }
-                GoogleMapsScreenState.SEARCH_LOADING -> {
-                    // Maps is still loading a location result — wait for it to resolve
-                    Log.d(TAG, "Maps is loading, waiting for LOCATION_DETAILS or SEARCH_RESULTS_LIST")
-                    rootNode.recycle()
-                    val loaded = waitForCondition(maxWaitMs = 8000) {
-                        val node = accessibilityService.getCurrentRootNode()
-                        if (node != null) {
-                            val state = detectGoogleMapsScreenState(node)
-                            node.recycle()
-                            state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.SEARCH_RESULTS_LIST
-                        } else false
-                    }
-                    if (!loaded) {
-                        Log.w(TAG, "Maps did not finish loading in time after SEARCH_LOADING state")
-                    }
-                    rootNode = accessibilityService.getCurrentRootNode() ?: return MapsActionResult(
-                        success = false,
-                        action = "get_directions",
-                        mode = mode,
-                        error = "Could not get root node after waiting for Maps to load"
-                    )
-                    // Continue to the Directions button click logic below
-                }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
                     rootNode.recycle()
@@ -4424,10 +4401,6 @@ class ScreenAgentTools @Inject constructor(
                                     Log.d(TAG, "Now on transit route detail after pressing back")
                                     break
                                 }
-                                GoogleMapsScreenState.SEARCH_LOADING -> {
-                                    Log.d(TAG, "Maps is loading a result after back press, treating as good state")
-                                    break // Exit the loop, loading will resolve
-                                }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
                                     // Continue the loop to try again
@@ -4464,24 +4437,6 @@ class ScreenAgentTools @Inject constructor(
                         val state = detectGoogleMapsScreenState(node)
                         node.recycle()
                         state != GoogleMapsScreenState.FILTERS_SCREEN
-                    } else false
-                }
-                currentRootNode = accessibilityService.getCurrentRootNode()
-                if (currentRootNode != null) {
-                    stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
-                }
-            }
-
-            // If Maps is still loading, wait for it to resolve
-            if (stateAfterHandling == GoogleMapsScreenState.SEARCH_LOADING) {
-                Log.d(TAG, "Maps still loading after handling - waiting for result")
-                currentRootNode?.recycle()
-                waitForCondition(maxWaitMs = 8000) {
-                    val node = accessibilityService.getCurrentRootNode()
-                    if (node != null) {
-                        val state = detectGoogleMapsScreenState(node)
-                        node.recycle()
-                        state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.SEARCH_RESULTS_LIST
                     } else false
                 }
                 currentRootNode = accessibilityService.getCurrentRootNode()
@@ -5056,7 +5011,6 @@ class ScreenAgentTools @Inject constructor(
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
         TRANSIT_ROUTE_DETAIL,  // Transit route detail screen (trip steps + "Start glanceable directions" button)
-        SEARCH_LOADING,        // terra_navigation_header_close_button present - loading location/results
         UNKNOWN
     }
 
@@ -5123,15 +5077,6 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Detected Google Maps screen state: FILTERS_SCREEN (Sort by + Clear/Apply found)")
                 return GoogleMapsScreenState.FILTERS_SCREEN
             }
-        }
-
-        // Check for search/location loading state: terra_navigation_header_close_button appears
-        // in the bottom panel while Maps is loading a location result after a search.
-        val terraCloseNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/terra_navigation_header_close_button")
-        if (terraCloseNodes != null && terraCloseNodes.isNotEmpty()) {
-            terraCloseNodes.forEach { it.recycle() }
-            Log.d(TAG, "Detected Google Maps screen state: SEARCH_LOADING (terra_navigation_header_close_button found)")
-            return GoogleMapsScreenState.SEARCH_LOADING
         }
 
         // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
