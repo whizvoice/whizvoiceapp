@@ -2993,7 +2993,7 @@ class ScreenAgentTools @Inject constructor(
                         // Find by content description and try direct click
                         val sendButtons = mutableListOf<AccessibilityNodeInfo>()
                         // Try all possible send button content descriptions
-                        val sendButtonDescriptions = listOf("Send message", "Send SMS", "Send encrypted message")
+                        val sendButtonDescriptions = listOf("Send message", "Send SMS", "Send MMS", "Send encrypted message")
                         for (desc in sendButtonDescriptions) {
                             findNodesByContentDescription(currentRoot, desc, sendButtons)
                             if (sendButtons.isNotEmpty()) break
