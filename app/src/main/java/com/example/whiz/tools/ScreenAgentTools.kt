@@ -3879,10 +3879,13 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
-                    dumpRoot.recycle()
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
+                        dumpRoot.recycle()
+                    }
                 }
                 return MapsActionResult(
                     success = false,
@@ -4958,12 +4961,15 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
-                    dumpRoot.recycle()
-                } else {
-                    logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps")
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
+                        dumpRoot.recycle()
+                    } else {
+                        logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps", expectedFailure = true)
+                    }
                 }
                 return MapsActionResult(
                     success = false,
