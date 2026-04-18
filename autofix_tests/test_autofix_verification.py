@@ -19,15 +19,11 @@ def test_autofix_gmaps_directions_screen_not_found(tester):
     tester.tap(950, 2225)
     time.sleep(3)
 
-    # Send a voice command that triggers getGoogleMapsDirections with transit mode.
-    # This exercises exactly the code path that caused gmaps_directions_screen_not_found.
     send_voice_command("get me transit directions to 1680 Mission Street San Francisco")
-    time.sleep(45)  # wait for screen agent to complete (Maps navigation takes time)
+    time.sleep(45)
 
-    # Take a screenshot of whatever is on screen
     tester.screenshot("/tmp/whiz_gmaps_result.png")
 
-    # Primary check: Google Maps is showing a directions or transit routes screen
     result = tester.validate_screenshot(
         "/tmp/whiz_gmaps_result.png",
         "Google Maps is showing a directions screen, transit routes, or a route overview "
@@ -39,7 +35,6 @@ def test_autofix_gmaps_directions_screen_not_found(tester):
     )
 
     if not result:
-        # Fallback: check if the Whiz app itself shows a success/confirmation message
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
         tester.screenshot("/tmp/whiz_gmaps_chat_result.png")

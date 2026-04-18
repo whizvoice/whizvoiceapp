@@ -2924,21 +2924,6 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Check if we're stuck in the search screen instead of a conversation
-            val sendSearchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
-            val sendSearchBoxNodes = rootNode.findAccessibilityNodeInfosByViewId(sendSearchBoxId)
-            if (sendSearchBoxNodes != null && sendSearchBoxNodes.isNotEmpty()) {
-                Log.e(TAG, "sendSMSMessage: still in search screen - not in a conversation!")
-                sendSearchBoxNodes.forEach { it.recycle() }
-                dumpUIHierarchy(rootNode, "sms_send_button_not_found", "Could not find or click send button in SMS app")
-                rootNode.recycle()
-                return SMSResult(
-                    success = false,
-                    action = "send_message",
-                    error = "Cannot send message: still in search screen. Please select a contact first to open a conversation."
-                )
-            }
-
             // Find the message input field
             // Try by resource ID first (Google Messages)
             var inputNode: AccessibilityNodeInfo? = null
