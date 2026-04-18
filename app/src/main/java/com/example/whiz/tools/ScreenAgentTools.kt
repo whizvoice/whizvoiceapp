@@ -4853,10 +4853,13 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (!locationClicked) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
-                    dumpRoot.recycle()
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc", expectedFailure = true)
+                        dumpRoot.recycle()
+                    }
                 }
                 return MapsActionResult(
                     success = false,
