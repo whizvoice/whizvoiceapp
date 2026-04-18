@@ -4631,57 +4631,6 @@ class ScreenAgentTools @Inject constructor(
                         }
                     }
 
-                    // Handle origin search screen (new Maps behavior after clicking Directions).
-                    // Newer Google Maps versions show an origin input screen before the directions
-                    // form with mode tabs. Detect this state and try to use the current location as
-                    // the origin so the directions form can appear.
-                    if (!hasModeTabs && !hasStartButton && modeRootNode != null) {
-                        val omniboxNodes = modeRootNode!!.findAccessibilityNodeInfosByViewId(
-                            "com.google.android.apps.maps:id/search_omnibox_container"
-                        )
-                        val isOnOriginSearch = !omniboxNodes.isNullOrEmpty()
-                        omniboxNodes?.forEach { it.recycle() }
-
-                        if (isOnOriginSearch) {
-                            Log.d(TAG, "Detected origin search screen on attempt $attempt (new Maps behavior), trying to use current location as origin")
-                            var selectedOrigin = false
-                            // Try to find "Your location" / "My location" / "Current location" in suggestions
-                            for (locationText in listOf("Your location", "My location", "Current location")) {
-                                val locNodes = modeRootNode!!.findAccessibilityNodeInfosByText(locationText)
-                                if (!locNodes.isNullOrEmpty()) {
-                                    val locNode = locNodes[0]
-                                    val target = if (locNode.isClickable) locNode else findClickableParent(locNode)
-                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                        Log.d(TAG, "Clicked '$locationText' to use as origin on attempt $attempt")
-                                        selectedOrigin = true
-                                    }
-                                    if (target != null && target !== locNode) target.recycle()
-                                    locNodes.forEach { it.recycle() }
-                                    if (selectedOrigin) break
-                                } else {
-                                    locNodes?.forEach { it.recycle() }
-                                }
-                            }
-                            if (!selectedOrigin) {
-                                // Suggestion not visible – type "My location" into the search box so Maps
-                                // recognises it as the current GPS location and offers it as a suggestion.
-                                Log.d(TAG, "Location option not found in suggestions, typing 'My location' in search box")
-                                val editNodes = modeRootNode!!.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.maps:id/search_omnibox_edit_text"
-                                )
-                                if (!editNodes.isNullOrEmpty()) {
-                                    val textArgs = Bundle()
-                                    textArgs.putCharSequence(
-                                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                                        "My location"
-                                    )
-                                    editNodes[0].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArgs)
-                                }
-                                editNodes?.forEach { it.recycle() }
-                            }
-                        }
-                    }
-
                     modeRootNode?.recycle()
                     modeRootNode = null
                 }
