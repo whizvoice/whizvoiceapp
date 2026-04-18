@@ -1283,6 +1283,20 @@ class ScreenAgentTools @Inject constructor(
                                     Log.w(TAG, "Click succeeded but not in chat - checking for contact profile message button")
                                     val profileRoot = accessibilityService.getCurrentRootNode()
                                     if (profileRoot != null) {
+                                        // First check if we're already in the chat — newer WhatsApp versions may
+                                        // take slightly longer to render the entry field, causing waitForCondition
+                                        // to time out even though navigation succeeded.
+                                        if (detectWhatsAppScreen(profileRoot) == WhatsAppScreen.INSIDE_CHAT) {
+                                            Log.i(TAG, "Already in chat after waitForCondition timeout - newer WhatsApp rendered entry field late")
+                                            profileRoot.recycle()
+                                            chatNodes.forEach { it.recycle() }
+                                            rootNode.recycle()
+                                            return WhatsAppResult(
+                                                success = true,
+                                                action = "select_chat",
+                                                chatName = chatName
+                                            )
+                                        }
                                         val messageBtnNodes = profileRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
                                         if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
                                             Log.i(TAG, "Found message_btn on contact profile, clicking to open chat")
@@ -8180,6 +8194,22 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // Detect search results screen — search_input is present when WhatsApp is in
+            // search mode. Newer versions wrap it in search_input_container (HorizontalScrollView)
+            // but the EditText keeps the same ID in both old and new WhatsApp.
+            val searchInputNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input")
+            if (searchInputNodes != null && searchInputNodes.isNotEmpty()) {
+                searchInputNodes.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
+            }
+            val searchInputContainerNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/search_input_container")
+            if (searchInputContainerNodes != null && searchInputContainerNodes.isNotEmpty()) {
+                searchInputContainerNodes.forEach { it.recycle() }
+                Log.d(TAG, "On WhatsApp search results screen (search_input_container visible)")
+                return WhatsAppScreen.SEARCH_ACTIVE
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
