@@ -9582,6 +9582,19 @@ class ScreenAgentTools @Inject constructor(
         for (scrollAttempt in 0..maxScrollAttempts) {
             val rootNode = accessibilityService.getCurrentRootNode() ?: continue
 
+            // Guard: if a scroll gesture accidentally triggered navigation to a sub-detail page
+            // (e.g. Weight detail), press BACK to return to the Today home screen.
+            val goBackNodes = findNodesByContentDescription(rootNode, "Go back")
+            val isOnSubDetail = goBackNodes.isNotEmpty()
+            goBackNodes.forEach { it.recycle() }
+            if (isOnSubDetail) {
+                Log.w(TAG, "tapFoodTileAndLog: accidentally on sub-detail page, pressing BACK")
+                rootNode.recycle()
+                accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                delay(600)
+                continue
+            }
+
             // Use recursive search since findAccessibilityNodeInfosByText
             // doesn't work with Compose nodes
             val foodNode = findNodeByText(rootNode, "Food")
