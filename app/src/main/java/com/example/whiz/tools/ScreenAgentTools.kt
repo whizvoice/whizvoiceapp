@@ -8096,6 +8096,23 @@ class ScreenAgentTools @Inject constructor(
                     }
                     toolbar.forEach { it.recycle() }
                 }
+                // Fallback: newer WhatsApp toolbar may not have a resource ID — check "Archived" title directly
+                val archivedTitleNodes = rootNode.findAccessibilityNodeInfosByText("Archived")
+                if (archivedTitleNodes != null && archivedTitleNodes.isNotEmpty()) {
+                    var foundArchivedTitle = false
+                    for (node in archivedTitleNodes) {
+                        if (node.className?.toString() == "android.widget.TextView" &&
+                            node.text?.toString() == "Archived") {
+                            foundArchivedTitle = true
+                            break
+                        }
+                    }
+                    archivedTitleNodes.forEach { it.recycle() }
+                    if (foundArchivedTitle) {
+                        Log.d(TAG, "On WhatsApp Archived screen (no toolbar ID) - need to go back to main chat list")
+                        return WhatsAppScreen.UNKNOWN
+                    }
+                }
             }
 
             // Check for Community page - it has conversations_row_contact_name like the
@@ -8180,6 +8197,18 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // Fallback: handle newer WhatsApp where bottom_nav_container/archived_row may be absent.
+            // Safe here because Archived and Community screens have already returned UNKNOWN above,
+            // so conversations_row_contact_name at this point means the main chat list.
+            if (!isMainChatList) {
+                val chatListFallback = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/conversations_row_contact_name")
+                if (chatListFallback != null && chatListFallback.isNotEmpty()) {
+                    chatListFallback.forEach { it.recycle() }
+                    Log.d(TAG, "On WhatsApp chat list (fallback: conversations_row_contact_name without main screen indicators)")
+                    return WhatsAppScreen.CHAT_LIST
+                }
             }
 
             Log.d(TAG, "Not on WhatsApp chat list or inside chat")
