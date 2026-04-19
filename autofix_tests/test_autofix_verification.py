@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Autofix verification test for gmaps_directions_screen_not_found.
 
-In newer Google Maps versions, clicking the Directions button from a location
-details page shows an origin-input screen ("Search here") before presenting
-the directions form with mode-tabs and a Start button.  The old code only
-looked for `directions_mode_tabs` / the Start button, so it always timed out
-on this intermediate screen.
+In newer Google Maps versions the directions screen shows "Choose start location"
+instead of auto-populating the current GPS position.  The old code interpreted the
+missing Start button as "screen not ready" and timed out after 5 attempts.
 
-The fix adds detection of the origin-search screen inside the polling loop
-and tries to click "Your location" / "My location" (or types "My location"
-into the search box) so that the directions form can appear.
+The fix detects the "Choose start location" placeholder, taps it, and selects
+"Your location" / "My location" so that a route is calculated and the Start button
+can appear.
 """
 
 import time
@@ -27,36 +25,36 @@ def test_autofix_gmaps_directions_screen_not_found(tester):
     tester.tap(950, 2225)
     time.sleep(3)
 
-    # Send a voice command that triggers getGoogleMapsDirections with transit mode.
-    # This exercises exactly the code path that caused gmaps_directions_screen_not_found.
-    send_voice_command("get me transit directions to 1680 Mission Street San Francisco")
+    # Ask for driving directions — this exercises the non-transit code path where
+    # "Choose start location" appears in newer Google Maps versions.
+    send_voice_command("get me directions to 49 South Venice Boulevard")
     time.sleep(45)  # wait for screen agent to complete (Maps navigation takes time)
 
     # Take a screenshot of whatever is on screen
     tester.screenshot("/tmp/whiz_gmaps_result.png")
 
-    # Primary check: Google Maps is showing a directions or transit routes screen
+    # Primary check: Google Maps is showing a directions or navigation screen
     result = tester.validate_screenshot(
         "/tmp/whiz_gmaps_result.png",
-        "Google Maps is showing a directions screen, transit routes, or a route overview "
-        "for a destination in San Francisco. Acceptable states: the directions input form "
-        "with mode tabs (Drive/Transit/Walk/Bike), a list of transit route options, "
-        "a turn-by-turn navigation screen, or a route summary. "
-        "NOT acceptable: the main Maps search screen with an empty search box and "
-        "recent searches shown, or an error screen."
+        "Google Maps is showing a directions screen, a route overview, or turn-by-turn "
+        "navigation for a destination. Acceptable states: the directions input form with "
+        "mode tabs (Drive/Transit/Walk/Bike), a route summary with distance and duration, "
+        "or an active navigation screen. "
+        "NOT acceptable: the main Maps search screen with an empty search box, or an "
+        "'Choose start location' prompt with no route calculated."
     )
 
     if not result:
-        # Fallback: check if the Whiz app itself shows a success/confirmation message
+        # Fallback: check if the Whiz app shows a success message in the chat
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
         tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
         result = tester.validate_screenshot(
             "/tmp/whiz_gmaps_chat_result.png",
-            "The Whiz assistant has successfully retrieved transit directions or route "
-            "information for 1680 Mission Street in San Francisco. The assistant message "
-            "should mention transit directions, a route, or navigation — NOT an error about "
-            "failing to find the directions screen or Start button."
+            "The Whiz assistant has successfully retrieved directions or navigation "
+            "information. The assistant message should mention a route, directions, "
+            "navigation, or travel time — NOT an error about failing to find the "
+            "directions screen or Start button."
         )
 
     if not result:
@@ -64,6 +62,6 @@ def test_autofix_gmaps_directions_screen_not_found(tester):
 
     assert result, (
         "Screen agent did not successfully navigate to the Google Maps directions screen. "
-        "The fix for gmaps_directions_screen_not_found (origin search screen detection) "
+        "The fix for gmaps_directions_screen_not_found ('Choose start location' detection) "
         "did not resolve the issue."
     )

@@ -4597,6 +4597,61 @@ class ScreenAgentTools @Inject constructor(
                     modeTabNodes?.forEach { it.recycle() }
 
                     if (hasModeTabs) {
+                        // Newer Google Maps doesn't auto-fill current location as start — it shows
+                        // "Choose start location" instead. Tap it and pick "Your location" so the
+                        // route can be calculated and the Start button appears.
+                        val chooseStartNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
+                        val hasChooseStart = chooseStartNodes?.isNotEmpty() == true
+                        if (hasChooseStart) {
+                            Log.d(TAG, "Directions screen shows 'Choose start location' (attempt $attempt) - tapping to use current GPS location")
+                            var tapped = false
+                            for (node in chooseStartNodes!!) {
+                                val clickable = findClickableParent(node) ?: if (node.isClickable) node else null
+                                if (clickable != null) {
+                                    clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    clickable.recycle()
+                                    tapped = true
+                                    break
+                                }
+                                node.recycle()
+                            }
+                            chooseStartNodes.forEach { it.recycle() }
+                            modeRootNode.recycle()
+                            modeRootNode = null
+                            if (tapped) {
+                                delay(1500) // Wait for origin search UI to open
+                                val searchRoot = accessibilityService.getCurrentRootNode()
+                                if (searchRoot != null) {
+                                    var selectedLocation = false
+                                    for (locText in listOf("Your location", "My location")) {
+                                        if (selectedLocation) break
+                                        val locNodes = searchRoot.findAccessibilityNodeInfosByText(locText)
+                                        for (node in locNodes) {
+                                            val clickable = findClickableParent(node) ?: if (node.isClickable) node else null
+                                            if (clickable != null) {
+                                                clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                                clickable.recycle()
+                                                selectedLocation = true
+                                                break
+                                            }
+                                            node.recycle()
+                                        }
+                                        locNodes.forEach { it.recycle() }
+                                    }
+                                    searchRoot.recycle()
+                                    if (selectedLocation) {
+                                        Log.d(TAG, "Selected current location as start; waiting for route calculation")
+                                        delay(2000)
+                                    } else {
+                                        Log.w(TAG, "Could not find 'Your location'/'My location' after tapping 'Choose start location'")
+                                    }
+                                }
+                            }
+                            delay(1000)
+                            continue // Retry loop to look for Start button after location is set
+                        }
+                        chooseStartNodes?.forEach { it.recycle() }
+
                         // Check what mode we're in using built-in search (no depth limit)
                         var currentMode: String? = null
                         val allModeCheckNodes = modeRootNode.findAccessibilityNodeInfosByText("mode")
