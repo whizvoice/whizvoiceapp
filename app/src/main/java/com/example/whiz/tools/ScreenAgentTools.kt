@@ -3886,7 +3886,7 @@ class ScreenAgentTools @Inject constructor(
                     dismissExitNavigationDialog(node)
                     val state = detectGoogleMapsScreenState(node)
                     node.recycle()
-                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.NO_RESULTS
                 } else false
             }
             if (!resultsLoaded) {
@@ -3901,6 +3901,22 @@ class ScreenAgentTools @Inject constructor(
                     location = address,
                     error = "Search results did not load in time"
                 )
+            }
+
+            // Check if no results were found
+            val noResultsCheckNode = accessibilityService.getCurrentRootNode()
+            if (noResultsCheckNode != null) {
+                val noResultsState = detectGoogleMapsScreenState(noResultsCheckNode)
+                noResultsCheckNode.recycle()
+                if (noResultsState == GoogleMapsScreenState.NO_RESULTS) {
+                    Log.d(TAG, "Google Maps returned no results for: $address")
+                    return MapsActionResult(
+                        success = false,
+                        action = "search_location",
+                        location = address,
+                        error = "No results found for \"$address\""
+                    )
+                }
             }
 
             // Select the first non-sponsored result from the list
@@ -4962,7 +4978,7 @@ class ScreenAgentTools @Inject constructor(
                     dismissExitNavigationDialog(node)
                     val state = detectGoogleMapsScreenState(node)
                     node.recycle()
-                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS
+                    state == GoogleMapsScreenState.SEARCH_RESULTS_LIST || state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.NO_RESULTS
                 } else false
             }
             if (!resultsLoaded) {
@@ -4979,6 +4995,22 @@ class ScreenAgentTools @Inject constructor(
                     location = searchPhrase,
                     error = "Search results did not load in time"
                 )
+            }
+
+            // Check if no results were found
+            val noResultsCheckNode = accessibilityService.getCurrentRootNode()
+            if (noResultsCheckNode != null) {
+                val noResultsState = detectGoogleMapsScreenState(noResultsCheckNode)
+                noResultsCheckNode.recycle()
+                if (noResultsState == GoogleMapsScreenState.NO_RESULTS) {
+                    Log.d(TAG, "Google Maps returned no results for: $searchPhrase")
+                    return MapsActionResult(
+                        success = false,
+                        action = "search_phrase",
+                        location = searchPhrase,
+                        error = "No results found for \"$searchPhrase\""
+                    )
+                }
             }
 
             return MapsActionResult(
@@ -5011,6 +5043,7 @@ class ScreenAgentTools @Inject constructor(
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
         TRANSIT_ROUTE_DETAIL,  // Transit route detail screen (trip steps + "Start glanceable directions" button)
+        NO_RESULTS,            // "No results found" screen shown after a search
         UNKNOWN
     }
 
@@ -5077,6 +5110,15 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Detected Google Maps screen state: FILTERS_SCREEN (Sort by + Clear/Apply found)")
                 return GoogleMapsScreenState.FILTERS_SCREEN
             }
+        }
+
+        // Check for "No results found" screen
+        val noResultsNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(rootNode, "No results found", noResultsNodes)
+        if (noResultsNodes.isNotEmpty()) {
+            noResultsNodes.forEach { it.recycle() }
+            Log.d(TAG, "Detected Google Maps screen state: NO_RESULTS (No results found text present)")
+            return GoogleMapsScreenState.NO_RESULTS
         }
 
         // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
