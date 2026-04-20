@@ -7233,6 +7233,25 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Second pass: relaxed match for newer YouTube Music versions where rows may not be
+            // long-clickable, or where type indicators are nested deeper than 2 levels.
+            if (matchingRow == null) {
+                Log.d(TAG, "First pass found no row; trying relaxed match (no isLongClickable requirement, deep tree search)")
+                for (node in allNodes) {
+                    val className = node.className?.toString() ?: ""
+                    if ((className == "android.widget.Button" || className == "android.view.ViewGroup")
+                        && node.isClickable) {
+                        if (treeContainsTypeIndicator(node, acceptableTypes)) {
+                            val title = extractTitleFromResultRow(node)
+                            Log.d(TAG, "Found result row (relaxed match) with title: '$title'")
+                            matchingRow = node
+                            matchingTitle = title
+                            break
+                        }
+                    }
+                }
+            }
+
             if (matchingRow != null) {
                 // Click the matching result row
                 val clicked = accessibilityService.clickNode(matchingRow)
@@ -8311,6 +8330,16 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 chatsNavNodes.forEach { it.recycle() }
+            }
+
+            // NEW: Check for the "New chat" FAB button — present on the main chat list even
+            // when the chat list is empty (e.g. fresh install after dismissing the notification
+            // permission dialog). Stable across WhatsApp versions.
+            val fabNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/fab")
+            if (fabNodes != null && fabNodes.isNotEmpty()) {
+                fabNodes.forEach { it.recycle() }
+                Log.d(TAG, "Found WhatsApp new-chat FAB (on main chat list)")
+                return WhatsAppScreen.CHAT_LIST
             }
 
             // Detect search results screen — search_input is present when WhatsApp is in
