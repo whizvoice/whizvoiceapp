@@ -1573,13 +1573,47 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            val rootNode = accessibilityService.getCurrentRootNode()
+            var rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode == null) {
                 return DraftResult(
                     success = false,
                     message = message,
                     error = "Could not get root node"
                 )
+            }
+
+            // Dismiss WhatsApp notification permission bottom sheet if present
+            val permissionTitleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/permission_title")
+            val hasCancelBtn = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/cancel")
+            if ((permissionTitleNodes != null && permissionTitleNodes.isNotEmpty()) ||
+                (hasCancelBtn != null && hasCancelBtn.isNotEmpty())) {
+                Log.d(TAG, "WhatsApp notification permission dialog detected, dismissing it")
+                val cancelNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/cancel")
+                if (cancelNodes != null && cancelNodes.isNotEmpty()) {
+                    cancelNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    cancelNodes.forEach { it.recycle() }
+                    Log.d(TAG, "Clicked cancel on notification permission dialog")
+                } else {
+                    // Fallback: press back to dismiss
+                    accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                    Log.d(TAG, "Pressed back to dismiss notification permission dialog")
+                }
+                permissionTitleNodes?.forEach { it.recycle() }
+                hasCancelBtn?.forEach { it.recycle() }
+                rootNode.recycle()
+                delay(800)
+                val newRootNode = accessibilityService.getCurrentRootNode()
+                if (newRootNode == null) {
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Could not get root node after dismissing notification dialog"
+                    )
+                }
+                rootNode = newRootNode
+            } else {
+                permissionTitleNodes?.forEach { it.recycle() }
+                hasCancelBtn?.forEach { it.recycle() }
             }
 
             // If we're on a contact profile page (has message_btn), click it to open the chat
