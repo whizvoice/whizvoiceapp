@@ -4660,6 +4660,44 @@ class ScreenAgentTools @Inject constructor(
                         } else {
                             // Non-transit mode - Start button should exist, keep waiting for it to render
                             Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
+
+                            // Check if Maps is showing "Choose start location" — this means
+                            // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
+                            // "Home" from the suggestions to set an origin so directions can load.
+                            val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
+                            if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
+                                Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
+                                chooseOriginNodes.forEach { it.recycle() }
+                                val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
+                                if (homeNodes != null && homeNodes.isNotEmpty()) {
+                                    val homeNode = homeNodes[0]
+                                    val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
+                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                        Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
+                                    }
+                                    if (target != null && target !== homeNode) target.recycle()
+                                    homeNodes.forEach { it.recycle() }
+                                    modeRootNode.recycle()
+                                    modeRootNode = null
+                                    waitForCondition(maxWaitMs = 5000) {
+                                        val node = accessibilityService.getCurrentRootNode()
+                                        if (node != null) {
+                                            val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
+                                                val match = n.isClickable && n.className == "android.widget.Button"
+                                                n.recycle()
+                                                match
+                                            }
+                                            node.recycle()
+                                            startVisible
+                                        } else false
+                                    }
+                                    continue
+                                }
+                                homeNodes?.forEach { it.recycle() }
+                            } else {
+                                chooseOriginNodes?.forEach { it.recycle() }
+                            }
+
                             // Don't break - continue the loop to wait for Start button
                             modeRootNode.recycle()
                             modeRootNode = null
