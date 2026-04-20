@@ -3025,6 +3025,17 @@ class ScreenAgentTools @Inject constructor(
                                 if (sendButton != null && sendButton.isClickable) {
                                     sendSuccess = accessibilityService.clickNode(sendButton)
                                     Log.d(TAG, "Clicked send button by walking up tree, result: $sendSuccess")
+                                    // Fallback to gesture tap for Compose views where ACTION_CLICK may fail
+                                    if (!sendSuccess) {
+                                        val btnBounds = android.graphics.Rect()
+                                        sendButton.getBoundsInScreen(btnBounds)
+                                        if (!btnBounds.isEmpty) {
+                                            sendSuccess = accessibilityService.performTapGesture(
+                                                btnBounds.centerX().toFloat(), btnBounds.centerY().toFloat()
+                                            )
+                                            Log.d(TAG, "Gesture tap on send button at (${btnBounds.centerX()}, ${btnBounds.centerY()}), result: $sendSuccess")
+                                        }
+                                    }
                                     sendButton.recycle()
                                 } else {
                                     Log.w(TAG, "Could not find clickable ancestor for send button")
@@ -3035,6 +3046,29 @@ class ScreenAgentTools @Inject constructor(
                             sendButtons.forEach { it.recycle() }
                         } else {
                             Log.e(TAG, "Could not find send button by content description")
+                        }
+
+                        // Additional fallback: find send button by Compose test tag (new Compose-based Messages)
+                        if (!sendSuccess) {
+                            val composeSendNodes = mutableListOf<AccessibilityNodeInfo>()
+                            findNodesByResourceId(currentRoot, "Compose:Draft:Send", composeSendNodes)
+                            if (composeSendNodes.isNotEmpty()) {
+                                Log.d(TAG, "Found send button by Compose test tag")
+                                val sendNode = composeSendNodes[0]
+                                sendSuccess = accessibilityService.clickNode(sendNode)
+                                Log.d(TAG, "Clicked Compose:Draft:Send, result: $sendSuccess")
+                                if (!sendSuccess) {
+                                    val bounds = android.graphics.Rect()
+                                    sendNode.getBoundsInScreen(bounds)
+                                    if (!bounds.isEmpty) {
+                                        sendSuccess = accessibilityService.performTapGesture(
+                                            bounds.centerX().toFloat(), bounds.centerY().toFloat()
+                                        )
+                                        Log.d(TAG, "Gesture tap on Compose:Draft:Send at (${bounds.centerX()}, ${bounds.centerY()}), result: $sendSuccess")
+                                    }
+                                }
+                                composeSendNodes.forEach { it.recycle() }
+                            }
                         }
 
                         currentRoot.recycle()
