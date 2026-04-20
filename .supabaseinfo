@@ -75,7 +75,7 @@ screen_agent_ui_dumps table:
 id | int8
 created_at | timestamp with time zone | now()
 user_id | text | foreign key to users.user_id
-dump_reason | text | NOT NULL | tag like 'whatsapp_unknown_screen', 'ytmusic_no_play_button'
+dump_reason | text | NOT NULL | tag like 'whatsapp_chat_not_found', 'ytmusic_play_error'
 error_message | text | human-readable error description
 ui_hierarchy | text | NOT NULL | full UI dump text content
 package_name | text | app package where error occurred (e.g., 'com.whatsapp')
@@ -89,6 +89,7 @@ conversation_id | int8 | foreign key to conversations.id (nullable)
 recent_actions | jsonb | default '[]' | last 5 screen agent actions
 screen_agent_context | jsonb | optional extra debug info
 is_emulator | boolean | nullable | true if the dump came from an Android emulator; autofix trigger is skipped when true
+expected_failure | boolean | default false | true for errors that are expected (e.g. contact not found); autofix trigger is skipped when true
 
 This table stores UI hierarchy dumps captured when the screen agent encounters navigation failures, used for debugging and improving screen agent code.
 
