@@ -4237,7 +4237,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Poll for search results to load (wait for search_list_layout or location details to appear)
             val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
-                val node = accessibilityService.getCurrentRootNode()
+                val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                 if (node != null) {
                     // Dismiss "Exit navigation?" dialog if present
                     dismissExitNavigationDialog(node)
@@ -4249,7 +4249,7 @@ class ScreenAgentTools @Inject constructor(
             if (!resultsLoaded) {
                 // Sample 5% (reduce to 1% at higher user volumes)
                 if (Math.random() < 0.05) {
-                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    val dumpRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (dumpRoot != null) {
                         dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
                         dumpRoot.recycle()
@@ -5402,7 +5402,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Poll for search results to load
             val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
-                val node = accessibilityService.getCurrentRootNode()
+                val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                 if (node != null) {
                     // Dismiss "Exit navigation?" dialog if present
                     dismissExitNavigationDialog(node)
@@ -5414,7 +5414,7 @@ class ScreenAgentTools @Inject constructor(
             if (!resultsLoaded) {
                 // Sample 5% (reduce to 1% at higher user volumes)
                 if (Math.random() < 0.05) {
-                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    val dumpRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (dumpRoot != null) {
                         dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
                         dumpRoot.recycle()
