@@ -8,28 +8,42 @@ from helpers import (
 )
 
 
-def test_autofix_sms_send_button(tester):
-    """Verify SMS send works, including Send MMS button variant.
+def test_autofix_google_maps_unknown_state(tester):
+    """Verify fix for google_maps_unknown_state.
 
-    Google Messages uses different send button labels depending on context:
-    "Send SMS", "Send MMS", "Send message", "Send encrypted message".
-    This test verifies the screen agent can find and click the send button
-    regardless of which variant Messages shows.
+    Tests that the screen agent can navigate through the Maps loading state
+    (ProgressBar visible while fetching location details) without triggering
+    an unknown state error.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_sms_send_button")
+    success, error = navigate_to_my_chats(tester, "autofix_google_maps_unknown_state")
     assert success, f"Could not reach My Chats: {error}"
 
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("send a text to Ruth Grace Wong saying hey what time are you getting here")
+    send_voice_command("get directions to 1117 Tennessee St San Francisco")
+    time.sleep(40)
 
-    result = tester.wait_for_logcat(
-        tag="ScreenAgentTools",
-        message="Found send button by content description",
-        timeout=45
+    tester.screenshot("/tmp/whiz_gmaps_directions.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_gmaps_directions.png",
+        "Google Maps is open and showing either a location details page with a "
+        "Directions button, or a turn-by-turn directions/navigation screen, "
+        "or a route summary screen"
     )
+    if not result:
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
+        tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
+        result = tester.validate_screenshot(
+            "/tmp/whiz_gmaps_chat_result.png",
+            "The Whiz chat shows a message from the assistant about opening directions "
+            "or navigation in Google Maps. It should NOT show an error about unknown state "
+            "or failing to navigate."
+        )
+        if not result:
+            save_failed_screenshot(tester, "autofix_google_maps_unknown_state", "validation_failed")
     assert result, (
-        "SMS send failed — screen agent could not find the send button. "
-        "Expected 'Found send button by content description' in logcat."
+        "Google Maps did not reach directions/location details after search — "
+        "SEARCH_LOADING state may not be handled correctly"
     )

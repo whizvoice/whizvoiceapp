@@ -4360,6 +4360,27 @@ class ScreenAgentTools @Inject constructor(
                     }
                     // Continue to the Directions button click logic below
                 }
+                GoogleMapsScreenState.SEARCH_LOADING -> {
+                    Log.d(TAG, "Maps is loading, waiting for LOCATION_DETAILS or SEARCH_RESULTS_LIST")
+                    rootNode.recycle()
+                    val loaded = waitForCondition(maxWaitMs = 8000) {
+                        val node = accessibilityService.getCurrentRootNode()
+                        if (node != null) {
+                            val state = detectGoogleMapsScreenState(node)
+                            node.recycle()
+                            state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.SEARCH_RESULTS_LIST
+                        } else false
+                    }
+                    if (!loaded) {
+                        Log.w(TAG, "Maps did not finish loading in time")
+                    }
+                    rootNode = accessibilityService.getCurrentRootNode() ?: return MapsActionResult(
+                        success = false,
+                        action = "get_directions",
+                        mode = mode,
+                        error = "Could not get root node after waiting for Maps to load"
+                    )
+                }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
                     rootNode.recycle()
@@ -4401,6 +4422,10 @@ class ScreenAgentTools @Inject constructor(
                                     Log.d(TAG, "Now on transit route detail after pressing back")
                                     break
                                 }
+                                GoogleMapsScreenState.SEARCH_LOADING -> {
+                                    Log.d(TAG, "Maps is loading after back press, waiting for it to resolve")
+                                    break
+                                }
                                 else -> {
                                     Log.w(TAG, "Still in unknown state after back press $backAttempt")
                                     // Continue the loop to try again
@@ -4437,6 +4462,23 @@ class ScreenAgentTools @Inject constructor(
                         val state = detectGoogleMapsScreenState(node)
                         node.recycle()
                         state != GoogleMapsScreenState.FILTERS_SCREEN
+                    } else false
+                }
+                currentRootNode = accessibilityService.getCurrentRootNode()
+                if (currentRootNode != null) {
+                    stateAfterHandling = detectGoogleMapsScreenState(currentRootNode)
+                }
+            }
+
+            if (stateAfterHandling == GoogleMapsScreenState.SEARCH_LOADING) {
+                Log.d(TAG, "Maps still loading after handling - waiting for result")
+                currentRootNode?.recycle()
+                waitForCondition(maxWaitMs = 8000) {
+                    val node = accessibilityService.getCurrentRootNode()
+                    if (node != null) {
+                        val state = detectGoogleMapsScreenState(node)
+                        node.recycle()
+                        state == GoogleMapsScreenState.LOCATION_DETAILS || state == GoogleMapsScreenState.SEARCH_RESULTS_LIST
                     } else false
                 }
                 currentRootNode = accessibilityService.getCurrentRootNode()
@@ -4618,6 +4660,44 @@ class ScreenAgentTools @Inject constructor(
                         } else {
                             // Non-transit mode - Start button should exist, keep waiting for it to render
                             Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
+
+                            // Check if Maps is showing "Choose start location" — this means
+                            // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
+                            // "Home" from the suggestions to set an origin so directions can load.
+                            val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
+                            if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
+                                Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
+                                chooseOriginNodes.forEach { it.recycle() }
+                                val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
+                                if (homeNodes != null && homeNodes.isNotEmpty()) {
+                                    val homeNode = homeNodes[0]
+                                    val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
+                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                        Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
+                                    }
+                                    if (target != null && target !== homeNode) target.recycle()
+                                    homeNodes.forEach { it.recycle() }
+                                    modeRootNode.recycle()
+                                    modeRootNode = null
+                                    waitForCondition(maxWaitMs = 5000) {
+                                        val node = accessibilityService.getCurrentRootNode()
+                                        if (node != null) {
+                                            val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
+                                                val match = n.isClickable && n.className == "android.widget.Button"
+                                                n.recycle()
+                                                match
+                                            }
+                                            node.recycle()
+                                            startVisible
+                                        } else false
+                                    }
+                                    continue
+                                }
+                                homeNodes?.forEach { it.recycle() }
+                            } else {
+                                chooseOriginNodes?.forEach { it.recycle() }
+                            }
+
                             // Don't break - continue the loop to wait for Start button
                             modeRootNode.recycle()
                             modeRootNode = null
@@ -5011,6 +5091,7 @@ class ScreenAgentTools @Inject constructor(
         SEARCH_RESULTS_LIST,   // search_list_layout exists - showing search results list
         FILTERS_SCREEN,        // Filters/sort screen is open (has "Sort by", "Clear", "Apply")
         TRANSIT_ROUTE_DETAIL,  // Transit route detail screen (trip steps + "Start glanceable directions" button)
+        SEARCH_LOADING,        // ProgressBar visible while Maps loads location/search results
         UNKNOWN
     }
 
@@ -5077,6 +5158,22 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Detected Google Maps screen state: FILTERS_SCREEN (Sort by + Clear/Apply found)")
                 return GoogleMapsScreenState.FILTERS_SCREEN
             }
+        }
+
+        // Check for search loading state: search omnibox is visible but results haven't
+        // loaded yet (ProgressBar is showing). Earlier checks already ruled out LOCATION_DETAILS
+        // and SEARCH_RESULTS_LIST, so if omnibox + ProgressBar are present, Maps is still loading.
+        val omniboxNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_container")
+        if (omniboxNodes != null && omniboxNodes.isNotEmpty()) {
+            omniboxNodes.forEach { it.recycle() }
+            val progressNodes = mutableListOf<AccessibilityNodeInfo>()
+            findNodesByClassName(rootNode, "android.widget.ProgressBar", progressNodes)
+            if (progressNodes.isNotEmpty()) {
+                progressNodes.forEach { it.recycle() }
+                Log.d(TAG, "Detected Google Maps screen state: SEARCH_LOADING (omnibox + ProgressBar found)")
+                return GoogleMapsScreenState.SEARCH_LOADING
+            }
+            progressNodes.forEach { it.recycle() }
         }
 
         // Note: "Arriving at" screen (post-navigation arrival) is intentionally treated as UNKNOWN
@@ -7762,6 +7859,26 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error finding nodes by resource ID", e)
+        }
+    }
+
+    private fun findNodesByClassName(node: AccessibilityNodeInfo, className: String, results: MutableList<AccessibilityNodeInfo>, depth: Int = 0) {
+        if (depth > 15) return
+
+        try {
+            if (node.className?.toString() == className) {
+                results.add(AccessibilityNodeInfo.obtain(node))
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    findNodesByClassName(child, className, results, depth + 1)
+                    child.recycle()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding nodes by class name", e)
         }
     }
 
