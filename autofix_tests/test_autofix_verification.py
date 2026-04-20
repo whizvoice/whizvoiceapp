@@ -47,3 +47,43 @@ def test_autofix_google_maps_unknown_state(tester):
         "Google Maps did not reach directions/location details after search — "
         "SEARCH_LOADING state may not be handled correctly"
     )
+
+
+def test_autofix_gmaps_no_nonsponsored_result(tester):
+    """Verify fix for gmaps_no_nonsponsored_result.
+
+    Tests that the screen agent can select a result from a Google Maps search list
+    even when the first item in the list has zero/negative height (invisible/collapsed).
+    Previously the agent would click the invisible first item repeatedly and fail.
+    """
+    success, error = navigate_to_my_chats(tester, "autofix_gmaps_no_nonsponsored_result")
+    assert success, f"Could not reach My Chats: {error}"
+
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    send_voice_command("show me City Hall on Google Maps")
+    time.sleep(40)
+
+    tester.screenshot("/tmp/whiz_gmaps_cityhall.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_gmaps_cityhall.png",
+        "Google Maps is open and showing a location details page for a 'City Hall' "
+        "or a similar civic building — NOT a search results list and NOT an error"
+    )
+    if not result:
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
+        tester.screenshot("/tmp/whiz_gmaps_cityhall_chat.png")
+        result = tester.validate_screenshot(
+            "/tmp/whiz_gmaps_cityhall_chat.png",
+            "The Whiz chat shows a message from the assistant indicating it successfully "
+            "found or navigated to City Hall in Google Maps. It should NOT show an error "
+            "about failing to select a non-sponsored result."
+        )
+        if not result:
+            save_failed_screenshot(tester, "autofix_gmaps_no_nonsponsored_result", "validation_failed")
+    assert result, (
+        "Screen agent failed to select a visible result from Google Maps search list — "
+        "invisible/collapsed first result may not be skipped correctly"
+    )

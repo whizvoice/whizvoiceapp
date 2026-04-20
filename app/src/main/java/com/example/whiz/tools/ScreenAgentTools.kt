@@ -5929,6 +5929,16 @@ class ScreenAgentTools @Inject constructor(
                         continue
                     }
 
+                    // Skip items with zero or negative dimensions — they are invisible/collapsed
+                    // (e.g., a collapsed sponsored slot that lacks "About this ad" text in newer Maps)
+                    val childBounds = android.graphics.Rect()
+                    child.getBoundsInScreen(childBounds)
+                    if (childBounds.height() <= 0 || childBounds.width() <= 0) {
+                        Log.d(TAG, "Child $i has zero/negative dimensions ($childBounds), skipping")
+                        child.recycle()
+                        continue
+                    }
+
                     nonSponsoredCount++
                     if (nonSponsoredCount == position) {
                         Log.d(TAG, "Found non-sponsored result at index $i (position $position)")
