@@ -64,6 +64,10 @@ class SpeechRecognitionService @Inject constructor(
     private var savedPartialForConcatenation = ""
     private var savedPartialIsAfterFinalResult = false  // True when saved partial is a NEW sub-utterance spoken AFTER the finalized text
     private var peakPartialLength = 0  // Longest partial seen in current recognition session, used to detect partial buffer resets
+    // Longest partial *text* seen in the current recognition session. Used in onSegmentResults
+    // empty-segment fallback so that a partial buffer reset right before delivery doesn't lose
+    // the user's full utterance. Reset alongside peakPartialLength.
+    private var peakPartialText = ""
     private val PREMATURE_END_THRESHOLD_MS = 1500L // If end-of-speech fires within this time of last partial, it's probably premature
     private val SAVED_PARTIAL_TIMEOUT_MS = 3000L // Wait for user to continue speaking (premature end case)
     private val BACKUP_RESULT_TIMEOUT_MS = 500L // Backup if onResults is canceled by restart (normal end case)
@@ -422,6 +426,7 @@ class SpeechRecognitionService @Inject constructor(
                 _errorState.value = null
                 manualStopInProgress = false
                 peakPartialLength = 0
+                peakPartialText = ""
                 lastEndOfSpeechTimestamp = 0L
                 restartAfterResults = false
 
@@ -439,6 +444,9 @@ class SpeechRecognitionService @Inject constructor(
                 beginningOfSpeechTimestamp = System.currentTimeMillis()
                 lastSpeechActivityTimestamp = System.currentTimeMillis()
                 hasLoggedFirstPartial = false
+                // Reset peak-partial tracking so each new utterance starts clean
+                peakPartialLength = 0
+                peakPartialText = ""
                 // Reset late segment dedup so repeated utterances aren't suppressed
                 lastCallbackText = ""
                 BubbleOverlayService.clearLastAutoSent()
@@ -778,9 +786,13 @@ class SpeechRecognitionService @Inject constructor(
                     Log.d(TAG, "[DEBUG] 🔗 MERGED partial: saved='$savedPartialForConcatenation' + partial='$originalPartial' -> '$partialText'")
                 }
 
-                // Track peak partial length for detecting partial buffer resets
+                // Track peak partial length and text for detecting partial buffer resets.
+                // Storing the text (not just the length) lets onSegmentResults' empty-segment
+                // fallback use the longest partial we ever saw rather than the latest one,
+                // so a buffer reset right before delivery doesn't truncate the message.
                 if (partialText.length > peakPartialLength) {
                     peakPartialLength = partialText.length
+                    peakPartialText = partialText
                 }
 
                 Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}', peak: $peakPartialLength)")
@@ -835,15 +847,23 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
                 Log.d(TAG, "[VOICE_TRACE] onSegmentResults segmentText='$segmentText' stateAtEntry='$transcriptionStateAtEntry' peakLen=$peakAtEntry")
 
-                // Fallback: if segment result is empty but we had good partials,
-                // use the last partial. Android's segmented recognizer sometimes
-                // delivers partials but then returns an empty final result.
-                // Guard: only fall back when peakPartialLength >= 4 to avoid
-                // sending noise artifacts ("a", "uh") as real messages.
-                val effectiveText = if (segmentText.isBlank() && _transcriptionState.value.isNotBlank()) {
+                // Fallback: if segment result is empty but we had good partials, use the
+                // longest partial we observed during this segment. Android's segmented
+                // recognizer sometimes delivers partials but then returns an empty final
+                // result, AND its partial buffer can reset mid-utterance (so the latest
+                // partial in _transcriptionState may be much shorter than what the user
+                // actually said). Prefer peakPartialText so a buffer reset doesn't truncate.
+                // Guard: only fall back when peakPartialLength >= 4 to avoid sending noise
+                // artifacts ("a", "uh") as real messages.
+                val haveAnyPartial = peakPartialText.isNotBlank() || _transcriptionState.value.isNotBlank()
+                val effectiveText = if (segmentText.isBlank() && haveAnyPartial) {
                     if (peakPartialLength >= 4) {
-                        val fallback = _transcriptionState.value.trim()
-                        Log.w(TAG, "🔄 SEGMENTED: Empty segment result but had partial '$fallback' (peak: $peakPartialLength), using as fallback")
+                        val fallback = if (peakPartialText.length >= _transcriptionState.value.length) {
+                            peakPartialText.trim()
+                        } else {
+                            _transcriptionState.value.trim()
+                        }
+                        Log.w(TAG, "🔄 SEGMENTED: Empty segment result but had partial '$fallback' (peak: $peakPartialLength, peakText='$peakPartialText', state='${_transcriptionState.value}'), using as fallback")
                         fallback
                     } else {
                         Log.d(TAG, "🔄 SEGMENTED: Empty segment result with short partials (peak: $peakPartialLength), suppressing fallback")
@@ -893,6 +913,7 @@ class SpeechRecognitionService @Inject constructor(
                 // Reset partial tracking for next segment (mic stays open)
                 _transcriptionState.value = ""
                 peakPartialLength = 0
+                peakPartialText = ""
                 hasLoggedFirstPartial = false
                 savedPartialForConcatenation = ""
                 savedPartialIsAfterFinalResult = false
@@ -1158,6 +1179,7 @@ class SpeechRecognitionService @Inject constructor(
         savedPartialForConcatenation = text
         savedPartialIsAfterFinalResult = false
         peakPartialLength = 0
+        peakPartialText = ""
 
         // Start the existing timeout so the partial is sent as a final result
         // if the user doesn't continue speaking
