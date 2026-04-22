@@ -667,11 +667,24 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             try {
                 val transcriptionFlowField = voiceManager.javaClass.getDeclaredField("_transcriptionFlow")
                 transcriptionFlowField.isAccessible = true
-                val transcriptionFlow = transcriptionFlowField.get(voiceManager) as? MutableSharedFlow<String>
+                @Suppress("UNCHECKED_CAST")
+                val transcriptionFlow = transcriptionFlowField.get(voiceManager)
+                    as? MutableSharedFlow<com.example.whiz.ui.viewmodels.VoiceManager.TranscriptionEmission>
 
                 if (transcriptionFlow != null) {
-                    Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$openClockMessage'")
-                    transcriptionFlow.emit(openClockMessage)
+                    // Pull the next seq from the same AtomicLong production code uses so the
+                    // dedup based on lastProcessedTranscriptionSeq stays monotonic across the
+                    // test-injection path and the real recognizer callback path.
+                    val seqCounterField = voiceManager.javaClass.getDeclaredField("transcriptionSeqCounter")
+                    seqCounterField.isAccessible = true
+                    val seqCounter = seqCounterField.get(voiceManager) as java.util.concurrent.atomic.AtomicLong
+                    val nextSeq = seqCounter.incrementAndGet()
+                    Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$openClockMessage' (seq=$nextSeq)")
+                    val emission = com.example.whiz.ui.viewmodels.VoiceManager.TranscriptionEmission(
+                        text = openClockMessage,
+                        seq = nextSeq
+                    )
+                    transcriptionFlow.emit(emission)
                     Log.d(TAG, "✅ Transcription flow emission completed - should trigger notification bubble mode")
                 } else {
                     Log.w(TAG, "⚠️ Transcription flow not available")
